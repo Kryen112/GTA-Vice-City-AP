@@ -1,0 +1,51 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions: {}
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install ruff
+      - run: ruff check .
+
+  world-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: world
+      - name: Check whether the world package exists yet
+        id: world
+        run: echo "exists=$([ -d world/apworld/gta_vice_city ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@v4
+        if: steps.world.outputs.exists == 'true'
+        with:
+          repository: ArchipelagoMW/Archipelago
+          ref: '0.6.7'
+          path: Archipelago
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install Archipelago dependencies
+        if: steps.world.outputs.exists == 'true'
+        working-directory: Archipelago
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r ci-requirements.txt
+          python ModuleUpdate.py --yes --force
+          python Launcher.py --update_settings
+      - name: Run world tests
+        working-directory: world
+        env:
+          AP_ROOT: ${{ github.workspace }}/Archipelago
+        run: python scripts/run_tests.py

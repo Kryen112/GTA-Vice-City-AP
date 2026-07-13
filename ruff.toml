@@ -1,0 +1,23 @@
+# Mirrors the Archipelago 0.6.7 ruff configuration so world code passes
+# upstream lint unchanged. Keep in sync with the pinned checkout's ruff.toml.
+line-length = 120
+indent-width = 4
+target-version = "py311"
+
+[lint]
+select = ["B", "C", "E", "F", "W", "I", "N", "Q", "UP", "RET", "RSE", "RUF", "ISC", "PLC", "PLE", "PLW", "T20", "PERF"]
+ignore = [
+    "B011",
+    "C901",
+    "N818",
+    "PLC0415",
+    "PLC1802",
+    "PLC1901",
+    "PLE1141",
+    "UP015",
+]
+
+[lint.per-file-ignores]
+# Entry-point scripts and hooks talk to the terminal on purpose.
+"scripts/**" = ["T20"]
+".githooks/*" = ["T20"]

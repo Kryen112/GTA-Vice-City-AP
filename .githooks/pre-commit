@@ -1,0 +1,67 @@
+#!/usr/bin/env python
+"""Pre-commit gate: hygiene, lint, then world tests.
+
+Python rather than shell so Windows line endings can never break it. The
+same lint and test entry points run in CI.
+"""
+
+import pathlib
+import shutil
+import subprocess
+import sys
+
+REPOSITORY_ROOT = pathlib.Path(__file__).resolve().parent.parent
+NEVER_COMMITTED_PREFIXES = ("PLAN.md", "notes/")
+
+
+def staged_files() -> list[str]:
+    output = subprocess.run(
+        ["git", "diff", "--cached", "--name-only", "--diff-filter=ACMR"],
+        capture_output=True,
+        text=True,
+        cwd=REPOSITORY_ROOT,
+        check=True,
+    ).stdout
+    return [line for line in output.splitlines() if line]
+
+
+def main() -> int:
+    staged = staged_files()
+    if not staged:
+        return 0
+
+    blocked = [path for path in staged if path.startswith(NEVER_COMMITTED_PREFIXES)]
+    if blocked:
+        print("PLAN.md and notes/ must never be committed. Unstage:")
+        for path in blocked:
+            print(f"  {path}")
+        return 1
+
+    whitespace = subprocess.run(["git", "diff", "--cached", "--check"], cwd=REPOSITORY_ROOT, check=False)
+    if whitespace.returncode != 0:
+        print("Fix the whitespace errors above before committing.")
+        return 1
+
+    staged_python = [path for path in staged if path.endswith(".py")]
+    if staged_python:
+        if shutil.which("ruff") is None:
+            print("ruff is required to commit Python (pip install ruff).")
+            return 1
+        lint = subprocess.run(["ruff", "check", *staged_python], cwd=REPOSITORY_ROOT, check=False)
+        if lint.returncode != 0:
+            return 1
+
+    if any(path.startswith("apworld/") for path in staged):
+        tests = subprocess.run(
+            [sys.executable, str(REPOSITORY_ROOT / "scripts" / "run_tests.py")],
+            cwd=REPOSITORY_ROOT,
+            check=False,
+        )
+        if tests.returncode != 0:
+            return 1
+
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
