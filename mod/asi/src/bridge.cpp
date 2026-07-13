@@ -1,0 +1,148 @@
+#include "bridge.hpp"
+
+#include <chrono>
+#include <utility>
+#include <vector>
+
+#include "game_state.hpp"
+
+namespace gtavc {
+namespace {
+constexpr int kRetryDelayMs = 1000;
+constexpr int kRecvTimeoutMs = 100;
+constexpr int kHandshakeTimeoutMs = 30000;
+}  // namespace
+
+BridgeClient::BridgeClient(std::string host, int port, GameState* game, Logger logger)
+    : host_(std::move(host)), port_(port), game_(game), logger_(std::move(logger)) {}
+
+BridgeClient::~BridgeClient() { Stop(); }
+
+void BridgeClient::Start() {
+  if (thread_.joinable()) return;
+  stop_ = false;
+  thread_ = std::thread([this] { RunLoop(); });
+}
+
+void BridgeClient::Stop() {
+  stop_ = true;
+  if (thread_.joinable()) thread_.join();
+  client_.Close();
+}
+
+void BridgeClient::RunLoop() {
+  while (!stop_) {
+    if (!client_.Connect(host_, port_)) {
+      SleepInterruptible(kRetryDelayMs);
+      continue;
+    }
+    logger_("connected to the client listener");
+    reader_ = MessageReader();
+    RunSession();
+    client_.Close();
+    if (!stop_) SleepInterruptible(kRetryDelayMs);
+  }
+}
+
+bool BridgeClient::RunSession() {
+  if (!SendMessage(HelloMessage(game_->SeedHash()))) return false;
+  bool welcomed = false;
+  const auto handshake_deadline =
+      std::chrono::steady_clock::now() + std::chrono::milliseconds(kHandshakeTimeoutMs);
+  while (!stop_) {
+    char buffer[4096];
+    const int received = client_.RecvSome(buffer, sizeof(buffer), kRecvTimeoutMs);
+    if (received < 0) {
+      logger_("connection closed");
+      return false;
+    }
+    if (received > 0) {
+      // A ProtocolError or any json type error from a malformed frame ends the
+      // session cleanly and reconnects; it must never escape this thread and
+      // terminate the game.
+      try {
+        for (const json& message : reader_.Feed(buffer, static_cast<std::size_t>(received))) {
+          if (welcomed) {
+            HandleMessage(message);
+            continue;
+          }
+          const std::string type = message.value("type", std::string());
+          if (type == msg::kRefused) {
+            const std::string reason = message.value("reason", std::string());
+            game_->ShowToast("Archipelago refused this game: " + reason);
+            logger_("refused by client: " + reason);
+            return false;
+          }
+          if (type != msg::kWelcome) {
+            logger_("unexpected handshake reply");
+            return false;
+          }
+          game_->StampSeedHash(message.value("seed_hash", std::string()));
+          welcomed = true;
+          logger_("welcomed by client");
+        }
+      } catch (const ProtocolError& error) {
+        logger_(std::string("protocol error: ") + error.what());
+        return false;
+      } catch (const json::exception& error) {
+        logger_(std::string("malformed frame: ") + error.what());
+        return false;
+      }
+    }
+    if (!welcomed && std::chrono::steady_clock::now() >= handshake_deadline) {
+      logger_("timed out waiting for welcome");
+      return false;
+    }
+    if (welcomed) PumpOutbound();
+  }
+  return true;
+}
+
+bool BridgeClient::SendMessage(const json& message) {
+  for (const std::string& frame : writer_.Frames(message)) {
+    if (!client_.SendAll(frame)) return false;
+  }
+  return true;
+}
+
+void BridgeClient::HandleMessage(const json& message) {
+  try {
+    const std::string type = message.value("type", std::string());
+    if (type == msg::kItems) {
+      std::vector<std::pair<std::int64_t, std::int64_t>> items;
+      for (const json& entry : message.at("items")) {
+        items.emplace_back(entry.at(0).get<std::int64_t>(), entry.at(1).get<std::int64_t>());
+      }
+      game_->ApplyItems(items);
+    } else if (type == msg::kChecked) {
+      std::vector<std::int64_t> locations;
+      for (const json& location : message.at("locations")) {
+        locations.push_back(location.get<std::int64_t>());
+      }
+      game_->MarkChecked(locations);
+    } else if (type == msg::kToast) {
+      game_->ShowToast(message.value("text", std::string()));
+    }
+  } catch (const json::exception& error) {
+    logger_(std::string("ignoring malformed message: ") + error.what());
+  }
+}
+
+void BridgeClient::PumpOutbound() {
+  for (const std::int64_t location : game_->TakeNewChecks()) {
+    SendMessage(CheckMessage(location));
+  }
+  if (game_->TakeGoalReached()) {
+    SendMessage(GoalReachedMessage());
+  }
+}
+
+void BridgeClient::SleepInterruptible(int milliseconds) {
+  int slept = 0;
+  while (slept < milliseconds && !stop_) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    slept += 50;
+  }
+}
+
+}  // namespace gtavc
