@@ -39,6 +39,31 @@ class TestHundredPercentAllClasses(WorldTestBase):
     }
 
 
+_STORY_ONLY_OPTIONS: dict = {
+    "enable_hidden_packages": False,
+    "enable_rampages_stunts": False,
+    "enable_emergency_vehicles": False,
+    "enable_properties": False,
+    "enable_robbable_stores": False,
+    "enable_side_events": False,
+}
+
+
+class TestStoryOnly(WorldTestBase):
+    game = "Grand Theft Auto Vice City"
+    options: ClassVar[dict] = dict(_STORY_ONLY_OPTIONS)
+
+    def test_solvable_with_only_story_missions(self) -> None:
+        # A solo story-only seed over-fills by one, so the world grants the
+        # opening unlock at the start rather than rejecting. The default
+        # reachability tests already prove solvability; this asserts the world
+        # generated at all and left the final mission as a real check.
+        self.assertIn(
+            data.FINAL_MISSION,
+            {location.name for location in self.multiworld.get_locations(self.player)},
+        )
+
+
 class TestRejections(WorldTestBase):
     game = "Grand Theft Auto Vice City"
     auto_construct = False
@@ -56,19 +81,6 @@ class TestRejections(WorldTestBase):
 
     def test_hidden_packages_goal_rejects_without_packages(self) -> None:
         self._assert_rejected({"goal": "hidden_packages", "enable_hidden_packages": False})
-
-    def test_story_only_is_rejected(self) -> None:
-        # With every optional class off, the progression items outnumber the
-        # story-mission checks, so the pool cannot be placed. Generation must
-        # refuse rather than fill into an unsolvable seed.
-        self._assert_rejected({
-            "enable_hidden_packages": False,
-            "enable_rampages_stunts": False,
-            "enable_emergency_vehicles": False,
-            "enable_properties": False,
-            "enable_robbable_stores": False,
-            "enable_side_events": False,
-        })
 
 
 class TestTables(WorldTestBase):

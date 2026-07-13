@@ -21,7 +21,11 @@ CONFIGURATIONS: list[tuple[str, dict]] = [
     ("default (final mission, packages on)", {}),
     ("goal hidden_packages", {"goal": "hidden_packages"}),
     ("goal hidden_packages, need all", {"goal": "hidden_packages", "hidden_packages_required": 100}),
-    ("story only (packages off) EXPECT reject", {"enable_hidden_packages": False}),
+    ("story only (all optional classes off)", {
+        "enable_hidden_packages": False, "enable_rampages_stunts": False,
+        "enable_emergency_vehicles": False, "enable_properties": False,
+        "enable_robbable_stores": False, "enable_side_events": False,
+    }),
     ("100 percent, all classes on", {
         "goal": "hundred_percent", "enable_hidden_packages": True,
         "enable_rampages_stunts": True, "enable_emergency_vehicles": True,

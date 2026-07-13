@@ -118,29 +118,59 @@ class GTAViceCityWorld(World):
             ))
 
     def create_items(self) -> None:
-        pool: list[GTAViceCityItem] = []
+        placeable: list[str] = []
         for giver in data.STORY_GIVERS:
             name = data.progressive_item_name(giver)
-            pool.extend(self.create_item(name) for _ in range(ITEM_QUANTITIES[name]))
-        pool.extend(self.create_item(area_item) for area_item in data.AREA_ITEMS)
-        pool.extend(
-            self.create_item(reward)
-            for reward in data.PACKAGE_REWARD_ITEMS
-            if self._item_enabled(reward)
+            placeable.extend([name] * ITEM_QUANTITIES[name])
+        placeable.extend(data.AREA_ITEMS)
+        placeable.extend(
+            reward for reward in data.PACKAGE_REWARD_ITEMS if self._item_enabled(reward)
         )
 
         active_locations = sum(
             1 for name in LOCATION_NAME_TO_ID if self._location_enabled(name)
         )
-        delta = active_locations - len(pool)
-        if delta < 0:
-            raise OptionError(
-                f"{self.game}: {len(pool)} progression and useful items but only "
-                f"{active_locations} checks this seed. Enable more check classes "
-                "so the progression items have reachable homes."
-            )
-        pool.extend(self.create_item(self.get_filler_item_name()) for _ in range(delta))
+        overflow = len(placeable) - active_locations
+        if overflow > 0:
+            # More progression items than checks. This happens on a solo seed
+            # with few classes enabled (story only over-fills by one). Grant the
+            # earliest unlocks at the start so the seed stays solvable. In a
+            # real multiworld these items would instead be placed in another
+            # world; here they open the opening missions on a new game.
+            self._grant_overflow_at_start(placeable, overflow)
+
+        pool = [self.create_item(name) for name in placeable]
+        pool.extend(
+            self.create_item(self.get_filler_item_name())
+            for _ in range(active_locations - len(pool))
+        )
         self.multiworld.itempool += pool
+
+    def _grant_overflow_at_start(self, placeable: list[str], overflow: int) -> None:
+        # Grant whole opening giver strands at the start, sphere-0 giver first,
+        # until the surplus clears. Granting a full strand (not just the exact
+        # surplus) opens several missions on a new game, which both balances the
+        # pool and gives fill a workable sphere-0 plus filler slack, avoiding the
+        # tiny-sphere-0 fill failure a story-only seed otherwise hits. Area items
+        # are never granted this way, so island gating stays meaningful.
+        givers = [data.SPHERE_ZERO_GIVER] + [
+            giver for giver in data.STORY_GIVERS if giver != data.SPHERE_ZERO_GIVER
+        ]
+        for giver in givers:
+            if overflow <= 0:
+                return
+            name = data.progressive_item_name(giver)
+            while name in placeable:
+                placeable.remove(name)
+                self.multiworld.push_precollected(self.create_item(name))
+                overflow -= 1
+        if overflow > 0:
+            # Unreachable with the current item math: progressive unlocks always
+            # outnumber the surplus. Guard rather than silently misfill.
+            raise OptionError(
+                f"{self.game}: cannot balance the item pool this seed. Enable "
+                "another check class."
+            )
 
     def set_rules(self) -> None:
         from worlds.generic.Rules import set_rule
