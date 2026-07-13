@@ -13,18 +13,26 @@ from . import data
 
 ID_BASE = 542_100_000
 
-# Progression: one progressive unlock item per giver, plus the two area items.
-PROGRESSIVE_ITEM_NAMES: list[str] = [
+# Progression: one progressive unlock item per mission strand (story givers and
+# venue strands), plus the area item(s).
+STORY_PROGRESSIVE_NAMES: list[str] = [
     data.progressive_item_name(giver) for giver in data.STORY_GIVERS
 ]
+VENUE_PROGRESSIVE_NAMES: list[str] = [
+    data.progressive_item_name(venue) for venue in data.VENUE_STRANDS
+]
+PROGRESSIVE_ITEM_NAMES: list[str] = STORY_PROGRESSIVE_NAMES + VENUE_PROGRESSIVE_NAMES
 
-# Ordered, stable item name list. Order fixes the id assignment, so never
-# reorder existing entries; append only.
+# Ordered item name list; the id assignment follows this order. The table is
+# not frozen until the first public release. After that, only append and never
+# reorder or remove, so existing seeds stay valid; until then it is free to
+# change. Venue progressives sit at the end.
 _ORDERED_ITEM_NAMES: list[str] = (
-    PROGRESSIVE_ITEM_NAMES
+    STORY_PROGRESSIVE_NAMES
     + data.AREA_ITEMS
     + data.PACKAGE_REWARD_ITEMS
     + data.FILLER_ITEMS
+    + VENUE_PROGRESSIVE_NAMES
 )
 
 ITEM_NAME_TO_ID: dict[str, int] = {
@@ -57,6 +65,6 @@ ITEM_GROUPS: dict[str, list[str]] = {
 # one per gated mission; everything else is a single copy (filler is topped up
 # separately to match the location count).
 ITEM_QUANTITIES: dict[str, int] = {
-    data.progressive_item_name(giver): data.progressive_item_count(giver)
-    for giver in data.STORY_GIVERS
+    data.progressive_item_name(strand): data.progressive_item_count(strand)
+    for strand in data.progressive_strands()
 }

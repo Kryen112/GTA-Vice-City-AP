@@ -88,6 +88,24 @@ class TestSpine(WorldTestBase):
         self.assertTrue(self.can_reach_location(data.FINAL_MISSION))
 
 
+class TestPropertiesToggle(WorldTestBase):
+    game = "Grand Theft Auto Vice City"
+    options: ClassVar[dict] = {"enable_properties": False}
+
+    def test_venue_items_and_locations_absent(self) -> None:
+        # Properties is the first optional class with progression items, so a
+        # disabled class must drop both its locations and its venue progressive
+        # items from the pool.
+        item_names = {item.name for item in self.multiworld.itempool}
+        item_names |= {
+            item.name for item in self.multiworld.precollected_items[self.player]
+        }
+        self.assertNotIn("Progressive Malibu Club", item_names)
+        location_names = {loc.name for loc in self.multiworld.get_locations(self.player)}
+        self.assertNotIn("No Escape?", location_names)
+        self.assertNotIn("Malibu Club Purchase", location_names)
+
+
 class TestRejections(WorldTestBase):
     game = "Grand Theft Auto Vice City"
     auto_construct = False
@@ -134,6 +152,15 @@ class TestTables(WorldTestBase):
         self.assertEqual(len(classes["rampages_stunts"][1]), 71)
         self.assertEqual(len(classes["emergency_vehicles"][1]), 56)
         self.assertEqual(len(classes["side_events"][1]), 14)
+        self.assertEqual(len(classes["robbable_stores"][1]), 15)
+        # 15 property purchases plus the venue mission strands.
+        self.assertEqual(len(classes["properties"][1]), 31)
+
+    def test_venue_strands_are_not_story_missions(self) -> None:
+        # The venue strands moved to the Properties class, so their missions
+        # are no longer always-on story checks.
+        for mission in ["No Escape?", "Recruitment Drive", "Cabmaggedon"]:
+            self.assertNotIn(mission, STORY_MISSION_NAMES)
 
 
 class TestClassToggles(WorldTestBase):

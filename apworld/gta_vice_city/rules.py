@@ -1,11 +1,12 @@
 """Access rules: the logic core.
 
-Every story mission location's rule is the conjunction of: its giver's
-progressive-unlock count, the cross-giver spine prerequisites for that giver,
-and any mission-specific cross-giver edge. The area requirement is carried by
-the region the location sits in, so it is not repeated here. Hidden packages
-have no rule (free within their region). The sphere-0 giver's first mission has
-no requirement at all.
+Every mission location (story giver or venue strand) has a rule that is the
+conjunction of: its strand's progressive-unlock count, the cross-giver spine
+prerequisites for that strand (story spine only; venues have none), and any
+mission-specific cross-giver edge. The area requirement is carried by the
+region the location sits in, so it is not repeated here. Collectibles,
+activities, purchases, and stores have no rule (free within their region). The
+sphere-0 giver's first mission has no requirement at all.
 """
 
 from __future__ import annotations

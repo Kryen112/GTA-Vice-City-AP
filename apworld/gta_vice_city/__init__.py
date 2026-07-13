@@ -5,9 +5,9 @@ maps in items.py and locations.py; the access-rule predicates in rules.py; the
 region graph in regions.py. There is no code-generation step.
 
 Check classes: story missions (always on), hidden packages, rampages and
-stunt jumps, emergency vehicle milestones, and side events, each optional
-behind a toggle. Properties, robbable stores, and the client bridge are not
-part of this world yet.
+stunt jumps, emergency vehicle milestones, side events, robbable stores, and
+properties (purchases plus venue mission strands), each optional behind a
+toggle. The client bridge is not part of this world yet.
 """
 
 from __future__ import annotations
@@ -20,7 +20,7 @@ from worlds.AutoWorld import WebWorld, World
 
 from . import data, locations, regions, rules
 from .items import FILLER_NAMES, ITEM_CLASSIFICATIONS, ITEM_GROUPS, ITEM_NAME_TO_ID, ITEM_QUANTITIES
-from .locations import LOCATION_GROUPS, LOCATION_NAME_TO_ID, LOCATION_REGIONS, LOCATION_TOGGLE
+from .locations import CLASS_TOGGLE, LOCATION_GROUPS, LOCATION_NAME_TO_ID, LOCATION_REGIONS, LOCATION_TOGGLE
 from .options import CHECK_CLASS_OPTIONS, Goal, GTAViceCityOptions
 
 # Below this many free-at-start locations, the world grants the east-island
@@ -84,6 +84,14 @@ class GTAViceCityWorld(World):
             return True
         return bool(getattr(self.options, option_attr).value)
 
+    def _class_enabled(self, class_key: str) -> bool:
+        # Story missions are always on; every optional class is enabled by its
+        # option. Governs whether a progressive strand's items enter the pool.
+        option_attr = CLASS_TOGGLE.get(class_key)
+        if option_attr is None:
+            return True
+        return bool(getattr(self.options, option_attr).value)
+
     def _item_enabled(self, name: str) -> bool:
         if name in data.PACKAGE_REWARD_ITEMS:
             return bool(self.options.enable_hidden_packages.value)
@@ -128,8 +136,10 @@ class GTAViceCityWorld(World):
 
     def create_items(self) -> None:
         placeable: list[str] = []
-        for giver in data.STORY_GIVERS:
-            name = data.progressive_item_name(giver)
+        for strand, (class_key, _missions) in data.progressive_strands().items():
+            if not self._class_enabled(class_key):
+                continue
+            name = data.progressive_item_name(strand)
             placeable.extend([name] * ITEM_QUANTITIES[name])
         placeable.extend(data.AREA_ITEMS)
         placeable.extend(

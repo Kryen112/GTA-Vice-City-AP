@@ -31,20 +31,11 @@ STORY_GIVERS: dict[str, list[str]] = {
     "Avery": [
         "Four Iron", "Two Bit Hit", "Demolition Man",
     ],
-    "Cam": [
-        "No Escape?", "The Shootist", "The Driver", "The Job",
-    ],
     "Phil Cassidy": [
         "Gun Runner", "Boomshine Saigon",
     ],
-    "Film Studio": [
-        "Recruitment Drive", "Dildo Dodo", "Martha's Mug Shot", "G-spotlight",
-    ],
     "Vercetti Protection": [
         "Shakedown", "Bar Brawl", "Cop Land",
-    ],
-    "Counterfeit": [
-        "Spilling the Beans", "Hit the Courier",
     ],
     "Big Mitch Baker": [
         "Alloy Wheels of Steel", "Messing with the Man", "Hog Tied",
@@ -63,13 +54,38 @@ STORY_GIVERS: dict[str, list[str]] = {
         "Road Kill", "Waste the Wife", "Autocide",
         "Check Out at the Check In", "Loose Ends",
     ],
-    "Kaufman Cabs": [
-        "V.I.P.", "Friendly Rivalry", "Cabmaggedon",
-    ],
     "Vercetti Finale": [
         "Cap the Collector", "Keep Your Friends Close...",
     ],
 }
+
+# Venue mission strands, the Properties class. Each venue is bought (a purchase
+# check) and then plays its own mission strand; buying is money, which is
+# grindable, so ownership is not a logic gate. Progressive unlocks work the
+# same as story givers. These are independent of the story spine.
+VENUE_STRANDS: dict[str, list[str]] = {
+    "Malibu Club": ["No Escape?", "The Shootist", "The Driver", "The Job"],
+    "Film Studio": [
+        "Recruitment Drive", "Dildo Dodo", "Martha's Mug Shot", "G-spotlight",
+    ],
+    "Printworks": ["Spilling the Beans", "Hit the Courier"],
+    "Kaufman Cabs": ["V.I.P.", "Friendly Rivalry", "Cabmaggedon"],
+    "Cherry Popper": ["Distribution"],
+    "Boatyard": ["Checkpoint Charlie"],
+    "Sunshine Autos": ["Sunshine Autos Races"],
+}
+
+# Property purchase checks. Buying a property is reachable once its area is
+# (money is grindable), so these carry no access rule beyond their region.
+# The businesses front the venue strands above; the rest are safehouses.
+PROPERTY_PURCHASES: list[str] = [
+    "Printworks Purchase", "Sunshine Autos Purchase", "Film Studio Purchase",
+    "Cherry Popper Purchase", "Kaufman Cabs Purchase", "Malibu Club Purchase",
+    "Boatyard Purchase", "Pole Position Purchase", "El Swanko Casa Purchase",
+    "Links View Apartment Purchase", "Hyman Condo Purchase",
+    "Ocean Heights Apartment Purchase", "1102 Washington Street Purchase",
+    "Vice Point Purchase", "Skumole Shack Purchase",
+]
 
 # The Rosenberg strand opens on a new game with no unlock item (sphere 0).
 # Every other giver's first mission needs its first progressive unlock.
@@ -173,17 +189,35 @@ def optional_check_classes() -> dict[str, tuple[str, list[str]]]:
             "enable_robbable_stores",
             [robbable_store_name(index) for index in range(1, ROBBABLE_STORE_COUNT + 1)],
         ),
+        "properties": (
+            "enable_properties",
+            list(PROPERTY_PURCHASES)
+            + [mission for missions in VENUE_STRANDS.values() for mission in missions],
+        ),
     }
 
 
-def progressive_item_name(giver: str) -> str:
-    return f"Progressive {giver}"
+def progressive_strands() -> dict[str, tuple[str, list[str]]]:
+    """Every progressive mission strand: strand name -> (check class, missions).
+
+    Story givers are always on; venue strands belong to the Properties class.
+    """
+    strands: dict[str, tuple[str, list[str]]] = {}
+    for giver, missions in STORY_GIVERS.items():
+        strands[giver] = ("story_missions", missions)
+    for venue, missions in VENUE_STRANDS.items():
+        strands[venue] = ("properties", missions)
+    return strands
 
 
-def progressive_item_count(giver: str) -> int:
+def progressive_item_name(strand: str) -> str:
+    return f"Progressive {strand}"
+
+
+def progressive_item_count(strand: str) -> int:
     # The sphere-0 giver's first mission is free, so it needs one fewer unlock.
-    missions = len(STORY_GIVERS[giver])
-    return missions - 1 if giver == SPHERE_ZERO_GIVER else missions
+    missions = len(STORY_GIVERS[strand] if strand in STORY_GIVERS else VENUE_STRANDS[strand])
+    return missions - 1 if strand == SPHERE_ZERO_GIVER else missions
 
 
 # Cross-giver story spine, the hard chain, pinned from the SCM CELL controller
@@ -227,10 +261,11 @@ REGION_MAINLAND = "Mainland"
 
 # Givers whose whole strand sits on the mainland (west island). Which exact
 # missions touch the mainland is audited per giver in Phase 3; this is the
-# default giver-level assignment behind the one confirmed barrier.
+# default giver-level assignment behind the one confirmed barrier. Venue
+# strands and property purchases default to the start island for now (a Phase 3
+# audit refines those, some of which are on the mainland).
 MAINLAND_GIVERS: frozenset[str] = frozenset({
-    "Counterfeit", "Big Mitch Baker", "Umberto Robina", "Auntie Poulet",
-    "Kaufman Cabs", "Vercetti Finale",
+    "Big Mitch Baker", "Umberto Robina", "Auntie Poulet", "Vercetti Finale",
 })
 
 
