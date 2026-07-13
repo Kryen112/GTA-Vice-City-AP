@@ -93,7 +93,7 @@ PACKAGE_REWARD_ITEMS: list[str] = [
     "Hunter Spawn", "$100,000",
 ]
 
-AREA_ITEMS: list[str] = ["Leaf Links Access", "Mainland Access"]
+AREA_ITEMS: list[str] = ["Mainland Access"]
 
 FILLER_ITEMS: list[str] = ["Cash Bundle", "Ammo Top-up"]
 
@@ -108,25 +108,27 @@ def progressive_item_count(giver: str) -> int:
     return missions - 1 if giver == SPHERE_ZERO_GIVER else missions
 
 
-# Region model. Provisional island assignment: only clearly off-start givers
-# sit behind an area barrier. Pinned precisely from the SCM barrier globals
-# later.
+# Region model, pinned from the SCM. The vanilla map has one persistent
+# island barrier: three bridge roadblocks (NT_ROADBLOCKCI, NT_ROADBLOCKGF,
+# WSH_ROADBLOCK) that all delete together, and the flag $847 that all set,
+# when Phnom Penh '86 (Diaz's second mission) passes. That single flip opens
+# the whole west island (the mainland). The AP item Mainland Access stands in
+# for that flip. There is NO second persistent area: the Leaf Links golf gate
+# opens inside the Four Iron mission script itself, so Leaf Links is not a
+# roamable gated area and Four Iron is a start-island check.
 REGION_VICE_CITY = "Vice City"
-REGION_LEAF_LINKS = "Leaf Links"
 REGION_MAINLAND = "Mainland"
 
-# Givers whose whole strand sits on the mainland (west island).
+# Givers whose whole strand sits on the mainland (west island). Which exact
+# missions touch the mainland is audited per giver in Phase 3; this is the
+# default giver-level assignment behind the one confirmed barrier.
 MAINLAND_GIVERS: frozenset[str] = frozenset({
     "Counterfeit", "Big Mitch Baker", "Umberto Robina", "Auntie Poulet",
     "Kaufman Cabs", "Vercetti Finale",
 })
-# Individual missions that sit on their own island regardless of giver.
-LEAF_LINKS_MISSIONS: frozenset[str] = frozenset({"Four Iron"})
 
 
 def mission_region(giver: str, mission: str) -> str:
-    if mission in LEAF_LINKS_MISSIONS:
-        return REGION_LEAF_LINKS
     if giver in MAINLAND_GIVERS:
         return REGION_MAINLAND
     return REGION_VICE_CITY

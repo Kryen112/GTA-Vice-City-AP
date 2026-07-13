@@ -22,6 +22,10 @@ from .items import FILLER_NAMES, ITEM_CLASSIFICATIONS, ITEM_GROUPS, ITEM_NAME_TO
 from .locations import LOCATION_GROUPS, LOCATION_NAME_TO_ID, LOCATION_REGIONS
 from .options import CHECK_CLASS_OPTIONS, Goal, GTAViceCityOptions
 
+# Below this many free-at-start locations, the world grants the opening giver's
+# strand so an all-progression pool (a collectible-free seed) can still fill.
+MINIMUM_SPHERE_ZERO = 10
+
 
 class GTAViceCityItem(Item):
     game = "Grand Theft Auto Vice City"
@@ -130,14 +134,31 @@ class GTAViceCityWorld(World):
         active_locations = sum(
             1 for name in LOCATION_NAME_TO_ID if self._location_enabled(name)
         )
+        # A new game starts with only the first Rosenberg mission free, so the
+        # sphere-0 room comes from the free-roam collectibles (hidden packages
+        # and, later, the other pickup classes). With every collectible class
+        # off, sphere 0 is a single location and an all-progression pool cannot
+        # be placed. In that case grant the opening giver's strand at the start
+        # so the seed stays solvable; a real multiworld would instead place
+        # those unlocks in other worlds.
+        givers_to_grant = [data.SPHERE_ZERO_GIVER] if (
+            self._free_start_location_count() < MINIMUM_SPHERE_ZERO
+        ) else []
+        for giver in givers_to_grant:
+            name = data.progressive_item_name(giver)
+            while name in placeable:
+                placeable.remove(name)
+                self.multiworld.push_precollected(self.create_item(name))
+
         overflow = len(placeable) - active_locations
         if overflow > 0:
-            # More progression items than checks. This happens on a solo seed
-            # with few classes enabled (story only over-fills by one). Grant the
-            # earliest unlocks at the start so the seed stays solvable. In a
-            # real multiworld these items would instead be placed in another
-            # world; here they open the opening missions on a new game.
-            self._grant_overflow_at_start(placeable, overflow)
+            # More progression and useful items than checks. Not reachable with
+            # the current classes and item math; guard rather than misfill.
+            raise OptionError(
+                f"{self.game}: {len(placeable)} progression and useful items but "
+                f"only {active_locations} checks this seed. Enable another check "
+                "class so the items have reachable homes."
+            )
 
         pool = [self.create_item(name) for name in placeable]
         pool.extend(
@@ -146,31 +167,16 @@ class GTAViceCityWorld(World):
         )
         self.multiworld.itempool += pool
 
-    def _grant_overflow_at_start(self, placeable: list[str], overflow: int) -> None:
-        # Grant whole opening giver strands at the start, sphere-0 giver first,
-        # until the surplus clears. Granting a full strand (not just the exact
-        # surplus) opens several missions on a new game, which both balances the
-        # pool and gives fill a workable sphere-0 plus filler slack, avoiding the
-        # tiny-sphere-0 fill failure a story-only seed otherwise hits. Area items
-        # are never granted this way, so island gating stays meaningful.
-        givers = [data.SPHERE_ZERO_GIVER] + [
-            giver for giver in data.STORY_GIVERS if giver != data.SPHERE_ZERO_GIVER
-        ]
-        for giver in givers:
-            if overflow <= 0:
-                return
-            name = data.progressive_item_name(giver)
-            while name in placeable:
-                placeable.remove(name)
-                self.multiworld.push_precollected(self.create_item(name))
-                overflow -= 1
-        if overflow > 0:
-            # Unreachable with the current item math: progressive unlocks always
-            # outnumber the surplus. Guard rather than silently misfill.
-            raise OptionError(
-                f"{self.game}: cannot balance the item pool this seed. Enable "
-                "another check class."
-            )
+    def _free_start_location_count(self) -> int:
+        # Locations reachable on a new game with no item: enabled start-region
+        # locations that carry no access rule. This is the sphere-0 room the
+        # fill has to work with.
+        return sum(
+            1 for name, region in LOCATION_REGIONS.items()
+            if region == data.REGION_VICE_CITY
+            and self._location_enabled(name)
+            and name not in rules.LOCATION_RULES
+        )
 
     def set_rules(self) -> None:
         from worlds.generic.Rules import set_rule
