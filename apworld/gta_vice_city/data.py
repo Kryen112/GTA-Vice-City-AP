@@ -97,6 +97,70 @@ AREA_ITEMS: list[str] = ["Mainland Access"]
 
 FILLER_ITEMS: list[str] = ["Cash Bundle", "Ammo Top-up"]
 
+# Other check classes beyond story missions and hidden packages. Counts come
+# from the game design in PLAN and the decompiled mission table. These are
+# free-roam collectibles and activities; their locations carry no access rule
+# beyond the region they sit in.
+RAMPAGE_COUNT = 35
+STUNT_JUMP_COUNT = 36
+
+
+def rampage_name(index: int) -> str:
+    return f"Rampage {index:02d}"
+
+
+def stunt_jump_name(index: int) -> str:
+    return f"Unique Stunt Jump {index:02d}"
+
+
+# The canonical side-events list (14), pinned from the SCM mission table: three
+# stadium events, four chopper checkpoints, three RC Top Fun events, and the
+# four dirt and bike time trials.
+SIDE_EVENTS: list[str] = [
+    "Hotring", "Bloodring", "Dirtring",
+    "Downtown Chopper Checkpoint", "Ocean Beach Chopper Checkpoint",
+    "Vice Point Chopper Checkpoint", "Little Haiti Chopper Checkpoint",
+    "RC Bandit Race", "RC Baron Race", "RC Raider Pickup",
+    "Trial by Dirt", "Test Track", "PCJ Playground", "Cone Crazy",
+]
+
+# Emergency-vehicle milestone checks, one per level. Milestone means per level,
+# never per fare or kill. Taxi and pizza count every tenth fare and level 1-10.
+EMERGENCY_LEVELS: dict[str, int] = {
+    "Paramedic": 12, "Vigilante": 12, "Firefighter": 12, "Taxi": 10, "Pizza": 10,
+}
+
+
+def emergency_name(activity: str, level: int) -> str:
+    return f"{activity} Level {level:02d}"
+
+
+def emergency_names() -> list[str]:
+    return [
+        emergency_name(activity, level)
+        for activity, levels in EMERGENCY_LEVELS.items()
+        for level in range(1, levels + 1)
+    ]
+
+
+# Optional check classes: class key -> (option attribute, ordered location
+# names). Story missions are always on and are not listed here. The order fixes
+# location ids, so append new classes at the end and never reorder.
+def optional_check_classes() -> dict[str, tuple[str, list[str]]]:
+    return {
+        "hidden_packages": (
+            "enable_hidden_packages",
+            [hidden_package_name(index) for index in range(1, HIDDEN_PACKAGE_COUNT + 1)],
+        ),
+        "rampages_stunts": (
+            "enable_rampages_stunts",
+            [rampage_name(index) for index in range(1, RAMPAGE_COUNT + 1)]
+            + [stunt_jump_name(index) for index in range(1, STUNT_JUMP_COUNT + 1)],
+        ),
+        "emergency_vehicles": ("enable_emergency_vehicles", emergency_names()),
+        "side_events": ("enable_side_events", list(SIDE_EVENTS)),
+    }
+
 
 def progressive_item_name(giver: str) -> str:
     return f"Progressive {giver}"

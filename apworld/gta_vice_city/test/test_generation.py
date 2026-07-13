@@ -127,3 +127,25 @@ class TestTables(WorldTestBase):
 
     def test_final_mission_exists(self) -> None:
         self.assertIn(data.FINAL_MISSION, LOCATION_NAME_TO_ID)
+
+    def test_optional_class_counts(self) -> None:
+        classes = data.optional_check_classes()
+        self.assertEqual(len(classes["hidden_packages"][1]), 100)
+        self.assertEqual(len(classes["rampages_stunts"][1]), 71)
+        self.assertEqual(len(classes["emergency_vehicles"][1]), 56)
+        self.assertEqual(len(classes["side_events"][1]), 14)
+
+
+class TestClassToggles(WorldTestBase):
+    game = "Grand Theft Auto Vice City"
+    options: ClassVar[dict] = {"enable_side_events": False}
+
+    def test_disabled_class_removes_its_locations(self) -> None:
+        names = {loc.name for loc in self.multiworld.get_locations(self.player)}
+        for side_event in data.SIDE_EVENTS:
+            self.assertNotIn(side_event, names)
+
+    def test_enabled_class_keeps_its_locations(self) -> None:
+        # Rampages stay on (default), so a rampage check exists this seed.
+        names = {loc.name for loc in self.multiworld.get_locations(self.player)}
+        self.assertIn(data.rampage_name(1), names)

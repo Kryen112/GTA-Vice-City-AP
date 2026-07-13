@@ -4,9 +4,10 @@ Hand-written world. Content tables live in data.py; the item and location id
 maps in items.py and locations.py; the access-rule predicates in rules.py; the
 region graph in regions.py. There is no code-generation step.
 
-This world implements two check classes: story missions (always on) and
-hidden packages. The other check classes and the client bridge are not part
-of it.
+Check classes: story missions (always on), hidden packages, rampages and
+stunt jumps, emergency vehicle milestones, and side events, each optional
+behind a toggle. Properties, robbable stores, and the client bridge are not
+part of this world yet.
 """
 
 from __future__ import annotations
@@ -19,7 +20,7 @@ from worlds.AutoWorld import WebWorld, World
 
 from . import data, locations, regions, rules
 from .items import FILLER_NAMES, ITEM_CLASSIFICATIONS, ITEM_GROUPS, ITEM_NAME_TO_ID, ITEM_QUANTITIES
-from .locations import LOCATION_GROUPS, LOCATION_NAME_TO_ID, LOCATION_REGIONS
+from .locations import LOCATION_GROUPS, LOCATION_NAME_TO_ID, LOCATION_REGIONS, LOCATION_TOGGLE
 from .options import CHECK_CLASS_OPTIONS, Goal, GTAViceCityOptions
 
 # Below this many free-at-start locations, the world grants the east-island
@@ -76,9 +77,12 @@ class GTAViceCityWorld(World):
             )
 
     def _location_enabled(self, name: str) -> bool:
-        if name in locations.PACKAGE_NAMES:
-            return bool(self.options.enable_hidden_packages.value)
-        return True
+        # Story missions carry no toggle and are always on. Every other class
+        # is enabled by its option.
+        option_attr = LOCATION_TOGGLE.get(name)
+        if option_attr is None:
+            return True
+        return bool(getattr(self.options, option_attr).value)
 
     def _item_enabled(self, name: str) -> bool:
         if name in data.PACKAGE_REWARD_ITEMS:
@@ -211,9 +215,13 @@ class GTAViceCityWorld(World):
                 state.can_reach_location(name, player) for name in package_names
             ) >= need
         if goal == Goal.option_hundred_percent:
-            package_names = locations.PACKAGE_NAMES
-            return lambda state: (
-                state.can_reach_location(data.FINAL_MISSION, player)
-                and all(state.can_reach_location(name, player) for name in package_names)
+            # The game's 100 percent requires every stat contributor, and
+            # generation only allows this goal when every check class is on, so
+            # completion is every enabled check reachable.
+            enabled = [
+                name for name in LOCATION_NAME_TO_ID if self._location_enabled(name)
+            ]
+            return lambda state: all(
+                state.can_reach_location(name, player) for name in enabled
             )
         return lambda state: state.can_reach_location(data.FINAL_MISSION, player)
