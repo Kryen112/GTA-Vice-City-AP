@@ -54,14 +54,38 @@ class TestStoryOnly(WorldTestBase):
     options: ClassVar[dict] = dict(_STORY_ONLY_OPTIONS)
 
     def test_solvable_with_only_story_missions(self) -> None:
-        # A solo story-only seed over-fills by one, so the world grants the
-        # opening unlock at the start rather than rejecting. The default
-        # reachability tests already prove solvability; this asserts the world
-        # generated at all and left the final mission as a real check.
+        # A solo story-only seed is an all-progression pool with a one-location
+        # sphere 0, so the world grants the east-island spine strands at the
+        # start to keep it fillable. The default reachability tests already
+        # prove solvability; this asserts the world generated at all and left
+        # the final mission as a real check.
         self.assertIn(
             data.FINAL_MISSION,
             {location.name for location in self.multiworld.get_locations(self.player)},
         )
+
+
+class TestSpine(WorldTestBase):
+    game = "Grand Theft Auto Vice City"
+
+    def test_diaz_gated_behind_cortez(self) -> None:
+        # The Chase is Diaz's first mission. Its rule needs the Cortez strand
+        # complete (the spine edge) plus a Diaz unlock, so it is unreachable
+        # with an empty inventory and reachable once those unlocks are held.
+        self.assertFalse(self.can_reach_location("The Chase"))
+        self.collect_by_name(["Progressive Cortez", "Progressive Diaz"])
+        self.assertTrue(self.can_reach_location("The Chase"))
+
+    def test_final_mission_requires_the_whole_spine(self) -> None:
+        # Owning only the finale's own unlocks and mainland access is not
+        # enough; the finale sits behind the entire main-story chain.
+        self.collect_by_name(["Progressive Vercetti Finale", "Mainland Access"])
+        self.assertFalse(self.can_reach_location(data.FINAL_MISSION))
+        self.collect_by_name([
+            "Progressive Rosenberg", "Progressive Cortez", "Progressive Diaz",
+            "Progressive Death Row", "Progressive Vercetti Protection",
+        ])
+        self.assertTrue(self.can_reach_location(data.FINAL_MISSION))
 
 
 class TestRejections(WorldTestBase):

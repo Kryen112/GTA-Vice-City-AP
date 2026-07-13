@@ -1,9 +1,11 @@
 """Access rules: the logic core.
 
-Every story mission location's rule is its giver's progressive-unlock count.
-The area requirement is carried by the region the location sits in, so it is
-not repeated here. Hidden packages have no rule (free within their region).
-The sphere-0 giver's first mission has no rule at all.
+Every story mission location's rule is the conjunction of: its giver's
+progressive-unlock count, the cross-giver spine prerequisites for that giver,
+and any mission-specific cross-giver edge. The area requirement is carried by
+the region the location sits in, so it is not repeated here. Hidden packages
+have no rule (free within their region). The sphere-0 giver's first mission has
+no requirement at all.
 """
 
 from __future__ import annotations
@@ -16,21 +18,38 @@ from . import data, locations
 
 RulePredicate = Callable[[CollectionState, int], bool]
 
+# A requirement is (progressive-item name, count). A mission is reachable when
+# the state has at least `count` of each listed item.
+Requirement = tuple[str, int]
 
-def _has_count(item: str, count: int) -> RulePredicate:
-    return lambda state, player: state.has(item, player, count)
+
+def _requires(requirements: list[Requirement]) -> RulePredicate:
+    return lambda state, player: all(
+        state.has(item, player, count) for item, count in requirements
+    )
+
+
+def _mission_requirements(mission: str, giver: str) -> list[Requirement]:
+    requirements: list[Requirement] = []
+    index = locations.MISSION_INDEX[mission]
+    # Sphere-0 giver: first mission (index 0) is free; mission i needs i.
+    # Every other giver: mission i needs its first i+1 unlocks.
+    own_count = index if giver == data.SPHERE_ZERO_GIVER else index + 1
+    if own_count > 0:
+        requirements.append((data.progressive_item_name(giver), own_count))
+    for prerequisite_giver, count in data.SPINE_PREREQUISITES.get(giver, []):
+        requirements.append((data.progressive_item_name(prerequisite_giver), count))
+    for prerequisite_giver, count in data.MISSION_PREREQUISITES.get(mission, []):
+        requirements.append((data.progressive_item_name(prerequisite_giver), count))
+    return requirements
 
 
 def build_location_rules() -> dict[str, RulePredicate]:
     rules: dict[str, RulePredicate] = {}
     for mission, giver in locations.MISSION_GIVER.items():
-        index = locations.MISSION_INDEX[mission]
-        # Sphere-0 giver: first mission (index 0) is free; mission i needs i.
-        # Every other giver: mission i needs its first i+1 unlocks.
-        needed = index if giver == data.SPHERE_ZERO_GIVER else index + 1
-        if needed <= 0:
-            continue
-        rules[mission] = _has_count(data.progressive_item_name(giver), needed)
+        requirements = _mission_requirements(mission, giver)
+        if requirements:
+            rules[mission] = _requires(requirements)
     return rules
 
 

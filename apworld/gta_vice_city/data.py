@@ -108,6 +108,34 @@ def progressive_item_count(giver: str) -> int:
     return missions - 1 if giver == SPHERE_ZERO_GIVER else missions
 
 
+# Cross-giver story spine, the hard chain, pinned from the SCM CELL controller
+# (Kent Paul's phone thread). Each entry gates a giver's whole strand behind
+# owning the unlocks to complete a prerequisite giver's strand up to the named
+# point; the count is that prerequisite giver's progressive-unlock count. Side
+# givers (Avery, Phil Cassidy, Big Mitch Baker, Umberto Robina, Auntie Poulet,
+# Love Fist, Mr. Black, and the venue strands) are deliberately independent and
+# are not listed; area access still gates the ones on the mainland.
+# The chain in vanilla: Cortez opens after Riot (Rosenberg's last); Diaz after
+# All Hands On Deck (Cortez's last); Death Row after Supply & Demand (Diaz's
+# fourth) and Sir, Yes Sir! (Cortez's fourth); Vercetti protection at the
+# mansion after Rub Out; the finale after the protection strand plus asset
+# ownership. Asset ownership is money, which is grindable, so it is not
+# encoded as a logic gate.
+SPINE_PREREQUISITES: dict[str, list[tuple[str, int]]] = {
+    "Cortez": [("Rosenberg", 4)],
+    "Diaz": [("Cortez", 5)],
+    "Death Row": [("Diaz", 4)],
+    "Vercetti Protection": [("Diaz", 5), ("Death Row", 1)],
+    "Vercetti Finale": [("Vercetti Protection", 3)],
+}
+
+# Cross-giver edges that gate a single mission rather than a whole strand. Rub
+# Out (Diaz's last) needs Lance rescued in Death Row first.
+MISSION_PREREQUISITES: dict[str, list[tuple[str, int]]] = {
+    "Rub Out": [("Death Row", 1)],
+}
+
+
 # Region model, pinned from the SCM. The vanilla map has one persistent
 # island barrier: three bridge roadblocks (NT_ROADBLOCKCI, NT_ROADBLOCKGF,
 # WSH_ROADBLOCK) that all delete together, and the flag $847 that all set,

@@ -22,8 +22,9 @@ from .items import FILLER_NAMES, ITEM_CLASSIFICATIONS, ITEM_GROUPS, ITEM_NAME_TO
 from .locations import LOCATION_GROUPS, LOCATION_NAME_TO_ID, LOCATION_REGIONS
 from .options import CHECK_CLASS_OPTIONS, Goal, GTAViceCityOptions
 
-# Below this many free-at-start locations, the world grants the opening giver's
-# strand so an all-progression pool (a collectible-free seed) can still fill.
+# Below this many free-at-start locations, the world grants the east-island
+# spine strands so an all-progression pool (a collectible-free seed) can still
+# fill.
 MINIMUM_SPHERE_ZERO = 10
 
 
@@ -137,18 +138,17 @@ class GTAViceCityWorld(World):
         # A new game starts with only the first Rosenberg mission free, so the
         # sphere-0 room comes from the free-roam collectibles (hidden packages
         # and, later, the other pickup classes). With every collectible class
-        # off, sphere 0 is a single location and an all-progression pool cannot
-        # be placed. In that case grant the opening giver's strand at the start
-        # so the seed stays solvable; a real multiworld would instead place
-        # those unlocks in other worlds.
-        givers_to_grant = [data.SPHERE_ZERO_GIVER] if (
-            self._free_start_location_count() < MINIMUM_SPHERE_ZERO
-        ) else []
-        for giver in givers_to_grant:
-            name = data.progressive_item_name(giver)
-            while name in placeable:
-                placeable.remove(name)
-                self.multiworld.push_precollected(self.create_item(name))
+        # off the pool is all-progression with a one-location sphere 0, and the
+        # spine chain makes it unplaceable. In that case grant the east-island
+        # spine strands at the start: this opens a large sphere 0 and leaves
+        # ample filler slack, keeping the seed solvable. A real multiworld would
+        # instead place those unlocks in other worlds.
+        if self._free_start_location_count() < MINIMUM_SPHERE_ZERO:
+            for giver in self._opening_grant_givers():
+                name = data.progressive_item_name(giver)
+                while name in placeable:
+                    placeable.remove(name)
+                    self.multiworld.push_precollected(self.create_item(name))
 
         overflow = len(placeable) - active_locations
         if overflow > 0:
@@ -166,6 +166,17 @@ class GTAViceCityWorld(World):
             for _ in range(active_locations - len(pool))
         )
         self.multiworld.itempool += pool
+
+    def _opening_grant_givers(self) -> list[str]:
+        # The east-island spine, in dependency order: the sphere-0 giver first,
+        # then each spine giver that stays on the start island (the mainland
+        # ones cannot open until Mainland Access, so granting them would not
+        # enlarge sphere 0). Granting whole strands here both opens the missions
+        # and creates filler slack.
+        return [data.SPHERE_ZERO_GIVER] + [
+            giver for giver in data.SPINE_PREREQUISITES
+            if giver not in data.MAINLAND_GIVERS
+        ]
 
     def _free_start_location_count(self) -> int:
         # Locations reachable on a new game with no item: enabled start-region
