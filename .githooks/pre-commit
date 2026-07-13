@@ -51,7 +51,7 @@ def main() -> int:
         if lint.returncode != 0:
             return 1
 
-    if any(path.startswith("apworld/") for path in staged):
+    if any(path.startswith(("apworld/", "client/", "scripts/")) for path in staged):
         tests = subprocess.run(
             [sys.executable, str(REPOSITORY_ROOT / "scripts" / "run_tests.py")],
             cwd=REPOSITORY_ROOT,

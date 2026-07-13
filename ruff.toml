@@ -21,3 +21,6 @@ ignore = [
 # Entry-point scripts and hooks talk to the terminal on purpose.
 "scripts/**" = ["T20"]
 ".githooks/*" = ["T20"]
+# The client context must filter the pkg_resources deprecation warning before
+# it imports Archipelago, so those imports intentionally follow a statement.
+"client/gta_vc_bridge/context.py" = ["E402"]
