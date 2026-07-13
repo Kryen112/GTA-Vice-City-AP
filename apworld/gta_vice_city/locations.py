@@ -51,6 +51,7 @@ LOCATION_GROUPS: dict[str, list[str]] = {
     "Rampages and Stunt Jumps": list(OPTIONAL_CLASSES["rampages_stunts"][1]),
     "Emergency Vehicle Missions": list(OPTIONAL_CLASSES["emergency_vehicles"][1]),
     "Side Events": list(OPTIONAL_CLASSES["side_events"][1]),
+    "Robbable Stores": list(OPTIONAL_CLASSES["robbable_stores"][1]),
 }
 
 # Location name to region. Story missions follow their giver's island;

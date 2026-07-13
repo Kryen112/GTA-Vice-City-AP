@@ -143,6 +143,16 @@ def emergency_names() -> list[str]:
     ]
 
 
+# Robbable stores. The SCM has 15 add_stores_knocked_off sites, matching the
+# 100 percent stat. A store is robbed by holding up its cashier, reachable
+# once its area is, so these carry no access rule beyond their region.
+ROBBABLE_STORE_COUNT = 15
+
+
+def robbable_store_name(index: int) -> str:
+    return f"Robbable Store {index:02d}"
+
+
 # Optional check classes: class key -> (option attribute, ordered location
 # names). Story missions are always on and are not listed here. The order fixes
 # location ids, so append new classes at the end and never reorder.
@@ -159,6 +169,10 @@ def optional_check_classes() -> dict[str, tuple[str, list[str]]]:
         ),
         "emergency_vehicles": ("enable_emergency_vehicles", emergency_names()),
         "side_events": ("enable_side_events", list(SIDE_EVENTS)),
+        "robbable_stores": (
+            "enable_robbable_stores",
+            [robbable_store_name(index) for index in range(1, ROBBABLE_STORE_COUNT + 1)],
+        ),
     }
 
 
