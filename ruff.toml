@@ -23,4 +23,4 @@ ignore = [
 ".githooks/*" = ["T20"]
 # The client context must filter the pkg_resources deprecation warning before
 # it imports Archipelago, so those imports intentionally follow a statement.
-"client/gta_vc_bridge/context.py" = ["E402"]
+"apworld/gta_vice_city/client/context.py" = ["E402"]

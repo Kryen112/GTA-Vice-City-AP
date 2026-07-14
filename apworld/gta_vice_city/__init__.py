@@ -7,16 +7,21 @@ region graph in regions.py. There is no code-generation step.
 Check classes: story missions (always on), hidden packages, rampages and
 stunt jumps, emergency vehicle milestones, side events, robbable stores, and
 properties (purchases plus venue mission strands), each optional behind a
-toggle. The client bridge is not part of this world yet.
+toggle. The bridge client that talks to the game mod is the client subpackage,
+registered as a launcher component below.
 """
 
 from __future__ import annotations
 
+import typing
 from collections.abc import Callable
 
+import settings
 from BaseClasses import CollectionState, Item, Location, Region
 from Options import OptionError
 from worlds.AutoWorld import WebWorld, World
+from worlds.LauncherComponents import Component, Type, components
+from worlds.LauncherComponents import launch as launch_component
 
 from . import data, locations, regions, rules, scm
 from .items import FILLER_NAMES, ITEM_CLASSIFICATIONS, ITEM_GROUPS, ITEM_NAME_TO_ID, ITEM_QUANTITIES
@@ -27,6 +32,39 @@ from .options import CHECK_CLASS_OPTIONS, Goal, GTAViceCityOptions
 # spine strands so an all-progression pool (a collectible-free seed) can still
 # fill.
 MINIMUM_SPHERE_ZERO = 10
+
+
+def launch_client(*args: str) -> None:
+    # Lazy import so registering the component does not pull CommonClient and
+    # its dependencies into every generation run.
+    from .client.context import launch
+    launch_component(launch, name="GTA Vice City Client", args=args)
+
+
+components.append(Component(
+    "GTA Vice City Client",
+    func=launch_client,
+    component_type=Type.CLIENT,
+    game_name="Grand Theft Auto Vice City",
+    supports_uri=True,
+    description="Connect to a multiworld and bridge to the GTA Vice City mod.",
+))
+
+
+class GTAViceCitySettings(settings.Group):
+    class InstallFolder(settings.UserFolderPath):
+        """The GTA Vice City install folder, the one holding gta-vc.exe. The
+        client launches the game from here on connect and on /play. Use forward
+        slashes. Blank means the client does not launch the game itself."""
+        description = "GTA Vice City install folder"
+
+    class AutoLaunchGame(settings.Bool):
+        """Launch gta-vc.exe automatically when the client connects, once per
+        client session. On by default; set false to launch it yourself or with
+        the /play command."""
+
+    install_folder: InstallFolder = InstallFolder("")
+    auto_launch_game: AutoLaunchGame | bool = True
 
 
 class GTAViceCityItem(Item):
@@ -53,6 +91,7 @@ class GTAViceCityWorld(World):
     web = GTAViceCityWeb()
     options_dataclass = GTAViceCityOptions
     options: GTAViceCityOptions
+    settings: typing.ClassVar[GTAViceCitySettings]
 
     item_name_to_id = ITEM_NAME_TO_ID
     location_name_to_id = LOCATION_NAME_TO_ID

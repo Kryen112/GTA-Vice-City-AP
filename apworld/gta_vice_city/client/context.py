@@ -7,22 +7,34 @@ check and goal events up to AP. The protocol and framing live in bridge.py and
 protocol.py, which are tested headless; this module is the live wiring, verified
 against a real server and game.
 
-Run from inside the Archipelago repo during development:
-    py -3.12 -m gta_vc_bridge.context --connect localhost:38281 --name Player1
-with the client package directory on PYTHONPATH.
+Normally launched from the Archipelago Launcher's "GTA Vice City Client"
+button. During development, from inside the Archipelago repo:
+    python -m worlds.gta_vice_city.client.context --connect localhost:38281 --name Player1
+
+On connect it launches gta-vc.exe from the install folder set in host.yaml (if
+auto-launch is on), and the /play command launches it on demand.
 """
 
 from __future__ import annotations
 
 import asyncio
 import logging
+import os
+import subprocess
 import warnings
 
 # Silence the setuptools deprecation AP emits when it imports pkg_resources,
 # before importing CommonClient so the filter is already in place.
 warnings.filterwarnings("ignore", message=".*pkg_resources is deprecated.*")
 
-from CommonClient import CommonContext, get_base_parser, gui_enabled, server_loop
+from CommonClient import (
+    ClientCommandProcessor,
+    CommonContext,
+    get_base_parser,
+    gui_enabled,
+    handle_url_arg,
+    server_loop,
+)
 from NetUtils import ClientStatus
 
 from . import protocol
@@ -32,10 +44,18 @@ DEFAULT_BRIDGE_PORT = 52300
 logger = logging.getLogger("Client")
 
 
+class GTAViceCityCommandProcessor(ClientCommandProcessor):
+    def _cmd_play(self) -> bool:
+        """Launch GTA Vice City."""
+        self.ctx.launch_game(forced=True)
+        return True
+
+
 class GTAViceCityContext(CommonContext):
     game = "Grand Theft Auto Vice City"
     # Receive our own items, starting inventory, and items from other worlds.
     items_handling = 0b111
+    command_processor = GTAViceCityCommandProcessor
 
     def __init__(self, server_address: str | None, password: str | None,
                  bridge_port: int, slot_name: str | None = None) -> None:
@@ -43,6 +63,7 @@ class GTAViceCityContext(CommonContext):
         if slot_name:
             self.auth = slot_name
         self.bridge_port = bridge_port
+        self._game_launched = False
         # The ASI configuration from slot_data: item id -> unlock global, and
         # completion global -> location id. Captured on Connected.
         self.asi_config: dict = {}
@@ -78,13 +99,16 @@ class GTAViceCityContext(CommonContext):
         # it, and the seed hash the mod handshake needs is derived from it.
         if cmd == "RoomInfo":
             self.seed_name = args.get("seed_name")
-        # Capture the ASI configuration from slot_data on connect.
+        # Capture the ASI configuration from slot_data on connect, and launch
+        # the game if configured to.
         if cmd == "Connected":
             slot_data = args.get("slot_data") or {}
             self.asi_config = {
                 "item_globals": slot_data.get("item_globals", {}),
                 "completion_watch": slot_data.get("completion_watch", {}),
             }
+            if self._auto_launch_enabled():
+                self.launch_game()
         # A new Connected or a ReceivedItems update means the mod's view is
         # stale, so push a fresh resync. The bridge no-ops if the mod is not
         # connected; it also resyncs itself on every mod (re)connect.
@@ -120,6 +144,33 @@ class GTAViceCityContext(CommonContext):
             await self.send_msgs([{"cmd": "StatusUpdate", "status": ClientStatus.CLIENT_GOAL}])
             self.finished_game = True
 
+    def _game_executable(self) -> str | None:
+        from .. import GTAViceCityWorld
+        folder = str(getattr(GTAViceCityWorld.settings, "install_folder", "")).strip()
+        if not folder:
+            return None
+        executable = os.path.join(folder, "gta-vc.exe")
+        return executable if os.path.isfile(executable) else None
+
+    def _auto_launch_enabled(self) -> bool:
+        from .. import GTAViceCityWorld
+        return bool(getattr(GTAViceCityWorld.settings, "auto_launch_game", False))
+
+    def launch_game(self, forced: bool = False) -> None:
+        if self._game_launched and not forced:
+            return
+        executable = self._game_executable()
+        if executable is None:
+            logger.info("Set the GTA Vice City install folder in host.yaml to launch the game, "
+                        "or start gta-vc.exe yourself.")
+            return
+        try:
+            subprocess.Popen([executable], cwd=os.path.dirname(executable))
+            self._game_launched = True
+            logger.info("Launched GTA Vice City.")
+        except OSError as error:
+            logger.error("Could not launch GTA Vice City: %s", error)
+
 
 async def _run(context: GTAViceCityContext) -> None:
     await context.bridge.start()
@@ -139,7 +190,11 @@ def launch(*args: str) -> None:
         parser.add_argument("--bridge_port", type=int, default=DEFAULT_BRIDGE_PORT,
                             help="Localhost port the GTA Vice City mod connects to.")
         parser.add_argument("--name", default=None, help="Slot name to connect as.")
+        parser.add_argument("url", nargs="?", help="Archipelago connection url.")
         parsed = parser.parse_args(args)
+        # A WebHost archipelago:// link arrives as the url positional; fold it
+        # into connect, name, and password.
+        parsed = handle_url_arg(parsed, parser=parser)
         context = GTAViceCityContext(parsed.connect, parsed.password, parsed.bridge_port, parsed.name)
         await _run(context)
 

@@ -12,14 +12,17 @@ from __future__ import annotations
 
 import asyncio
 import json
-import pathlib
 import sys
 
-REPOSITORY_ROOT = pathlib.Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(REPOSITORY_ROOT / "client"))
+from ap_env import archipelago_root, link_world
 
-from gta_vc_bridge import protocol  # noqa: E402
-from gta_vc_bridge.bridge import AsiBridge  # noqa: E402
+_root = archipelago_root()
+if _root is not None:
+    sys.path.insert(0, str(_root))
+    link_world(_root)
+
+from worlds.gta_vice_city.client import protocol  # noqa: E402
+from worlds.gta_vice_city.client.bridge import AsiBridge  # noqa: E402
 
 EXPECTED_HASH = "interophash01"
 RESYNC_ITEMS = [(0, 111), (1, 222), (2, 333)]

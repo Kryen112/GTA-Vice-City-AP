@@ -12,7 +12,7 @@ import unittest
 
 from .. import protocol
 from ..bridge import AsiBridge
-from ..fake_asi import FakeAsi
+from .fake_asi import FakeAsi
 
 HOST = "127.0.0.1"
 

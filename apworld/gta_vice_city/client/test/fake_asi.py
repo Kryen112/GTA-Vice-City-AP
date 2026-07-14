@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import asyncio
 
-from . import protocol
+from .. import protocol
 
 
 class FakeAsi:

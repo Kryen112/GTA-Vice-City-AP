@@ -12,8 +12,10 @@ gitignore them. Stage explicit paths only; never `git add -A` or `git add .`.
 - `apworld/gta_vice_city/`: the AP world package. Hand-written Python, no
   generators. All access logic lives in `rules.py` as boolean predicates;
   diffs there are logic, everything else is plumbing.
-- `client/`: bridge client on CommonClient. Hosts the localhost listener;
-  the ASI connects to it.
+- `apworld/gta_vice_city/client/`: bridge client on CommonClient, bundled in
+  the world and registered as a launcher component. Hosts the localhost
+  listener; the ASI connects to it. `scripts/build_apworld.py` packages the
+  world (client included) into a `.apworld`.
 - `mod/asi/`: C++ plugin on plugin-sdk. `mod/cleo/`: CLEO scripts.
   `mod/scm/`: main.scm source for Sanny Builder.
 - `scripts/`: entry points shared by hooks, CI, and manual runs.
