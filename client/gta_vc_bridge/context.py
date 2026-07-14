@@ -37,8 +37,11 @@ class GTAViceCityContext(CommonContext):
     # Receive our own items, starting inventory, and items from other worlds.
     items_handling = 0b111
 
-    def __init__(self, server_address: str | None, password: str | None, bridge_port: int) -> None:
+    def __init__(self, server_address: str | None, password: str | None,
+                 bridge_port: int, slot_name: str | None = None) -> None:
         super().__init__(server_address, password)
+        if slot_name:
+            self.auth = slot_name
         self.bridge_port = bridge_port
         # The ASI configuration from slot_data: item id -> unlock global, and
         # completion global -> location id. Captured on Connected.
@@ -58,7 +61,8 @@ class GTAViceCityContext(CommonContext):
     async def server_auth(self, password_requested: bool = False) -> None:
         if password_requested and not self.password:
             await super().server_auth(password_requested)
-        await self.get_username()
+        if not self.auth:
+            await self.get_username()
         await self.send_connect()
 
     def expected_seed_hash(self) -> str | None:
@@ -134,8 +138,9 @@ def launch(*args: str) -> None:
         parser = get_base_parser(description="GTA: Vice City Archipelago bridge client.")
         parser.add_argument("--bridge_port", type=int, default=DEFAULT_BRIDGE_PORT,
                             help="Localhost port the GTA Vice City mod connects to.")
+        parser.add_argument("--name", default=None, help="Slot name to connect as.")
         parsed = parser.parse_args(args)
-        context = GTAViceCityContext(parsed.connect, parsed.password, parsed.bridge_port)
+        context = GTAViceCityContext(parsed.connect, parsed.password, parsed.bridge_port, parsed.name)
         await _run(context)
 
     import colorama
