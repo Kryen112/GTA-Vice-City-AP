@@ -17,19 +17,19 @@ from contextlib import contextmanager
 from pathlib import Path
 from unittest import mock
 
-from ... import GTAViceCityWorld
+from ... import GTAViceCityWorld, installer
 from .. import context as context_module
 
 
 @contextmanager
 def _fake_settings(install_folder: str = "", auto_launch_game: bool = True,
-                   isolate_saves: bool = False):
+                   isolate_saves: bool = False, auto_install_mod: bool = False):
     # World.settings is a lazy property on the AutoWorldRegister metaclass;
     # replace it with one returning a stub so no real host.yaml is loaded. Also
     # blind the context to the real save folder, so tests never move real saves.
     fake = types.SimpleNamespace(
         install_folder=install_folder, auto_launch_game=auto_launch_game,
-        isolate_saves=isolate_saves)
+        isolate_saves=isolate_saves, auto_install_mod=auto_install_mod)
     with mock.patch.object(
         type(GTAViceCityWorld), "settings",
         new_callable=mock.PropertyMock, return_value=fake,
@@ -234,6 +234,16 @@ class TestCommands(unittest.TestCase):
 
         asyncio.run(scenario())
 
+    def test_installmod_delegates(self) -> None:
+        async def scenario() -> None:
+            with _fake_settings(""):
+                context = _context()
+                with mock.patch.object(context, "install_mod") as install_mod:
+                    context_module.GTAViceCityCommandProcessor(context)._cmd_installmod()
+                    install_mod.assert_called_once_with()
+
+        asyncio.run(scenario())
+
 
 class TestSaveIsolation(unittest.TestCase):
     def test_isolates_this_seed_when_enabled_and_the_game_is_not_running(self) -> None:
@@ -270,6 +280,65 @@ class TestSaveIsolation(unittest.TestCase):
                 context.seed_name = "Seed One"
                 context._isolate_saves()
                 context.save_manager.isolate.assert_not_called()
+
+        asyncio.run(scenario())
+
+
+class TestModInstall(unittest.TestCase):
+    def test_deploys_when_the_mod_is_not_current(self) -> None:
+        async def scenario() -> None:
+            with _install_folder_with_exe() as folder, _fake_settings(folder):
+                context = _context()
+                with mock.patch.object(context, "game_running", return_value=False), \
+                     mock.patch.object(installer, "mod_is_current", return_value=False), \
+                     mock.patch.object(installer, "deploy", return_value=["Installed main.scm."]) as deploy:
+                    context.install_mod()
+                    deploy.assert_called_once_with(context.install_dir)
+
+        asyncio.run(scenario())
+
+    def test_skips_deploy_while_the_game_is_running(self) -> None:
+        async def scenario() -> None:
+            with _install_folder_with_exe() as folder, _fake_settings(folder):
+                context = _context()
+                with mock.patch.object(context, "game_running", return_value=True), \
+                     mock.patch.object(installer, "deploy") as deploy:
+                    context.install_mod()
+                    deploy.assert_not_called()
+
+        asyncio.run(scenario())
+
+    def test_skips_deploy_when_already_current(self) -> None:
+        async def scenario() -> None:
+            with _install_folder_with_exe() as folder, _fake_settings(folder):
+                context = _context()
+                with mock.patch.object(context, "game_running", return_value=False), \
+                     mock.patch.object(installer, "mod_is_current", return_value=True), \
+                     mock.patch.object(installer, "deploy") as deploy:
+                    context.install_mod()
+                    deploy.assert_not_called()
+
+        asyncio.run(scenario())
+
+    def test_auto_installs_on_connect_when_enabled(self) -> None:
+        async def scenario() -> None:
+            with _install_folder_with_exe() as folder, \
+                    _fake_settings(folder, auto_launch_game=False, auto_install_mod=True):
+                context = _context()
+                with mock.patch.object(context, "install_mod") as install_mod:
+                    await context.setup_and_launch()
+                    install_mod.assert_called_once_with(announce_current=False)
+
+        asyncio.run(scenario())
+
+    def test_no_auto_install_on_connect_when_disabled(self) -> None:
+        async def scenario() -> None:
+            with _install_folder_with_exe() as folder, \
+                    _fake_settings(folder, auto_launch_game=False, auto_install_mod=False):
+                context = _context()
+                with mock.patch.object(context, "install_mod") as install_mod:
+                    await context.setup_and_launch()
+                    install_mod.assert_not_called()
 
         asyncio.run(scenario())
 

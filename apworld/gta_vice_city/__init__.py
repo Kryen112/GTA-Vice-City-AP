@@ -71,9 +71,16 @@ class GTAViceCitySettings(settings.Group):
         default. Bring your normal saves back with the client's /restore
         command. Only the save files move; controls and display settings stay."""
 
+    class AutoInstallMod(settings.Bool):
+        """Compare the mod bundled in this apworld against the install when the
+        client connects, and copy it in if it differs, before the game launches.
+        On by default. Set false to manage the mod yourself with the /installmod
+        command. You still supply Ultimate ASI Loader and CLEO."""
+
     install_folder: InstallFolder = InstallFolder("")
     auto_launch_game: AutoLaunchGame | bool = True
     isolate_saves: IsolateSaves | bool = True
+    auto_install_mod: AutoInstallMod | bool = True
 
 
 class GTAViceCityItem(Item):

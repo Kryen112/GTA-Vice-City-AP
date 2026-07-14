@@ -98,6 +98,11 @@ class GTAViceCityCommandProcessor(ClientCommandProcessor):
         the game first."""
         self.ctx.restore_saves()
 
+    def _cmd_installmod(self) -> None:
+        """Install or update the bundled GTA Vice City mod in the install
+        folder. Close the game first."""
+        self.ctx.install_mod()
+
 
 class GTAViceCityContext(CommonContext):
     game = "Grand Theft Auto Vice City"
@@ -221,10 +226,14 @@ class GTAViceCityContext(CommonContext):
         from .. import GTAViceCityWorld
         return bool(getattr(GTAViceCityWorld.settings, "isolate_saves", False))
 
+    def _auto_install_mod_enabled(self) -> bool:
+        from .. import GTAViceCityWorld
+        return bool(getattr(GTAViceCityWorld.settings, "auto_install_mod", False))
+
     async def setup_and_launch(self) -> None:
         """On connect: isolate this seed's saves, make sure an install folder is
-        known (picker on first run), then auto-launch the game if that setting
-        is on."""
+        known (picker on first run), install the mod, then auto-launch the game
+        if that setting is on."""
         # Isolation moves save files, so it runs on the loop (serialized with
         # other connects) rather than racing in a thread; its one blocking step,
         # the tasklist check, is bounded to a few seconds.
@@ -237,8 +246,30 @@ class GTAViceCityContext(CommonContext):
                                "gta_vice_city_options -> install_folder in host.yaml.")
         if not self.install_dir:
             return
+        if self._auto_install_mod_enabled():
+            self.install_mod(announce_current=False)
         if not self.game_launched and self._auto_launch_enabled():
             self.launch_game()
+
+    def install_mod(self, announce_current: bool = True) -> None:
+        from .. import installer
+        if not self.install_dir:
+            logger.warning("No install folder set. Use /setfolder first.")
+            return
+        try:
+            # Check first, so a current mod (or an apworld with no payload) is a
+            # silent no-op and never warns about a running game needlessly.
+            if installer.mod_is_current(self.install_dir):
+                if announce_current:
+                    logger.info("The mod is already up to date.")
+                return
+            if self.game_running():
+                logger.warning("Close the game before installing the mod.")
+                return
+            for line in installer.deploy(self.install_dir):
+                logger.info(line)
+        except Exception as error:
+            logger.error(f"Could not install the mod ({error}).")
 
     def game_running(self) -> bool:
         # The client-launched process is authoritative, but a game the player
