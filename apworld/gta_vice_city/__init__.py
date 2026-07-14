@@ -54,15 +54,11 @@ components.append(Component(
 class GTAViceCitySettings(settings.Group):
     class InstallFolder(settings.UserFolderPath):
         """The GTA Vice City install folder, the one holding gta-vc.exe. The
-        client launches the game from here on connect and on /play. The first
-        time it needs the folder it opens a picker and stores the choice here.
-        Use forward slashes."""
+        client launches the game from here on connect and on /play. Blank by
+        default; the client offers a folder picker on first connect and saves
+        the choice here. Use forward slashes."""
         description = "GTA Vice City install folder"
-
-        def exists(self) -> bool:
-            # A blank or invalid value counts as missing, so the client's first
-            # access opens the folder picker instead of silently doing nothing.
-            return bool(str(self).strip()) and super().exists()
+        required = False
 
     class AutoLaunchGame(settings.Bool):
         """Launch gta-vc.exe automatically when the client connects, once per
