@@ -40,6 +40,9 @@ class GTAViceCityContext(CommonContext):
     def __init__(self, server_address: str | None, password: str | None, bridge_port: int) -> None:
         super().__init__(server_address, password)
         self.bridge_port = bridge_port
+        # The ASI configuration from slot_data: item id -> unlock global, and
+        # completion global -> location id. Captured on Connected.
+        self.asi_config: dict = {}
         # Hold references to fire-and-forget resync tasks so they are not
         # garbage-collected mid-flight.
         self._background_tasks: set[asyncio.Task] = set()
@@ -71,6 +74,13 @@ class GTAViceCityContext(CommonContext):
         # it, and the seed hash the mod handshake needs is derived from it.
         if cmd == "RoomInfo":
             self.seed_name = args.get("seed_name")
+        # Capture the ASI configuration from slot_data on connect.
+        if cmd == "Connected":
+            slot_data = args.get("slot_data") or {}
+            self.asi_config = {
+                "item_globals": slot_data.get("item_globals", {}),
+                "completion_watch": slot_data.get("completion_watch", {}),
+            }
         # A new Connected or a ReceivedItems update means the mod's view is
         # stale, so push a fresh resync. The bridge no-ops if the mod is not
         # connected; it also resyncs itself on every mod (re)connect.
@@ -89,7 +99,13 @@ class GTAViceCityContext(CommonContext):
         await self.bridge.send_checked(sorted(self.checked_locations))
 
     async def on_bridge_connected(self, _bridge: AsiBridge) -> None:
-        # The mod just connected and was welcomed; give it the full state.
+        # The mod just connected and was welcomed; give it its configuration
+        # then the full state.
+        if self.asi_config:
+            await self.bridge.send_config(
+                self.asi_config.get("item_globals", {}),
+                self.asi_config.get("completion_watch", {}),
+            )
         await self._resync_bridge()
 
     async def on_bridge_check(self, location: int) -> None:

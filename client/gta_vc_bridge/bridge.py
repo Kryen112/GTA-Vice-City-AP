@@ -93,6 +93,9 @@ class AsiBridge:
             if self._writer is writer:
                 self._drop_connection()
 
+    async def send_config(self, item_globals: dict, completion_watch: dict) -> None:
+        await self.send(protocol.config_message(item_globals, completion_watch))
+
     async def send_items(self, items: list[tuple[int, int]]) -> None:
         await self.send(protocol.items_message(items))
 

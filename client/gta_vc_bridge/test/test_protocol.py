@@ -32,6 +32,12 @@ class TestFraming(unittest.TestCase):
             self.assertEqual(frame.count(b"\n"), 1)
             self.assertLessEqual(len(frame), protocol.MAX_FRAME_BYTES)
 
+    def test_config_message_round_trip(self) -> None:
+        message = protocol.config_message(
+            {"542100000": 9010}, {"9035": 542000000, "9036": 542000001},
+        )
+        self.assertEqual(_round_trip(message), [message])
+
     def test_large_message_chunks_and_reassembles(self) -> None:
         big = protocol.items_message([(index, index * 7) for index in range(5000)])
         frames = protocol.MessageWriter().frames(big)

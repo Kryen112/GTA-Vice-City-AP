@@ -35,6 +35,10 @@ Message types
 Client to ASI:
     welcome  {seed_hash}      accept; carries the expected seed hash to stamp
     refused  {reason}         reject this connection, with a player-facing reason
+    config   {item_globals,   how the ASI maps play to the SCM: item id -> the
+              completion_watch} unlock global it counts toward, and completion
+                              global index -> location id to poll and report.
+                              Sent once per connection, before the resync.
     items    {items}          the full cumulative received-items list, as
                               [index, item_id] pairs. The ASI re-derives all
                               unlock globals from this every time and re-applies
@@ -71,6 +75,7 @@ MAX_CHUNK_PARTS = 4096
 # Message type values.
 WELCOME = "welcome"
 REFUSED = "refused"
+CONFIG = "config"
 ITEMS = "items"
 CHECKED = "checked"
 TOAST = "toast"
@@ -102,6 +107,10 @@ def welcome_message(expected_seed_hash: str) -> dict:
 
 def refused_message(reason: str) -> dict:
     return {"type": REFUSED, "protocol_version": PROTOCOL_VERSION, "reason": reason}
+
+
+def config_message(item_globals: dict, completion_watch: dict) -> dict:
+    return {"type": CONFIG, "item_globals": item_globals, "completion_watch": completion_watch}
 
 
 def items_message(items: list[tuple[int, int]]) -> dict:

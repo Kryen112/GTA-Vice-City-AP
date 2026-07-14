@@ -23,10 +23,12 @@ class Recorder:
         expected_hash: str | None,
         resync_items: list[tuple[int, int]] | None = None,
         resync_checked: list[int] | None = None,
+        config: dict | None = None,
     ) -> None:
         self.expected_hash = expected_hash
         self.resync_items = resync_items or []
         self.resync_checked = resync_checked or []
+        self.config = config
         self.checks: list[int] = []
         self.goals = 0
         self.connected = 0
@@ -42,6 +44,10 @@ class Recorder:
 
     async def on_connected(self, bridge: AsiBridge) -> None:
         self.connected += 1
+        if self.config is not None:
+            await bridge.send_config(
+                self.config["item_globals"], self.config["completion_watch"],
+            )
         await bridge.send_items(self.resync_items)
         await bridge.send_checked(self.resync_checked)
 
@@ -98,6 +104,24 @@ class TestBridge(unittest.TestCase):
             self.assertEqual(by_type[protocol.ITEMS]["items"], [[0, 111], [1, 222]])
             self.assertEqual(by_type[protocol.CHECKED]["locations"], [542000000, 542000001])
             self.assertEqual(recorder.connected, 1)
+            await asi.close()
+            await bridge.stop()
+
+        asyncio.run(scenario())
+
+    def test_config_is_sent_before_the_resync(self) -> None:
+        async def scenario() -> None:
+            config = {"item_globals": {"542100000": 9010},
+                      "completion_watch": {"9035": 542000000}}
+            recorder = Recorder("abcd1234", resync_items=[(0, 111)], config=config)
+            bridge = _make_bridge(recorder)
+            await bridge.start()
+            asi = FakeAsi(HOST, bridge.port, presented_seed_hash="abcd1234")
+            await asi.connect()
+            resync = await asi.drain_messages()
+            self.assertEqual(resync[0]["type"], protocol.CONFIG)
+            self.assertEqual(resync[0]["item_globals"], {"542100000": 9010})
+            self.assertEqual(resync[0]["completion_watch"], {"9035": 542000000})
             await asi.close()
             await bridge.stop()
 
