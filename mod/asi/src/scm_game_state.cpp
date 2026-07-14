@@ -117,6 +117,15 @@ void ScmGameState::OnGameFrame() {
     stamp_pending_ = false;
   }
 
+  // Only touch the game's script memory once a stamped game is actually
+  // running. In the frontend menu ScriptSpace holds no meaningful state, and a
+  // baseline taken there would be wrong.
+  const bool game_active = !cached_seed_hash_.empty();
+  if (!game_active) {
+    baseline_captured_ = false;
+    return;
+  }
+
   if (items_dirty_) {
     // Re-derive every unlock global from the full item list: zero each distinct
     // unlock global, then tally received copies per global.
@@ -131,12 +140,21 @@ void ScmGameState::OnGameFrame() {
     if (logger_) logger_("applied items to unlock globals");
   }
 
-  for (const auto& [global_index, location] : completion_watch_) {
-    if (reported_.count(global_index)) continue;
-    if (GetGlobal(global_index) != 0) {
-      outbound_checks_.push_back(location);
-      reported_.insert(global_index);
-    }
+  std::map<int, int> current;
+  for (const auto& entry : completion_watch_) {
+    current[entry.first] = GetGlobal(entry.first);
+  }
+  // Snapshot the completion globals as this game starts, so a real completion
+  // shows up as a change from a zero baseline. Globals nonzero at the baseline
+  // are not declared completion globals and are never reported.
+  if (!baseline_captured_) {
+    baseline_ = current;
+    baseline_captured_ = true;
+    if (logger_) logger_("captured completion baseline");
+  }
+  for (const std::int64_t location :
+       DetectCompletedLocations(completion_watch_, baseline_, current, reported_)) {
+    outbound_checks_.push_back(location);
   }
 
   for (const std::string& text : pending_toasts_) {

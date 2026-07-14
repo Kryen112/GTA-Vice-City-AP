@@ -14,6 +14,7 @@
 #include <vector>
 
 #include "game_state.hpp"
+#include "scm_completion.hpp"
 
 namespace gtavc {
 
@@ -50,12 +51,16 @@ class ScmGameState : public GameState {
   std::map<std::int64_t, int> location_to_global_;
   std::vector<std::pair<std::int64_t, std::int64_t>> items_;
   std::set<int> reported_;
+  // The completion globals as they read when this game started; a real
+  // completion is a change away from a zero baseline. Captured once per game.
+  std::map<int, int> baseline_;
   std::vector<std::int64_t> outbound_checks_;
   std::vector<std::string> pending_toasts_;
   std::string pending_stamp_;
   std::string cached_seed_hash_;
   bool items_dirty_ = false;
   bool stamp_pending_ = false;
+  bool baseline_captured_ = false;
 };
 
 }  // namespace gtavc
