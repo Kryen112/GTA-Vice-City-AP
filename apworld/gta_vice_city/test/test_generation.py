@@ -11,7 +11,7 @@ from typing import ClassVar
 from Options import OptionError
 from test.bases import WorldTestBase
 
-from .. import data
+from .. import data, scm
 from ..items import ITEM_NAME_TO_ID
 from ..locations import LOCATION_NAME_TO_ID, PACKAGE_NAMES, STORY_MISSION_NAMES
 
@@ -161,6 +161,53 @@ class TestTables(WorldTestBase):
         # are no longer always-on story checks.
         for mission in ["No Escape?", "Recruitment Drive", "Cabmaggedon"]:
             self.assertNotIn(mission, STORY_MISSION_NAMES)
+
+
+class TestReservedGlobals(WorldTestBase):
+    game = "Grand Theft Auto Vice City"
+    run_default_tests = False
+
+    def test_all_reserved_globals_are_above_the_vanilla_maximum(self) -> None:
+        # Vanilla packs globals up to $8583; the reserved block must clear it.
+        self.assertGreater(scm.RESERVED_BASE, 8583)
+        for global_index in scm.item_globals().values():
+            self.assertGreaterEqual(global_index, scm.UNLOCK_BASE)
+        self.assertGreater(scm.highest_reserved_global(), scm.COMPLETION_BASE)
+
+    def test_no_reserved_global_collisions(self) -> None:
+        seed_hash = set(range(scm.SEED_HASH_BASE, scm.SEED_HASH_BASE + scm.SEED_HASH_GLOBAL_COUNT))
+        unlocks = {scm.unlock_global(key) for key in scm.UNLOCK_KEYS}
+        completions = set(scm.completion_watch().keys())
+        self.assertEqual(len(unlocks), len(scm.UNLOCK_KEYS))
+        self.assertEqual(len(completions), len(LOCATION_NAME_TO_ID))
+        self.assertTrue(seed_hash.isdisjoint(unlocks))
+        self.assertTrue(seed_hash.isdisjoint(completions))
+        self.assertTrue(unlocks.isdisjoint(completions))
+        self.assertNotIn(scm.APPLIED_INDEX_GLOBAL, unlocks | completions)
+
+    def test_item_globals_cover_every_progression_item(self) -> None:
+        mapping = scm.item_globals()
+        for strand in data.progressive_strands():
+            self.assertIn(ITEM_NAME_TO_ID[data.progressive_item_name(strand)], mapping)
+        for area_item in data.AREA_ITEMS:
+            self.assertIn(ITEM_NAME_TO_ID[area_item], mapping)
+
+    def test_completion_watch_covers_every_location(self) -> None:
+        watch = scm.completion_watch()
+        self.assertEqual(sorted(watch.values()), sorted(LOCATION_NAME_TO_ID.values()))
+
+
+class TestSlotData(WorldTestBase):
+    game = "Grand Theft Auto Vice City"
+
+    def test_slot_data_is_json_shaped_and_complete(self) -> None:
+        slot_data = self.world.fill_slot_data()
+        self.assertEqual(slot_data["goal"], "final_mission")
+        self.assertTrue(slot_data["item_globals"])
+        self.assertTrue(slot_data["completion_watch"])
+        # JSON object keys are strings.
+        for key in list(slot_data["item_globals"]) + list(slot_data["completion_watch"]):
+            self.assertIsInstance(key, str)
 
 
 class TestClassToggles(WorldTestBase):

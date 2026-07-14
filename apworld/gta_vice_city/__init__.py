@@ -18,7 +18,7 @@ from BaseClasses import CollectionState, Item, Location, Region
 from Options import OptionError
 from worlds.AutoWorld import WebWorld, World
 
-from . import data, locations, regions, rules
+from . import data, locations, regions, rules, scm
 from .items import FILLER_NAMES, ITEM_CLASSIFICATIONS, ITEM_GROUPS, ITEM_NAME_TO_ID, ITEM_QUANTITIES
 from .locations import CLASS_TOGGLE, LOCATION_GROUPS, LOCATION_NAME_TO_ID, LOCATION_REGIONS, LOCATION_TOGGLE
 from .options import CHECK_CLASS_OPTIONS, Goal, GTAViceCityOptions
@@ -214,6 +214,25 @@ class GTAViceCityWorld(World):
     def _bind(self, rule: Callable[[CollectionState, int], bool]) -> Callable[[CollectionState], bool]:
         player = self.player
         return lambda state: rule(state, player)
+
+    def fill_slot_data(self) -> dict:
+        # The client reads this on connect and configures the ASI from it: how
+        # to turn received items into unlock-global writes, which completion
+        # globals to poll for checks, plus the goal so the client knows when to
+        # report it. JSON object keys are strings.
+        return {
+            "goal": self.options.goal.current_key,
+            "hidden_packages_required": self.options.hidden_packages_required.value,
+            "death_link": bool(self.options.death_link.value),
+            "item_globals": {
+                str(item_id): global_index
+                for item_id, global_index in scm.item_globals().items()
+            },
+            "completion_watch": {
+                str(global_index): location_id
+                for global_index, location_id in scm.completion_watch().items()
+            },
+        }
 
     def _completion_condition(self) -> Callable[[CollectionState], bool]:
         player = self.player
