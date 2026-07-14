@@ -13,8 +13,22 @@ import types
 import unittest
 from unittest import mock
 
-from ... import GTAViceCityWorld
+from ... import GTAViceCitySettings, GTAViceCityWorld
 from .. import context as context_module
+
+
+class TestInstallFolderSetting(unittest.TestCase):
+    # The picker fires when the stored folder reports itself missing, so a blank
+    # or invalid value must count as missing and a real folder as present.
+
+    def test_blank_or_invalid_folder_reports_missing(self) -> None:
+        self.assertFalse(GTAViceCitySettings.InstallFolder("").exists())
+        self.assertFalse(GTAViceCitySettings.InstallFolder("   ").exists())
+        self.assertFalse(GTAViceCitySettings.InstallFolder("C:/no/such/folder/here").exists())
+
+    def test_real_folder_reports_present(self) -> None:
+        with tempfile.TemporaryDirectory() as folder:
+            self.assertTrue(GTAViceCitySettings.InstallFolder(folder).exists())
 
 
 class TestSettingsReaders(unittest.TestCase):
@@ -50,6 +64,20 @@ class TestSettingsReaders(unittest.TestCase):
             with self._with_settings(folder, False):
                 self.assertIsNone(context_module.GTAViceCityContext._game_executable(None))
                 self.assertFalse(context_module.GTAViceCityContext._auto_launch_enabled(None))
+
+    def test_cancelled_picker_yields_no_executable(self) -> None:
+        # A cancelled folder picker surfaces as FileNotFoundError from the
+        # settings access; the reader must swallow it and launch nothing.
+        class CancelledSettings:
+            @property
+            def install_folder(self) -> str:
+                raise FileNotFoundError("picker cancelled")
+
+        with mock.patch.object(
+            type(GTAViceCityWorld), "settings",
+            new_callable=mock.PropertyMock, return_value=CancelledSettings(),
+        ):
+            self.assertIsNone(context_module.GTAViceCityContext._game_executable(None))
 
 
 class TestGameLaunch(unittest.TestCase):

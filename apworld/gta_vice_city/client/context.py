@@ -11,8 +11,9 @@ Normally launched from the Archipelago Launcher's "GTA Vice City Client"
 button. During development, from inside the Archipelago repo:
     python -m worlds.gta_vice_city.client.context --connect localhost:38281 --name Player1
 
-On connect it launches gta-vc.exe from the install folder set in host.yaml (if
-auto-launch is on), and the /play command launches it on demand.
+On connect it launches gta-vc.exe (when auto-launch is on), opening a folder
+picker the first time to find the install folder and remembering it in
+host.yaml. The /play command launches the game on demand.
 """
 
 from __future__ import annotations
@@ -146,7 +147,13 @@ class GTAViceCityContext(CommonContext):
 
     def _game_executable(self) -> str | None:
         from .. import GTAViceCityWorld
-        folder = str(getattr(GTAViceCityWorld.settings, "install_folder", "")).strip()
+        try:
+            # Reading this setting opens a folder picker the first time, when no
+            # valid folder is stored yet, and saves the choice to host.yaml.
+            folder = str(GTAViceCityWorld.settings.install_folder).strip()
+        except FileNotFoundError:
+            # The picker was cancelled, so there is nothing to launch this time.
+            return None
         if not folder:
             return None
         executable = os.path.join(folder, "gta-vc.exe")
@@ -161,8 +168,8 @@ class GTAViceCityContext(CommonContext):
             return
         executable = self._game_executable()
         if executable is None:
-            logger.info("Set the GTA Vice City install folder in host.yaml to launch the game, "
-                        "or start gta-vc.exe yourself.")
+            logger.info("Could not find gta-vc.exe. Set the GTA Vice City install folder in "
+                        "host.yaml, or start the game yourself.")
             return
         try:
             subprocess.Popen([executable], cwd=os.path.dirname(executable))
