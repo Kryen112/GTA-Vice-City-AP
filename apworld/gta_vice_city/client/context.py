@@ -22,6 +22,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import subprocess
+import sys
 import warnings
 from pathlib import Path
 
@@ -40,8 +41,9 @@ from CommonClient import (
 )
 from NetUtils import ClientStatus
 
-from . import protocol
+from . import protocol, saves
 from .bridge import AsiBridge
+from .saves import SaveManager
 
 DEFAULT_BRIDGE_PORT = 52300
 logger = logging.getLogger("Client")
@@ -52,6 +54,22 @@ def looks_like_install(path: Path) -> bool:
     An unset UserFolderPath resolves to the Archipelago root, so a non-empty
     value is not enough on its own."""
     return (path / "gta-vc.exe").is_file()
+
+
+def game_process_running() -> bool:
+    """Whether any gta-vc.exe runs, including one the client did not launch."""
+    if sys.platform != "win32":
+        return False
+    try:
+        result = subprocess.run(
+            ["tasklist", "/FI", "IMAGENAME eq gta-vc.exe", "/NH"],
+            capture_output=True, text=True, timeout=3, check=False,
+            creationflags=subprocess.CREATE_NO_WINDOW)
+    except (OSError, subprocess.TimeoutExpired):
+        # Callers guard destructive save moves, so an unanswerable check fails
+        # closed: assume the game is running.
+        return True
+    return "gta-vc.exe" in result.stdout
 
 
 class GTAViceCityCommandProcessor(ClientCommandProcessor):
@@ -75,6 +93,11 @@ class GTAViceCityCommandProcessor(ClientCommandProcessor):
         self.ctx.set_install_dir(chosen)
         self.output(f"Install folder set to {self.ctx.install_dir} (saved to host.yaml).")
 
+    def _cmd_restore(self) -> None:
+        """Restore your normal saves, undoing Archipelago save isolation. Close
+        the game first."""
+        self.ctx.restore_saves()
+
 
 class GTAViceCityContext(CommonContext):
     game = "Grand Theft Auto Vice City"
@@ -89,6 +112,10 @@ class GTAViceCityContext(CommonContext):
             self.auth = slot_name
         self.bridge_port = bridge_port
         self.game_launched = False
+        self.game_process: subprocess.Popen | None = None
+        # Set by /restore, so a reconnect does not swap the normal saves back
+        # out after the player asked for them.
+        self.isolation_suspended = False
         # The install folder, from host.yaml if it already holds gta-vc.exe.
         # A blank setting resolves to the Archipelago root, so it is validated,
         # not just checked for being non-empty.
@@ -96,6 +123,10 @@ class GTAViceCityContext(CommonContext):
         folder = self._configured_folder()
         if folder and looks_like_install(Path(folder)):
             self.install_dir = Path(folder)
+        # Save isolation works on the GTA Vice City User Files folder, which
+        # lives under Documents, apart from the install folder.
+        user_files = saves.user_files_directory()
+        self.save_manager: SaveManager | None = SaveManager(user_files) if user_files else None
         # The ASI configuration from slot_data: item id -> unlock global, and
         # completion global -> location id. Captured on Connected.
         self.asi_config: dict = {}
@@ -186,9 +217,18 @@ class GTAViceCityContext(CommonContext):
         from .. import GTAViceCityWorld
         return bool(getattr(GTAViceCityWorld.settings, "auto_launch_game", False))
 
+    def _isolate_saves_enabled(self) -> bool:
+        from .. import GTAViceCityWorld
+        return bool(getattr(GTAViceCityWorld.settings, "isolate_saves", False))
+
     async def setup_and_launch(self) -> None:
-        """On connect: make sure an install folder is known (picker on first
-        run), then auto-launch the game if that setting is on."""
+        """On connect: isolate this seed's saves, make sure an install folder is
+        known (picker on first run), then auto-launch the game if that setting
+        is on."""
+        # Isolation moves save files, so it runs on the loop (serialized with
+        # other connects) rather than racing in a thread; its one blocking step,
+        # the tasklist check, is bounded to a few seconds.
+        self._isolate_saves()
         if not self.install_dir:
             if gui_enabled:
                 await self.pick_install_dir()
@@ -199,6 +239,50 @@ class GTAViceCityContext(CommonContext):
             return
         if not self.game_launched and self._auto_launch_enabled():
             self.launch_game()
+
+    def game_running(self) -> bool:
+        # The client-launched process is authoritative, but a game the player
+        # started themselves counts too: swapping saves under a live game
+        # corrupts state.
+        if self.game_process is not None and self.game_process.poll() is None:
+            return True
+        return game_process_running()
+
+    def _isolate_saves(self) -> None:
+        """Swap in this seed's own save set, unless disabled. Skipped while the
+        game runs, so saves are never swapped under a live game."""
+        if not (self.save_manager and self._isolate_saves_enabled()):
+            return
+        if self.isolation_suspended:
+            return
+        if not self.seed_name:
+            return
+        already_on_seed = (
+            self.save_manager.is_isolated()
+            and self.save_manager.active_seed() == saves.seed_folder_name(self.seed_name))
+        if self.game_running() and not already_on_seed:
+            logger.warning("The game is running, so save isolation was skipped. Close it "
+                           "and reconnect to isolate this seed's saves.")
+            return
+        try:
+            logger.info(self.save_manager.isolate(self.seed_name))
+        except Exception as error:
+            logger.error(f"Save isolation failed ({error}); using the current saves as-is.")
+
+    def restore_saves(self) -> None:
+        if not self.save_manager:
+            logger.warning("No GTA Vice City User Files folder found to restore saves in.")
+            return
+        if self.game_running():
+            logger.warning("Close the game before restoring your normal saves.")
+            return
+        try:
+            logger.info(self.save_manager.restore())
+            # Do not re-isolate on the next reconnect this session, or the
+            # restore would silently swap the normal saves back out.
+            self.isolation_suspended = True
+        except Exception as error:
+            logger.error(f"Could not restore saves ({error}); resolve by hand.")
 
     async def pick_install_dir(self) -> None:
         """Open a folder picker off the event loop and save the choice."""
@@ -242,7 +326,7 @@ class GTAViceCityContext(CommonContext):
             logger.error(f"gta-vc.exe not found at {executable}.")
             return
         try:
-            subprocess.Popen([str(executable)], cwd=str(executable.parent))
+            self.game_process = subprocess.Popen([str(executable)], cwd=str(executable.parent))
             self.game_launched = True
             logger.info("Launched GTA Vice City.")
         except OSError as error:

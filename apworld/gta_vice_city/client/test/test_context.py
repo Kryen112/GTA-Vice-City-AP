@@ -22,14 +22,18 @@ from .. import context as context_module
 
 
 @contextmanager
-def _fake_settings(install_folder: str = "", auto_launch_game: bool = True):
+def _fake_settings(install_folder: str = "", auto_launch_game: bool = True,
+                   isolate_saves: bool = False):
     # World.settings is a lazy property on the AutoWorldRegister metaclass;
-    # replace it with one returning a stub so no real host.yaml is loaded.
-    fake = types.SimpleNamespace(install_folder=install_folder, auto_launch_game=auto_launch_game)
+    # replace it with one returning a stub so no real host.yaml is loaded. Also
+    # blind the context to the real save folder, so tests never move real saves.
+    fake = types.SimpleNamespace(
+        install_folder=install_folder, auto_launch_game=auto_launch_game,
+        isolate_saves=isolate_saves)
     with mock.patch.object(
         type(GTAViceCityWorld), "settings",
         new_callable=mock.PropertyMock, return_value=fake,
-    ):
+    ), mock.patch.object(context_module.saves, "user_files_directory", return_value=None):
         yield fake
 
 
@@ -217,6 +221,55 @@ class TestCommands(unittest.TestCase):
                 with mock.patch.object(context, "set_install_dir") as set_dir:
                     context_module.GTAViceCityCommandProcessor(context)._cmd_setfolder(empty)
                     set_dir.assert_not_called()
+
+        asyncio.run(scenario())
+
+    def test_restore_delegates(self) -> None:
+        async def scenario() -> None:
+            with _fake_settings(""):
+                context = _context()
+                with mock.patch.object(context, "restore_saves") as restore:
+                    context_module.GTAViceCityCommandProcessor(context)._cmd_restore()
+                    restore.assert_called_once_with()
+
+        asyncio.run(scenario())
+
+
+class TestSaveIsolation(unittest.TestCase):
+    def test_isolates_this_seed_when_enabled_and_the_game_is_not_running(self) -> None:
+        async def scenario() -> None:
+            with _fake_settings("", isolate_saves=True):
+                context = _context()
+                context.save_manager = mock.Mock()
+                context.save_manager.is_isolated.return_value = False
+                context.seed_name = "Seed One"
+                with mock.patch.object(context, "game_running", return_value=False):
+                    context._isolate_saves()
+                    context.save_manager.isolate.assert_called_once_with("Seed One")
+
+        asyncio.run(scenario())
+
+    def test_skips_isolation_while_the_game_is_running(self) -> None:
+        async def scenario() -> None:
+            with _fake_settings("", isolate_saves=True):
+                context = _context()
+                context.save_manager = mock.Mock()
+                context.save_manager.is_isolated.return_value = False
+                context.seed_name = "Seed One"
+                with mock.patch.object(context, "game_running", return_value=True):
+                    context._isolate_saves()
+                    context.save_manager.isolate.assert_not_called()
+
+        asyncio.run(scenario())
+
+    def test_skips_isolation_when_disabled(self) -> None:
+        async def scenario() -> None:
+            with _fake_settings("", isolate_saves=False):
+                context = _context()
+                context.save_manager = mock.Mock()
+                context.seed_name = "Seed One"
+                context._isolate_saves()
+                context.save_manager.isolate.assert_not_called()
 
         asyncio.run(scenario())
 

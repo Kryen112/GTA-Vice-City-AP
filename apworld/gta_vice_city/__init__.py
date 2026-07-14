@@ -65,8 +65,15 @@ class GTAViceCitySettings(settings.Group):
         client session. On by default; set false to launch it yourself or with
         the /play command."""
 
+    class IsolateSaves(settings.Bool):
+        """Keep each Archipelago seed's GTA Vice City saves in their own set,
+        apart from your normal saves, swapped in when the client connects. On by
+        default. Bring your normal saves back with the client's /restore
+        command. Only the save files move; controls and display settings stay."""
+
     install_folder: InstallFolder = InstallFolder("")
     auto_launch_game: AutoLaunchGame | bool = True
+    isolate_saves: IsolateSaves | bool = True
 
 
 class GTAViceCityItem(Item):
