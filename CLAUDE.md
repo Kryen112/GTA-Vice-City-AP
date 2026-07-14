@@ -14,8 +14,10 @@ gitignore them. Stage explicit paths only; never `git add -A` or `git add .`.
   diffs there are logic, everything else is plumbing.
 - `apworld/gta_vice_city/client/`: bridge client on CommonClient, bundled in
   the world and registered as a launcher component. Hosts the localhost
-  listener; the ASI connects to it. `scripts/build_apworld.py` packages the
-  world (client included) into a `.apworld`.
+  listener; the ASI connects to it. `scripts/build_apworld.py` links the world
+  into the Archipelago checkout, packages it (client included) into a
+  `.apworld` with an Archipelago manifest, and installs it to the frozen
+  install's `custom_worlds`.
 - `mod/asi/`: C++ plugin on plugin-sdk. `mod/cleo/`: CLEO scripts.
   `mod/scm/`: main.scm source for Sanny Builder.
 - `scripts/`: entry points shared by hooks, CI, and manual runs.
