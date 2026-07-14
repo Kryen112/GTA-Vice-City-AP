@@ -81,11 +81,11 @@ bool BridgeClient::RunSession() {
           welcomed = true;
           logger_("welcomed by client");
         }
-      } catch (const ProtocolError& error) {
-        logger_(std::string("protocol error: ") + error.what());
-        return false;
-      } catch (const json::exception& error) {
-        logger_(std::string("malformed frame: ") + error.what());
+      } catch (const std::exception& error) {
+        // ProtocolError, json type errors, and the config key conversions
+        // (std::stoll/std::stoi) all derive from std::exception. A bad frame
+        // ends the session and reconnects; it never escapes this thread.
+        logger_(std::string("bad frame: ") + error.what());
         return false;
       }
     }
@@ -108,7 +108,18 @@ bool BridgeClient::SendMessage(const json& message) {
 void BridgeClient::HandleMessage(const json& message) {
   try {
     const std::string type = message.value("type", std::string());
-    if (type == msg::kItems) {
+    if (type == msg::kConfig) {
+      std::map<std::int64_t, int> item_globals;
+      for (auto it = message.at("item_globals").begin(); it != message.at("item_globals").end(); ++it) {
+        item_globals[std::stoll(it.key())] = it.value().get<int>();
+      }
+      std::map<int, std::int64_t> completion_watch;
+      for (auto it = message.at("completion_watch").begin();
+           it != message.at("completion_watch").end(); ++it) {
+        completion_watch[std::stoi(it.key())] = it.value().get<std::int64_t>();
+      }
+      game_->ApplyConfig(item_globals, completion_watch);
+    } else if (type == msg::kItems) {
       std::vector<std::pair<std::int64_t, std::int64_t>> items;
       for (const json& entry : message.at("items")) {
         items.emplace_back(entry.at(0).get<std::int64_t>(), entry.at(1).get<std::int64_t>());

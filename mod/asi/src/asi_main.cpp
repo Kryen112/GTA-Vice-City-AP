@@ -1,35 +1,27 @@
-// First in-game ASI milestone: prove the plugin loads and that plugin-sdk
-// reads and writes SCM globals with Sanny's $N addressing (global $N lives at
-// ScriptSpace[N*4]). Deliberately single-file and offline: no socket yet, so
-// this run isolates the two in-game unknowns (does the .asi load, does the
-// global write reach the script) from the networking, which is already
-// verified headless. Pressing the debug key writes the reserved unlock global
-// $9000 = 1, which the gated main.scm reads to open "An Old Friend", the same
-// gate the CLEO spike proved by hand.
+// The ASI entry point. Starts the bridge on a background thread (it connects to
+// the client's localhost listener with retry) and drives the game-state on the
+// game frame, so all SCM memory access stays on the game thread. Received item
+// unlocks reach the script and completed checks flow back, both keyed by the
+// reserved-globals contract in the client's config. Logs one greppable line per
+// event next to gta-vc.exe.
 #include <cstdio>
 #include <ctime>
+#include <mutex>
 #include <string>
 
 #include <windows.h>
 
 #include <plugin.h>
-#include <CMessages.h>
-#include <CTheScripts.h>
+
+#include "bridge.hpp"
+#include "scm_game_state.hpp"
 
 using namespace plugin;
 
 namespace {
 
-// The AP reserved global block starts above the vanilla maximum ($8583).
-constexpr int kUnlockAnOldFriend = 9000;
-constexpr int kDebugSetKey = VK_F6;
+std::mutex g_log_mutex;
 
-int& GlobalInt(int index) {
-  return *reinterpret_cast<int*>(&CTheScripts::ScriptSpace[index * 4]);
-}
-
-// The log lives next to gta-vc.exe. A relative path would follow the working
-// directory, which a Steam or shortcut launch does not set to the game folder.
 std::string LogPath() {
   char executable[MAX_PATH] = {0};
   GetModuleFileNameA(nullptr, executable, MAX_PATH);
@@ -39,43 +31,37 @@ std::string LogPath() {
   return directory + "\\gtavc_ap_asi.log";
 }
 
-void Log(const char* format, int value) {
+void LogLine(const std::string& line) {
+  std::lock_guard<std::mutex> lock(g_log_mutex);
   static FILE* file = nullptr;
   if (file == nullptr) {
     fopen_s(&file, LogPath().c_str(), "w");
     if (file == nullptr) return;
   }
-  std::fprintf(file, "GTAVC_AP %ld: ", static_cast<long>(std::time(nullptr)));
-  std::fprintf(file, format, value);
-  std::fprintf(file, "\n");
+  std::fprintf(file, "GTAVC_AP %ld: %s\n", static_cast<long>(std::time(nullptr)), line.c_str());
   std::fflush(file);
 }
 
 }  // namespace
 
 struct AsiMain {
-  std::size_t frame = 0;
-  bool key_was_down = false;
+  gtavc::ScmGameState game;
+  gtavc::BridgeClient bridge;
 
-  AsiMain() {
-    Log("loaded (build frame %d)", 0);
+  AsiMain()
+      : game([](const std::string& line) { LogLine("game: " + line); }),
+        bridge("127.0.0.1", 52300, &game,
+               [](const std::string& line) { LogLine("bridge: " + line); }) {
+    LogLine("loaded");
+    // Register the frame handler before starting the bridge, so the game
+    // thread is priming the seed-hash cache by the time the bridge presents it.
     Events::gameProcessEvent += [] { instance.OnGameProcess(); };
+    bridge.Start();
   }
 
-  void OnGameProcess() {
-    ++frame;
-    const bool key_is_down = (GetAsyncKeyState(kDebugSetKey) & 0x8000) != 0;
-    if (key_is_down && !key_was_down) {
-      GlobalInt(kUnlockAnOldFriend) = 1;
-      Log("debug key: wrote global 9000 = %d", GlobalInt(kUnlockAnOldFriend));
-      CMessages::AddMessageJumpQ(const_cast<char*>("AP: unlock global 9000 set"), 3000, 0);
-    }
-    key_was_down = key_is_down;
+  ~AsiMain() { bridge.Stop(); }
 
-    if (frame % 200 == 0) {
-      Log("heartbeat: global 9000 reads %d", GlobalInt(kUnlockAnOldFriend));
-    }
-  }
+  void OnGameProcess() { game.OnGameFrame(); }
 
   static AsiMain instance;
 };

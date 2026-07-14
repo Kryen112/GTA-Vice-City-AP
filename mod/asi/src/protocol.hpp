@@ -28,6 +28,7 @@ constexpr std::size_t kMaxPendingBufferBytes = 1u << 20;
 namespace msg {
 constexpr const char* kWelcome = "welcome";
 constexpr const char* kRefused = "refused";
+constexpr const char* kConfig = "config";
 constexpr const char* kItems = "items";
 constexpr const char* kChecked = "checked";
 constexpr const char* kToast = "toast";

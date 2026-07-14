@@ -54,6 +54,14 @@ int main(int argc, char** argv) {
   }
   summary["checked"] = game.Checked();
   summary["toasts"] = game.Toasts();
+  summary["item_globals"] = json::object();
+  for (const auto& entry : game.ItemGlobals()) {
+    summary["item_globals"][std::to_string(entry.first)] = entry.second;
+  }
+  summary["completion_watch"] = json::object();
+  for (const auto& entry : game.CompletionWatch()) {
+    summary["completion_watch"][std::to_string(entry.first)] = entry.second;
+  }
   std::cout << summary.dump() << "\n";
   return 0;
 }

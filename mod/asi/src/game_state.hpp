@@ -6,6 +6,7 @@
 #pragma once
 
 #include <cstdint>
+#include <map>
 #include <string>
 #include <utility>
 #include <vector>
@@ -15,6 +16,12 @@ namespace gtavc {
 class GameState {
  public:
   virtual ~GameState() = default;
+
+  // How received items map to SCM globals, sent once per connection before the
+  // resync. item_globals: AP item id -> the unlock global it counts toward.
+  // completion_watch: completion global index -> AP location id to poll.
+  virtual void ApplyConfig(const std::map<std::int64_t, int>& item_globals,
+                           const std::map<int, std::int64_t>& completion_watch) = 0;
 
   // The seed hash to present on hello, read from the reserved SCM global.
   // Empty when no game has been started for this seed.
