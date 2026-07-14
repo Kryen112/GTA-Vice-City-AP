@@ -14,6 +14,7 @@ from test.bases import WorldTestBase
 from .. import data, scm
 from ..items import ITEM_NAME_TO_ID
 from ..locations import LOCATION_NAME_TO_ID, PACKAGE_NAMES, STORY_MISSION_NAMES
+from ..options import CHECK_CLASS_OPTIONS
 
 
 class TestDefault(WorldTestBase):
@@ -63,6 +64,47 @@ class TestStoryOnly(WorldTestBase):
             data.FINAL_MISSION,
             {location.name for location in self.multiworld.get_locations(self.player)},
         )
+
+
+class TestUniversalTracker(WorldTestBase):
+    game = "Grand Theft Auto Vice City"
+    options: ClassVar[dict] = {
+        "goal": "hidden_packages",
+        "hidden_packages_required": 30,
+        "enable_properties": False,
+    }
+
+    def test_slot_data_carries_the_world_shaping_options(self) -> None:
+        slot_data = self.world.fill_slot_data()
+        self.assertEqual(slot_data["goal"], "hidden_packages")
+        self.assertEqual(slot_data["hidden_packages_required"], 30)
+        self.assertFalse(slot_data["enable_properties"])
+        self.assertTrue(slot_data["enable_hidden_packages"])
+        for name in CHECK_CLASS_OPTIONS:
+            self.assertIn(name, slot_data)
+
+    def test_regeneration_restores_options_from_slot_data(self) -> None:
+        # Stand in for a Universal Tracker regeneration: a different seed's
+        # slot_data passed through must overwrite the options generate_early
+        # would otherwise use.
+        slot_data = {
+            "goal": "hundred_percent",
+            "hidden_packages_required": 80,
+            "death_link": True,
+            "enable_hidden_packages": True,
+            "enable_rampages_stunts": True,
+            "enable_emergency_vehicles": True,
+            "enable_properties": True,
+            "enable_robbable_stores": True,
+            "enable_side_events": True,
+        }
+        self.multiworld.re_gen_passthrough = {self.game: slot_data}
+        self.world.generate_early()
+        self.assertEqual(self.world.options.goal.current_key, "hundred_percent")
+        self.assertEqual(self.world.options.hidden_packages_required.value, 80)
+        self.assertTrue(bool(self.world.options.death_link.value))
+        for name in CHECK_CLASS_OPTIONS:
+            self.assertEqual(getattr(self.world.options, name).value, 1)
 
 
 class TestSpine(WorldTestBase):

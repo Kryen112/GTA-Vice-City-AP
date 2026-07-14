@@ -95,12 +95,41 @@ class GTAViceCityWorld(World):
     options: GTAViceCityOptions
     settings: typing.ClassVar[GTAViceCitySettings]
 
+    # The Universal Tracker regenerates this world from slot_data alone (see
+    # interpret_slot_data), so it needs no yaml on hand.
+    ut_can_gen_without_yaml = True
+
     item_name_to_id = ITEM_NAME_TO_ID
     location_name_to_id = LOCATION_NAME_TO_ID
     item_name_groups = ITEM_GROUPS
     location_name_groups = LOCATION_GROUPS
 
+    @staticmethod
+    def interpret_slot_data(slot_data: dict) -> dict:
+        """Universal Tracker hook. Returning the slot_data asks the tracker to
+        regenerate this world with it passed through, so generate_early restores
+        the played seed's options instead of the tracker's defaults."""
+        return slot_data
+
+    def _restore_options(self, slot_data: dict) -> None:
+        # Rebuild the world-shaping options from a played seed's slot_data, so a
+        # tracker regeneration matches that seed's locations and pool.
+        options = self.options
+        options.goal.value = type(options.goal).options[slot_data["goal"]]
+        options.hidden_packages_required.value = int(slot_data["hidden_packages_required"])
+        options.death_link.value = int(bool(slot_data["death_link"]))
+        for name in CHECK_CLASS_OPTIONS:
+            if name in slot_data:
+                getattr(options, name).value = int(bool(slot_data[name]))
+
     def generate_early(self) -> None:
+        # A Universal Tracker regeneration runs on its own seed and passes the
+        # played seed's slot_data through; replay its options instead of the
+        # tracker's defaults.
+        passthrough = getattr(self.multiworld, "re_gen_passthrough", {}).get(self.game)
+        if passthrough is not None:
+            self._restore_options(passthrough)
+            return
         options = self.options
         if options.goal == Goal.option_hundred_percent:
             missing = [name for name in CHECK_CLASS_OPTIONS
@@ -260,7 +289,9 @@ class GTAViceCityWorld(World):
         # The client reads this on connect and configures the ASI from it: how
         # to turn received items into unlock-global writes, which completion
         # globals to poll for checks, plus the goal so the client knows when to
-        # report it. JSON object keys are strings.
+        # report it. The check-class toggles ride along so the Universal Tracker
+        # can regenerate the world from slot_data alone. JSON object keys are
+        # strings.
         return {
             "goal": self.options.goal.current_key,
             "hidden_packages_required": self.options.hidden_packages_required.value,
@@ -273,6 +304,7 @@ class GTAViceCityWorld(World):
                 str(global_index): location_id
                 for global_index, location_id in scm.completion_watch().items()
             },
+            **{name: bool(getattr(self.options, name).value) for name in CHECK_CLASS_OPTIONS},
         }
 
     def _completion_condition(self) -> Callable[[CollectionState], bool]:
