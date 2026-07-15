@@ -62,6 +62,16 @@ int main(int argc, char** argv) {
   for (const auto& entry : game.CompletionWatch()) {
     summary["completion_watch"][std::to_string(entry.first)] = entry.second;
   }
+  summary["item_effects"] = json::object();
+  for (const auto& entry : game.ItemEffects()) {
+    json descriptor = json::array({entry.second.type});
+    if (entry.second.type == "cash") descriptor.push_back(entry.second.amount);
+    summary["item_effects"][std::to_string(entry.first)] = descriptor;
+  }
+  summary["config_globals"] = json::object();
+  for (const auto& entry : game.ConfigGlobals()) {
+    summary["config_globals"][std::to_string(entry.first)] = entry.second;
+  }
   std::cout << summary.dump() << "\n";
   return 0;
 }

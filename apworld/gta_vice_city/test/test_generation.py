@@ -32,7 +32,7 @@ class TestHundredPercentAllClasses(WorldTestBase):
     options: ClassVar[dict] = {
         "goal": "hundred_percent",
         "enable_hidden_packages": True,
-        "enable_rampages_stunts": True,
+        "enable_rampages": True, "enable_stunt_jumps": True,
         "enable_emergency_vehicles": True,
         "enable_properties": True,
         "enable_robbable_stores": True,
@@ -42,7 +42,7 @@ class TestHundredPercentAllClasses(WorldTestBase):
 
 _STORY_ONLY_OPTIONS: dict = {
     "enable_hidden_packages": False,
-    "enable_rampages_stunts": False,
+    "enable_rampages": False, "enable_stunt_jumps": False,
     "enable_emergency_vehicles": False,
     "enable_properties": False,
     "enable_robbable_stores": False,
@@ -80,6 +80,7 @@ class TestUniversalTracker(WorldTestBase):
         self.assertEqual(slot_data["hidden_packages_required"], 30)
         self.assertFalse(slot_data["enable_properties"])
         self.assertTrue(slot_data["enable_hidden_packages"])
+        self.assertIn("shuffle_emergency_rewards", slot_data)
         for name in CHECK_CLASS_OPTIONS:
             self.assertIn(name, slot_data)
 
@@ -91,8 +92,9 @@ class TestUniversalTracker(WorldTestBase):
             "goal": "hundred_percent",
             "hidden_packages_required": 80,
             "death_link": True,
+            "shuffle_emergency_rewards": True,
             "enable_hidden_packages": True,
-            "enable_rampages_stunts": True,
+            "enable_rampages": True, "enable_stunt_jumps": True,
             "enable_emergency_vehicles": True,
             "enable_properties": True,
             "enable_robbable_stores": True,
@@ -103,6 +105,7 @@ class TestUniversalTracker(WorldTestBase):
         self.assertEqual(self.world.options.goal.current_key, "hundred_percent")
         self.assertEqual(self.world.options.hidden_packages_required.value, 80)
         self.assertTrue(bool(self.world.options.death_link.value))
+        self.assertTrue(bool(self.world.options.shuffle_emergency_rewards.value))
         for name in CHECK_CLASS_OPTIONS:
             self.assertEqual(getattr(self.world.options, name).value, 1)
 
@@ -148,6 +151,74 @@ class TestPropertiesToggle(WorldTestBase):
         self.assertNotIn("Malibu Club Purchase", location_names)
 
 
+class TestEmergencyRewardShuffle(WorldTestBase):
+    game = "Grand Theft Auto Vice City"
+    options: ClassVar[dict] = {"shuffle_emergency_rewards": True}
+
+    def test_reward_items_enter_the_pool_when_shuffled(self) -> None:
+        item_names = {item.name for item in self.multiworld.itempool}
+        item_names |= {
+            item.name for item in self.multiworld.precollected_items[self.player]
+        }
+        for reward in data.EMERGENCY_REWARD_ITEMS:
+            self.assertIn(reward, item_names)
+
+
+class TestEmergencyRewardsUnshuffled(WorldTestBase):
+    game = "Grand Theft Auto Vice City"
+
+    def test_reward_items_absent_when_not_shuffled(self) -> None:
+        # Shuffle defaults off, so the five ability items grant vanilla and stay
+        # out of the pool even with emergency vehicles enabled.
+        item_names = {item.name for item in self.multiworld.itempool}
+        item_names |= {
+            item.name for item in self.multiworld.precollected_items[self.player]
+        }
+        for reward in data.EMERGENCY_REWARD_ITEMS:
+            self.assertNotIn(reward, item_names)
+
+
+class TestEmergencyRewardsRequireVehicles(WorldTestBase):
+    game = "Grand Theft Auto Vice City"
+    options: ClassVar[dict] = {
+        "shuffle_emergency_rewards": True, "enable_emergency_vehicles": False,
+    }
+
+    def test_reward_items_absent_without_the_vehicles_class(self) -> None:
+        # Shuffle on but the emergency-vehicles class off: the toggle AND keeps
+        # the reward items out of the pool, since there is nothing to complete.
+        item_names = {item.name for item in self.multiworld.itempool}
+        item_names |= {
+            item.name for item in self.multiworld.precollected_items[self.player]
+        }
+        for reward in data.EMERGENCY_REWARD_ITEMS:
+            self.assertNotIn(reward, item_names)
+
+
+class TestConfigFlagsShuffleWithoutVehicles(WorldTestBase):
+    game = "Grand Theft Auto Vice City"
+    options: ClassVar[dict] = {
+        "shuffle_emergency_rewards": True, "enable_emergency_vehicles": False,
+    }
+
+    def test_emergency_flag_off_when_vehicles_off(self) -> None:
+        # Shuffle on but vehicles off: no ability item is in the pool, so the
+        # config flag must report NOT shuffled, or the SCM would suppress the
+        # vanilla grants with nothing to replace them.
+        config = self.world.fill_slot_data()["config_globals"]
+        self.assertEqual(config[str(scm.EMERGENCY_SHUFFLED_GLOBAL)], 0)
+        self.assertEqual(config[str(scm.PACKAGES_SHUFFLED_GLOBAL)], 1)
+
+
+class TestConfigFlagsShuffled(WorldTestBase):
+    game = "Grand Theft Auto Vice City"
+    options: ClassVar[dict] = {"shuffle_emergency_rewards": True}
+
+    def test_emergency_flag_on_when_shuffled_and_vehicles_on(self) -> None:
+        config = self.world.fill_slot_data()["config_globals"]
+        self.assertEqual(config[str(scm.EMERGENCY_SHUFFLED_GLOBAL)], 1)
+
+
 class TestRejections(WorldTestBase):
     game = "Grand Theft Auto Vice City"
     auto_construct = False
@@ -191,7 +262,8 @@ class TestTables(WorldTestBase):
     def test_optional_class_counts(self) -> None:
         classes = data.optional_check_classes()
         self.assertEqual(len(classes["hidden_packages"][1]), 100)
-        self.assertEqual(len(classes["rampages_stunts"][1]), 71)
+        self.assertEqual(len(classes["rampages"][1]), 35)
+        self.assertEqual(len(classes["stunt_jumps"][1]), 36)
         self.assertEqual(len(classes["emergency_vehicles"][1]), 56)
         self.assertEqual(len(classes["side_events"][1]), 14)
         self.assertEqual(len(classes["robbable_stores"][1]), 15)
@@ -222,10 +294,19 @@ class TestReservedGlobals(WorldTestBase):
         completions = set(scm.completion_watch().keys())
         self.assertEqual(len(unlocks), len(scm.UNLOCK_KEYS))
         self.assertEqual(len(completions), len(LOCATION_NAME_TO_ID))
+        rewards = {scm.reward_global(key) for key in scm.REWARD_KEYS}
+        config = {scm.PACKAGES_SHUFFLED_GLOBAL, scm.EMERGENCY_SHUFFLED_GLOBAL}
+        self.assertEqual(len(rewards), len(scm.REWARD_KEYS))
         self.assertTrue(seed_hash.isdisjoint(unlocks))
         self.assertTrue(seed_hash.isdisjoint(completions))
         self.assertTrue(unlocks.isdisjoint(completions))
-        self.assertNotIn(scm.APPLIED_INDEX_GLOBAL, unlocks | completions)
+        # The reward and config-flag blocks must not collide with anything else,
+        # and must stay within the declared reserved block the foundation sizes.
+        self.assertTrue(rewards.isdisjoint(seed_hash | unlocks | completions | config))
+        self.assertTrue(config.isdisjoint(seed_hash | unlocks | completions | rewards))
+        for global_index in rewards | config:
+            self.assertLessEqual(global_index, scm.highest_reserved_global())
+        self.assertNotIn(scm.APPLIED_INDEX_GLOBAL, unlocks | completions | rewards | config)
 
     def test_item_globals_cover_every_progression_item(self) -> None:
         mapping = scm.item_globals()
@@ -233,6 +314,16 @@ class TestReservedGlobals(WorldTestBase):
             self.assertIn(ITEM_NAME_TO_ID[data.progressive_item_name(strand)], mapping)
         for area_item in data.AREA_ITEMS:
             self.assertIn(ITEM_NAME_TO_ID[area_item], mapping)
+
+    def test_one_shot_effects_are_disjoint_from_count_globals(self) -> None:
+        # A consumable is applied once past the applied-index; a reward/unlock
+        # item counts into a global. No item may be both, or it would double.
+        effect_ids = set(scm.item_effects().keys())
+        count_ids = set(scm.item_globals().keys())
+        self.assertTrue(effect_ids.isdisjoint(count_ids))
+        # Every consumable effect names a known type.
+        for effect in scm.item_effects().values():
+            self.assertIn(effect[0], {"cash", "weapon", "health", "armor"})
 
     def test_completion_watch_covers_every_location(self) -> None:
         watch = scm.completion_watch()
@@ -265,3 +356,16 @@ class TestClassToggles(WorldTestBase):
         # Rampages stay on (default), so a rampage check exists this seed.
         names = {loc.name for loc in self.multiworld.get_locations(self.player)}
         self.assertIn(data.rampage_name(1), names)
+
+
+class TestRampagesStuntsSplit(WorldTestBase):
+    game = "Grand Theft Auto Vice City"
+    options: ClassVar[dict] = {"enable_rampages": True, "enable_stunt_jumps": False}
+
+    def test_the_two_toggles_are_independent(self) -> None:
+        # Rampages on, stunt jumps off: only the rampage locations exist.
+        names = {loc.name for loc in self.multiworld.get_locations(self.player)}
+        self.assertIn(data.rampage_name(1), names)
+        self.assertIn(data.rampage_name(data.RAMPAGE_COUNT), names)
+        self.assertNotIn(data.stunt_jump_name(1), names)
+        self.assertNotIn(data.stunt_jump_name(data.STUNT_JUMP_COUNT), names)

@@ -173,6 +173,8 @@ class GTAViceCityContext(CommonContext):
             slot_data = args.get("slot_data") or {}
             self.asi_config = {
                 "item_globals": slot_data.get("item_globals", {}),
+                "item_effects": slot_data.get("item_effects", {}),
+                "config_globals": slot_data.get("config_globals", {}),
                 "completion_watch": slot_data.get("completion_watch", {}),
             }
             self._schedule(self.setup_and_launch())
@@ -231,6 +233,8 @@ class GTAViceCityContext(CommonContext):
             await self.bridge.send_config(
                 self.asi_config.get("item_globals", {}),
                 self.asi_config.get("completion_watch", {}),
+                self.asi_config.get("item_effects", {}),
+                self.asi_config.get("config_globals", {}),
             )
         await self._resync_bridge()
 

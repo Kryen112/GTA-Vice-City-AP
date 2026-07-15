@@ -38,8 +38,15 @@ def main() -> int:
     print(f"- Applied index:  ${scm.APPLIED_INDEX_GLOBAL}  (ASI managed)")
     print(f"- Unlock globals: ${scm.UNLOCK_BASE}..${scm.UNLOCK_BASE + len(scm.UNLOCK_KEYS) - 1}"
           "  (ASI writes the received count; the SCM reads them in gates)")
-    print(f"- Completion:     ${scm.COMPLETION_BASE}..${scm.highest_reserved_global()}"
+    completion_top = scm.COMPLETION_BASE + len(locations.LOCATION_NAME_TO_ID) - 1
+    print(f"- Completion:     ${scm.COMPLETION_BASE}..${completion_top}"
           "  (the SCM sets to 1 on completion; the ASI polls them)")
+    reward_top = scm.REWARD_BASE + len(scm.REWARD_KEYS) - 1
+    print(f"- Reward globals: ${scm.REWARD_BASE}..${reward_top}"
+          "  (ASI writes 1 when the reward item is received; the SCM re-gates the "
+          "vanilla grant on it when its class is shuffled)")
+    print(f"- Config flags:   ${scm.PACKAGES_SHUFFLED_GLOBAL} packages_shuffled, "
+          f"${scm.EMERGENCY_SHUFFLED_GLOBAL} emergency_shuffled  (ASI stamps from slot_data)")
     print(f"- Highest reserved global: ${scm.highest_reserved_global()} "
           "(reference it once so Sanny grows the global space to cover the block)")
     print()
@@ -70,6 +77,15 @@ def main() -> int:
         print(f"- {area}: unlock global ${scm.unlock_global(area)}. When it is >= 1, "
               "open the area (Mainland: delete roadblocks $1781/$1782/$1783 and set "
               "$847 = 1, mirroring the Phnom Penh '86 flip).")
+
+    print()
+    print("## Persistent-reward globals (re-gate the vanilla grant on these when "
+          "the reward class is shuffled)")
+    reward_activity = {item: activity for activity, item in data.EMERGENCY_REWARD_BY_ACTIVITY.items()}
+    for reward in data.PERSISTENT_REWARD_ITEMS:
+        activity = reward_activity.get(reward)
+        source = f"emergency: {activity} completion" if activity else "hidden-package reward"
+        print(f"- ${scm.reward_global(reward)}  {reward}  ({source})")
 
     print()
     print("## Completion globals for non-mission locations (set to 1 when the "

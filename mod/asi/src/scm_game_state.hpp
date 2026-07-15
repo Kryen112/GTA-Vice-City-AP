@@ -26,7 +26,9 @@ class ScmGameState : public GameState {
 
   // GameState, called from the bridge thread.
   void ApplyConfig(const std::map<std::int64_t, int>& item_globals,
-                   const std::map<int, std::int64_t>& completion_watch) override;
+                   const std::map<int, std::int64_t>& completion_watch,
+                   const std::map<std::int64_t, ItemEffect>& item_effects,
+                   const std::map<int, int>& config_globals) override;
   std::string SeedHash() override;
   void StampSeedHash(const std::string& expected) override;
   void ApplyItems(const std::vector<std::pair<std::int64_t, std::int64_t>>& items) override;
@@ -43,10 +45,14 @@ class ScmGameState : public GameState {
   static void SetGlobal(int index, int value);
   static std::string ReadSeedHash();
   static void WriteSeedHash(const std::string& hash);
+  // Applies one consumable effect to the live player through plugin-sdk.
+  static void ApplyEffect(const ItemEffect& effect);
 
   Logger logger_;
   std::mutex mutex_;
   std::map<std::int64_t, int> item_globals_;
+  std::map<std::int64_t, ItemEffect> item_effects_;
+  std::map<int, int> config_globals_;
   std::map<int, std::int64_t> completion_watch_;
   std::map<std::int64_t, int> location_to_global_;
   std::vector<std::pair<std::int64_t, std::int64_t>> items_;

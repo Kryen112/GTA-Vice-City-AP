@@ -118,7 +118,25 @@ void BridgeClient::HandleMessage(const json& message) {
            it != message.at("completion_watch").end(); ++it) {
         completion_watch[std::stoi(it.key())] = it.value().get<std::int64_t>();
       }
-      game_->ApplyConfig(item_globals, completion_watch);
+      std::map<std::int64_t, ItemEffect> item_effects;
+      if (message.contains("item_effects")) {
+        for (auto it = message.at("item_effects").begin();
+             it != message.at("item_effects").end(); ++it) {
+          const json& descriptor = it.value();
+          ItemEffect effect;
+          effect.type = descriptor.at(0).get<std::string>();
+          if (descriptor.size() > 1) effect.amount = descriptor.at(1).get<int>();
+          item_effects[std::stoll(it.key())] = effect;
+        }
+      }
+      std::map<int, int> config_globals;
+      if (message.contains("config_globals")) {
+        for (auto it = message.at("config_globals").begin();
+             it != message.at("config_globals").end(); ++it) {
+          config_globals[std::stoi(it.key())] = it.value().get<int>();
+        }
+      }
+      game_->ApplyConfig(item_globals, completion_watch, item_effects, config_globals);
     } else if (type == msg::kItems) {
       std::vector<std::pair<std::int64_t, std::int64_t>> items;
       for (const json& entry : message.at("items")) {

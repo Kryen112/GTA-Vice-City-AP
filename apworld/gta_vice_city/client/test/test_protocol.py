@@ -35,6 +35,8 @@ class TestFraming(unittest.TestCase):
     def test_config_message_round_trip(self) -> None:
         message = protocol.config_message(
             {"542100000": 9010}, {"9035": 542000000, "9036": 542000001},
+            {"542100050": ["cash", 5000], "542100051": ["weapon"]},
+            {"9377": 1, "9378": 0},
         )
         self.assertEqual(_round_trip(message), [message])
 

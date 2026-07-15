@@ -111,7 +111,61 @@ PACKAGE_REWARD_ITEMS: list[str] = [
 
 AREA_ITEMS: list[str] = ["Mainland Access"]
 
-FILLER_ITEMS: list[str] = ["Cash Bundle", "Ammo Top-up"]
+# The five emergency-vehicle completion rewards. When the shuffle option is on
+# they enter the pool as useful items and the vanilla full-completion grant is
+# suppressed; when off they grant vanilla and stay out of the pool.
+EMERGENCY_REWARD_ITEMS: list[str] = [
+    "Infinite Sprint", "Fireproof", "Max Armor Upgrade", "Taxi Nitro", "Max Health Upgrade",
+]
+
+# Which reward item each activity's full completion grants.
+EMERGENCY_REWARD_BY_ACTIVITY: dict[str, str] = {
+    "Paramedic": "Infinite Sprint",
+    "Firefighter": "Fireproof",
+    "Vigilante": "Max Armor Upgrade",
+    "Taxi": "Taxi Nitro",
+    "Pizza": "Max Health Upgrade",
+}
+
+# Cash filler comes in fixed denominations mirroring the suppressed mission
+# rewards; each grants its face value once. Money never gates logic.
+CASH_DENOMINATIONS: list[int] = [500, 1000, 2000, 5000, 10000, 25000, 50000]
+
+
+def cash_item_name(amount: int) -> str:
+    return f"Cash ${amount:,}"
+
+
+# Consumable filler: the cash denominations plus one-shot health and armor top-
+# ups and a random weapon pickup. All one-shot, all filler, none gate logic.
+FILLER_ITEMS: list[str] = (
+    [cash_item_name(amount) for amount in CASH_DENOMINATIONS]
+    + ["Weapon Pickup", "Health Top-up", "Armor Top-up"]
+)
+
+# The package cash reward has no vanilla package grant (the VC package system
+# gives no money), so it is a one-shot cash item like the filler denominations,
+# not a re-gated pickup.
+PACKAGE_CASH_REWARD = "$100,000"
+
+# Persistent rewards re-gate a vanilla respawning grant (safehouse weapon pickup,
+# car generator, or completion ability) onto an AP reward global instead of the
+# vanilla trigger. The ten package weapon/vehicle rewards plus the five
+# emergency abilities. Order is stable: it drives the reward-global indices.
+PERSISTENT_REWARD_ITEMS: list[str] = (
+    [item for item in PACKAGE_REWARD_ITEMS if item != PACKAGE_CASH_REWARD]
+    + EMERGENCY_REWARD_ITEMS
+)
+
+# One-shot consumable effects, each applied once by the ASI past the saved
+# applied-index. (item name -> (effect type, *params)); cash carries its amount.
+CONSUMABLE_EFFECTS: dict[str, tuple] = {
+    **{cash_item_name(amount): ("cash", amount) for amount in CASH_DENOMINATIONS},
+    PACKAGE_CASH_REWARD: ("cash", 100000),
+    "Weapon Pickup": ("weapon",),
+    "Health Top-up": ("health",),
+    "Armor Top-up": ("armor",),
+}
 
 # Other check classes beyond story missions and hidden packages. Counts come
 # from the game design in PLAN and the decompiled mission table. These are
@@ -178,10 +232,13 @@ def optional_check_classes() -> dict[str, tuple[str, list[str]]]:
             "enable_hidden_packages",
             [hidden_package_name(index) for index in range(1, HIDDEN_PACKAGE_COUNT + 1)],
         ),
-        "rampages_stunts": (
-            "enable_rampages_stunts",
-            [rampage_name(index) for index in range(1, RAMPAGE_COUNT + 1)]
-            + [stunt_jump_name(index) for index in range(1, STUNT_JUMP_COUNT + 1)],
+        "rampages": (
+            "enable_rampages",
+            [rampage_name(index) for index in range(1, RAMPAGE_COUNT + 1)],
+        ),
+        "stunt_jumps": (
+            "enable_stunt_jumps",
+            [stunt_jump_name(index) for index in range(1, STUNT_JUMP_COUNT + 1)],
         ),
         "emergency_vehicles": ("enable_emergency_vehicles", emergency_names()),
         "side_events": ("enable_side_events", list(SIDE_EVENTS)),

@@ -1,17 +1,41 @@
 #include "scm_game_state.hpp"
 
+#include <algorithm>
+#include <cstdlib>
+
 #include <plugin.h>
 #include <CMessages.h>
 #include <CTheScripts.h>
+#include <CWorld.h>
+#include <CPlayerPed.h>
+#include <CWeaponInfo.h>
+#include <CStreaming.h>
+#include <common.h>
 
 namespace gtavc {
 namespace {
 // Fixed part of the reserved layout, matching apworld scm.py: the seed hash
 // occupies four globals from $9000, sixteen hex characters packed four per
-// global. The unlock and completion globals are dynamic (from the config).
+// global. The applied-index is $9005. The unlock, reward, completion, and
+// config-flag globals are dynamic (from the config).
 constexpr int kSeedHashBase = 9000;
 constexpr int kSeedHashGlobalCount = 4;
 constexpr int kSeedHashLength = kSeedHashGlobalCount * 4;
+constexpr int kAppliedIndexGlobal = 9005;
+// The streaming flag the give-weapon script opcode uses (load as a dependency).
+constexpr int kStreamModelDependency = 0x04;
+// A weapon pickup grants two magazines: a reloaded weapon plus a spare, floored
+// so single-load weapons (shotgun/stubby/sniper, magazine 1) still give a usable
+// amount rather than two rounds.
+constexpr unsigned int kPickupMagazines = 2;
+constexpr unsigned int kMinPickupAmmo = 10;
+// The pool the random weapon pickup draws from: standard on-foot guns, not the
+// heavy ordnance (those are the package rewards) or melee/throwables.
+constexpr eWeaponType kWeaponPool[] = {
+    WEAPONTYPE_PISTOL, WEAPONTYPE_PYTHON, WEAPONTYPE_SHOTGUN, WEAPONTYPE_SPAS12_SHOTGUN,
+    WEAPONTYPE_STUBBY_SHOTGUN, WEAPONTYPE_TEC9, WEAPONTYPE_UZI, WEAPONTYPE_SILENCED_INGRAM,
+    WEAPONTYPE_MP5, WEAPONTYPE_M4, WEAPONTYPE_RUGER, WEAPONTYPE_SNIPERRIFLE, WEAPONTYPE_LASERSCOPE,
+};
 }  // namespace
 
 ScmGameState::ScmGameState(Logger logger) : logger_(std::move(logger)) {}
@@ -50,15 +74,57 @@ void ScmGameState::WriteSeedHash(const std::string& hash) {
 }
 
 void ScmGameState::ApplyConfig(const std::map<std::int64_t, int>& item_globals,
-                               const std::map<int, std::int64_t>& completion_watch) {
+                               const std::map<int, std::int64_t>& completion_watch,
+                               const std::map<std::int64_t, ItemEffect>& item_effects,
+                               const std::map<int, int>& config_globals) {
   std::lock_guard<std::mutex> lock(mutex_);
   item_globals_ = item_globals;
+  item_effects_ = item_effects;
+  config_globals_ = config_globals;
   completion_watch_ = completion_watch;
   location_to_global_.clear();
   for (const auto& [global_index, location] : completion_watch_) {
     location_to_global_[location] = global_index;
   }
   if (logger_) logger_("config applied");
+}
+
+void ScmGameState::ApplyEffect(const ItemEffect& effect) {
+  CPlayerPed* player = FindPlayerPed();
+  if (player == nullptr) return;
+  if (effect.type == "cash") {
+    CWorld::Players[0].m_nMoney += effect.amount;
+  } else if (effect.type == "health") {
+    player->m_fHealth = static_cast<float>(CWorld::Players[0].m_nMaxHealth);
+  } else if (effect.type == "armor") {
+    player->m_fArmour = static_cast<float>(CWorld::Players[0].m_nMaxArmour);
+  } else if (effect.type == "weapon") {
+    // A random weapon pickup: give the gun if its slot is free, add two of its
+    // magazines if already held, or top up the different gun occupying the slot,
+    // never overwriting a weapon the player already has.
+    const int pool_size = sizeof(kWeaponPool) / sizeof(kWeaponPool[0]);
+    const eWeaponType weapon = kWeaponPool[std::rand() % pool_size];
+    const int slot = player->GetWeaponSlot(weapon);
+    if (slot < 0 || slot >= 10) return;
+    CWeapon& held = player->m_aWeapons[slot];
+    if (held.m_eWeaponType != weapon && held.m_eWeaponType != WEAPONTYPE_UNARMED) {
+      const CWeaponInfo* held_info = CWeaponInfo::GetWeaponInfo(held.m_eWeaponType);
+      if (held_info != nullptr) {
+        held.m_nAmmoTotal += std::max(kMinPickupAmmo, kPickupMagazines * held_info->m_nAmountofAmmunition);
+      }
+      return;
+    }
+    const CWeaponInfo* info = CWeaponInfo::GetWeaponInfo(weapon);
+    if (info == nullptr) return;
+    if (held.m_eWeaponType == WEAPONTYPE_UNARMED) {
+      // Giving a new weapon needs its model streamed in first, as the SCM's own
+      // give-weapon opcode does; an already-held weapon already has it loaded.
+      if (info->m_nModelId >= 0) CStreaming::RequestModel(info->m_nModelId, kStreamModelDependency);
+      if (info->m_nModel2Id >= 0) CStreaming::RequestModel(info->m_nModel2Id, kStreamModelDependency);
+      CStreaming::LoadAllRequestedModels(false);
+    }
+    player->GiveWeapon(weapon, std::max(kMinPickupAmmo, kPickupMagazines * info->m_nAmountofAmmunition), false);
+  }
 }
 
 std::string ScmGameState::SeedHash() {
@@ -138,6 +204,31 @@ void ScmGameState::OnGameFrame() {
     for (const auto& [global_index, count] : counts) SetGlobal(global_index, count);
     items_dirty_ = false;
     if (logger_) logger_("applied items to unlock globals");
+  }
+
+  // Stamp the config flags every frame so the SCM knows which reward groups are
+  // shuffled, even after the new-game zeroing clears them.
+  for (const auto& [global_index, value] : config_globals_) {
+    SetGlobal(global_index, value);
+  }
+
+  // Apply one-shot consumables (cash, weapon, health, armour) once, past the
+  // saved applied-index. Only when the player exists, so a grant is never lost
+  // to a still-loading world; the index counts consumable items in received
+  // order and persists in the save.
+  if (FindPlayerPed() != nullptr) {
+    const int applied = GetGlobal(kAppliedIndexGlobal);
+    int consumable_count = 0;
+    for (const auto& [received_index, item_id] : items_) {
+      const auto effect = item_effects_.find(item_id);
+      if (effect == item_effects_.end()) continue;
+      if (consumable_count >= applied) ApplyEffect(effect->second);
+      ++consumable_count;
+    }
+    if (consumable_count > applied) {
+      SetGlobal(kAppliedIndexGlobal, consumable_count);
+      if (logger_) logger_("applied one-shot consumables");
+    }
   }
 
   std::map<int, int> current;

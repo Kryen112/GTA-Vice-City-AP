@@ -36,9 +36,12 @@ Client to ASI:
     welcome  {seed_hash}      accept; carries the expected seed hash to stamp
     refused  {reason}         reject this connection, with a player-facing reason
     config   {item_globals,   how the ASI maps play to the SCM: item id -> the
-              completion_watch} unlock global it counts toward, and completion
-                              global index -> location id to poll and report.
-                              Sent once per connection, before the resync.
+              item_effects,     count global it counts toward; item id -> a
+              config_globals,   one-shot effect applied once past the applied
+              completion_watch} index; config-flag global index -> value to
+                              stamp; and completion global index -> location id
+                              to poll and report. Sent once per connection,
+                              before the resync.
     items    {items}          the full cumulative received-items list, as
                               [index, item_id] pairs. The ASI re-derives all
                               unlock globals from this every time and re-applies
@@ -60,7 +63,7 @@ import base64
 import hashlib
 import json
 
-PROTOCOL_VERSION = 1
+PROTOCOL_VERSION = 2
 
 # A single frame, including its trailing newline, never exceeds this many bytes.
 MAX_FRAME_BYTES = 4096
@@ -109,8 +112,16 @@ def refused_message(reason: str) -> dict:
     return {"type": REFUSED, "protocol_version": PROTOCOL_VERSION, "reason": reason}
 
 
-def config_message(item_globals: dict, completion_watch: dict) -> dict:
-    return {"type": CONFIG, "item_globals": item_globals, "completion_watch": completion_watch}
+def config_message(
+    item_globals: dict, completion_watch: dict, item_effects: dict, config_globals: dict,
+) -> dict:
+    return {
+        "type": CONFIG,
+        "item_globals": item_globals,
+        "item_effects": item_effects,
+        "config_globals": config_globals,
+        "completion_watch": completion_watch,
+    }
 
 
 def items_message(items: list[tuple[int, int]]) -> dict:

@@ -13,15 +13,27 @@
 
 namespace gtavc {
 
+// A one-shot consumable effect applied once past the saved applied-index.
+// type is "cash" | "weapon" | "health" | "armor"; amount carries the cash value
+// and is unused for the others.
+struct ItemEffect {
+  std::string type;
+  int amount = 0;
+};
+
 class GameState {
  public:
   virtual ~GameState() = default;
 
-  // How received items map to SCM globals, sent once per connection before the
-  // resync. item_globals: AP item id -> the unlock global it counts toward.
+  // How received items map to SCM state, sent once per connection before the
+  // resync. item_globals: AP item id -> the count global it adds one to (unlock
+  // or persistent reward). item_effects: AP item id -> a one-shot consumable
+  // effect. config_globals: config-flag global index -> value to stamp.
   // completion_watch: completion global index -> AP location id to poll.
   virtual void ApplyConfig(const std::map<std::int64_t, int>& item_globals,
-                           const std::map<int, std::int64_t>& completion_watch) = 0;
+                           const std::map<int, std::int64_t>& completion_watch,
+                           const std::map<std::int64_t, ItemEffect>& item_effects,
+                           const std::map<int, int>& config_globals) = 0;
 
   // The seed hash to present on hello, read from the reserved SCM global.
   // Empty when no game has been started for this seed.

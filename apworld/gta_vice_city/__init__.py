@@ -4,8 +4,8 @@ Hand-written world. Content tables live in data.py; the item and location id
 maps in items.py and locations.py; the access-rule predicates in rules.py; the
 region graph in regions.py. There is no code-generation step.
 
-Check classes: story missions (always on), hidden packages, rampages and
-stunt jumps, emergency vehicle milestones, side events, robbable stores, and
+Check classes: story missions (always on), hidden packages, rampages, stunt
+jumps, emergency vehicle milestones, side events, robbable stores, and
 properties (purchases plus venue mission strands), each optional behind a
 toggle. The bridge client that talks to the game mod is the client subpackage,
 registered as a launcher component below.
@@ -132,6 +132,8 @@ class GTAViceCityWorld(World):
         options.goal.value = type(options.goal).options[slot_data["goal"]]
         options.hidden_packages_required.value = int(slot_data["hidden_packages_required"])
         options.death_link.value = int(bool(slot_data["death_link"]))
+        if "shuffle_emergency_rewards" in slot_data:
+            options.shuffle_emergency_rewards.value = int(bool(slot_data["shuffle_emergency_rewards"]))
         for name in CHECK_CLASS_OPTIONS:
             if name in slot_data:
                 getattr(options, name).value = int(bool(slot_data[name]))
@@ -179,6 +181,9 @@ class GTAViceCityWorld(World):
     def _item_enabled(self, name: str) -> bool:
         if name in data.PACKAGE_REWARD_ITEMS:
             return bool(self.options.enable_hidden_packages.value)
+        if name in data.EMERGENCY_REWARD_ITEMS:
+            return bool(self.options.enable_emergency_vehicles.value
+                        and self.options.shuffle_emergency_rewards.value)
         return True
 
     def create_item(self, name: str) -> GTAViceCityItem:
@@ -228,6 +233,9 @@ class GTAViceCityWorld(World):
         placeable.extend(data.AREA_ITEMS)
         placeable.extend(
             reward for reward in data.PACKAGE_REWARD_ITEMS if self._item_enabled(reward)
+        )
+        placeable.extend(
+            reward for reward in data.EMERGENCY_REWARD_ITEMS if self._item_enabled(reward)
         )
 
         active_locations = sum(
@@ -301,18 +309,32 @@ class GTAViceCityWorld(World):
 
     def fill_slot_data(self) -> dict:
         # The client reads this on connect and configures the ASI from it: how
-        # to turn received items into unlock-global writes, which completion
-        # globals to poll for checks, plus the goal so the client knows when to
-        # report it. The check-class toggles ride along so the Universal Tracker
-        # can regenerate the world from slot_data alone. JSON object keys are
-        # strings.
+        # to turn received items into count-global writes (item_globals), the
+        # one-shot consumable effects (item_effects), the config flags that tell
+        # the SCM which reward groups are shuffled (config_globals), which
+        # completion globals to poll for checks, plus the goal so the client
+        # knows when to report it. The check-class toggles ride along so the
+        # Universal Tracker can regenerate the world from slot_data alone. JSON
+        # object keys are strings.
         return {
             "goal": self.options.goal.current_key,
             "hidden_packages_required": self.options.hidden_packages_required.value,
             "death_link": bool(self.options.death_link.value),
+            "shuffle_emergency_rewards": bool(self.options.shuffle_emergency_rewards.value),
             "item_globals": {
                 str(item_id): global_index
                 for item_id, global_index in scm.item_globals().items()
+            },
+            "item_effects": {
+                str(item_id): effect for item_id, effect in scm.item_effects().items()
+            },
+            "config_globals": {
+                str(global_index): value
+                for global_index, value in scm.config_flags(
+                    bool(self.options.enable_hidden_packages.value),
+                    bool(self.options.enable_emergency_vehicles.value
+                         and self.options.shuffle_emergency_rewards.value),
+                ).items()
             },
             "completion_watch": {
                 str(global_index): location_id

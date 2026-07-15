@@ -57,7 +57,8 @@ LOCATION_NAME_TO_ID: dict[str, int] = {
 LOCATION_GROUPS: dict[str, list[str]] = {
     "Story Missions": list(STORY_MISSION_NAMES),
     "Hidden Packages": list(OPTIONAL_CLASSES["hidden_packages"][1]),
-    "Rampages and Stunt Jumps": list(OPTIONAL_CLASSES["rampages_stunts"][1]),
+    "Rampages": list(OPTIONAL_CLASSES["rampages"][1]),
+    "Stunt Jumps": list(OPTIONAL_CLASSES["stunt_jumps"][1]),
     "Emergency Vehicle Missions": list(OPTIONAL_CLASSES["emergency_vehicles"][1]),
     "Side Events": list(OPTIONAL_CLASSES["side_events"][1]),
     "Robbable Stores": list(OPTIONAL_CLASSES["robbable_stores"][1]),

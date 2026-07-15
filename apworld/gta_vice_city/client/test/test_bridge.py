@@ -47,6 +47,7 @@ class Recorder:
         if self.config is not None:
             await bridge.send_config(
                 self.config["item_globals"], self.config["completion_watch"],
+                self.config.get("item_effects", {}), self.config.get("config_globals", {}),
             )
         await bridge.send_items(self.resync_items)
         await bridge.send_checked(self.resync_checked)

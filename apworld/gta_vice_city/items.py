@@ -1,8 +1,9 @@
 """Item tables. Names, ids, classification, and groups, derived from data.py.
 
 Classification is decided here in one place. Progressive giver unlocks and
-area access are progression; package rewards are useful; cash and ammo are
-filler. Money never gates logic, so cash is never progression.
+area access are progression; package rewards and emergency-vehicle rewards are
+useful; cash denominations, the weapon pickup, and the health and armor top-ups
+are filler. Money never gates logic, so cash is never progression.
 """
 
 from __future__ import annotations
@@ -31,6 +32,7 @@ _ORDERED_ITEM_NAMES: list[str] = (
     STORY_PROGRESSIVE_NAMES
     + data.AREA_ITEMS
     + data.PACKAGE_REWARD_ITEMS
+    + data.EMERGENCY_REWARD_ITEMS
     + data.FILLER_ITEMS
     + VENUE_PROGRESSIVE_NAMES
 )
@@ -45,7 +47,7 @@ FILLER_NAMES: list[str] = list(data.FILLER_ITEMS)
 def _classify(name: str) -> ItemClassification:
     if name in PROGRESSIVE_ITEM_NAMES or name in data.AREA_ITEMS:
         return ItemClassification.progression
-    if name in data.PACKAGE_REWARD_ITEMS:
+    if name in data.PACKAGE_REWARD_ITEMS or name in data.EMERGENCY_REWARD_ITEMS:
         return ItemClassification.useful
     return ItemClassification.filler
 
@@ -58,6 +60,7 @@ ITEM_GROUPS: dict[str, list[str]] = {
     "Progressive Unlocks": list(PROGRESSIVE_ITEM_NAMES),
     "Area Access": list(data.AREA_ITEMS),
     "Package Rewards": list(data.PACKAGE_REWARD_ITEMS),
+    "Emergency Rewards": list(data.EMERGENCY_REWARD_ITEMS),
     "Filler": list(data.FILLER_ITEMS),
 }
 

@@ -19,10 +19,14 @@ class FakeGameState : public GameState {
       : presented_seed_hash_(std::move(presented_seed_hash)) {}
 
   void ApplyConfig(const std::map<std::int64_t, int>& item_globals,
-                   const std::map<int, std::int64_t>& completion_watch) override {
+                   const std::map<int, std::int64_t>& completion_watch,
+                   const std::map<std::int64_t, ItemEffect>& item_effects,
+                   const std::map<int, int>& config_globals) override {
     std::lock_guard<std::mutex> lock(mutex_);
     item_globals_ = item_globals;
     completion_watch_ = completion_watch;
+    item_effects_ = item_effects;
+    config_globals_ = config_globals;
   }
 
   std::string SeedHash() override {
@@ -101,11 +105,23 @@ class FakeGameState : public GameState {
     return completion_watch_;
   }
 
+  std::map<std::int64_t, ItemEffect> ItemEffects() {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return item_effects_;
+  }
+
+  std::map<int, int> ConfigGlobals() {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return config_globals_;
+  }
+
  private:
   std::mutex mutex_;
   std::string presented_seed_hash_;
   std::string stamped_seed_hash_;
   std::map<std::int64_t, int> item_globals_;
+  std::map<std::int64_t, ItemEffect> item_effects_;
+  std::map<int, int> config_globals_;
   std::map<int, std::int64_t> completion_watch_;
   std::vector<std::pair<std::int64_t, std::int64_t>> applied_items_;
   std::vector<std::int64_t> checked_;

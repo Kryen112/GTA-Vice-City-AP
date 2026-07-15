@@ -31,6 +31,8 @@ EMITTED_CHECK = 542000042
 CONFIG = {
     "item_globals": {"542100000": 9010, "542100001": 9011},
     "completion_watch": {"9035": 542000000, "9036": 542000042},
+    "item_effects": {"542100050": ["cash", 5000], "542100051": ["weapon"]},
+    "config_globals": {"9377": 1, "9378": 0},
 }
 
 
@@ -50,7 +52,10 @@ class Recorder:
 
     async def on_connected(self, bridge: AsiBridge) -> None:
         self.connected += 1
-        await bridge.send_config(CONFIG["item_globals"], CONFIG["completion_watch"])
+        await bridge.send_config(
+            CONFIG["item_globals"], CONFIG["completion_watch"],
+            CONFIG["item_effects"], CONFIG["config_globals"],
+        )
         await bridge.send_items(RESYNC_ITEMS)
         await bridge.send_checked(RESYNC_CHECKED)
 
@@ -96,6 +101,10 @@ async def run(harness: str) -> int:
         failures.append(f"item_globals {summary.get('item_globals')} != {CONFIG['item_globals']}")
     if summary.get("completion_watch") != CONFIG["completion_watch"]:
         failures.append(f"completion_watch {summary.get('completion_watch')} != {CONFIG['completion_watch']}")
+    if summary.get("item_effects") != CONFIG["item_effects"]:
+        failures.append(f"item_effects {summary.get('item_effects')} != {CONFIG['item_effects']}")
+    if summary.get("config_globals") != CONFIG["config_globals"]:
+        failures.append(f"config_globals {summary.get('config_globals')} != {CONFIG['config_globals']}")
 
     if failures:
         print("FAIL: C++ ASI interop check")

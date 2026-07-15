@@ -11,7 +11,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import ClassVar
 
-from Options import Choice, DeathLink, DefaultOnToggle, NamedRange, PerGameCommonOptions, StartInventoryPool
+from Options import Choice, DeathLink, DefaultOnToggle, NamedRange, PerGameCommonOptions, StartInventoryPool, Toggle
 
 
 class Goal(Choice):
@@ -47,17 +47,28 @@ class EnableHiddenPackages(DefaultOnToggle):
     display_name = "Enable hidden packages"
 
 
-class EnableRampagesStunts(DefaultOnToggle):
-    """If on, the 35 rampages and 36 unique stunt jumps are checks. This world
-    creates no locations for the class yet; the toggle drives the option
-    surface and the 100 percent goal requirement."""
-    display_name = "Enable rampages and stunt jumps"
+class EnableRampages(DefaultOnToggle):
+    """If on, the 35 rampages are checks."""
+    display_name = "Enable rampages"
+
+
+class EnableStuntJumps(DefaultOnToggle):
+    """If on, the 36 unique stunt jumps are checks."""
+    display_name = "Enable stunt jumps"
 
 
 class EnableEmergencyVehicles(DefaultOnToggle):
     """If on, the per-level emergency vehicle milestones (paramedic, vigilante,
     firefighter, taxi, pizza) are checks."""
     display_name = "Enable emergency vehicle missions"
+
+
+class ShuffleEmergencyRewards(Toggle):
+    """If on, the five emergency-vehicle completion rewards (infinite sprint,
+    fireproof, max armor, taxi nitro, max health) become useful items in the
+    pool and the vanilla full-completion grant is suppressed. Has no effect
+    unless emergency vehicle missions are enabled."""
+    display_name = "Shuffle emergency vehicle rewards"
 
 
 class EnableProperties(DefaultOnToggle):
@@ -79,7 +90,7 @@ class EnableSideEvents(DefaultOnToggle):
 # The check-class toggles, by option attribute name. Story missions are always
 # on and are not listed. The 100 percent goal requires every one of these true.
 CHECK_CLASS_OPTIONS: list[str] = [
-    "enable_hidden_packages", "enable_rampages_stunts",
+    "enable_hidden_packages", "enable_rampages", "enable_stunt_jumps",
     "enable_emergency_vehicles", "enable_properties",
     "enable_robbable_stores", "enable_side_events",
 ]
@@ -91,9 +102,11 @@ class GTAViceCityOptions(PerGameCommonOptions):
     goal: Goal
     hidden_packages_required: HiddenPackagesRequired
     enable_hidden_packages: EnableHiddenPackages
-    enable_rampages_stunts: EnableRampagesStunts
+    enable_rampages: EnableRampages
+    enable_stunt_jumps: EnableStuntJumps
     enable_emergency_vehicles: EnableEmergencyVehicles
     enable_properties: EnableProperties
     enable_robbable_stores: EnableRobbableStores
     enable_side_events: EnableSideEvents
+    shuffle_emergency_rewards: ShuffleEmergencyRewards
     death_link: DeathLink
