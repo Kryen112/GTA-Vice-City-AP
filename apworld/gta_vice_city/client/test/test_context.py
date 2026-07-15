@@ -395,6 +395,7 @@ class TestItemToast(unittest.TestCase):
                 context = _context()
                 self._setup(context)
                 with mock.patch.object(context, "_schedule") as schedule, \
+                     mock.patch.object(context, "_send_toast", mock.Mock()), \
                      mock.patch.object(context, "_item_toast_text", return_value="X"):
                     context.on_print_json(
                         {"type": "ItemSend", "receiving": 2, "data": [],
