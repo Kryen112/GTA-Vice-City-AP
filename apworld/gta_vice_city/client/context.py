@@ -187,6 +187,34 @@ class GTAViceCityContext(CommonContext):
         self._background_tasks.add(task)
         task.add_done_callback(self._background_tasks.discard)
 
+    def on_print_json(self, args: dict) -> None:
+        super().on_print_json(args)
+        # Turn each item movement that concerns this player into an in-game
+        # toast, so completing a check shows what it sent or found.
+        if args.get("type") != "ItemSend" or self.is_uninteresting_item_send(args):
+            return
+        text = self._item_toast_text(args)
+        if text:
+            self._schedule(self._send_toast(text))
+
+    def _item_toast_text(self, args: dict) -> str | None:
+        item = args["item"]
+        receiving = args["receiving"]
+        item_name = self.item_names.lookup_in_slot(item.item, receiving)
+        found_it = self.slot_concerns_self(item.player)
+        got_it = self.slot_concerns_self(receiving)
+        if found_it and got_it:
+            return f"You found your {item_name}"
+        if found_it:
+            return f"You sent {item_name} to {self.player_names.get(receiving, str(receiving))}"
+        if got_it:
+            return f"{self.player_names.get(item.player, str(item.player))} found your {item_name}"
+        return None
+
+    async def _send_toast(self, text: str) -> None:
+        if self.bridge.connected:
+            await self.bridge.send_toast(text)
+
     def _received_item_pairs(self) -> list[tuple[int, int]]:
         return [(index, item.item) for index, item in enumerate(self.items_received)]
 

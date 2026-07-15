@@ -343,5 +343,72 @@ class TestModInstall(unittest.TestCase):
         asyncio.run(scenario())
 
 
+class TestItemToast(unittest.TestCase):
+    def _setup(self, context):
+        context.slot = 1
+        context.slot_info = {}
+        context.player_names = {1: "Me", 2: "PlayerTwo"}
+
+    def _text(self, item_player: int, receiving: int) -> str | None:
+        async def scenario() -> str | None:
+            with _fake_settings(""):
+                from NetUtils import NetworkItem
+                context = _context()
+                self._setup(context)
+                with mock.patch.object(context.item_names, "lookup_in_slot",
+                                       return_value="Progressive Cortez"):
+                    return context._item_toast_text(
+                        {"type": "ItemSend", "receiving": receiving,
+                         "item": NetworkItem(42, 100, item_player, 0)})
+
+        return asyncio.run(scenario())
+
+    def test_found_own_item(self) -> None:
+        self.assertEqual(self._text(1, 1), "You found your Progressive Cortez")
+
+    def test_sent_to_another_player(self) -> None:
+        self.assertEqual(self._text(1, 2), "You sent Progressive Cortez to PlayerTwo")
+
+    def test_another_player_found_mine(self) -> None:
+        self.assertEqual(self._text(2, 1), "PlayerTwo found your Progressive Cortez")
+
+    def test_send_toast_only_when_the_mod_is_connected(self) -> None:
+        async def scenario() -> None:
+            with _fake_settings(""):
+                context = _context()
+                with mock.patch.object(type(context.bridge), "connected",
+                                       new_callable=mock.PropertyMock) as connected, \
+                     mock.patch.object(context.bridge, "send_toast") as send_toast:
+                    connected.return_value = False
+                    await context._send_toast("hi")
+                    send_toast.assert_not_called()
+                    connected.return_value = True
+                    await context._send_toast("hi")
+                    send_toast.assert_awaited_once_with("hi")
+
+        asyncio.run(scenario())
+
+    def test_on_print_json_toasts_my_event_and_ignores_others(self) -> None:
+        async def scenario() -> None:
+            with _fake_settings(""):
+                from NetUtils import NetworkItem
+                context = _context()
+                self._setup(context)
+                with mock.patch.object(context, "_schedule") as schedule, \
+                     mock.patch.object(context, "_item_toast_text", return_value="X"):
+                    context.on_print_json(
+                        {"type": "ItemSend", "receiving": 2, "data": [],
+                         "item": NetworkItem(42, 100, 1, 0)})
+                    schedule.assert_called_once()  # my check, sent to PlayerTwo
+                    schedule.reset_mock()
+                    # An event between two other players concerns nobody here.
+                    context.on_print_json(
+                        {"type": "ItemSend", "receiving": 2, "data": [],
+                         "item": NetworkItem(42, 100, 3, 0)})
+                    schedule.assert_not_called()
+
+        asyncio.run(scenario())
+
+
 if __name__ == "__main__":
     unittest.main()
