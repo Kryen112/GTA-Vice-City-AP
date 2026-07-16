@@ -214,7 +214,8 @@ class TestDeferredClassIslands(WorldTestBase):
         # jump (provisionally mainland) wait on Mainland Access; a start-island
         # store and chopper checkpoint do not. This closes the loop where the fill
         # could otherwise strand Mainland Access behind a mainland-only check.
-        for start_name in ["Robbable Store 01", "Ocean Beach Chopper Checkpoint"]:
+        for start_name in ["Robbable Store 01", "Ocean Beach Chopper Checkpoint",
+                            "RC Bandit Race", "Cone Crazy"]:
             self.assertTrue(self.can_reach_location(start_name), start_name)
         mainland = ["Robbable Store 03", "Hotring", "Unique Stunt Jump 01"]
         for name in mainland:

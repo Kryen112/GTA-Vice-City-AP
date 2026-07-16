@@ -381,15 +381,15 @@ MAINLAND_STORES: frozenset[str] = frozenset(
 )
 
 # Side events on the mainland. The three stadium events (Hyman Stadium, Downtown)
-# and the Downtown and Little Haiti chopper checkpoints are confirmed. The seven
-# with bespoke triggers (the RC events, the dirt trials, PCJ Playground, Cone
-# Crazy) are not coordinate-pinned yet, so they count as mainland for safety
-# (over-gating never softlocks); refine to the start island once confirmed.
+# and the Downtown and Little Haiti chopper checkpoints are confirmed mainland. RC
+# Raider, Trial by Dirt, and Test Track are not coordinate-pinned, so they count
+# as mainland for safety (over-gating never softlocks); refine to the start island
+# once confirmed. RC Bandit, RC Baron, PCJ Playground, Cone Crazy, and the Ocean
+# Beach and Vice Point chopper checkpoints are on the start island.
 MAINLAND_SIDE_EVENTS: frozenset[str] = frozenset({
     "Hotring", "Bloodring", "Dirtring",
     "Downtown Chopper Checkpoint", "Little Haiti Chopper Checkpoint",
-    "RC Bandit Race", "RC Baron Race", "RC Raider Pickup",
-    "Trial by Dirt", "Test Track", "PCJ Playground", "Cone Crazy",
+    "RC Raider Pickup", "Trial by Dirt", "Test Track",
 })
 
 # Stunt jumps are exe-native: the SCM only registers a found jump by its engine
