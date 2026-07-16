@@ -135,10 +135,14 @@ class GTAViceCityContext(CommonContext):
         # The ASI configuration from slot_data: item id -> unlock global, and
         # completion global -> location id. Captured on Connected.
         self.asi_config: dict = {}
-        # The hidden-packages hunt goal is detected on the client by counting
-        # received copies of the macguffin. None unless that is the goal.
+        # Client-side goal detection, configured from slot_data on Connected.
+        # hidden_packages counts received copies of the macguffin; final_mission
+        # watches for the finale location being checked; hundred_percent waits
+        # until no location is missing.
+        self.slot_goal: str | None = None
         self.hunt_item_id: int | None = None
         self.hunt_required = 0
+        self.final_location_id: int | None = None
         # Hold references to fire-and-forget tasks so they are not
         # garbage-collected mid-flight.
         self._background_tasks: set[asyncio.Task] = set()
@@ -182,17 +186,21 @@ class GTAViceCityContext(CommonContext):
                 "completion_watch": slot_data.get("completion_watch", {}),
                 "package_coords": slot_data.get("package_coords", {}),
             }
-            if slot_data.get("goal") == "hidden_packages":
+            self.slot_goal = slot_data.get("goal")
+            self.final_location_id = slot_data.get("final_location_id")
+            if self.slot_goal == "hidden_packages":
                 self.hunt_item_id = slot_data.get("hidden_package_item_id")
                 self.hunt_required = slot_data.get("hidden_packages_required", 0)
             self._schedule(self.setup_and_launch())
         # A new Connected or a ReceivedItems update means the mod's view is
         # stale, so push a fresh resync. The bridge no-ops if the mod is not
-        # connected; it also resyncs itself on every mod (re)connect. A received
-        # item can also complete the hidden-packages hunt.
+        # connected; it also resyncs itself on every mod (re)connect.
         if cmd in ("Connected", "ReceivedItems"):
             self._schedule(self._resync_bridge())
-            self._maybe_finish_hunt()
+        # A received item (the hunt) or a newly checked location (the finale, or
+        # the last check for 100 percent) can complete the goal.
+        if cmd in ("Connected", "ReceivedItems", "RoomUpdate"):
+            self._maybe_finish_goal()
 
     def _schedule(self, coro) -> None:
         task = asyncio.create_task(coro)
@@ -264,14 +272,24 @@ class GTAViceCityContext(CommonContext):
         self.finished_game = True
         await self.send_msgs([{"cmd": "StatusUpdate", "status": ClientStatus.CLIENT_GOAL}])
 
-    def _maybe_finish_hunt(self) -> None:
-        # The hidden-packages goal is met when enough Hidden Package items have
-        # been received, wherever in the multiworld they were found.
-        if self.finished_game or self.hunt_item_id is None:
-            return
-        received = sum(1 for item in self.items_received if item.item == self.hunt_item_id)
-        if received >= self.hunt_required:
+    def _maybe_finish_goal(self) -> None:
+        if not self.finished_game and self.slot is not None and self._goal_reached():
             self._schedule(self._finish_goal())
+
+    def _goal_reached(self) -> bool:
+        if self.slot_goal == "hidden_packages":
+            # Enough Hidden Package items received, wherever in the multiworld
+            # they were found.
+            if self.hunt_item_id is None:
+                return False
+            received = sum(1 for item in self.items_received if item.item == self.hunt_item_id)
+            return received >= self.hunt_required
+        if self.slot_goal == "hundred_percent":
+            # Every location in the slot checked: nothing left missing.
+            return bool(self.checked_locations) and not self.missing_locations
+        if self.slot_goal == "final_mission":
+            return self.final_location_id in self.checked_locations
+        return False
 
     def _configured_folder(self) -> str:
         from .. import GTAViceCityWorld

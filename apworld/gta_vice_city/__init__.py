@@ -327,6 +327,10 @@ class GTAViceCityWorld(World):
             # The client counts received copies of this item to detect the
             # hidden-packages hunt goal (the ASI has no part in it).
             "hidden_package_item_id": ITEM_NAME_TO_ID[data.HIDDEN_PACKAGE_ITEM],
+            # The client watches for this location being checked to detect the
+            # final-mission goal; the 100 percent goal needs no id (it waits for
+            # every location).
+            "final_location_id": LOCATION_NAME_TO_ID[data.FINAL_MISSION],
             "death_link": bool(self.options.death_link.value),
             "shuffle_emergency_rewards": bool(self.options.shuffle_emergency_rewards.value),
             "item_globals": {

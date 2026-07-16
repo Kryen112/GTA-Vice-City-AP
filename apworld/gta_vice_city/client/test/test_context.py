@@ -411,52 +411,127 @@ class TestItemToast(unittest.TestCase):
         asyncio.run(scenario())
 
 
-class TestHiddenPackagesHunt(unittest.TestCase):
-    def _run(self, received: int, required: int, item_id: int | None,
-             already_finished: bool = False):
-        # Drive _maybe_finish_hunt with a stubbed received-items list and return
-        # (send_awaited_count, finished_game).
-        async def scenario():
+def _run_goal(configure) -> tuple[int, bool]:
+    # Build a context, apply the caller's goal state, run _maybe_finish_goal,
+    # and report how many CLIENT_GOAL messages went out and finished_game.
+    async def scenario() -> tuple[int, bool]:
+        with _fake_settings(""):
+            context = _context()
+            context.slot = 1
+            configure(context)
+            with mock.patch.object(
+                context, "send_msgs", new_callable=mock.AsyncMock,
+            ) as send:
+                context._maybe_finish_goal()
+                await asyncio.gather(*list(context._background_tasks))
+                return send.await_count, context.finished_game
+
+    return asyncio.run(scenario())
+
+
+def _received(item_id: int, count: int) -> list:
+    from NetUtils import NetworkItem
+    # A distractor item plus count copies of the goal item.
+    items = [NetworkItem(999, 1, 1, 0)]
+    items += [NetworkItem(item_id, 10 + n, 1, 0) for n in range(count)]
+    return items
+
+
+class TestHiddenPackagesHuntGoal(unittest.TestCase):
+    def test_completes_when_enough_are_received(self) -> None:
+        def configure(context):
+            context.slot_goal = "hidden_packages"
+            context.hunt_item_id = 7
+            context.hunt_required = 3
+            context.items_received = _received(7, 3)
+
+        self.assertEqual(_run_goal(configure), (1, True))
+
+    def test_does_not_complete_below_the_threshold(self) -> None:
+        def configure(context):
+            context.slot_goal = "hidden_packages"
+            context.hunt_item_id = 7
+            context.hunt_required = 3
+            context.items_received = _received(7, 2)
+
+        self.assertEqual(_run_goal(configure), (0, False))
+
+    def test_does_not_resend_once_finished(self) -> None:
+        def configure(context):
+            context.slot_goal = "hidden_packages"
+            context.hunt_item_id = 7
+            context.hunt_required = 3
+            context.items_received = _received(7, 5)
+            context.finished_game = True
+
+        self.assertEqual(_run_goal(configure), (0, True))
+
+
+class TestFinalMissionGoal(unittest.TestCase):
+    def test_completes_when_the_finale_is_checked(self) -> None:
+        def configure(context):
+            context.slot_goal = "final_mission"
+            context.final_location_id = 500
+            context.checked_locations = {1, 2, 500}
+
+        self.assertEqual(_run_goal(configure), (1, True))
+
+    def test_incomplete_until_the_finale_is_checked(self) -> None:
+        def configure(context):
+            context.slot_goal = "final_mission"
+            context.final_location_id = 500
+            context.checked_locations = {1, 2, 3}
+
+        self.assertEqual(_run_goal(configure), (0, False))
+
+
+class TestHundredPercentGoal(unittest.TestCase):
+    def test_completes_when_nothing_is_missing(self) -> None:
+        def configure(context):
+            context.slot_goal = "hundred_percent"
+            context.checked_locations = {1, 2, 3}
+            context.missing_locations = set()
+
+        self.assertEqual(_run_goal(configure), (1, True))
+
+    def test_incomplete_while_a_location_is_missing(self) -> None:
+        def configure(context):
+            context.slot_goal = "hundred_percent"
+            context.checked_locations = {1, 2}
+            context.missing_locations = {3}
+
+        self.assertEqual(_run_goal(configure), (0, False))
+
+    def test_incomplete_before_location_info_arrives(self) -> None:
+        # Nothing checked and nothing missing yet (the pre-Connected state) is
+        # not a completed game.
+        def configure(context):
+            context.slot_goal = "hundred_percent"
+            context.checked_locations = set()
+            context.missing_locations = set()
+
+        self.assertEqual(_run_goal(configure), (0, False))
+
+
+class TestGoalDispatch(unittest.TestCase):
+    def test_room_update_can_complete_the_goal(self) -> None:
+        # A newly checked location reaches _maybe_finish_goal through
+        # on_package's RoomUpdate dispatch, not only through a direct call.
+        async def scenario() -> int:
             with _fake_settings(""):
-                from NetUtils import NetworkItem
                 context = _context()
-                context.hunt_item_id = item_id
-                context.hunt_required = required
-                context.finished_game = already_finished
-                # Some copies of the macguffin (item id 7) plus an unrelated item.
-                context.items_received = [NetworkItem(99, 100, 1, 0)]
-                context.items_received += [
-                    NetworkItem(7, 100 + n, 1, 0) for n in range(received)
-                ]
+                context.slot = 1
+                context.slot_goal = "final_mission"
+                context.final_location_id = 500
+                context.checked_locations = {500}
                 with mock.patch.object(
                     context, "send_msgs", new_callable=mock.AsyncMock,
                 ) as send:
-                    context._maybe_finish_hunt()
+                    context.on_package("RoomUpdate", {})
                     await asyncio.gather(*list(context._background_tasks))
-                    return send.await_count, context.finished_game
+                    return send.await_count
 
-        return asyncio.run(scenario())
-
-    def test_completes_when_enough_are_received(self) -> None:
-        sends, finished = self._run(received=3, required=3, item_id=7)
-        self.assertEqual(sends, 1)
-        self.assertTrue(finished)
-
-    def test_does_not_complete_below_the_threshold(self) -> None:
-        sends, finished = self._run(received=2, required=3, item_id=7)
-        self.assertEqual(sends, 0)
-        self.assertFalse(finished)
-
-    def test_ignores_when_the_goal_is_not_the_hunt(self) -> None:
-        # hunt_item_id stays None under the other goals, so nothing is counted.
-        sends, finished = self._run(received=5, required=3, item_id=None)
-        self.assertEqual(sends, 0)
-        self.assertFalse(finished)
-
-    def test_does_not_resend_once_finished(self) -> None:
-        sends, finished = self._run(received=5, required=3, item_id=7, already_finished=True)
-        self.assertEqual(sends, 0)
-        self.assertTrue(finished)
+        self.assertEqual(asyncio.run(scenario()), 1)
 
 
 if __name__ == "__main__":

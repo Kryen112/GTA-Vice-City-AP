@@ -105,6 +105,10 @@ class TestUniversalTracker(WorldTestBase):
         self.assertEqual(
             slot_data["hidden_package_item_id"], ITEM_NAME_TO_ID[data.HIDDEN_PACKAGE_ITEM],
         )
+        # And watches this location being checked for the final-mission goal.
+        self.assertEqual(
+            slot_data["final_location_id"], LOCATION_NAME_TO_ID[data.FINAL_MISSION],
+        )
         self.assertFalse(slot_data["enable_properties"])
         self.assertTrue(slot_data["enable_hidden_packages"])
         self.assertIn("shuffle_emergency_rewards", slot_data)
