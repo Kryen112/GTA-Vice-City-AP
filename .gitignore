@@ -21,6 +21,10 @@ mod/asi/plugin/obj/
 *.obj
 *.asi
 
+# Compiled mod payloads (built from source, bundled into the .apworld)
+mod/scm/main.scm
+mod/cleo/apwatchers.cs
+
 # Editor / OS
 .vscode/
 .idea/
