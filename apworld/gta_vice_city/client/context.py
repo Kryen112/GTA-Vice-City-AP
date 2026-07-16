@@ -135,6 +135,10 @@ class GTAViceCityContext(CommonContext):
         # The ASI configuration from slot_data: item id -> unlock global, and
         # completion global -> location id. Captured on Connected.
         self.asi_config: dict = {}
+        # The hidden-packages hunt goal is detected on the client by counting
+        # received copies of the macguffin. None unless that is the goal.
+        self.hunt_item_id: int | None = None
+        self.hunt_required = 0
         # Hold references to fire-and-forget tasks so they are not
         # garbage-collected mid-flight.
         self._background_tasks: set[asyncio.Task] = set()
@@ -178,12 +182,17 @@ class GTAViceCityContext(CommonContext):
                 "completion_watch": slot_data.get("completion_watch", {}),
                 "package_coords": slot_data.get("package_coords", {}),
             }
+            if slot_data.get("goal") == "hidden_packages":
+                self.hunt_item_id = slot_data.get("hidden_package_item_id")
+                self.hunt_required = slot_data.get("hidden_packages_required", 0)
             self._schedule(self.setup_and_launch())
         # A new Connected or a ReceivedItems update means the mod's view is
         # stale, so push a fresh resync. The bridge no-ops if the mod is not
-        # connected; it also resyncs itself on every mod (re)connect.
+        # connected; it also resyncs itself on every mod (re)connect. A received
+        # item can also complete the hidden-packages hunt.
         if cmd in ("Connected", "ReceivedItems"):
             self._schedule(self._resync_bridge())
+            self._maybe_finish_hunt()
 
     def _schedule(self, coro) -> None:
         task = asyncio.create_task(coro)
@@ -244,9 +253,25 @@ class GTAViceCityContext(CommonContext):
         await self.send_msgs([{"cmd": "LocationChecks", "locations": [location]}])
 
     async def on_bridge_goal(self) -> None:
-        if not self.finished_game:
-            await self.send_msgs([{"cmd": "StatusUpdate", "status": ClientStatus.CLIENT_GOAL}])
-            self.finished_game = True
+        await self._finish_goal()
+
+    async def _finish_goal(self) -> None:
+        if self.finished_game:
+            return
+        # Mark finished before awaiting the send: a burst of ReceivedItems can
+        # schedule this more than once, and the flag set with no await before it
+        # keeps the check-and-set atomic so the goal is reported exactly once.
+        self.finished_game = True
+        await self.send_msgs([{"cmd": "StatusUpdate", "status": ClientStatus.CLIENT_GOAL}])
+
+    def _maybe_finish_hunt(self) -> None:
+        # The hidden-packages goal is met when enough Hidden Package items have
+        # been received, wherever in the multiworld they were found.
+        if self.finished_game or self.hunt_item_id is None:
+            return
+        received = sum(1 for item in self.items_received if item.item == self.hunt_item_id)
+        if received >= self.hunt_required:
+            self._schedule(self._finish_goal())
 
     def _configured_folder(self) -> str:
         from .. import GTAViceCityWorld

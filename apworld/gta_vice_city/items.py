@@ -35,6 +35,7 @@ _ORDERED_ITEM_NAMES: list[str] = (
     + data.EMERGENCY_REWARD_ITEMS
     + data.FILLER_ITEMS
     + VENUE_PROGRESSIVE_NAMES
+    + [data.HIDDEN_PACKAGE_ITEM]
 )
 
 ITEM_NAME_TO_ID: dict[str, int] = {
@@ -47,6 +48,11 @@ FILLER_NAMES: list[str] = list(data.FILLER_ITEMS)
 def _classify(name: str) -> ItemClassification:
     if name in PROGRESSIVE_ITEM_NAMES or name in data.AREA_ITEMS:
         return ItemClassification.progression
+    if name == data.HIDDEN_PACKAGE_ITEM:
+        # A goal macguffin: progression so the generator guarantees enough are
+        # reachable, skip_balancing because there are many and none unlocks
+        # anything, so they must not distort progression balancing.
+        return ItemClassification.progression_skip_balancing
     if name in data.PACKAGE_REWARD_ITEMS or name in data.EMERGENCY_REWARD_ITEMS:
         return ItemClassification.useful
     return ItemClassification.filler

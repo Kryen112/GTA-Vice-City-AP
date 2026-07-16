@@ -18,7 +18,9 @@ class Goal(Choice):
     """Which condition beats the seed.
 
     final_mission (default): complete "Keep Your Friends Close...".
-    hidden_packages: collect the configured number of hidden packages.
+    hidden_packages: receive the configured number of Hidden Package items, a
+    hunt across the multiworld. Collecting a package in game is a check, never
+    goal progress.
     hundred_percent: reach the game's own 100 percent stat. Generation rejects
     this unless every check class is enabled, since every stat contributor must
     be a check.
@@ -31,8 +33,9 @@ class Goal(Choice):
 
 
 class HiddenPackagesRequired(NamedRange):
-    """Packages needed for the hidden-packages goal. Counted from the in-game
-    package counter, so it works whatever the class toggles are."""
+    """Hidden Package items to receive for the hidden-packages goal. The pool
+    holds one per physical package, scattered across the multiworld; receiving
+    this many wins. Has no effect under the other goals."""
     display_name = "Hidden packages required"
     range_start = 1
     range_end = 100

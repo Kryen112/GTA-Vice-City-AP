@@ -23,7 +23,7 @@ from worlds.AutoWorld import WebWorld, World
 from worlds.LauncherComponents import Component, Type, components
 from worlds.LauncherComponents import launch as launch_component
 
-from . import data, locations, regions, rules, scm
+from . import data, regions, rules, scm
 from .items import FILLER_NAMES, ITEM_CLASSIFICATIONS, ITEM_GROUPS, ITEM_NAME_TO_ID, ITEM_QUANTITIES
 from .locations import CLASS_TOGGLE, LOCATION_GROUPS, LOCATION_NAME_TO_ID, LOCATION_REGIONS, LOCATION_TOGGLE
 from .options import CHECK_CLASS_OPTIONS, Goal, GTAViceCityOptions
@@ -237,6 +237,11 @@ class GTAViceCityWorld(World):
         placeable.extend(
             reward for reward in data.EMERGENCY_REWARD_ITEMS if self._item_enabled(reward)
         )
+        if self.options.goal == Goal.option_hidden_packages:
+            # The hunt: one Hidden Package macguffin per physical package,
+            # scattered across the multiworld. The goal counts how many are
+            # received, so a physical package pickup stays an ordinary check.
+            placeable.extend([data.HIDDEN_PACKAGE_ITEM] * data.HIDDEN_PACKAGE_COUNT)
 
         active_locations = sum(
             1 for name in LOCATION_NAME_TO_ID if self._location_enabled(name)
@@ -319,6 +324,9 @@ class GTAViceCityWorld(World):
         return {
             "goal": self.options.goal.current_key,
             "hidden_packages_required": self.options.hidden_packages_required.value,
+            # The client counts received copies of this item to detect the
+            # hidden-packages hunt goal (the ASI has no part in it).
+            "hidden_package_item_id": ITEM_NAME_TO_ID[data.HIDDEN_PACKAGE_ITEM],
             "death_link": bool(self.options.death_link.value),
             "shuffle_emergency_rewards": bool(self.options.shuffle_emergency_rewards.value),
             "item_globals": {
@@ -353,11 +361,11 @@ class GTAViceCityWorld(World):
         player = self.player
         goal = self.options.goal
         if goal == Goal.option_hidden_packages:
+            # A hunt on received macguffins, not on collecting your own packages:
+            # the goal is how many Hidden Package items you receive, from anywhere
+            # in the multiworld.
             need = self.options.hidden_packages_required.value
-            package_names = locations.PACKAGE_NAMES
-            return lambda state: sum(
-                state.can_reach_location(name, player) for name in package_names
-            ) >= need
+            return lambda state: state.has(data.HIDDEN_PACKAGE_ITEM, player, need)
         if goal == Goal.option_hundred_percent:
             # The game's 100 percent requires every stat contributor, and
             # generation only allows this goal when every check class is on, so

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from typing import ClassVar
 
+from BaseClasses import CollectionState
 from Options import OptionError
 from test.bases import WorldTestBase
 
@@ -25,6 +26,28 @@ class TestDefault(WorldTestBase):
 class TestHiddenPackagesGoal(WorldTestBase):
     game = "Grand Theft Auto Vice City"
     options: ClassVar[dict] = {"goal": "hidden_packages", "hidden_packages_required": 50}
+
+    def test_pool_holds_one_macguffin_per_package(self) -> None:
+        macguffins = [
+            item for item in self.multiworld.itempool
+            if item.name == data.HIDDEN_PACKAGE_ITEM and item.player == self.player
+        ]
+        self.assertEqual(len(macguffins), data.HIDDEN_PACKAGE_COUNT)
+        # Progression, so the generator guarantees enough are reachable.
+        self.assertTrue(all(item.advancement for item in macguffins))
+
+    def test_goal_counts_received_macguffins_not_own_pickups(self) -> None:
+        # The bug this guards: the goal is how many Hidden Package items are
+        # received, not whether the player reaches package locations in their own
+        # game. A state with no macguffins does not win; receiving enough does.
+        completion = self.multiworld.completion_condition[self.player]
+        state = CollectionState(self.multiworld)
+        self.assertFalse(completion(state))
+        for _ in range(50):
+            state.collect(
+                self.world.create_item(data.HIDDEN_PACKAGE_ITEM), prevent_sweep=True,
+            )
+        self.assertTrue(completion(state))
 
 
 class TestHundredPercentAllClasses(WorldTestBase):
@@ -78,6 +101,10 @@ class TestUniversalTracker(WorldTestBase):
         slot_data = self.world.fill_slot_data()
         self.assertEqual(slot_data["goal"], "hidden_packages")
         self.assertEqual(slot_data["hidden_packages_required"], 30)
+        # The client counts received copies of this id for the hunt goal.
+        self.assertEqual(
+            slot_data["hidden_package_item_id"], ITEM_NAME_TO_ID[data.HIDDEN_PACKAGE_ITEM],
+        )
         self.assertFalse(slot_data["enable_properties"])
         self.assertTrue(slot_data["enable_hidden_packages"])
         self.assertIn("shuffle_emergency_rewards", slot_data)
@@ -183,10 +210,10 @@ class TestHiddenPackagesGoalNeedsMainland(WorldTestBase):
     options: ClassVar[dict] = {"goal": "hidden_packages", "hidden_packages_required": 80}
 
     def test_high_package_goal_pulls_in_the_mainland(self) -> None:
-        # Only 40 packages sit on the start island, so a goal of 80 cannot be met
-        # without the mainland. A mainland package is unreachable until Mainland
-        # Access; the default solvability tests prove the seed still generates and
-        # beats with the goal in place.
+        # The 100 Hidden Package macguffins are progression, so the fill must make
+        # all of them reachable, which pulls in Mainland Access and the mainland
+        # locations. A mainland package location stays gated until Mainland
+        # Access; the default solvability tests prove the goal seed still beats.
         self.assertFalse(self.can_reach_location("Hidden Package - Escobar International - 1"))
         self.collect_by_name(["Mainland Access"])
         self.assertTrue(self.can_reach_location("Hidden Package - Escobar International - 1"))

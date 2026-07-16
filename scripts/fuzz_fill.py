@@ -21,6 +21,15 @@ CONFIGURATIONS: list[tuple[str, dict]] = [
     ("default (final mission, packages on)", {}),
     ("goal hidden_packages", {"goal": "hidden_packages"}),
     ("goal hidden_packages, need all", {"goal": "hidden_packages", "hidden_packages_required": 100}),
+    # The hunt adds 100 macguffins; with only packages and story on this is the
+    # tightest item-to-location config. Solves, or is rejected cleanly by the
+    # overflow guard, never crashes.
+    ("goal hidden_packages, minimal classes", {
+        "goal": "hidden_packages", "enable_rampages": False,
+        "enable_stunt_jumps": False, "enable_emergency_vehicles": False,
+        "enable_properties": False, "enable_robbable_stores": False,
+        "enable_side_events": False,
+    }),
     ("story only (all optional classes off)", {
         "enable_hidden_packages": False, "enable_rampages": False,
         "enable_stunt_jumps": False, "enable_emergency_vehicles": False,

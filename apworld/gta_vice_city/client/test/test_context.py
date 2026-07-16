@@ -411,5 +411,53 @@ class TestItemToast(unittest.TestCase):
         asyncio.run(scenario())
 
 
+class TestHiddenPackagesHunt(unittest.TestCase):
+    def _run(self, received: int, required: int, item_id: int | None,
+             already_finished: bool = False):
+        # Drive _maybe_finish_hunt with a stubbed received-items list and return
+        # (send_awaited_count, finished_game).
+        async def scenario():
+            with _fake_settings(""):
+                from NetUtils import NetworkItem
+                context = _context()
+                context.hunt_item_id = item_id
+                context.hunt_required = required
+                context.finished_game = already_finished
+                # Some copies of the macguffin (item id 7) plus an unrelated item.
+                context.items_received = [NetworkItem(99, 100, 1, 0)]
+                context.items_received += [
+                    NetworkItem(7, 100 + n, 1, 0) for n in range(received)
+                ]
+                with mock.patch.object(
+                    context, "send_msgs", new_callable=mock.AsyncMock,
+                ) as send:
+                    context._maybe_finish_hunt()
+                    await asyncio.gather(*list(context._background_tasks))
+                    return send.await_count, context.finished_game
+
+        return asyncio.run(scenario())
+
+    def test_completes_when_enough_are_received(self) -> None:
+        sends, finished = self._run(received=3, required=3, item_id=7)
+        self.assertEqual(sends, 1)
+        self.assertTrue(finished)
+
+    def test_does_not_complete_below_the_threshold(self) -> None:
+        sends, finished = self._run(received=2, required=3, item_id=7)
+        self.assertEqual(sends, 0)
+        self.assertFalse(finished)
+
+    def test_ignores_when_the_goal_is_not_the_hunt(self) -> None:
+        # hunt_item_id stays None under the other goals, so nothing is counted.
+        sends, finished = self._run(received=5, required=3, item_id=None)
+        self.assertEqual(sends, 0)
+        self.assertFalse(finished)
+
+    def test_does_not_resend_once_finished(self) -> None:
+        sends, finished = self._run(received=5, required=3, item_id=7, already_finished=True)
+        self.assertEqual(sends, 0)
+        self.assertTrue(finished)
+
+
 if __name__ == "__main__":
     unittest.main()

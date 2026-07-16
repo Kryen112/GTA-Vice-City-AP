@@ -98,6 +98,12 @@ FINAL_MISSION = "Keep Your Friends Close..."
 
 HIDDEN_PACKAGE_COUNT = len(package_data.PACKAGE_NAMES)
 
+# The macguffin item of the hidden-packages goal. Collecting a physical package
+# is a check like any other; the goal is a hunt on how many of these items you
+# receive from the multiworld, one per physical package in the pool. It carries
+# no in-game effect, so it maps to no SCM global.
+HIDDEN_PACKAGE_ITEM = "Hidden Package"
+
 
 def hidden_package_name(index: int) -> str:
     # Per physical package, in the SCM create_collectable1 placement order (index
