@@ -467,6 +467,18 @@ class TestClassToggles(WorldTestBase):
         self.assertIn(data.rampage_name(1), names)
 
 
+class TestHiddenPackagesOffSendsNoCoords(WorldTestBase):
+    game = "Grand Theft Auto Vice City"
+    options: ClassVar[dict] = {"enable_hidden_packages": False}
+
+    def test_no_package_coords_when_class_disabled(self) -> None:
+        # With packages off their locations do not exist, so the ASI must get no
+        # coordinates to detect and cannot report a package location.
+        self.assertEqual(self.world.fill_slot_data()["package_coords"], {})
+        names = {loc.name for loc in self.multiworld.get_locations(self.player)}
+        self.assertNotIn(data.hidden_package_name(1), names)
+
+
 class TestRampagesStuntsSplit(WorldTestBase):
     game = "Grand Theft Auto Vice City"
     options: ClassVar[dict] = {"enable_rampages": True, "enable_stunt_jumps": False}
