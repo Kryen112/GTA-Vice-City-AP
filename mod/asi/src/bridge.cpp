@@ -125,7 +125,10 @@ void BridgeClient::HandleMessage(const json& message) {
           const json& descriptor = it.value();
           ItemEffect effect;
           effect.type = descriptor.at(0).get<std::string>();
-          if (descriptor.size() > 1) effect.amount = descriptor.at(1).get<int>();
+          if (descriptor.size() > 1) {
+            effect.amount = descriptor.at(1).get<int>();
+            effect.has_amount = true;
+          }
           item_effects[std::stoll(it.key())] = effect;
         }
       }

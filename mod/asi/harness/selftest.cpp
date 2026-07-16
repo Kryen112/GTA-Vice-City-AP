@@ -8,6 +8,7 @@
 
 #include "../src/protocol.hpp"
 #include "../src/scm_completion.hpp"
+#include "../src/scm_effects.hpp"
 #include "../src/scm_packages.hpp"
 
 using namespace gtavc;
@@ -138,6 +139,48 @@ int main() {
     auto far_result = DetectNewlyCollectedPackages({packages[0]}, far, one_seen, none);
     Expect(far_result.size() == 1 && far_result[0] == 9075,
            "a pickup beyond two units leaves the package collected");
+  }
+
+  // One-shot effect planning: effects apply in received order past the applied
+  // index; a chaos trap waits until the player is controllable, so the index
+  // never skips it; weather and consumables never defer.
+  {
+    auto make = [](const char* type, int amount, bool has) {
+      ItemEffect effect;
+      effect.type = type;
+      effect.amount = amount;
+      effect.has_amount = has;
+      return effect;
+    };
+    const std::map<std::int64_t, ItemEffect> effects = {
+        {10, make("cash", 500, true)},
+        {11, make("trap_weather", 0, false)},
+        {12, make("trap_wanted", 3, true)},
+        {13, make("trap_speed_up", 30, true)}};
+    // Item 99 carries no effect and is skipped without disturbing the index.
+    const std::vector<std::pair<std::int64_t, std::int64_t>> items = {
+        {0, 10}, {1, 99}, {2, 11}, {3, 12}, {4, 13}};
+
+    auto blocked = PlanEffects(items, effects, 0, false);
+    Expect(blocked.to_apply.size() == 2 && blocked.to_apply[0].type == "cash" &&
+               blocked.to_apply[1].type == "trap_weather",
+           "cash and weather apply while not controllable");
+    Expect(blocked.new_applied_index == 2,
+           "the deferring trap stops the plan and the index does not skip it");
+
+    auto freed = PlanEffects(items, effects, 2, true);
+    Expect(freed.to_apply.size() == 2 && freed.to_apply[0].type == "trap_wanted" &&
+               freed.to_apply[1].type == "trap_speed_up",
+           "deferred traps apply in received order once controllable");
+    Expect(freed.new_applied_index == 4, "the index reaches the last effect item");
+
+    auto done = PlanEffects(items, effects, 4, true);
+    Expect(done.to_apply.empty() && done.new_applied_index == 4,
+           "a fully applied list repeats nothing");
+
+    Expect(EffectDefersUntilControllable("trap_wanted"), "a chaos trap defers");
+    Expect(!EffectDefersUntilControllable("trap_weather"), "weather does not defer");
+    Expect(!EffectDefersUntilControllable("cash"), "a consumable does not defer");
   }
 
   if (failures == 0) {

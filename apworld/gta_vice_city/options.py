@@ -90,6 +90,20 @@ class EnableSideEvents(DefaultOnToggle):
     display_name = "Enable side events"
 
 
+class TrapPercentage(NamedRange):
+    """Percentage of filler items replaced by traps (0 disables). The six trap
+    types share the slice equally: raised wanted level, exploding cars, hostile
+    pedestrians, stormy weather, sped-up time, and slowed time. Traps only ever
+    replace filler, so they never crowd out progression."""
+    display_name = "Trap percentage"
+    range_start = 0
+    range_end = 100
+    default = 15
+    special_range_names: ClassVar[dict[str, int]] = {
+        "none": 0, "some": 15, "half": 50, "all": 100,
+    }
+
+
 # The check-class toggles, by option attribute name. Story missions are always
 # on and are not listed. The 100 percent goal requires every one of these true.
 CHECK_CLASS_OPTIONS: list[str] = [
@@ -112,4 +126,5 @@ class GTAViceCityOptions(PerGameCommonOptions):
     enable_robbable_stores: EnableRobbableStores
     enable_side_events: EnableSideEvents
     shuffle_emergency_rewards: ShuffleEmergencyRewards
+    trap_percentage: TrapPercentage
     death_link: DeathLink

@@ -14,6 +14,16 @@
 #include <CStreaming.h>
 #include <CPickups.h>
 #include <ePickupType.h>
+#include <CPad.h>
+#include <CTimer.h>
+#include <CWanted.h>
+#include <CPools.h>
+#include <CVehicle.h>
+#include <CAutomobile.h>
+#include <CPed.h>
+#include <CWeather.h>
+#include <eObjective.h>
+#include <eWeather.h>
 #include <common.h>
 
 namespace gtavc {
@@ -40,6 +50,22 @@ constexpr eWeaponType kWeaponPool[] = {
     WEAPONTYPE_STUBBY_SHOTGUN, WEAPONTYPE_TEC9, WEAPONTYPE_UZI, WEAPONTYPE_SILENCED_INGRAM,
     WEAPONTYPE_MP5, WEAPONTYPE_M4, WEAPONTYPE_RUGER, WEAPONTYPE_SNIPERRIFLE, WEAPONTYPE_LASERSCOPE,
 };
+
+// Trap tuning. The sped-up and slowed clock imitate ONSPEED and BOOOOOORING; the
+// wanted spike caps at the game maximum; stormy weather is the rain state
+// CATSANDDOGS forces. The default duration matches data.TRAP_DURATION_SECONDS.
+constexpr float kSpeedUpTimeScale = 2.0f;
+constexpr float kSlowDownTimeScale = 0.35f;
+constexpr float kNormalTimeScale = 1.0f;
+constexpr int kMaxWantedLevel = 6;
+constexpr short kStormyWeather = WEATHER_RAINY;
+constexpr int kDefaultTrapSeconds = 30;
+
+// The trap duration in real milliseconds, from the descriptor's seconds param.
+unsigned int TrapDurationMs(const ItemEffect& effect) {
+  const int seconds = (effect.has_amount && effect.amount > 0) ? effect.amount : kDefaultTrapSeconds;
+  return static_cast<unsigned int>(seconds) * 1000u;
+}
 }  // namespace
 
 ScmGameState::ScmGameState(Logger logger) : logger_(std::move(logger)) {}
@@ -130,6 +156,111 @@ void ScmGameState::ApplyEffect(const ItemEffect& effect) {
       CStreaming::LoadAllRequestedModels(false);
     }
     player->GiveWeapon(weapon, std::max(kMinPickupAmmo, kPickupMagazines * info->m_nAmountofAmmunition), false);
+  }
+}
+
+bool ScmGameState::PlayerIsControllable() {
+  const CPad* pad = CPad::GetPad(0);
+  // No pad yet (still loading) reads as not controllable, so a trap waits.
+  if (pad == nullptr) return false;
+  return pad->DisablePlayerControls == 0;
+}
+
+unsigned int ScmGameState::RealTimeMs() {
+  return static_cast<unsigned int>(CTimer::m_snTimeInMillisecondsPauseMode);
+}
+
+void ScmGameState::ExplodeAllVehicles() {
+  CPlayerPed* player = FindPlayerPed();
+  CPool<CVehicle, CAutomobile>* pool = CPools::ms_pVehiclePool;
+  if (pool == nullptr) return;
+  for (int index = 0; index < pool->m_nSize; ++index) {
+    CVehicle* vehicle = pool->GetAt(index);
+    if (vehicle != nullptr) vehicle->BlowUpCar(player);
+  }
+}
+
+void ScmGameState::MakePedestriansHostile() {
+  CPlayerPed* player = FindPlayerPed();
+  CPool<CPed, CPlayerPed>* pool = CPools::ms_pPedPool;
+  if (player == nullptr || pool == nullptr) return;
+  for (int index = 0; index < pool->m_nSize; ++index) {
+    CPed* ped = pool->GetAt(index);
+    if (ped == nullptr || ped == player) continue;
+    ped->SetObjective(OBJECTIVE_KILL_CHAR_ON_FOOT, static_cast<void*>(player));
+  }
+}
+
+void ScmGameState::CalmPedestrians() {
+  CPlayerPed* player = FindPlayerPed();
+  CPool<CPed, CPlayerPed>* pool = CPools::ms_pPedPool;
+  if (pool == nullptr) return;
+  for (int index = 0; index < pool->m_nSize; ++index) {
+    CPed* ped = pool->GetAt(index);
+    if (ped == nullptr || ped == player) continue;
+    ped->ClearObjective();
+  }
+}
+
+void ScmGameState::ApplyOneShot(const ItemEffect& effect) {
+  if (effect.type.rfind("trap_", 0) == 0) {
+    ApplyTrap(effect);
+  } else {
+    ApplyEffect(effect);
+  }
+}
+
+void ScmGameState::ApplyTrap(const ItemEffect& effect) {
+  CPlayerPed* player = FindPlayerPed();
+  if (player == nullptr) return;
+  if (effect.type == "trap_wanted") {
+    // Raise the wanted level by the descriptor's stars, capped at the maximum.
+    if (player->m_pWanted != nullptr) {
+      const int raised = static_cast<int>(player->m_pWanted->m_nWantedLevel) +
+                         (effect.has_amount ? effect.amount : 1);
+      player->m_pWanted->SetWantedLevelNoDrop(std::min(kMaxWantedLevel, raised));
+    }
+  } else if (effect.type == "trap_explode_cars") {
+    ExplodeAllVehicles();
+  } else if (effect.type == "trap_weather") {
+    // Weather applies any time, so it is fired here with no control gate.
+    CWeather::ForceWeatherNow(kStormyWeather);
+  } else if (effect.type == "trap_hostile_peds") {
+    hostile_pedestrians_active_ = true;
+    hostile_pedestrians_until_ = RealTimeMs() + TrapDurationMs(effect);
+    MakePedestriansHostile();
+  } else if (effect.type == "trap_speed_up") {
+    time_scale_trap_active_ = true;
+    time_scale_trap_factor_ = kSpeedUpTimeScale;
+    time_scale_trap_until_ = RealTimeMs() + TrapDurationMs(effect);
+    CTimer::ms_fTimeScale = kSpeedUpTimeScale;
+  } else if (effect.type == "trap_slow_down") {
+    time_scale_trap_active_ = true;
+    time_scale_trap_factor_ = kSlowDownTimeScale;
+    time_scale_trap_until_ = RealTimeMs() + TrapDurationMs(effect);
+    CTimer::ms_fTimeScale = kSlowDownTimeScale;
+  }
+}
+
+void ScmGameState::UpdateTimedTraps() {
+  const unsigned int now = RealTimeMs();
+  if (time_scale_trap_active_) {
+    // Signed difference so the deadline comparison survives the clock wrapping.
+    if (static_cast<int>(now - time_scale_trap_until_) >= 0) {
+      CTimer::ms_fTimeScale = kNormalTimeScale;
+      time_scale_trap_active_ = false;
+    } else {
+      // Reassert each frame so the game's own time-scale updates cannot drift it.
+      CTimer::ms_fTimeScale = time_scale_trap_factor_;
+    }
+  }
+  if (hostile_pedestrians_active_) {
+    if (static_cast<int>(now - hostile_pedestrians_until_) >= 0) {
+      CalmPedestrians();
+      hostile_pedestrians_active_ = false;
+    } else {
+      MakePedestriansHostile();
+    }
   }
 }
 
@@ -248,24 +379,26 @@ void ScmGameState::OnGameFrame() {
     SetGlobal(global_index, value);
   }
 
-  // Apply one-shot consumables (cash, weapon, health, armour) once, past the
-  // saved applied-index. Only when the player exists, so a grant is never lost
-  // to a still-loading world; the index counts consumable items in received
-  // order and persists in the save.
+  // Apply one-shot effects (consumables and traps) once, past the saved
+  // applied-index. Only when the player exists, so a grant is never lost to a
+  // still-loading world; the index counts effect items in received order and
+  // persists in the save. The chaos traps defer until the player is
+  // controllable: planning stops at the first deferred trap so the index never
+  // skips it, and it is retried on a later frame.
   if (FindPlayerPed() != nullptr) {
     const int applied = GetGlobal(kAppliedIndexGlobal);
-    int consumable_count = 0;
-    for (const auto& [received_index, item_id] : items_) {
-      const auto effect = item_effects_.find(item_id);
-      if (effect == item_effects_.end()) continue;
-      if (consumable_count >= applied) ApplyEffect(effect->second);
-      ++consumable_count;
-    }
-    if (consumable_count > applied) {
-      SetGlobal(kAppliedIndexGlobal, consumable_count);
-      if (logger_) logger_("applied one-shot consumables");
+    const EffectPlan plan =
+        PlanEffects(items_, item_effects_, applied, PlayerIsControllable());
+    for (const ItemEffect& effect : plan.to_apply) ApplyOneShot(effect);
+    if (plan.new_applied_index != applied) {
+      SetGlobal(kAppliedIndexGlobal, plan.new_applied_index);
+      if (logger_) logger_("applied one-shot effects");
     }
   }
+
+  // Hold or revert the timed traps (sped-up or slowed clock, hostile
+  // pedestrians) whether or not new items arrived this frame.
+  UpdateTimedTraps();
 
   // Set each collected hidden package's completion global from the pickup pool,
   // so the poll below reports every package as its own check. Only when the world

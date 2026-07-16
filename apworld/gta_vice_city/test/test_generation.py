@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import ClassVar
 
-from BaseClasses import CollectionState
+from BaseClasses import CollectionState, ItemClassification
 from Options import OptionError
 from test.bases import WorldTestBase
 
@@ -112,6 +112,8 @@ class TestUniversalTracker(WorldTestBase):
         self.assertFalse(slot_data["enable_properties"])
         self.assertTrue(slot_data["enable_hidden_packages"])
         self.assertIn("shuffle_emergency_rewards", slot_data)
+        # Carried so a tracker regeneration rebuilds the same filler/trap split.
+        self.assertIn("trap_percentage", slot_data)
         for name in CHECK_CLASS_OPTIONS:
             self.assertIn(name, slot_data)
 
@@ -124,6 +126,7 @@ class TestUniversalTracker(WorldTestBase):
             "hidden_packages_required": 80,
             "death_link": True,
             "shuffle_emergency_rewards": True,
+            "trap_percentage": 40,
             "enable_hidden_packages": True,
             "enable_rampages": True, "enable_stunt_jumps": True,
             "enable_emergency_vehicles": True,
@@ -137,6 +140,7 @@ class TestUniversalTracker(WorldTestBase):
         self.assertEqual(self.world.options.hidden_packages_required.value, 80)
         self.assertTrue(bool(self.world.options.death_link.value))
         self.assertTrue(bool(self.world.options.shuffle_emergency_rewards.value))
+        self.assertEqual(self.world.options.trap_percentage.value, 40)
         for name in CHECK_CLASS_OPTIONS:
             self.assertEqual(getattr(self.world.options, name).value, 1)
 
@@ -443,14 +447,21 @@ class TestReservedGlobals(WorldTestBase):
             self.assertIn(ITEM_NAME_TO_ID[area_item], mapping)
 
     def test_one_shot_effects_are_disjoint_from_count_globals(self) -> None:
-        # A consumable is applied once past the applied-index; a reward/unlock
-        # item counts into a global. No item may be both, or it would double.
+        # A one-shot effect (consumable or trap) is applied once past the
+        # applied-index; a reward/unlock item counts into a global. No item may
+        # be both, or it would double.
         effect_ids = set(scm.item_effects().keys())
         count_ids = set(scm.item_globals().keys())
         self.assertTrue(effect_ids.isdisjoint(count_ids))
-        # Every consumable effect names a known type.
+        # Every effect names a known type: the four consumables plus the six
+        # trap types the ASI knows how to apply.
+        known_types = {
+            "cash", "weapon", "health", "armor",
+            "trap_wanted", "trap_explode_cars", "trap_hostile_peds",
+            "trap_weather", "trap_speed_up", "trap_slow_down",
+        }
         for effect in scm.item_effects().values():
-            self.assertIn(effect[0], {"cash", "weapon", "health", "armor"})
+            self.assertIn(effect[0], known_types)
 
     def test_completion_watch_covers_every_location(self) -> None:
         watch = scm.completion_watch()
@@ -521,3 +532,47 @@ class TestRampagesStuntsSplit(WorldTestBase):
         self.assertIn(data.rampage_name(data.RAMPAGE_COUNT), names)
         self.assertNotIn(data.stunt_jump_name(1), names)
         self.assertNotIn(data.stunt_jump_name(data.STUNT_JUMP_COUNT), names)
+
+
+class TestTraps(WorldTestBase):
+    game = "Grand Theft Auto Vice City"
+    # Default options carry trap_percentage = 15.
+
+    def test_default_seed_has_traps_classified_as_traps(self) -> None:
+        traps = [item for item in self.multiworld.itempool
+                 if item.name in data.TRAP_ITEMS and item.player == self.player]
+        self.assertGreater(len(traps), 0)
+        # Traps carry the trap classification and never advance logic.
+        self.assertTrue(all(item.classification == ItemClassification.trap for item in traps))
+        self.assertTrue(all(not item.advancement for item in traps))
+
+    def test_effects_carry_the_six_trap_types(self) -> None:
+        # The item-effect contract sent to the ASI names every trap effect type.
+        types = {effect[0] for effect in scm.item_effects().values()}
+        for trap_type in ("trap_wanted", "trap_explode_cars", "trap_hostile_peds",
+                          "trap_weather", "trap_speed_up", "trap_slow_down"):
+            self.assertIn(trap_type, types)
+
+
+class TestTrapsDisabled(WorldTestBase):
+    game = "Grand Theft Auto Vice City"
+    options: ClassVar[dict] = {"trap_percentage": 0}
+
+    def test_zero_percent_places_no_traps(self) -> None:
+        names = {item.name for item in self.multiworld.itempool}
+        for trap in data.TRAP_ITEMS:
+            self.assertNotIn(trap, names)
+
+
+class TestTrapsAll(WorldTestBase):
+    game = "Grand Theft Auto Vice City"
+    options: ClassVar[dict] = {"trap_percentage": 100}
+
+    def test_all_filler_becomes_traps(self) -> None:
+        # At 100 percent every filler slot is a trap, so trap items are present
+        # and no plain filler remains. Progression and useful items are untouched,
+        # so the seed still solves through the default reachability tests.
+        pool_names = [item.name for item in self.multiworld.itempool
+                      if item.player == self.player]
+        self.assertGreater(len([n for n in pool_names if n in data.TRAP_ITEMS]), 0)
+        self.assertEqual([n for n in pool_names if n in data.FILLER_ITEMS], [])

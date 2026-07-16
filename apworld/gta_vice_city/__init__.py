@@ -134,6 +134,8 @@ class GTAViceCityWorld(World):
         options.death_link.value = int(bool(slot_data["death_link"]))
         if "shuffle_emergency_rewards" in slot_data:
             options.shuffle_emergency_rewards.value = int(bool(slot_data["shuffle_emergency_rewards"]))
+        if "trap_percentage" in slot_data:
+            options.trap_percentage.value = int(slot_data["trap_percentage"])
         for name in CHECK_CLASS_OPTIONS:
             if name in slot_data:
                 getattr(options, name).value = int(bool(slot_data[name]))
@@ -272,11 +274,22 @@ class GTAViceCityWorld(World):
             )
 
         pool = [self.create_item(name) for name in placeable]
+        # The remaining slots are filler. A share of them, set by trap_percentage,
+        # become traps instead. Traps only ever replace filler, so they can never
+        # crowd out progression or useful items.
+        filler_slots = active_locations - len(pool)
+        trap_slots = filler_slots * self.options.trap_percentage.value // 100
+        pool.extend(self.create_item(self._random_trap()) for _ in range(trap_slots))
         pool.extend(
             self.create_item(self.get_filler_item_name())
-            for _ in range(active_locations - len(pool))
+            for _ in range(filler_slots - trap_slots)
         )
         self.multiworld.itempool += pool
+
+    def _random_trap(self) -> str:
+        # The six trap types are equally weighted, so each filler-replacing slot
+        # draws one uniformly at random.
+        return self.multiworld.random.choice(data.TRAP_ITEMS)
 
     def _opening_grant_givers(self) -> list[str]:
         # The east-island spine, in dependency order: the sphere-0 giver first,
@@ -333,6 +346,7 @@ class GTAViceCityWorld(World):
             "final_location_id": LOCATION_NAME_TO_ID[data.FINAL_MISSION],
             "death_link": bool(self.options.death_link.value),
             "shuffle_emergency_rewards": bool(self.options.shuffle_emergency_rewards.value),
+            "trap_percentage": self.options.trap_percentage.value,
             "item_globals": {
                 str(item_id): global_index
                 for item_id, global_index in scm.item_globals().items()

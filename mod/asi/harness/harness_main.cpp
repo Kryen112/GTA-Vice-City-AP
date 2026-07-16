@@ -65,7 +65,7 @@ int main(int argc, char** argv) {
   summary["item_effects"] = json::object();
   for (const auto& entry : game.ItemEffects()) {
     json descriptor = json::array({entry.second.type});
-    if (entry.second.type == "cash") descriptor.push_back(entry.second.amount);
+    if (entry.second.has_amount) descriptor.push_back(entry.second.amount);
     summary["item_effects"][std::to_string(entry.first)] = descriptor;
   }
   summary["config_globals"] = json::object();

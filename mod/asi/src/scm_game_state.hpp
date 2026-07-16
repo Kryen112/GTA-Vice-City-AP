@@ -15,6 +15,7 @@
 
 #include "game_state.hpp"
 #include "scm_completion.hpp"
+#include "scm_effects.hpp"
 
 namespace gtavc {
 
@@ -53,6 +54,29 @@ class ScmGameState : public GameState {
   static void WriteSeedHash(const std::string& hash);
   // Applies one consumable effect to the live player through plugin-sdk.
   static void ApplyEffect(const ItemEffect& effect);
+  // Applies one one-shot effect: a consumable field write or a trap world
+  // action. Arms the timed traps' revert deadlines, so it is not static.
+  void ApplyOneShot(const ItemEffect& effect);
+  // Fires one trap into the world through plugin-sdk. The timed traps
+  // (hostile peds, sped-up and slowed time) record a deadline for UpdateTimedTraps.
+  void ApplyTrap(const ItemEffect& effect);
+  // Holds the sped-up/slowed clock and the hostile-pedestrian window for their
+  // duration, reverting each once its deadline passes. Runs every frame.
+  void UpdateTimedTraps();
+  // True when the game hands the player control: not in a cutscene, on a
+  // mission pass/fail screen, or otherwise script-owned. The one flag the trap
+  // deferral keys on.
+  static bool PlayerIsControllable();
+  // The pause-mode millisecond clock, which advances in real time regardless of
+  // any time-scale trap, so a trap's own effect cannot distort its own timer.
+  static unsigned int RealTimeMs();
+  // The BIGBANG-style trap: blow up every loaded vehicle, the player's included.
+  static void ExplodeAllVehicles();
+  // The NOBODYLIKESME-style trap: set every loaded pedestrian to attack the
+  // player. Re-asserted each frame of the window so freshly spawned peds join.
+  static void MakePedestriansHostile();
+  // Clears the attack objective from every loaded pedestrian when the window ends.
+  static void CalmPedestrians();
 
   Logger logger_;
   std::mutex mutex_;
@@ -75,6 +99,12 @@ class ScmGameState : public GameState {
   bool items_dirty_ = false;
   bool stamp_pending_ = false;
   bool baseline_captured_ = false;
+  // Timed-trap state, reverted once each deadline (in real milliseconds) passes.
+  bool time_scale_trap_active_ = false;
+  unsigned int time_scale_trap_until_ = 0;
+  float time_scale_trap_factor_ = 1.0f;
+  bool hostile_pedestrians_active_ = false;
+  unsigned int hostile_pedestrians_until_ = 0;
 };
 
 }  // namespace gtavc

@@ -3,7 +3,8 @@
 Classification is decided here in one place. Progressive giver unlocks and
 area access are progression; package rewards and emergency-vehicle rewards are
 useful; cash denominations, the weapon pickup, and the health and armor top-ups
-are filler. Money never gates logic, so cash is never progression.
+are filler; the trap items are traps. Money never gates logic, so cash is never
+progression.
 """
 
 from __future__ import annotations
@@ -36,6 +37,7 @@ _ORDERED_ITEM_NAMES: list[str] = (
     + data.FILLER_ITEMS
     + VENUE_PROGRESSIVE_NAMES
     + [data.HIDDEN_PACKAGE_ITEM]
+    + data.TRAP_ITEMS
 )
 
 ITEM_NAME_TO_ID: dict[str, int] = {
@@ -55,6 +57,8 @@ def _classify(name: str) -> ItemClassification:
         return ItemClassification.progression_skip_balancing
     if name in data.PACKAGE_REWARD_ITEMS or name in data.EMERGENCY_REWARD_ITEMS:
         return ItemClassification.useful
+    if name in data.TRAP_ITEMS:
+        return ItemClassification.trap
     return ItemClassification.filler
 
 
@@ -68,6 +72,7 @@ ITEM_GROUPS: dict[str, list[str]] = {
     "Package Rewards": list(data.PACKAGE_REWARD_ITEMS),
     "Emergency Rewards": list(data.EMERGENCY_REWARD_ITEMS),
     "Filler": list(data.FILLER_ITEMS),
+    "Traps": list(data.TRAP_ITEMS),
 }
 
 # The item quantity each name contributes to the pool. Progressive items have

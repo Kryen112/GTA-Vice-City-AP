@@ -13,12 +13,19 @@
 
 namespace gtavc {
 
-// A one-shot consumable effect applied once past the saved applied-index.
-// type is "cash" | "weapon" | "health" | "armor"; amount carries the cash value
-// and is unused for the others.
+// A one-shot effect applied once past the saved applied-index.
+//
+// Consumables: "cash" (amount is the value), "weapon", "health", "armor".
+// Traps: "trap_wanted" (amount is stars to add), "trap_explode_cars",
+// "trap_hostile_peds" / "trap_speed_up" / "trap_slow_down" (amount is the
+// duration in seconds), and "trap_weather". The chaos traps defer until the
+// player is controllable; weather and the consumables apply any time the world
+// is loaded. has_amount records whether the descriptor carried the amount, so a
+// round trip echoes the exact param list.
 struct ItemEffect {
   std::string type;
   int amount = 0;
+  bool has_amount = false;
 };
 
 // A hidden package: the completion global to set when it is collected, and its

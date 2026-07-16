@@ -31,7 +31,12 @@ EMITTED_CHECK = 542000042
 CONFIG = {
     "item_globals": {"542100000": 9010, "542100001": 9011},
     "completion_watch": {"9035": 542000000, "9036": 542000042},
-    "item_effects": {"542100050": ["cash", 5000], "542100051": ["weapon"]},
+    "item_effects": {
+        "542100050": ["cash", 5000], "542100051": ["weapon"],
+        # Traps ride the same channel: one with a duration param, one without,
+        # so the round trip proves the param list is preserved either way.
+        "542100052": ["trap_speed_up", 30], "542100053": ["trap_weather"],
+    },
     "config_globals": {"9377": 1, "9378": 0},
 }
 
@@ -52,9 +57,11 @@ class Recorder:
 
     async def on_connected(self, bridge: AsiBridge) -> None:
         self.connected += 1
+        # package_coords rides the same config frame; the harness does not echo
+        # it back, so this check sends an empty map and asserts the rest.
         await bridge.send_config(
             CONFIG["item_globals"], CONFIG["completion_watch"],
-            CONFIG["item_effects"], CONFIG["config_globals"],
+            CONFIG["item_effects"], CONFIG["config_globals"], {},
         )
         await bridge.send_items(RESYNC_ITEMS)
         await bridge.send_checked(RESYNC_CHECKED)

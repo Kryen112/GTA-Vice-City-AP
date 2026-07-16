@@ -178,6 +178,31 @@ CONSUMABLE_EFFECTS: dict[str, tuple] = {
     "Armor Top-up": ("armor",),
 }
 
+# Traps take an equally weighted share of the filler slots, tuned by the
+# trap_percentage option. Like consumables they are one-shot effects the ASI
+# applies once past the applied-index, so a reconnect never re-fires one. Unlike
+# consumables the five chaos traps defer until the player is controllable (the
+# one deferral the design allows); stormy weather applies any time. Hostile
+# pedestrians, sped-up time, and slowed time last a fixed duration then revert.
+# The effect type mirrors the cheat each imitates: wanted level like
+# YOUWONTTAKEMEALIVE, exploding cars like BIGBANG, hostile peds like
+# NOBODYLIKESME, stormy weather like CATSANDDOGS, speed up like ONSPEED, and
+# slow down like BOOOOOORING.
+TRAP_DURATION_SECONDS = 30
+TRAP_WANTED_STARS = 3
+
+TRAP_EFFECTS: dict[str, tuple] = {
+    "Wanted Level Trap": ("trap_wanted", TRAP_WANTED_STARS),
+    "Exploding Cars Trap": ("trap_explode_cars",),
+    "Hostile Pedestrians Trap": ("trap_hostile_peds", TRAP_DURATION_SECONDS),
+    "Stormy Weather Trap": ("trap_weather",),
+    "Speed Up Trap": ("trap_speed_up", TRAP_DURATION_SECONDS),
+    "Slow Motion Trap": ("trap_slow_down", TRAP_DURATION_SECONDS),
+}
+
+# The trap item names, in a stable order.
+TRAP_ITEMS: list[str] = list(TRAP_EFFECTS.keys())
+
 # Other check classes beyond story missions and hidden packages. Counts come
 # from the game design in PLAN and the decompiled mission table. These are
 # free-roam collectibles and activities; their locations carry no access rule
