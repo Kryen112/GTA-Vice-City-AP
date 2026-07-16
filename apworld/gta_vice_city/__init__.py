@@ -24,7 +24,7 @@ from worlds.LauncherComponents import Component, Type, components
 from worlds.LauncherComponents import launch as launch_component
 
 from . import data, regions, rules, scm
-from .items import FILLER_NAMES, ITEM_CLASSIFICATIONS, ITEM_GROUPS, ITEM_NAME_TO_ID, ITEM_QUANTITIES
+from .items import GENERAL_FILLER_NAMES, ITEM_CLASSIFICATIONS, ITEM_GROUPS, ITEM_NAME_TO_ID, ITEM_QUANTITIES
 from .locations import CLASS_TOGGLE, LOCATION_GROUPS, LOCATION_NAME_TO_ID, LOCATION_REGIONS, LOCATION_TOGGLE
 from .options import CHECK_CLASS_OPTIONS, Goal, GTAViceCityOptions
 
@@ -194,7 +194,9 @@ class GTAViceCityWorld(World):
         )
 
     def get_filler_item_name(self) -> str:
-        return self.multiworld.random.choice(FILLER_NAMES)
+        # Generic filler only, never cash: the reward-mirror cash is placed by
+        # create_items, and AP's generic filler path must not reintroduce money.
+        return self.multiworld.random.choice(GENERAL_FILLER_NAMES)
 
     def create_regions(self) -> None:
         menu = Region("Menu", self.player, self.multiworld)
@@ -274,17 +276,33 @@ class GTAViceCityWorld(World):
             )
 
         pool = [self.create_item(name) for name in placeable]
-        # The remaining slots are filler. A share of them, set by trap_percentage,
-        # become traps instead. Traps only ever replace filler, so they can never
+        # The remaining slots are filler, drawn from the reward mirror: each
+        # enabled check offers one entry worth the vanilla cash it would have paid
+        # (None where it paid nothing). There are more mirror entries than filler
+        # slots, since progression and useful items occupy some checks, so a
+        # random sample fills the slots. That keeps the reward distribution while
+        # bounding total money to the mirror. A trap_percentage share of the slots
+        # become traps instead; traps only ever replace filler, so they never
         # crowd out progression or useful items.
+        mirror = self._reward_mirror()
         filler_slots = active_locations - len(pool)
         trap_slots = filler_slots * self.options.trap_percentage.value // 100
         pool.extend(self.create_item(self._random_trap()) for _ in range(trap_slots))
-        pool.extend(
-            self.create_item(self.get_filler_item_name())
-            for _ in range(filler_slots - trap_slots)
-        )
+        for entry in self.multiworld.random.sample(mirror, filler_slots - trap_slots):
+            name = entry if entry is not None else self.multiworld.random.choice(GENERAL_FILLER_NAMES)
+            pool.append(self.create_item(name))
         self.multiworld.itempool += pool
+
+    def _reward_mirror(self) -> list[str | None]:
+        # One filler entry per enabled check, mirroring the vanilla cash it would
+        # have paid: a cash item name, or None for a check that paid nothing. The
+        # same enabled-location predicate as create_regions, so it stays one entry
+        # per location this seed.
+        return [
+            data.mirror_item(name)
+            for name in LOCATION_NAME_TO_ID
+            if self._location_enabled(name)
+        ]
 
     def _random_trap(self) -> str:
         # The six trap types are equally weighted, so each filler-replacing slot

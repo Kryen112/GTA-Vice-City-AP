@@ -138,21 +138,18 @@ EMERGENCY_REWARD_BY_ACTIVITY: dict[str, str] = {
     "Pizza": "Max Health Upgrade",
 }
 
-# Cash filler comes in fixed denominations mirroring the suppressed mission
-# rewards; each grants its face value once. Money never gates logic.
-CASH_DENOMINATIONS: list[int] = [500, 1000, 2000, 5000, 10000, 25000, 50000]
-
-
 def cash_item_name(amount: int) -> str:
     return f"Cash ${amount:,}"
 
 
-# Consumable filler: the cash denominations plus one-shot health and armor top-
-# ups and a random weapon pickup. All one-shot, all filler, none gate logic.
-FILLER_ITEMS: list[str] = (
-    [cash_item_name(amount) for amount in CASH_DENOMINATIONS]
-    + ["Weapon Pickup", "Health Top-up", "Armor Top-up"]
-)
+# Generic filler for checks with no vanilla cash reward (properties, robbable
+# stores, emergency milestones) and for zero-reward missions: one-shot health and
+# armor top-ups, a random weapon pickup, and a wanted-level clear like the
+# LEAVEMEALONE cheat. All one-shot, all filler, none gate logic. The cash filler
+# items are derived from the reward mirror at the end of this module.
+GENERAL_FILLER: list[str] = [
+    "Weapon Pickup", "Health Top-up", "Armor Top-up", "Remove Wanted Level",
+]
 
 # The package cash reward has no vanilla package grant (the VC package system
 # gives no money), so it is a one-shot cash item like the filler denominations,
@@ -167,16 +164,6 @@ PERSISTENT_REWARD_ITEMS: list[str] = (
     [item for item in PACKAGE_REWARD_ITEMS if item != PACKAGE_CASH_REWARD]
     + EMERGENCY_REWARD_ITEMS
 )
-
-# One-shot consumable effects, each applied once by the ASI past the saved
-# applied-index. (item name -> (effect type, *params)); cash carries its amount.
-CONSUMABLE_EFFECTS: dict[str, tuple] = {
-    **{cash_item_name(amount): ("cash", amount) for amount in CASH_DENOMINATIONS},
-    PACKAGE_CASH_REWARD: ("cash", 100000),
-    "Weapon Pickup": ("weapon",),
-    "Health Top-up": ("health",),
-    "Armor Top-up": ("armor",),
-}
 
 # Traps take an equally weighted share of the filler slots, tuned by the
 # trap_percentage option. Like consumables they are one-shot effects the ASI
@@ -482,3 +469,154 @@ MAINLAND_SIDE_EVENTS: frozenset[str] = frozenset({
 MAINLAND_STUNT_JUMPS: frozenset[str] = frozenset(
     stunt_jump_name(index) for index in range(1, STUNT_JUMP_COUNT + 1)
 )
+
+
+# Reward mirror. The mod pays no cash on a mission pass (build_scm.py strips it);
+# the AP check is the reward. To keep money principled instead of arbitrary, each
+# enabled check contributes one filler item mirroring the cash it would have paid
+# in vanilla: cash for the checks that paid, generic filler for the ones that did
+# not. Money never gates logic, so every mirror item is filler.
+
+# Side events each paid a flat $100 pickup in vanilla.
+SIDE_EVENT_CASH = 100
+
+# Hidden packages pay no per-package cash in vanilla; this graded spread is a
+# deliberate variance choice for the pool. The counts sum to HIDDEN_PACKAGE_COUNT.
+PACKAGE_CASH_TIERS: list[tuple[int, int]] = [(100, 40), (250, 30), (500, 20), (1000, 10)]
+
+
+def package_cash_reward(index: int) -> int:
+    # Index is 1-based in placement order; the tiers fill in that order. The exact
+    # package-to-tier mapping does not matter (the cash is pool filler, not an
+    # in-game package reward), only the resulting multiset of values.
+    position = index
+    for amount, count in PACKAGE_CASH_TIERS:
+        if position <= count:
+            return amount
+        position -= count
+    return PACKAGE_CASH_TIERS[-1][0]
+
+
+def stunt_jump_reward(index: int) -> int:
+    # Vanilla pays $100 * n for the nth unique jump, and $10,000 for the last one.
+    return 10_000 if index == STUNT_JUMP_COUNT else 100 * index
+
+
+def rampage_reward(index: int) -> int:
+    # Vanilla pays $500 for the first rampage and $500 more for each one after it.
+    return 500 * index
+
+
+# Suppressed vanilla mission cash: the amount build_scm.py strips from each
+# mission's pass path, zero where a mission pays nothing (it then mirrors to
+# generic filler). These amounts are provisional; scripts/dump_mission_rewards.py
+# re-derives the authoritative 1.0 values from a clean decompile before release.
+MISSION_REWARDS: dict[str, int] = {
+    # Rosenberg
+    "An Old Friend": 0, "The Party": 100, "Back Alley Brawl": 200,
+    "Jury Fury": 400, "Riot": 1000,
+    # Cortez
+    "Treacherous Swine": 250, "Mall Shootout": 500, "Guardian Angels": 1000,
+    "Sir, Yes Sir!": 2000, "All Hands On Deck!": 5000,
+    # Diaz
+    "The Chase": 1000, "Phnom Penh '86": 2000, "The Fastest Boat": 4000,
+    "Supply & Demand": 10000, "Rub Out": 50000,
+    # Death Row
+    "Death Row": 0,
+    # Avery
+    "Four Iron": 500, "Two Bit Hit": 2500, "Demolition Man": 1000,
+    # Phil Cassidy
+    "Gun Runner": 2000, "Boomshine Saigon": 4000,
+    # Vercetti Protection
+    "Shakedown": 2000, "Bar Brawl": 4000, "Cop Land": 10000,
+    # Big Mitch Baker
+    "Alloy Wheels of Steel": 1000, "Messing with the Man": 2000, "Hog Tied": 4000,
+    # Umberto Robina
+    "Stunt Boat Challenge": 1000, "Cannon Fodder": 2000, "Naval Engagement": 4000,
+    "Trojan Voodoo": 10000,
+    # Auntie Poulet
+    "Juju Scramble": 1000, "Bombs Away!": 2000, "Dirty Lickin's": 5000,
+    # Love Fist
+    "Love Juice": 2000, "Psycho Killer": 4000, "Publicity Tour": 8000,
+    # Mr. Black
+    "Road Kill": 500, "Waste the Wife": 2000, "Autocide": 4000,
+    "Check Out at the Check In": 8000, "Loose Ends": 16000,
+    # Vercetti Finale
+    "Cap the Collector": 30000, "Keep Your Friends Close...": 30000,
+    # Malibu Club
+    "No Escape?": 1000, "The Shootist": 2000, "The Driver": 3000, "The Job": 50000,
+    # Film Studio
+    "Recruitment Drive": 1000, "Dildo Dodo": 2000, "Martha's Mug Shot": 4000,
+    "G-spotlight": 8000,
+    # Printworks
+    "Spilling the Beans": 2000, "Hit the Courier": 5000,
+    # Kaufman Cabs
+    "V.I.P.": 1000, "Friendly Rivalry": 2000, "Cabmaggedon": 5000,
+    # Cherry Popper
+    "Distribution": 0,
+    # Boatyard
+    "Checkpoint Charlie": 5000,
+    # Sunshine Autos
+    "Sunshine Autos Races": 0,
+}
+
+
+def _build_location_reward() -> dict[str, int]:
+    # Every location name -> the vanilla cash it would have paid (0 = no cash, so
+    # generic filler). Built from the same content tables the locations come from,
+    # so it stays one entry per location.
+    reward: dict[str, int] = {}
+    for missions in STORY_GIVERS.values():
+        for mission in missions:
+            reward[mission] = MISSION_REWARDS[mission]
+    for missions in VENUE_STRANDS.values():
+        for mission in missions:
+            reward[mission] = MISSION_REWARDS[mission]
+    for index, name in enumerate(package_data.PACKAGE_NAMES, start=1):
+        reward[name] = package_cash_reward(index)
+    for name in SIDE_EVENTS:
+        reward[name] = SIDE_EVENT_CASH
+    for index in range(1, RAMPAGE_COUNT + 1):
+        reward[rampage_name(index)] = rampage_reward(index)
+    for index in range(1, STUNT_JUMP_COUNT + 1):
+        reward[stunt_jump_name(index)] = stunt_jump_reward(index)
+    for name in emergency_names():
+        reward[name] = 0
+    for index in range(1, ROBBABLE_STORE_COUNT + 1):
+        reward[robbable_store_name(index)] = 0
+    for name in PROPERTY_PURCHASES:
+        reward[name] = 0
+    return reward
+
+
+LOCATION_REWARD: dict[str, int] = _build_location_reward()
+
+
+def mirror_item(location_name: str) -> str | None:
+    # The filler mirroring a location's vanilla reward: a cash item at its value,
+    # or None (a generic-filler placeholder) when the check paid no cash.
+    amount = LOCATION_REWARD[location_name]
+    return cash_item_name(amount) if amount > 0 else None
+
+
+# The static universe of cash denominations, independent of options so the item
+# id table is stable across seeds: every distinct positive reward value.
+CASH_VALUES: list[int] = sorted({amount for amount in LOCATION_REWARD.values() if amount > 0})
+
+# All filler item names: one cash item per distinct reward value, plus the
+# generic consumables. items.py assigns ids from this list and classifies it
+# filler; create_items draws the actual per-seed filler from the reward mirror.
+FILLER_ITEMS: list[str] = [cash_item_name(amount) for amount in CASH_VALUES] + GENERAL_FILLER
+
+# One-shot consumable effects, each applied once by the ASI past the saved
+# applied-index. (item name -> (effect type, *params)); cash carries its amount.
+# The wanted-level clear is beneficial, so unlike the chaos traps it never
+# defers; it applies the moment the player exists, like every other consumable.
+CONSUMABLE_EFFECTS: dict[str, tuple] = {
+    **{cash_item_name(amount): ("cash", amount) for amount in CASH_VALUES},
+    PACKAGE_CASH_REWARD: ("cash", 100000),
+    "Weapon Pickup": ("weapon",),
+    "Health Top-up": ("health",),
+    "Armor Top-up": ("armor",),
+    "Remove Wanted Level": ("clear_wanted",),
+}

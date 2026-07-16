@@ -2,9 +2,9 @@
 
 Classification is decided here in one place. Progressive giver unlocks and
 area access are progression; package rewards and emergency-vehicle rewards are
-useful; cash denominations, the weapon pickup, and the health and armor top-ups
-are filler; the trap items are traps. Money never gates logic, so cash is never
-progression.
+useful; cash denominations, the weapon pickup, the health and armor top-ups,
+and the wanted-level clear are filler; the trap items are traps. Money never
+gates logic, so cash is never progression.
 """
 
 from __future__ import annotations
@@ -44,7 +44,10 @@ ITEM_NAME_TO_ID: dict[str, int] = {
     name: ID_BASE + index for index, name in enumerate(_ORDERED_ITEM_NAMES)
 }
 
-FILLER_NAMES: list[str] = list(data.FILLER_ITEMS)
+# The generic (non-cash) filler. get_filler_item_name draws only from these, so
+# AP's cross-world and plando filler path never mints unbounded cash; the reward-
+# mirror cash is placed by the world's own create_items.
+GENERAL_FILLER_NAMES: list[str] = list(data.GENERAL_FILLER)
 
 
 def _classify(name: str) -> ItemClassification:

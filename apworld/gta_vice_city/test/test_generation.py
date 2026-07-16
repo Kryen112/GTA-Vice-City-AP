@@ -13,7 +13,7 @@ from Options import OptionError
 from test.bases import WorldTestBase
 
 from .. import data, scm
-from ..items import ITEM_NAME_TO_ID
+from ..items import ITEM_CLASSIFICATIONS, ITEM_NAME_TO_ID
 from ..locations import LOCATION_NAME_TO_ID, PACKAGE_NAMES, STORY_MISSION_NAMES
 from ..options import CHECK_CLASS_OPTIONS
 
@@ -453,10 +453,10 @@ class TestReservedGlobals(WorldTestBase):
         effect_ids = set(scm.item_effects().keys())
         count_ids = set(scm.item_globals().keys())
         self.assertTrue(effect_ids.isdisjoint(count_ids))
-        # Every effect names a known type: the four consumables plus the six
+        # Every effect names a known type: the five consumables plus the six
         # trap types the ASI knows how to apply.
         known_types = {
-            "cash", "weapon", "health", "armor",
+            "cash", "weapon", "health", "armor", "clear_wanted",
             "trap_wanted", "trap_explode_cars", "trap_hostile_peds",
             "trap_weather", "trap_speed_up", "trap_slow_down",
         }
@@ -554,6 +554,21 @@ class TestTraps(WorldTestBase):
             self.assertIn(trap_type, types)
 
 
+class TestRemoveWantedLevelFiller(WorldTestBase):
+    game = "Grand Theft Auto Vice City"
+
+    def test_it_is_a_one_shot_clear_wanted_consumable(self) -> None:
+        # The wanted-level clear (like the LEAVEMEALONE cheat) is plain filler,
+        # never progression or a trap, and it rides the one-shot item-effect path
+        # as clear_wanted, so the ASI applies it once past the applied-index.
+        self.assertIn("Remove Wanted Level", data.FILLER_ITEMS)
+        self.assertEqual(
+            ITEM_CLASSIFICATIONS["Remove Wanted Level"], ItemClassification.filler,
+        )
+        effect = scm.item_effects()[ITEM_NAME_TO_ID["Remove Wanted Level"]]
+        self.assertEqual(effect, ["clear_wanted"])
+
+
 class TestTrapsDisabled(WorldTestBase):
     game = "Grand Theft Auto Vice City"
     options: ClassVar[dict] = {"trap_percentage": 0}
@@ -576,3 +591,109 @@ class TestTrapsAll(WorldTestBase):
                       if item.player == self.player]
         self.assertGreater(len([n for n in pool_names if n in data.TRAP_ITEMS]), 0)
         self.assertEqual([n for n in pool_names if n in data.FILLER_ITEMS], [])
+
+
+def _rampage_only_cash() -> set[str]:
+    # Cash denominations paid only by rampages (no mission, package, side event,
+    # or stunt jump pays the same amount), so their presence tracks the rampage
+    # class exactly. Robust to later reward-value edits.
+    rampage_names = {data.rampage_name(index) for index in range(1, data.RAMPAGE_COUNT + 1)}
+    rampage_values = {data.LOCATION_REWARD[name] for name in rampage_names}
+    other_values = {amount for name, amount in data.LOCATION_REWARD.items()
+                    if amount > 0 and name not in rampage_names}
+    return {data.cash_item_name(value) for value in rampage_values - other_values}
+
+
+class TestRewardData(WorldTestBase):
+    game = "Grand Theft Auto Vice City"
+
+    def test_stunt_and_rampage_reward_curves(self) -> None:
+        # Stunt jumps pay $100 * n, except the final jump which pays $10,000.
+        self.assertEqual(data.stunt_jump_reward(1), 100)
+        self.assertEqual(data.stunt_jump_reward(35), 3500)
+        self.assertEqual(data.stunt_jump_reward(data.STUNT_JUMP_COUNT), 10_000)
+        # Rampages pay $500 for the first and $500 more for each one after it.
+        self.assertEqual(data.rampage_reward(1), 500)
+        self.assertEqual(data.rampage_reward(data.RAMPAGE_COUNT), 500 * data.RAMPAGE_COUNT)
+
+    def test_every_location_has_exactly_one_reward_entry(self) -> None:
+        # The mirror needs one reward per location: a missing key would KeyError
+        # at generation, an extra one would drift from the location set.
+        self.assertEqual(set(data.LOCATION_REWARD), set(LOCATION_NAME_TO_ID))
+
+    def test_mission_rewards_cover_every_mission(self) -> None:
+        missions = [m for missions in data.STORY_GIVERS.values() for m in missions]
+        missions += [m for missions in data.VENUE_STRANDS.values() for m in missions]
+        self.assertEqual(set(data.MISSION_REWARDS), set(missions))
+        self.assertTrue(all(isinstance(amount, int) and amount >= 0
+                            for amount in data.MISSION_REWARDS.values()))
+
+    def test_mirror_item_is_cash_when_paid_and_none_when_free(self) -> None:
+        # A paying check mirrors to a cash item; a no-reward check mirrors to
+        # generic filler (None).
+        self.assertEqual(data.mirror_item(data.hidden_package_name(1)),
+                         data.cash_item_name(data.package_cash_reward(1)))
+        self.assertEqual(data.mirror_item(data.rampage_name(1)),
+                         data.cash_item_name(data.rampage_reward(1)))
+        self.assertIsNone(data.mirror_item("Printworks Purchase"))
+        self.assertIsNone(data.mirror_item(data.emergency_name("Paramedic", 1)))
+
+    def test_package_cash_is_a_graded_spread(self) -> None:
+        # A deliberate variance spread, not vanilla: 40 x $100, 30 x $250,
+        # 20 x $500, 10 x $1,000, summing to every package.
+        self.assertEqual(sum(count for _amount, count in data.PACKAGE_CASH_TIERS),
+                         data.HIDDEN_PACKAGE_COUNT)
+        values = [data.LOCATION_REWARD[data.hidden_package_name(index)]
+                  for index in range(1, data.HIDDEN_PACKAGE_COUNT + 1)]
+        for amount, count in data.PACKAGE_CASH_TIERS:
+            self.assertEqual(sum(1 for value in values if value == amount), count)
+
+    def test_cash_items_are_filler_with_a_cash_effect(self) -> None:
+        # Every mirrored denomination is a filler item riding the one-shot cash
+        # effect the ASI already applies; none gates logic.
+        self.assertTrue(data.CASH_VALUES)
+        for amount in data.CASH_VALUES:
+            name = data.cash_item_name(amount)
+            self.assertIn(name, data.FILLER_ITEMS)
+            self.assertEqual(ITEM_CLASSIFICATIONS[name], ItemClassification.filler)
+            self.assertEqual(scm.item_effects()[ITEM_NAME_TO_ID[name]], ["cash", amount])
+
+
+class TestRewardMirror(WorldTestBase):
+    game = "Grand Theft Auto Vice City"
+    # Default options: hidden packages, rampages, stunt jumps, side events on.
+
+    def test_mirror_has_one_entry_per_enabled_location(self) -> None:
+        self.assertEqual(len(self.world._reward_mirror()),
+                         len(self.multiworld.get_locations(self.player)))
+
+    def test_itempool_fills_every_location(self) -> None:
+        placed = [item for item in self.multiworld.itempool if item.player == self.player]
+        self.assertEqual(len(placed), len(self.multiworld.get_locations(self.player)))
+
+    def test_filler_cash_is_bounded_by_the_reward_mirror(self) -> None:
+        # Total filler cash can never exceed the sum of every mirrored reward, and
+        # sampling only ever removes entries, so money is bounded, not arbitrary.
+        cash_total = sum(
+            data.CONSUMABLE_EFFECTS[item.name][1]
+            for item in self.multiworld.itempool
+            if item.player == self.player and item.name.startswith("Cash $")
+        )
+        self.assertGreater(cash_total, 0)
+        self.assertLessEqual(cash_total, sum(data.LOCATION_REWARD.values()))
+
+    def test_rampage_cash_present_when_rampages_on(self) -> None:
+        mirror = set(self.world._reward_mirror())
+        self.assertTrue(_rampage_only_cash())
+        self.assertTrue(_rampage_only_cash().issubset(mirror))
+
+
+class TestRewardMirrorClassOff(WorldTestBase):
+    game = "Grand Theft Auto Vice City"
+    options: ClassVar[dict] = {"enable_rampages": False}
+
+    def test_disabling_a_class_drops_its_mirrored_cash(self) -> None:
+        # With rampages off their locations do not exist, so no rampage-only cash
+        # denomination enters the mirror.
+        mirror = set(self.world._reward_mirror())
+        self.assertTrue(_rampage_only_cash().isdisjoint(mirror))
