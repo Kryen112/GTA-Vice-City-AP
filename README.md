@@ -1,7 +1,14 @@
 # GTA: Vice City (Archipelago world)
 
-Work in progress, nothing playable yet. This repo will hold the Archipelago
-apworld for GTA: Vice City, and any mod or tracker pieces it needs.
+An Archipelago world plus in-game mod for GTA: Vice City (classic PC,
+executable 1.0). It turns Vice City into a multiworld game.
+
+## For players
+
+To install and play, see [PLAYER_SETUP.md](PLAYER_SETUP.md). You supply an
+original 1.0 `gta-vc.exe`; this project never distributes the game.
+
+## For developers
 
 Start with `NEXT_APWORLD_PLAYBOOK.md`. It is the build playbook and process
 guardrails distilled from the HP2PC and Viscera Cleanup Detail projects: what
