@@ -1,0 +1,62 @@
+{$CLEO .cs}
+
+// AP marker test. Stands in for the ASI: sets the reserved mission-unlock
+// globals from the keyboard so the APMARK watcher's map blips and world beams
+// can be verified without a live AP session. Run with the AP client NOT
+// connected, so the ASI does not overwrite these globals.
+//   1 -> Progressive Rosenberg +1 (start-island office, LAW1..LAW4)
+//   2 -> Progressive Mr. Black  +1 (payphones, distinct coords, shared handle)
+//   3 -> Progressive Love Fist  +1 (mainland giver)
+//   0 -> Mainland Access ON
+//   9 -> reset those four unlock globals to 0 (markers should hide)
+
+0000:
+
+:APTEST
+wait 0
+if
+    0AB0:   key_pressed 49  // '1'
+jf @APTEST_2
+$9010 += 1
+0AD1: show_formatted_text_highpriority "AP test: Rosenberg unlock +1" time 2500
+wait 400
+jump @APTEST
+
+:APTEST_2
+if
+    0AB0:   key_pressed 50  // '2'
+jf @APTEST_3
+$9021 += 1
+0AD1: show_formatted_text_highpriority "AP test: Mr Black unlock +1" time 2500
+wait 400
+jump @APTEST
+
+:APTEST_3
+if
+    0AB0:   key_pressed 51  // '3'
+jf @APTEST_0
+$9020 += 1
+0AD1: show_formatted_text_highpriority "AP test: Love Fist unlock +1" time 2500
+wait 400
+jump @APTEST
+
+:APTEST_0
+if
+    0AB0:   key_pressed 48  // '0'
+jf @APTEST_RESET
+$9030 = 1
+0AD1: show_formatted_text_highpriority "AP test: Mainland Access ON" time 2500
+wait 400
+jump @APTEST
+
+:APTEST_RESET
+if
+    0AB0:   key_pressed 57  // '9'
+jf @APTEST
+$9010 = 0
+$9020 = 0
+$9021 = 0
+$9030 = 0
+0AD1: show_formatted_text_highpriority "AP test: unlocks reset to 0" time 2500
+wait 400
+jump @APTEST
