@@ -202,6 +202,28 @@ class TestMainlandPropertyPurchase(WorldTestBase):
         self.assertTrue(self.can_reach_location("Kaufman Cabs Purchase"))
 
 
+class TestDeferredClassIslands(WorldTestBase):
+    game = "Grand Theft Auto Vice City"
+    options: ClassVar[dict] = {
+        "enable_robbable_stores": True, "enable_side_events": True,
+        "enable_stunt_jumps": True,
+    }
+
+    def test_mainland_members_need_mainland_access(self) -> None:
+        # A mainland store (coordinate-derived), a mainland side event, and a stunt
+        # jump (provisionally mainland) wait on Mainland Access; a start-island
+        # store and chopper checkpoint do not. This closes the loop where the fill
+        # could otherwise strand Mainland Access behind a mainland-only check.
+        for start_name in ["Robbable Store 01", "Ocean Beach Chopper Checkpoint"]:
+            self.assertTrue(self.can_reach_location(start_name), start_name)
+        mainland = ["Robbable Store 03", "Hotring", "Unique Stunt Jump 01"]
+        for name in mainland:
+            self.assertFalse(self.can_reach_location(name), name)
+        self.collect_by_name(["Mainland Access"])
+        for name in mainland:
+            self.assertTrue(self.can_reach_location(name), name)
+
+
 class TestPropertiesToggle(WorldTestBase):
     game = "Grand Theft Auto Vice City"
     options: ClassVar[dict] = {"enable_properties": False}

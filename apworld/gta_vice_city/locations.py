@@ -2,10 +2,10 @@
 
 Story missions are always on. Every other check class is optional and governed
 by its toggle (data.optional_check_classes). Each location's region (island) is
-assigned below: missions by giver or venue island, rampages and hidden packages
-by position, property purchases by island, and emergency milestones by pacing.
-Stunt jumps, side events, and robbable stores are not yet audited and default to
-the start island.
+assigned below from the game's own coordinates where available (givers, rampages,
+payphones, stores) and from the district otherwise. Stunt jumps and the
+bespoke-trigger side events are provisionally on the mainland (safe over-gating)
+until an in-game audit places each one.
 """
 
 from __future__ import annotations
@@ -76,11 +76,11 @@ for _strand, (_class_key, _missions) in data.progressive_strands().items():
         MISSION_INDEX[_mission] = _index
 
 # Location name to region (island). Missions (story and venue) follow their
-# giver or venue island, with per-mission overrides; rampages and hidden packages
-# follow their world position; property purchases follow their business or
-# safehouse island; the upper half of each emergency activity gates on the
-# mainland for logic pacing. Classes not yet audited (stunt jumps, side events,
-# robbable stores) default to the start island.
+# giver or venue island, with per-mission overrides; rampages, hidden packages,
+# and robbable stores follow their world position; property purchases follow their
+# business or safehouse island; the upper half of each emergency activity gates on
+# the mainland for logic pacing; the mainland side events and (provisionally) all
+# stunt jumps gate on the mainland. Anything left over is the start island.
 LOCATION_REGIONS: dict[str, str] = {}
 for _mission, _strand in MISSION_GIVER.items():
     LOCATION_REGIONS[_mission] = data.mission_region(_strand, _mission)
@@ -92,6 +92,12 @@ for _activity, _level_count in data.EMERGENCY_LEVELS.items():
     for _level in range(_level_count // 2 + 1, _level_count + 1):
         LOCATION_REGIONS[data.emergency_name(_activity, _level)] = data.REGION_MAINLAND
 for _name in data.MAINLAND_PROPERTIES:
+    LOCATION_REGIONS[_name] = data.REGION_MAINLAND
+for _name in data.MAINLAND_STORES:
+    LOCATION_REGIONS[_name] = data.REGION_MAINLAND
+for _name in data.MAINLAND_SIDE_EVENTS:
+    LOCATION_REGIONS[_name] = data.REGION_MAINLAND
+for _name in data.MAINLAND_STUNT_JUMPS:
     LOCATION_REGIONS[_name] = data.REGION_MAINLAND
 for _name in _ORDERED_LOCATION_NAMES:
     LOCATION_REGIONS.setdefault(_name, data.REGION_VICE_CITY)

@@ -373,3 +373,28 @@ MAINLAND_PROPERTIES: frozenset[str] = frozenset({
     "Kaufman Cabs Purchase", "Boatyard Purchase",
     "Hyman Condo Purchase", "Skumole Shack Purchase",
 })
+
+# Robbable stores on the mainland, from each store's locate/area coordinates in
+# the store controller (source order equals check order).
+MAINLAND_STORES: frozenset[str] = frozenset(
+    robbable_store_name(index) for index in (3, 4, 5, 6, 7, 14, 15)
+)
+
+# Side events on the mainland. The three stadium events (Hyman Stadium, Downtown)
+# and the Downtown and Little Haiti chopper checkpoints are confirmed. The seven
+# with bespoke triggers (the RC events, the dirt trials, PCJ Playground, Cone
+# Crazy) are not coordinate-pinned yet, so they count as mainland for safety
+# (over-gating never softlocks); refine to the start island once confirmed.
+MAINLAND_SIDE_EVENTS: frozenset[str] = frozenset({
+    "Hotring", "Bloodring", "Dirtring",
+    "Downtown Chopper Checkpoint", "Little Haiti Chopper Checkpoint",
+    "RC Bandit Race", "RC Baron Race", "RC Raider Pickup",
+    "Trial by Dirt", "Test Track", "PCJ Playground", "Cone Crazy",
+})
+
+# Stunt jumps are exe-native: the SCM only registers a found jump by its engine
+# id, so their per-jump islands are not readable from the decompile. All 36 count
+# as mainland provisionally (safe over-gating) until an in-game audit places each.
+MAINLAND_STUNT_JUMPS: frozenset[str] = frozenset(
+    stunt_jump_name(index) for index in range(1, STUNT_JUMP_COUNT + 1)
+)
