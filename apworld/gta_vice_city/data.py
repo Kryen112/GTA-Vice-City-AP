@@ -305,28 +305,71 @@ MISSION_PREREQUISITES: dict[str, list[tuple[str, int]]] = {
 }
 
 
-# Region model, pinned from the SCM. The vanilla map has one persistent
-# island barrier: three bridge roadblocks (NT_ROADBLOCKCI, NT_ROADBLOCKGF,
-# WSH_ROADBLOCK) that all delete together, and the flag $847 that all set,
-# when Phnom Penh '86 (Diaz's second mission) passes. That single flip opens
-# the whole west island (the mainland). The AP item Mainland Access stands in
-# for that flip. There is NO second persistent area: the Leaf Links golf gate
-# opens inside the Four Iron mission script itself, so Leaf Links is not a
-# roamable gated area and Four Iron is a start-island check.
+# Region model, pinned from the SCM. The vanilla map has one persistent island
+# barrier: three bridge roadblocks that all delete together, and the flag $847
+# that all set, when Phnom Penh '86 (Diaz's second mission) passes, opening the
+# whole west island (the mainland). The AP item Mainland Access stands in for
+# that flip. Leaf Links is not a roamable gated area (its gate opens inside Four
+# Iron), so the start island is the east beaches plus Starfish, Prawn, and Leaf
+# Links; the mainland is everything west of the bridge channel. Island membership
+# below is read from each check's world coordinates in the decompile: giver
+# marker positions, rampage pickup positions, and payphone positions, split at
+# the channel (start-island givers reach X = -379, mainland givers begin at
+# X = -597).
 REGION_VICE_CITY = "Vice City"
 REGION_MAINLAND = "Mainland"
 
-# Givers whose whole strand sits on the mainland (west island). Which exact
-# missions touch the mainland is audited per giver in Phase 3; this is the
-# default giver-level assignment behind the one confirmed barrier. Venue
-# strands and property purchases default to the start island for now (a Phase 3
-# audit refines those, some of which are on the mainland).
+# Story givers whose whole strand sits on the mainland (marker west of the
+# channel). Mr. Black is absent because his payphones span both islands (his
+# mainland ones are in MAINLAND_MISSIONS). The finale spans both islands but
+# stays mainland since it is end-game, past Mainland Access anyway.
 MAINLAND_GIVERS: frozenset[str] = frozenset({
-    "Big Mitch Baker", "Umberto Robina", "Auntie Poulet", "Vercetti Finale",
+    "Big Mitch Baker", "Umberto Robina", "Auntie Poulet",
+    "Phil Cassidy", "Love Fist", "Vercetti Finale",
+})
+
+# Venue strands whose business sits on the mainland.
+MAINLAND_VENUES: frozenset[str] = frozenset({
+    "Kaufman Cabs", "Printworks", "Cherry Popper", "Boatyard", "Sunshine Autos",
+})
+
+# Individual mainland missions whose giver is not a whole-mainland giver. Mr.
+# Black's last two payphones (Check Out at the Check In at X = -1482, Loose Ends
+# at X = -978) are on the mainland; his first three are on the start island.
+MAINLAND_MISSIONS: frozenset[str] = frozenset({
+    "Check Out at the Check In", "Loose Ends",
 })
 
 
 def mission_region(giver: str, mission: str) -> str:
-    if giver in MAINLAND_GIVERS:
+    if mission in MAINLAND_MISSIONS:
+        return REGION_MAINLAND
+    if giver in MAINLAND_GIVERS or giver in MAINLAND_VENUES:
         return REGION_MAINLAND
     return REGION_VICE_CITY
+
+
+# Rampages on the mainland, from the kill-frenzy pickup coordinates in the
+# RAMPAGE controller (pickup order equals flag order equals check order). Rampages
+# 09 (X = -509) and 26 (X = -449) sit in the channel band and count as mainland.
+MAINLAND_RAMPAGES: frozenset[str] = frozenset(
+    rampage_name(index)
+    for index in (2, 7, 8, 9, 10, 11, 14, 15, 16, 17, 18, 19, 26, 27, 28, 32, 34, 35)
+)
+
+# Hidden packages are count-ordinal, so the Nth package check needs the mainland
+# once N passes the start-island package count. Sources put the start island at
+# "just over half"; 50 is the safe conservative count (well within reach on the
+# start island, and it keeps the default 50-package goal start-island reachable).
+PACKAGE_START_ISLAND_COUNT = 50
+
+# Property purchases on the mainland: the five mainland venue businesses and the
+# two mainland safehouses (Hyman Condo in Downtown, Skumole Shack in Little
+# Haiti). A purchase needs its island reached, so a mainland purchase must gate on
+# Mainland Access; leaving it start-island lets the fill hide Mainland Access
+# itself behind a mainland business, an unwinnable loop.
+MAINLAND_PROPERTIES: frozenset[str] = frozenset({
+    "Printworks Purchase", "Sunshine Autos Purchase", "Cherry Popper Purchase",
+    "Kaufman Cabs Purchase", "Boatyard Purchase",
+    "Hyman Condo Purchase", "Skumole Shack Purchase",
+})

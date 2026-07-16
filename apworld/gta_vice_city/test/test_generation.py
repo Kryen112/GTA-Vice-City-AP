@@ -133,6 +133,75 @@ class TestSpine(WorldTestBase):
         self.assertTrue(self.can_reach_location(data.FINAL_MISSION))
 
 
+class TestMainlandGating(WorldTestBase):
+    game = "Grand Theft Auto Vice City"
+    options: ClassVar[dict] = {
+        "enable_hidden_packages": True, "enable_rampages": True,
+        "enable_emergency_vehicles": True,
+    }
+
+    def test_mainland_checks_need_mainland_access(self) -> None:
+        # Collectibles and emergency milestones carry no rule beyond their region,
+        # so a start-island check is reachable with an empty inventory while its
+        # mainland counterpart waits on Mainland Access. Covers a rampage (per
+        # pickup coordinate), the hidden-package count threshold, and the emergency
+        # upper-half pacing.
+        for start_name in ["Rampage 01", "Hidden Package 050", "Paramedic Level 06"]:
+            self.assertTrue(self.can_reach_location(start_name), start_name)
+        mainland = ["Rampage 02", "Hidden Package 051", "Paramedic Level 07"]
+        for name in mainland:
+            self.assertFalse(self.can_reach_location(name), name)
+        self.collect_by_name(["Mainland Access"])
+        for name in mainland:
+            self.assertTrue(self.can_reach_location(name), name)
+
+    def test_mainland_giver_mission_needs_mainland_access(self) -> None:
+        # Phil Cassidy is a mainland giver, so his first mission needs its own
+        # unlock AND Mainland Access, not the unlock alone.
+        self.collect_by_name(["Progressive Phil Cassidy"])
+        self.assertFalse(self.can_reach_location("Gun Runner"))
+        self.collect_by_name(["Mainland Access"])
+        self.assertTrue(self.can_reach_location("Gun Runner"))
+
+    def test_mr_black_payphones_split_by_island(self) -> None:
+        # Mr. Black's payphones span both islands. With his full unlock strand,
+        # Road Kill (start island) is reachable but Loose Ends (mainland) still
+        # waits on Mainland Access.
+        self.collect_by_name(["Progressive Mr. Black"])
+        self.assertTrue(self.can_reach_location("Road Kill"))
+        self.assertFalse(self.can_reach_location("Loose Ends"))
+        self.collect_by_name(["Mainland Access"])
+        self.assertTrue(self.can_reach_location("Loose Ends"))
+
+
+class TestHiddenPackagesGoalNeedsMainland(WorldTestBase):
+    game = "Grand Theft Auto Vice City"
+    options: ClassVar[dict] = {"goal": "hidden_packages", "hidden_packages_required": 80}
+
+    def test_high_package_goal_pulls_in_the_mainland(self) -> None:
+        # A goal above the start-island count forces mainland packages into the
+        # goal: the 80th-order package check is a mainland check, unreachable
+        # until Mainland Access. The default solvability tests prove the seed
+        # still generates and beats.
+        self.assertFalse(self.can_reach_location("Hidden Package 080"))
+        self.collect_by_name(["Mainland Access"])
+        self.assertTrue(self.can_reach_location("Hidden Package 080"))
+
+
+class TestMainlandPropertyPurchase(WorldTestBase):
+    game = "Grand Theft Auto Vice City"
+    options: ClassVar[dict] = {"enable_properties": True}
+
+    def test_mainland_purchase_needs_mainland_access(self) -> None:
+        # A purchase carries no rule beyond its region. A mainland business must
+        # gate on Mainland Access so the fill cannot strand Mainland Access behind
+        # it; a start-island business does not.
+        self.assertTrue(self.can_reach_location("Malibu Club Purchase"))
+        self.assertFalse(self.can_reach_location("Kaufman Cabs Purchase"))
+        self.collect_by_name(["Mainland Access"])
+        self.assertTrue(self.can_reach_location("Kaufman Cabs Purchase"))
+
+
 class TestPropertiesToggle(WorldTestBase):
     game = "Grand Theft Auto Vice City"
     options: ClassVar[dict] = {"enable_properties": False}
