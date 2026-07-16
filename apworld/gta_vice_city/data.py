@@ -175,8 +175,53 @@ RAMPAGE_COUNT = 35
 STUNT_JUMP_COUNT = 36
 
 
+# Rampage names: the weapon the RAMPAGE controller hands the player (its $1518
+# model id, read from the SCM) plus the district. Rampages 14 and 21 hand no fixed
+# weapon. The MP5 pair at Vice Point is disambiguated 1/2. Districts are
+# provisional, auto-derived from the kill-frenzy pickup coordinates, pending an
+# in-game audit. Order is fixed: index i is rampage i, so location ids and
+# completion globals stay stable across the rename.
+RAMPAGE_NAMES: list[str] = [
+    "Tear Gas Rampage - Ocean Beach",
+    "Rocket Launcher Rampage - Escobar International",
+    "MP5 Rampage - Vice Point 1",
+    "Tec-9 Rampage - Vice Point",
+    "Rocket Launcher Rampage - Vice Point",
+    "Ruger Rampage - Vice Point",
+    "Flamethrower Rampage - Downtown",
+    "MP5 Rampage - Downtown",
+    "Tear Gas Rampage - Downtown",
+    "M60 Rampage - Little Haiti",
+    "Mac-10 Rampage - Little Havana",
+    "Chainsaw Rampage - Washington Beach",
+    ".308 Sniper Rampage - Ocean Beach",
+    "Rampage - Little Havana",
+    ".357 Rampage - Escobar International",
+    "Rocket Launcher Rampage - Viceport",
+    "Minigun Rampage - Little Havana",
+    "Grenade Rampage - Escobar International",
+    "Sniper Rifle Rampage - Little Havana",
+    "Katana Rampage - Washington Beach",
+    "Rampage - Ocean Beach",
+    "Pistol Rampage - Vice Point",
+    "MP5 Rampage - Vice Point 2",
+    "Chainsaw Rampage - Vice Point",
+    "Rocket Launcher Rampage - Ocean Beach",
+    "Minigun Rampage - Vice Point",
+    "Pistol Rampage - Downtown",
+    "Shotgun Rampage - Escobar International",
+    ".308 Sniper Rampage - Vice Point",
+    "Shotgun Rampage - Washington Beach",
+    "S.P.A.S. 12 Rampage - Vice Point",
+    "S.P.A.S. 12 Rampage - Little Havana",
+    "S.P.A.S. 12 Rampage - Escobar International",
+    "Tec-9 Rampage - Washington Beach",
+    "Katana Rampage - Escobar International",
+]
+
+
 def rampage_name(index: int) -> str:
-    return f"Rampage {index:02d}"
+    return RAMPAGE_NAMES[index - 1]
 
 
 def stunt_jump_name(index: int) -> str:
@@ -349,12 +394,14 @@ def mission_region(giver: str, mission: str) -> str:
     return REGION_VICE_CITY
 
 
-# Rampages on the mainland, from the kill-frenzy pickup coordinates in the
-# RAMPAGE controller (pickup order equals flag order equals check order). Rampages
-# 09 (X = -509) and 26 (X = -449) sit in the channel band and count as mainland.
+# Rampages on the mainland, from the kill-frenzy pickup coordinates in the RAMPAGE
+# controller (pickup order equals flag order equals check order). Indices with
+# pickup X below the bridge channel (about -480) are mainland; rampages 25
+# (X = -366, far south) and 26 (X = -449, far north) sit in the band west of the
+# beaches and count as mainland too.
 MAINLAND_RAMPAGES: frozenset[str] = frozenset(
     rampage_name(index)
-    for index in (2, 7, 8, 9, 10, 11, 14, 15, 16, 17, 18, 19, 26, 27, 28, 32, 34, 35)
+    for index in (2, 7, 8, 9, 10, 11, 14, 15, 16, 17, 18, 19, 25, 26, 27, 28, 32, 33, 35)
 )
 
 # Hidden packages are count-ordinal, so the Nth package check needs the mainland

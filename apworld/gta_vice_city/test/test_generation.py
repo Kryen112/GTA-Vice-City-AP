@@ -146,9 +146,13 @@ class TestMainlandGating(WorldTestBase):
         # mainland counterpart waits on Mainland Access. Covers a rampage (per
         # pickup coordinate), the hidden-package count threshold, and the emergency
         # upper-half pacing.
-        for start_name in ["Rampage 01", "Hidden Package 050", "Paramedic Level 06"]:
+        for start_name in ["Tear Gas Rampage - Ocean Beach",
+                            "Tec-9 Rampage - Washington Beach",
+                            "Hidden Package 050", "Paramedic Level 06"]:
             self.assertTrue(self.can_reach_location(start_name), start_name)
-        mainland = ["Rampage 02", "Hidden Package 051", "Paramedic Level 07"]
+        mainland = ["Rocket Launcher Rampage - Escobar International",
+                    "S.P.A.S. 12 Rampage - Escobar International",
+                    "Hidden Package 051", "Paramedic Level 07"]
         for name in mainland:
             self.assertFalse(self.can_reach_location(name), name)
         self.collect_by_name(["Mainland Access"])
