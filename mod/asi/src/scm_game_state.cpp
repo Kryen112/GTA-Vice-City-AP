@@ -3,6 +3,8 @@
 #include <algorithm>
 #include <cstdlib>
 
+#include "scm_packages.hpp"
+
 #include <plugin.h>
 #include <CMessages.h>
 #include <CTheScripts.h>
@@ -176,36 +178,26 @@ bool ScmGameState::TakeGoalReached() {
 
 void ScmGameState::DetectCollectedPackages() {
   if (package_locations_.empty()) return;
-  // World positions of every collectable pickup still present in the pool.
-  std::vector<CVector> present;
+  // World positions of every collectable pickup still present in the pool. The
+  // 336 pool size matches plugin-sdk's CPickup (&aPickUps)[336].
+  std::vector<WorldPoint> present;
   for (int index = 0; index < 336; ++index) {
     const CPickup& pickup = CPickups::aPickUps[index];
     if (pickup.bPickupType == PICKUP_COLLECTABLE1 && !pickup.bRemoved) {
-      present.push_back(pickup.vecPos);
+      present.push_back({pickup.vecPos.x, pickup.vecPos.y, pickup.vecPos.z});
     }
   }
-  // Within two units (Euclidean) counts as the same package; the SCM places
-  // each collectable at exactly the configured coordinate. The 336 pool size
-  // matches plugin-sdk's CPickup (&aPickUps)[336].
-  constexpr float kMatchDistanceSq = 4.0f;
+  // The persistent SCM completion global records a package already collected,
+  // this session or restored from a save.
+  std::set<int> already_collected;
   for (const PackageLocation& package : package_locations_) {
-    bool here = false;
-    for (const CVector& position : present) {
-      const float dx = position.x - package.x;
-      const float dy = position.y - package.y;
-      const float dz = position.z - package.z;
-      if (dx * dx + dy * dy + dz * dz <= kMatchDistanceSq) {
-        here = true;
-        break;
-      }
+    if (GetGlobal(package.completion_global) != 0) {
+      already_collected.insert(package.completion_global);
     }
-    if (here) {
-      package_seen_present_.insert(package.completion_global);
-    } else if (package_seen_present_.count(package.completion_global) != 0 &&
-               GetGlobal(package.completion_global) == 0) {
-      // Seen present this session and now gone: this package was collected.
-      SetGlobal(package.completion_global, 1);
-    }
+  }
+  for (int completion_global : DetectNewlyCollectedPackages(
+           package_locations_, present, package_seen_present_, already_collected)) {
+    SetGlobal(completion_global, 1);
   }
 }
 
