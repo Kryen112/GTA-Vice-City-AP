@@ -10,6 +10,8 @@ audits. Nothing here gates logic on money.
 
 from __future__ import annotations
 
+from . import package_data
+
 # Story missions grouped by giver, each list in vanilla play order. Progressive
 # unlocks follow this order (Progressive <giver> #n opens the giver's nth
 # mission). Names are the in-game mission names from the decompile.
@@ -94,11 +96,14 @@ SPHERE_ZERO_GIVER = "Rosenberg"
 # The default goal mission.
 FINAL_MISSION = "Keep Your Friends Close..."
 
-HIDDEN_PACKAGE_COUNT = 100
+HIDDEN_PACKAGE_COUNT = len(package_data.PACKAGE_NAMES)
 
 
 def hidden_package_name(index: int) -> str:
-    return f"Hidden Package {index:03d}"
+    # Per physical package, in the SCM create_collectable1 placement order (index
+    # i is the ith placed package). Names carry the district; the ASI detects each
+    # one individually by coordinate.
+    return package_data.PACKAGE_NAMES[index - 1]
 
 
 # Rewards that leave the vanilla hidden-package threshold and enter the pool
@@ -404,11 +409,12 @@ MAINLAND_RAMPAGES: frozenset[str] = frozenset(
     for index in (2, 7, 8, 9, 10, 11, 14, 15, 16, 17, 18, 19, 25, 26, 27, 28, 32, 33, 35)
 )
 
-# Hidden packages are count-ordinal, so the Nth package check needs the mainland
-# once N passes the start-island package count. Sources put the start island at
-# "just over half"; 50 is the safe conservative count (well within reach on the
-# start island, and it keeps the default 50-package goal start-island reachable).
-PACKAGE_START_ISLAND_COUNT = 50
+# Hidden packages are per package, each detected individually by the ASI (by
+# coordinate) rather than by a running count. Island membership and coordinates
+# come from package_data, in the SCM placement order. PACKAGE_COORDS is sent to
+# the ASI via slot_data so it can match a collected pickup to its package.
+MAINLAND_PACKAGES: frozenset[str] = package_data.MAINLAND_PACKAGES
+PACKAGE_COORDS: list[tuple[float, float, float]] = package_data.PACKAGE_COORDS
 
 # Property purchases on the mainland: the five mainland venue businesses and the
 # two mainland safehouses (Hyman Condo in Downtown, Skumole Shack in Little

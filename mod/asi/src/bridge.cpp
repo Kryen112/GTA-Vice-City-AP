@@ -136,7 +136,21 @@ void BridgeClient::HandleMessage(const json& message) {
           config_globals[std::stoi(it.key())] = it.value().get<int>();
         }
       }
-      game_->ApplyConfig(item_globals, completion_watch, item_effects, config_globals);
+      std::vector<PackageLocation> package_locations;
+      if (message.contains("package_coords")) {
+        for (auto it = message.at("package_coords").begin();
+             it != message.at("package_coords").end(); ++it) {
+          const json& coord = it.value();
+          PackageLocation package;
+          package.completion_global = std::stoi(it.key());
+          package.x = coord.at(0).get<float>();
+          package.y = coord.at(1).get<float>();
+          package.z = coord.at(2).get<float>();
+          package_locations.push_back(package);
+        }
+      }
+      game_->ApplyConfig(item_globals, completion_watch, item_effects, config_globals,
+                         package_locations);
     } else if (type == msg::kItems) {
       std::vector<std::pair<std::int64_t, std::int64_t>> items;
       for (const json& entry : message.at("items")) {

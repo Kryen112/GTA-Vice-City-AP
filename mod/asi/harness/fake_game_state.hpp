@@ -21,12 +21,14 @@ class FakeGameState : public GameState {
   void ApplyConfig(const std::map<std::int64_t, int>& item_globals,
                    const std::map<int, std::int64_t>& completion_watch,
                    const std::map<std::int64_t, ItemEffect>& item_effects,
-                   const std::map<int, int>& config_globals) override {
+                   const std::map<int, int>& config_globals,
+                   const std::vector<PackageLocation>& package_locations) override {
     std::lock_guard<std::mutex> lock(mutex_);
     item_globals_ = item_globals;
     completion_watch_ = completion_watch;
     item_effects_ = item_effects;
     config_globals_ = config_globals;
+    package_locations_ = package_locations;
   }
 
   std::string SeedHash() override {
@@ -123,6 +125,7 @@ class FakeGameState : public GameState {
   std::map<std::int64_t, ItemEffect> item_effects_;
   std::map<int, int> config_globals_;
   std::map<int, std::int64_t> completion_watch_;
+  std::vector<PackageLocation> package_locations_;
   std::vector<std::pair<std::int64_t, std::int64_t>> applied_items_;
   std::vector<std::int64_t> checked_;
   std::vector<std::string> toasts_;

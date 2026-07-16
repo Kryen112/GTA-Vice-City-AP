@@ -177,11 +177,10 @@ lines = [ln for ln in lines
          if ln not in ("start_new_script @APPKG ", "start_new_script @APSTAT ",
                        "start_new_script @APACT ")]
 
-cleo = ["{$CLEO .cs}", "", "0000:", "", ":AW_LOOP", "wait 500",
-        "get_collectable1s_collected $9006"]
-for count in range(1, 101):
-    cleo += ["if ", f"  $9006 >= {count}", "goto_if_false @AW_PKGDONE", f"${9074 + count} = 1"]
-cleo += [":AW_PKGDONE"]
+# Hidden packages are detected per package by the ASI (matching each collected
+# collectable pickup to its coordinate), so the CLEO watcher no longer counts
+# them; it polls the stat and activity/side-event flags only.
+cleo = ["{$CLEO .cs}", "", "0000:", "", ":AW_LOOP", "wait 500"]
 stat_checks = ([(f"${1439 + n} == 1", 9175 + n) for n in range(35)]
                + [(f"${795 + n} == 1", 9210 + n) for n in range(36)]
                + [(f"$369 >= {10 * n}", 9281 + n) for n in range(1, 11)])

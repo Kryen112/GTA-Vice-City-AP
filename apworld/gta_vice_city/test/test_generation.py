@@ -148,11 +148,11 @@ class TestMainlandGating(WorldTestBase):
         # upper-half pacing.
         for start_name in ["Tear Gas Rampage - Ocean Beach",
                             "Tec-9 Rampage - Washington Beach",
-                            "Hidden Package 050", "Paramedic Level 06"]:
+                            "Hidden Package - Ocean Beach - 1", "Paramedic Level 06"]:
             self.assertTrue(self.can_reach_location(start_name), start_name)
         mainland = ["Rocket Launcher Rampage - Escobar International",
                     "S.P.A.S. 12 Rampage - Escobar International",
-                    "Hidden Package 051", "Paramedic Level 07"]
+                    "Hidden Package - Viceport - 1", "Paramedic Level 07"]
         for name in mainland:
             self.assertFalse(self.can_reach_location(name), name)
         self.collect_by_name(["Mainland Access"])
@@ -183,13 +183,13 @@ class TestHiddenPackagesGoalNeedsMainland(WorldTestBase):
     options: ClassVar[dict] = {"goal": "hidden_packages", "hidden_packages_required": 80}
 
     def test_high_package_goal_pulls_in_the_mainland(self) -> None:
-        # A goal above the start-island count forces mainland packages into the
-        # goal: the 80th-order package check is a mainland check, unreachable
-        # until Mainland Access. The default solvability tests prove the seed
-        # still generates and beats.
-        self.assertFalse(self.can_reach_location("Hidden Package 080"))
+        # Only 40 packages sit on the start island, so a goal of 80 cannot be met
+        # without the mainland. A mainland package is unreachable until Mainland
+        # Access; the default solvability tests prove the seed still generates and
+        # beats with the goal in place.
+        self.assertFalse(self.can_reach_location("Hidden Package - Escobar International - 1"))
         self.collect_by_name(["Mainland Access"])
-        self.assertTrue(self.can_reach_location("Hidden Package 080"))
+        self.assertTrue(self.can_reach_location("Hidden Package - Escobar International - 1"))
 
 
 class TestMainlandPropertyPurchase(WorldTestBase):
@@ -437,6 +437,19 @@ class TestSlotData(WorldTestBase):
         # JSON object keys are strings.
         for key in list(slot_data["item_globals"]) + list(slot_data["completion_watch"]):
             self.assertIsInstance(key, str)
+
+    def test_package_coords_carry_every_package(self) -> None:
+        # The ASI matches a collected pickup to its package by coordinate, so
+        # slot_data carries one [x, y, z] per package, keyed by that package's
+        # completion global (string key for JSON), all 100 present.
+        coords = self.world.fill_slot_data()["package_coords"]
+        self.assertEqual(len(coords), data.HIDDEN_PACKAGE_COUNT)
+        for key, value in coords.items():
+            self.assertIsInstance(key, str)
+            self.assertEqual(len(value), 3)
+        # Package 1's completion global maps to the first placed coordinate.
+        first_global = str(scm.completion_global(data.hidden_package_name(1)))
+        self.assertEqual(coords[first_global], list(data.PACKAGE_COORDS[0]))
 
 
 class TestClassToggles(WorldTestBase):

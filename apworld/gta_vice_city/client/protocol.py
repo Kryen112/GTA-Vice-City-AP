@@ -114,6 +114,7 @@ def refused_message(reason: str) -> dict:
 
 def config_message(
     item_globals: dict, completion_watch: dict, item_effects: dict, config_globals: dict,
+    package_coords: dict,
 ) -> dict:
     return {
         "type": CONFIG,
@@ -121,6 +122,7 @@ def config_message(
         "item_effects": item_effects,
         "config_globals": config_globals,
         "completion_watch": completion_watch,
+        "package_coords": package_coords,
     }
 
 

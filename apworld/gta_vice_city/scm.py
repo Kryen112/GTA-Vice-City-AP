@@ -115,3 +115,16 @@ def completion_watch() -> dict[int, int]:
         completion_global(name): location_id
         for name, location_id in locations.LOCATION_NAME_TO_ID.items()
     }
+
+
+def package_coords() -> dict[int, list[float]]:
+    """Package completion global index -> [x, y, z] world position.
+
+    The ASI matches a collected collectable pickup to its package by coordinate
+    and sets that package's completion global, so each hidden package is its own
+    check. Index order follows the SCM create_collectable1 placement order.
+    """
+    return {
+        completion_global(name): list(data.PACKAGE_COORDS[index])
+        for index, name in enumerate(locations.PACKAGE_NAMES)
+    }

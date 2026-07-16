@@ -28,7 +28,8 @@ class ScmGameState : public GameState {
   void ApplyConfig(const std::map<std::int64_t, int>& item_globals,
                    const std::map<int, std::int64_t>& completion_watch,
                    const std::map<std::int64_t, ItemEffect>& item_effects,
-                   const std::map<int, int>& config_globals) override;
+                   const std::map<int, int>& config_globals,
+                   const std::vector<PackageLocation>& package_locations) override;
   std::string SeedHash() override;
   void StampSeedHash(const std::string& expected) override;
   void ApplyItems(const std::vector<std::pair<std::int64_t, std::int64_t>>& items) override;
@@ -43,6 +44,11 @@ class ScmGameState : public GameState {
  private:
   static int GetGlobal(int index);
   static void SetGlobal(int index, int value);
+  // Sets each collected package's completion global by matching the game's
+  // collectable pickups to the configured package coordinates. Only a package
+  // seen present this session and then gone counts as collected, so the pool not
+  // yet being placed on a new game cannot false-report.
+  void DetectCollectedPackages();
   static std::string ReadSeedHash();
   static void WriteSeedHash(const std::string& hash);
   // Applies one consumable effect to the live player through plugin-sdk.
@@ -54,6 +60,8 @@ class ScmGameState : public GameState {
   std::map<std::int64_t, ItemEffect> item_effects_;
   std::map<int, int> config_globals_;
   std::map<int, std::int64_t> completion_watch_;
+  std::vector<PackageLocation> package_locations_;
+  std::set<int> package_seen_present_;
   std::map<std::int64_t, int> location_to_global_;
   std::vector<std::pair<std::int64_t, std::int64_t>> items_;
   std::set<int> reported_;

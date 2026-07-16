@@ -340,6 +340,12 @@ class GTAViceCityWorld(World):
                 str(global_index): location_id
                 for global_index, location_id in scm.completion_watch().items()
             },
+            # Only when the class is enabled: with packages off their locations
+            # do not exist, so the ASI must not detect or report them.
+            "package_coords": {
+                str(global_index): coord
+                for global_index, coord in scm.package_coords().items()
+            } if self.options.enable_hidden_packages.value else {},
             **{name: bool(getattr(self.options, name).value) for name in CHECK_CLASS_OPTIONS},
         }
 

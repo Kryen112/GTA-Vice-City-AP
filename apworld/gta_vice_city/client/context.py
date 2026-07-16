@@ -176,6 +176,7 @@ class GTAViceCityContext(CommonContext):
                 "item_effects": slot_data.get("item_effects", {}),
                 "config_globals": slot_data.get("config_globals", {}),
                 "completion_watch": slot_data.get("completion_watch", {}),
+                "package_coords": slot_data.get("package_coords", {}),
             }
             self._schedule(self.setup_and_launch())
         # A new Connected or a ReceivedItems update means the mod's view is
@@ -235,6 +236,7 @@ class GTAViceCityContext(CommonContext):
                 self.asi_config.get("completion_watch", {}),
                 self.asi_config.get("item_effects", {}),
                 self.asi_config.get("config_globals", {}),
+                self.asi_config.get("package_coords", {}),
             )
         await self._resync_bridge()
 

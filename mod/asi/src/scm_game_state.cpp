@@ -10,6 +10,8 @@
 #include <CPlayerPed.h>
 #include <CWeaponInfo.h>
 #include <CStreaming.h>
+#include <CPickups.h>
+#include <ePickupType.h>
 #include <common.h>
 
 namespace gtavc {
@@ -76,12 +78,14 @@ void ScmGameState::WriteSeedHash(const std::string& hash) {
 void ScmGameState::ApplyConfig(const std::map<std::int64_t, int>& item_globals,
                                const std::map<int, std::int64_t>& completion_watch,
                                const std::map<std::int64_t, ItemEffect>& item_effects,
-                               const std::map<int, int>& config_globals) {
+                               const std::map<int, int>& config_globals,
+                               const std::vector<PackageLocation>& package_locations) {
   std::lock_guard<std::mutex> lock(mutex_);
   item_globals_ = item_globals;
   item_effects_ = item_effects;
   config_globals_ = config_globals;
   completion_watch_ = completion_watch;
+  package_locations_ = package_locations;
   location_to_global_.clear();
   for (const auto& [global_index, location] : completion_watch_) {
     location_to_global_[location] = global_index;
@@ -170,6 +174,41 @@ bool ScmGameState::TakeGoalReached() {
   return false;
 }
 
+void ScmGameState::DetectCollectedPackages() {
+  if (package_locations_.empty()) return;
+  // World positions of every collectable pickup still present in the pool.
+  std::vector<CVector> present;
+  for (int index = 0; index < 336; ++index) {
+    const CPickup& pickup = CPickups::aPickUps[index];
+    if (pickup.bPickupType == PICKUP_COLLECTABLE1 && !pickup.bRemoved) {
+      present.push_back(pickup.vecPos);
+    }
+  }
+  // Within two units (Euclidean) counts as the same package; the SCM places
+  // each collectable at exactly the configured coordinate. The 336 pool size
+  // matches plugin-sdk's CPickup (&aPickUps)[336].
+  constexpr float kMatchDistanceSq = 4.0f;
+  for (const PackageLocation& package : package_locations_) {
+    bool here = false;
+    for (const CVector& position : present) {
+      const float dx = position.x - package.x;
+      const float dy = position.y - package.y;
+      const float dz = position.z - package.z;
+      if (dx * dx + dy * dy + dz * dz <= kMatchDistanceSq) {
+        here = true;
+        break;
+      }
+    }
+    if (here) {
+      package_seen_present_.insert(package.completion_global);
+    } else if (package_seen_present_.count(package.completion_global) != 0 &&
+               GetGlobal(package.completion_global) == 0) {
+      // Seen present this session and now gone: this package was collected.
+      SetGlobal(package.completion_global, 1);
+    }
+  }
+}
+
 void ScmGameState::OnGameFrame() {
   std::lock_guard<std::mutex> lock(mutex_);
 
@@ -189,6 +228,11 @@ void ScmGameState::OnGameFrame() {
   const bool game_active = !cached_seed_hash_.empty();
   if (!game_active) {
     baseline_captured_ = false;
+    // Forget which packages were seen present so a fresh game re-derives from
+    // its own pool. Tied to the game boundary, not to config: a bridge
+    // reconnect keeps the set intact, so a package collected mid-session is
+    // never missed by a clear between its present and gone frames.
+    package_seen_present_.clear();
     return;
   }
 
@@ -230,6 +274,11 @@ void ScmGameState::OnGameFrame() {
       if (logger_) logger_("applied one-shot consumables");
     }
   }
+
+  // Set each collected hidden package's completion global from the pickup pool,
+  // so the poll below reports every package as its own check. Only when the world
+  // is loaded, so the pool reflects the placed packages.
+  if (FindPlayerPed() != nullptr) DetectCollectedPackages();
 
   std::map<int, int> current;
   for (const auto& entry : completion_watch_) {

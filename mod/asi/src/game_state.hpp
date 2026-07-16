@@ -21,6 +21,16 @@ struct ItemEffect {
   int amount = 0;
 };
 
+// A hidden package: the completion global to set when it is collected, and its
+// world position, so the ASI can match a collected collectable pickup to its
+// package by coordinate (the game reports only a running count, not which one).
+struct PackageLocation {
+  int completion_global = 0;
+  float x = 0.0f;
+  float y = 0.0f;
+  float z = 0.0f;
+};
+
 class GameState {
  public:
   virtual ~GameState() = default;
@@ -33,7 +43,8 @@ class GameState {
   virtual void ApplyConfig(const std::map<std::int64_t, int>& item_globals,
                            const std::map<int, std::int64_t>& completion_watch,
                            const std::map<std::int64_t, ItemEffect>& item_effects,
-                           const std::map<int, int>& config_globals) = 0;
+                           const std::map<int, int>& config_globals,
+                           const std::vector<PackageLocation>& package_locations) = 0;
 
   // The seed hash to present on hello, read from the reserved SCM global.
   // Empty when no game has been started for this seed.
