@@ -130,6 +130,11 @@ void ScmGameState::ApplyEffect(const ItemEffect& effect) {
     player->m_fHealth = static_cast<float>(CWorld::Players[0].m_nMaxHealth);
   } else if (effect.type == "armor") {
     player->m_fArmour = static_cast<float>(CWorld::Players[0].m_nMaxArmour);
+  } else if (effect.type == "clear_wanted") {
+    // Drop the wanted level to zero, like the LEAVEMEALONE cheat. SetWantedLevel
+    // clears the queued crimes and recomputes, so pursuit actually ends, unlike
+    // the trap's SetWantedLevelNoDrop, which only ever raises the level.
+    if (player->m_pWanted != nullptr) player->m_pWanted->SetWantedLevel(0);
   } else if (effect.type == "weapon") {
     // A random weapon pickup: give the gun if its slot is free, add two of its
     // magazines if already held, or top up the different gun occupying the slot,

@@ -15,7 +15,8 @@ namespace gtavc {
 
 // A one-shot effect applied once past the saved applied-index.
 //
-// Consumables: "cash" (amount is the value), "weapon", "health", "armor".
+// Consumables: "cash" (amount is the value), "weapon", "health", "armor",
+// "clear_wanted" (drops the wanted level to zero, like the LEAVEMEALONE cheat).
 // Traps: "trap_wanted" (amount is stars to add), "trap_explode_cars",
 // "trap_hostile_peds" / "trap_speed_up" / "trap_slow_down" (amount is the
 // duration in seconds), and "trap_weather". The chaos traps defer until the
