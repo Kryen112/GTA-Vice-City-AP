@@ -1,8 +1,8 @@
 """Access rules: the logic core.
 
 Every mission location (story giver or venue strand) has a rule that is the
-conjunction of: its strand's progressive-unlock count, the cross-giver spine
-prerequisites for that strand (story spine only; venues have none), and any
+conjunction of: its strand's progressive-unlock count, any cross-giver
+prerequisite gating the whole strand (only the finale has one), and any
 mission-specific cross-giver edge. The area requirement is carried by the
 region the location sits in, so it is not repeated here. Collectibles,
 activities, purchases, and stores have no rule (free within their region). The
@@ -38,7 +38,7 @@ def _mission_requirements(mission: str, giver: str) -> list[Requirement]:
     own_count = index if giver == data.SPHERE_ZERO_GIVER else index + 1
     if own_count > 0:
         requirements.append((data.progressive_item_name(giver), own_count))
-    for prerequisite_giver, count in data.SPINE_PREREQUISITES.get(giver, []):
+    for prerequisite_giver, count in data.STRAND_PREREQUISITES.get(giver, []):
         requirements.append((data.progressive_item_name(prerequisite_giver), count))
     for prerequisite_giver, count in data.MISSION_PREREQUISITES.get(mission, []):
         requirements.append((data.progressive_item_name(prerequisite_giver), count))

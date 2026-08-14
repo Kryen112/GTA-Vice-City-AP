@@ -79,7 +79,7 @@ class TestStoryOnly(WorldTestBase):
 
     def test_solvable_with_only_story_missions(self) -> None:
         # A solo story-only seed is an all-progression pool with a one-location
-        # sphere 0, so the world grants the east-island spine strands at the
+        # sphere 0, so the world grants the start-island story strands at the
         # start to keep it fillable. The default reachability tests already
         # prove solvability; this asserts the world generated at all and left
         # the final mission as a real check.
@@ -87,6 +87,19 @@ class TestStoryOnly(WorldTestBase):
             data.FINAL_MISSION,
             {location.name for location in self.multiworld.get_locations(self.player)},
         )
+
+    def test_opening_grant_givers_enlarge_sphere_zero(self) -> None:
+        # The grant exists to enlarge sphere 0, so every granted strand must
+        # be a story giver off the mainland (a mainland strand cannot open
+        # before Mainland Access), with the free sphere-0 giver included.
+        self.assertIn(data.SPHERE_ZERO_GIVER, data.OPENING_GRANT_GIVERS)
+        for giver in data.OPENING_GRANT_GIVERS:
+            self.assertIn(giver, data.STORY_GIVERS, giver)
+            self.assertNotIn(giver, data.MAINLAND_GIVERS, giver)
+        # And the grant really landed: the granted unlocks are precollected.
+        precollected = [item.name for item in self.multiworld.precollected_items[self.player]]
+        for giver in data.OPENING_GRANT_GIVERS:
+            self.assertIn(data.progressive_item_name(giver), precollected, giver)
 
 
 class TestUniversalTracker(WorldTestBase):
@@ -145,26 +158,31 @@ class TestUniversalTracker(WorldTestBase):
             self.assertEqual(getattr(self.world.options, name).value, 1)
 
 
-class TestSpine(WorldTestBase):
+class TestStrandAccess(WorldTestBase):
     game = "Grand Theft Auto Vice City"
 
-    def test_diaz_gated_behind_cortez(self) -> None:
-        # The Chase is Diaz's first mission. Its rule needs the Cortez strand
-        # complete (the spine edge) plus a Diaz unlock, so it is unreachable
-        # with an empty inventory and reachable once those unlocks are held.
+    def test_strand_opens_on_its_own_unlocks_alone(self) -> None:
+        # The Chase is Diaz's first mission. Strand starts are independent, so
+        # its rule is a Diaz unlock alone; no other strand's items are needed.
         self.assertFalse(self.can_reach_location("The Chase"))
-        self.collect_by_name(["Progressive Cortez", "Progressive Diaz"])
+        self.collect_by_name(["Progressive Diaz"])
         self.assertTrue(self.can_reach_location("The Chase"))
 
-    def test_final_mission_requires_the_whole_spine(self) -> None:
-        # Owning only the finale's own unlocks and mainland access is not
-        # enough; the finale sits behind the entire main-story chain.
+    def test_rub_out_requires_death_row(self) -> None:
+        # Rub Out, Diaz's last mission, keeps the one mission-level cross-giver
+        # edge: Lance must be rescued in Death Row first.
+        self.collect_by_name(["Progressive Diaz"])
+        self.assertFalse(self.can_reach_location("Rub Out"))
+        self.collect_by_name(["Progressive Death Row"])
+        self.assertTrue(self.can_reach_location("Rub Out"))
+
+    def test_final_mission_requires_the_protection_strand(self) -> None:
+        # The finale keeps the one strand-level cross-giver edge: it sits
+        # behind the protection strand, and nothing else beyond its own
+        # unlocks and Mainland Access.
         self.collect_by_name(["Progressive Vercetti Finale", "Mainland Access"])
         self.assertFalse(self.can_reach_location(data.FINAL_MISSION))
-        self.collect_by_name([
-            "Progressive Rosenberg", "Progressive Cortez", "Progressive Diaz",
-            "Progressive Death Row", "Progressive Vercetti Protection",
-        ])
+        self.collect_by_name(["Progressive Vercetti Protection"])
         self.assertTrue(self.can_reach_location(data.FINAL_MISSION))
 
 

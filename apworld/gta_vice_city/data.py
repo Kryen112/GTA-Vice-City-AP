@@ -3,9 +3,9 @@
 This is plain owned data, not a generated format. Mission names and their
 per-giver order come from the vanilla main.scm DEFINE MISSION table. Giver
 grouping and the region (island) assignment below are provisional first
-readings; the exact cross-giver spine edges and island barriers are pinned
-from the SCM in a dedicated extraction pass and refined in per-giver Phase 3
-audits. Nothing here gates logic on money.
+readings; the cross-giver edges and island barriers are pinned from the SCM
+in a dedicated extraction pass and refined in per-giver Phase 3 audits.
+Nothing here gates logic on money.
 """
 
 from __future__ import annotations
@@ -64,7 +64,7 @@ STORY_GIVERS: dict[str, list[str]] = {
 # Venue mission strands, the Properties class. Each venue is bought (a purchase
 # check) and then plays its own mission strand; buying is money, which is
 # grindable, so ownership is not a logic gate. Progressive unlocks work the
-# same as story givers. These are independent of the story spine.
+# same as story givers.
 VENUE_STRANDS: dict[str, list[str]] = {
     "Malibu Club": ["No Escape?", "The Shootist", "The Driver", "The Job"],
     "Film Studio": [
@@ -92,6 +92,15 @@ PROPERTY_PURCHASES: list[str] = [
 # The Rosenberg strand opens on a new game with no unlock item (sphere 0).
 # Every other giver's first mission needs its first progressive unlock.
 SPHERE_ZERO_GIVER = "Rosenberg"
+
+# Strands granted at the start when a seed has too little free sphere-0 room
+# (every collectible class off). Each of these sits on the start island, so
+# the granted missions are playable immediately. Avery and the early Mr.
+# Black payphones also start on the start island but stay in the pool, so
+# the fill keeps start-island progression to place.
+OPENING_GRANT_GIVERS: list[str] = [
+    SPHERE_ZERO_GIVER, "Cortez", "Diaz", "Death Row", "Vercetti Protection",
+]
 
 # The default goal mission.
 FINAL_MISSION = "Keep Your Friends Close..."
@@ -345,24 +354,16 @@ def progressive_item_count(strand: str) -> int:
     return missions - 1 if strand == SPHERE_ZERO_GIVER else missions
 
 
-# Cross-giver story spine, the hard chain, pinned from the SCM CELL controller
-# (Kent Paul's phone thread). Each entry gates a giver's whole strand behind
-# owning the unlocks to complete a prerequisite giver's strand up to the named
-# point; the count is that prerequisite giver's progressive-unlock count. Side
-# givers (Avery, Phil Cassidy, Big Mitch Baker, Umberto Robina, Auntie Poulet,
-# Love Fist, Mr. Black, and the venue strands) are deliberately independent and
-# are not listed; area access still gates the ones on the mainland.
-# The chain in vanilla: Cortez opens after Riot (Rosenberg's last); Diaz after
-# All Hands On Deck (Cortez's last); Death Row after Supply & Demand (Diaz's
-# fourth) and Sir, Yes Sir! (Cortez's fourth); Vercetti protection at the
-# mansion after Rub Out; the finale after the protection strand plus asset
-# ownership. Asset ownership is money, which is grindable, so it is not
-# encoded as a logic gate.
-SPINE_PREREQUISITES: dict[str, list[tuple[str, int]]] = {
-    "Cortez": [("Rosenberg", 4)],
-    "Diaz": [("Cortez", 5)],
-    "Death Row": [("Diaz", 4)],
-    "Vercetti Protection": [("Diaz", 5), ("Death Row", 1)],
+# Cross-giver prerequisites that gate a whole strand. Every giver's strand
+# opens on its own progressive unlocks alone, so the strands play in any
+# order: the vanilla phone-call chain (Cortez after Riot, Diaz after All
+# Hands On Deck, Death Row after Supply & Demand, the protection strand
+# after Rub Out) is deliberately not enforced, and the mod severs the
+# vanilla marker reveals and launcher starts that carried it. The one
+# strand-level edge kept is the finale, the goal mission, behind the
+# protection strand. Asset ownership before the finale is money, which is
+# grindable, so it is not encoded as a logic gate.
+STRAND_PREREQUISITES: dict[str, list[tuple[str, int]]] = {
     "Vercetti Finale": [("Vercetti Protection", 3)],
 }
 
