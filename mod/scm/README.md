@@ -49,8 +49,19 @@ version control.
   (`$9031`): the east gate on the item alone, the west gate only together
   with Mainland Access, since that gate is the sole barrier on the island's
   mainland crossing.
-- Reserved globals above `$9416` are SCM-internal: `$9417..$9419` are unused
-  padding and `$9420` up are marker handles and visibility flags. `$9004`, `$9006`, `$9007`, `$9008`, and `$9009` in the
+- Class-cash flags `$9417..$9420` (side events, stunt jumps, rampages,
+  properties; ASI-stamped from slot_data) gate the vanilla cash suppression:
+  while a flag is one, the class's one-time completion cash and its on-screen
+  amount are skipped (the AP check is the reward, mirrored back as filler);
+  at zero everything pays vanilla. Story mission pass cash is deleted outright
+  (always on); venue missions and Checkpoint Charlie's first run gate on the
+  properties flag; each side event gates its first-completion payout on the
+  side-events flag OR its completion global, so replays pay vanilla winnings.
+  Repeatable earnings (emergency pay, till cash, race winnings, in-mission
+  bonuses) are never touched, and a build-time audit pins every remaining
+  payout so a new site fails the build instead of leaking. Reserved globals
+  above `$9420` are SCM-internal: `$9421` up are marker handles and
+  visibility flags. `$9004`, `$9006`, `$9007`, `$9008`, and `$9009` in the
   bookkeeping gap below `$9379` are SCM-internal scratch (the two island-gate
   once-guards, a package counter, and two reward once-guards). The ASI never
   reads or writes any of these.

@@ -430,11 +430,12 @@ class GTAViceCityWorld(World):
         }
 
     def _config_globals(self) -> dict[int, int]:
-        # The reward-group config flags, plus the vanilla-collapse writes when
-        # the properties class is off: with the ownership items out of the
-        # pool, the client stamps the venue unlock and ownership globals so
-        # every static property gate reduces to purchase-only, the vanilla
-        # semantics the toggle invariant demands.
+        # The reward-group config flags, the class-cash flags gating each
+        # enabled class's one-time completion cash, plus the vanilla-collapse
+        # writes when the properties class is off: with the ownership items
+        # out of the pool, the client stamps the venue unlock and ownership
+        # globals so every static property gate reduces to purchase-only, the
+        # vanilla semantics the toggle invariant demands.
         flags = scm.config_flags(
             bool(self.options.enable_hidden_packages.value),
             bool(self.options.enable_emergency_vehicles.value
@@ -442,6 +443,12 @@ class GTAViceCityWorld(World):
             bool(self.options.randomize_radio_stations.value),
             bool(self.options.shuffle_minimap.value),
         )
+        flags.update(scm.class_cash_flags(
+            bool(self.options.enable_side_events.value),
+            bool(self.options.enable_stunt_jumps.value),
+            bool(self.options.enable_rampages.value),
+            bool(self.options.enable_properties.value),
+        ))
         if not self.options.enable_properties.value:
             flags.update(scm.properties_vanilla_globals())
         return flags

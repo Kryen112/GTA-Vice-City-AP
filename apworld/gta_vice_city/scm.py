@@ -99,10 +99,22 @@ OWNERSHIP_KEYS: list[str] = list(data.PROPERTY_OWNERSHIP_ITEMS)
 # the unlock global receives one when the Minimap item arrives, through
 # item_globals like any unlock. While the flag is set and the unlock is zero
 # the ASI holds the game's script-facing radar-hide flag; on unlock it
-# releases the flag back to the game once. The whole reserved block must stay
-# below the SCM-internal marker handles, which begin right above it.
+# releases the flag back to the game once.
 MINIMAP_SHUFFLED_GLOBAL = OWNERSHIP_BASE + len(OWNERSHIP_KEYS)
 MINIMAP_UNLOCK_GLOBAL = MINIMAP_SHUFFLED_GLOBAL + 1
+
+# Class-cash flags follow the minimap globals, one per check class whose
+# one-time completion cash the main.scm suppresses while the class is enabled
+# (the AP check is the reward; the suppressed amounts return as the filler
+# mirror). At zero everything pays vanilla, the toggle invariant. Side events
+# suppress the first completion only, so replay prizes stay grindable;
+# repeatable earnings (emergency pay, till cash, race winnings) are never
+# touched. The whole reserved block must stay below the SCM-internal marker
+# handles, which begin right above it.
+SIDE_EVENTS_CASH_GLOBAL = MINIMAP_UNLOCK_GLOBAL + 1
+STUNT_JUMPS_CASH_GLOBAL = SIDE_EVENTS_CASH_GLOBAL + 1
+RAMPAGES_CASH_GLOBAL = STUNT_JUMPS_CASH_GLOBAL + 1
+PROPERTIES_CASH_GLOBAL = RAMPAGES_CASH_GLOBAL + 1
 
 
 def unlock_global(key: str) -> int:
@@ -122,7 +134,7 @@ def reward_global(item_name: str) -> int:
 
 
 def highest_reserved_global() -> int:
-    return MINIMAP_UNLOCK_GLOBAL
+    return PROPERTIES_CASH_GLOBAL
 
 
 def item_globals() -> dict[int, int]:
@@ -188,6 +200,22 @@ def config_flags(packages_shuffled: bool, emergency_shuffled: bool,
         EMERGENCY_SHUFFLED_GLOBAL: int(bool(emergency_shuffled)),
         RADIO_RANDOMIZED_GLOBAL: int(bool(radio_randomized)),
         MINIMAP_SHUFFLED_GLOBAL: int(bool(minimap_shuffled)),
+    }
+
+
+def class_cash_flags(side_events: bool, stunt_jumps: bool,
+                     rampages: bool, properties: bool) -> dict[int, int]:
+    """Class-cash flag global index -> value the ASI stamps once from
+    slot_data. Each value is the raw check-class toggle: while a class is
+    enabled its one-time completion cash is suppressed in the main.scm (the
+    AP check is the reward, mirrored back as filler); while it is disabled
+    the cash pays vanilla, the toggle invariant. Unlike config_flags there is
+    no item-existence AND, because no single item replaces the cash."""
+    return {
+        SIDE_EVENTS_CASH_GLOBAL: int(bool(side_events)),
+        STUNT_JUMPS_CASH_GLOBAL: int(bool(stunt_jumps)),
+        RAMPAGES_CASH_GLOBAL: int(bool(rampages)),
+        PROPERTIES_CASH_GLOBAL: int(bool(properties)),
     }
 
 

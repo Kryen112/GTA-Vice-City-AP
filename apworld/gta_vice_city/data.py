@@ -662,14 +662,18 @@ def stunt_jump_reward(index: int) -> int:
 
 
 def rampage_reward(index: int) -> int:
-    # Vanilla pays $500 for the first rampage and $500 more for each one after it.
-    return 500 * index
+    # Vanilla pays $50 * n for the nth rampage and a flat $1,000 for the last,
+    # from the RAMPAGE thread in the decompile ($1401 = count * 50, the final
+    # branch pays 1000).
+    return 1_000 if index == RAMPAGE_COUNT else 50 * index
 
 
-# Suppressed vanilla mission cash: the amount build_scm.py strips from each
-# mission's pass path, zero where a mission pays nothing (it then mirrors to
-# generic filler). These amounts are provisional; scripts/dump_mission_rewards.py
-# re-derives the authoritative 1.0 values from a clean decompile before release.
+# Suppressed vanilla mission cash: the amount build_scm.py strips (story) or
+# gates on the properties flag (venue) in each mission's pass path, zero where
+# a mission pays nothing (it then mirrors to generic filler). Verified against
+# a clean 1.0 decompile with scripts/dump_mission_rewards.py; Checkpoint
+# Charlie carries its first-run 5000 only, since the replay tiers stay
+# vanilla winnings.
 MISSION_REWARDS: dict[str, int] = {
     # Rosenberg
     "An Old Friend": 0, "The Party": 100, "Back Alley Brawl": 200,

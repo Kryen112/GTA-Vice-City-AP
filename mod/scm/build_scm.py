@@ -171,18 +171,6 @@ def wire(launcher, gate_conditions, completion_global):
             block += ["if ", f"  ${global_index} >= {count}", f"goto_if_false @{loopback}"]
         insert_after(f":{gate_block}", block, f"gate {launcher} {gate_conditions}")
     edits.append(f"completion {launcher} ${completion_global}")
-    # Reward: strip the M_PASS "$N" banner and the positive cash add near each
-    # passed-flag assignment.
-    removed_total = 0
-    for start in [i for i, ln in enumerate(lines) if ln == f"{flag} = 1"]:
-        drop = [j for j in range(start + 1, min(start + 19, len(lines)))
-                if re.match(r"^print_with_number_big 'M_PASS' number \d+ ", lines[j])
-                or re.match(r"^add_score \$player_char money \+= \d+$", lines[j])]
-        for j in sorted(drop, reverse=True):
-            del lines[j]
-        removed_total += len(drop)
-    if removed_total:
-        edits.append(f"reward {launcher}: removed {removed_total} line(s)")
 
 
 def relocate_mainland_open():
@@ -426,23 +414,352 @@ def add_activity_watcher():
     insert_after("start_new_script @HOT ", ["start_new_script @APACT "], "boot start @APACT")
 
 
-def suppress_activity_rewards():
-    # Checkpoint Charlie pays 5000 then a 6000 time bonus through the M_PASS
-    # banner around its win flag ($607 = 1); the AP check is the reward, so strip
-    # both like the story missions. Anchored on the unique completion flag, since
-    # the mission block itself carries a script_name. Sunshine's per-race prize
-    # money is activity winnings, not a mission-pass reward, so it stays.
+# Vanilla cash suppression. The AP check replaces each check's one-time
+# completion cash; repeatable earnings (fares, per-action pay, replay prizes,
+# race winnings, till cash) stay vanilla. Story mission pass cash is deleted
+# outright (story missions are always on); every toggleable class gates its
+# cash on a class-cash config flag instead, so a disabled class pays fully
+# vanilla. Side events suppress the first completion only: the payout skips
+# while the class flag is set and the event's completion global is still zero,
+# so replays pay. The flag indices match scm.py.
+MISSION_HEADER = re.compile(r"^//-------------Mission (\d+)---------------$")
+PASS_BANNER = re.compile(r"^print_with_number_big 'M_PASS' number (\d+) time \d+ style 1$")
+CASH_ADD = re.compile(r"^add_score \$player_char money \+= (\$?\d+)$")
+
+# Venue mission launchers, the Properties class members among MISSIONS
+# (mirrors data.VENUE_STRANDS). Their pass cash is gated, not deleted.
+VENUE_LAUNCHERS = frozenset([
+    "BANK1", "BANK2", "BANK3", "BANK4", "PORN1", "PORN2", "PORN3", "PORN4",
+    "COU1", "COU2", "TWAR1", "TWAR2", "TWAR3", "ICE1",
+])
+
+apcash_numbers = iter(range(1, 10_000))
+
+
+def next_apcash_label():
+    return f"APCASH_{next(apcash_numbers)}"
+
+
+def guard_flag(index, span, flag):
+    # Wrap `span` lines in an if-flag-zero guard: vanilla pays only while the
+    # class-cash flag is zero (the class is disabled).
+    guard_span(index, span, flag, next_apcash_label())
+
+
+def guard_replay(index, span, completion):
+    # Wrap `span` lines so they run when the side-events class is off OR the
+    # event's completion global is already set (a replay). Only the first
+    # completion while the class is on skips the payout: the payout and the
+    # win-flag write share one script frame, and the APACT watcher marks the
+    # completion global at least a frame later, so the global is still zero
+    # exactly on the run the AP check eats.
+    label = next_apcash_label()
+    lines[index + span:index + span] = [f":{label}"]
+    lines[index:index] = ["if or", f"  ${SIDE_EVENTS_ENABLED} == 0",
+                          f"  ${completion} == 1", f"goto_if_false @{label}"]
+
+
+def mission_blocks():
+    # Mission number -> (start, end) line span from the decompile's headers.
+    found = [(int(MISSION_HEADER.match(ln).group(1)), i)
+             for i, ln in enumerate(lines) if MISSION_HEADER.match(ln)]
+    spans = {}
+    for position, (number, start) in enumerate(found):
+        end = found[position + 1][1] if position + 1 < len(found) else len(lines)
+        spans[number] = (start, end)
+    return spans
+
+
+def launcher_mission_number(launcher):
+    starts = [i for i, ln in enumerate(lines) if ln == f":{launcher}"]
+    assert len(starts) == 1, f"mission number: :{launcher} matched {len(starts)}"
+    launch = _first(j for j in range(starts[0], len(lines))
+                    if lines[j].startswith("load_and_launch_mission_internal "))
+    assert launch is not None, f"mission number: {launcher} has no launch opcode"
+    return int(lines[launch].split()[1])
+
+
+def suppress_mission_rewards():
+    # Every wired mission's pass cash, detected inside its mission block: each
+    # M_PASS banner, plus every literal cash add whose amount matches a banner
+    # amount in the same block, since the pass blocks scatter flag, banner,
+    # and cash in different orders and distances across missions. In-mission
+    # 'BONUS' earnings pay other amounts and stay; the audit pins them, so an
+    # amount collision fails the build.
+    spans = mission_blocks()
+    actions = []
+    for launcher, _, _ in MISSIONS:
+        number = launcher_mission_number(launcher)
+        start, end = spans[number]
+        amounts = {PASS_BANNER.match(lines[i]).group(1)
+                   for i in range(start, end) if PASS_BANNER.match(lines[i])}
+        for i in range(start, end):
+            cash = CASH_ADD.match(lines[i])
+            if PASS_BANNER.match(lines[i]) or (cash and cash.group(1) in amounts):
+                actions.append((i, launcher))
+    deleted = wrapped = 0
+    for index, launcher in sorted(actions, reverse=True):
+        if launcher in VENUE_LAUNCHERS:
+            guard_flag(index, 1, PROPERTIES_ENABLED)
+            wrapped += 1
+        else:
+            del lines[index]
+            deleted += 1
+    edits.append(f"mission rewards: {deleted} story lines removed, "
+                 f"{wrapped} venue lines gated")
+
+
+def suppress_boatyard_first_run_reward():
+    # Checkpoint Charlie is replayable with escalating prizes ($8582 counts
+    # runs); only the first run is the check, paying 5000 and setting $607.
+    # That banner and cash gate on the properties flag; the replay tiers
+    # (6000 and up) stay vanilla winnings. Sunshine's per-race prize money
+    # also stays, as activity winnings.
     anchors = [i for i, ln in enumerate(lines) if ln == "$607 = 1"]
-    assert len(anchors) == 1, f"activity reward: $607 = 1 matched {len(anchors)}"
+    assert len(anchors) == 1, f"boatyard reward: $607 = 1 matched {len(anchors)}"
     a = anchors[0]
-    drop = [j for j in range(a - 6, a + 9)
-            if 0 <= j < len(lines)
-            and (re.match(r"^print_with_number_big 'M_PASS' number \d+ ", lines[j])
-                 or re.match(r"^add_score \$player_char money \+= \d+$", lines[j]))]
-    assert len(drop) == 4, f"activity reward: expected 4 lines, found {len(drop)}"
-    for j in sorted(drop, reverse=True):
-        del lines[j]
-    edits.append(f"activity reward COKERUN: removed {len(drop)} line(s)")
+    banner = _first(j for j in range(a - 8, a) if lines[j]
+                    == "print_with_number_big 'M_PASS' number 5000 time 5000 style 1")
+    assert banner is not None and lines[banner + 1] == "add_score $player_char money += 5000", \
+        "boatyard reward: first-run 5000 pair not found"
+    guard_flag(banner, 2, PROPERTIES_ENABLED)
+    edits.append("boatyard first-run reward gated on the properties flag")
+
+
+def suppress_stunt_jump_rewards():
+    # The USJ thread pays escalating cash ($790, plus 100 per jump) per unique
+    # jump and 10000 for the last. The REWARD banner and the cash gate on the
+    # class flag; the USJ pass text, sound, and stat registration stay.
+    for banner, cash in [
+        ("print_with_number_big 'REWARD' number $790 time 6000 style 6",
+         "add_score $player_char money += $790"),
+        ("print_with_number_big 'REWARD' number 10000 time 6000 style 6",
+         "add_score $player_char money += 10000"),
+    ]:
+        hits = [i for i in range(len(lines) - 1)
+                if lines[i] == banner and lines[i + 1] == cash]
+        assert len(hits) == 1, f"stunt reward: {banner!r} pair matched {len(hits)}"
+        guard_flag(hits[0], 2, STUNT_JUMPS_ENABLED)
+    edits.append("stunt jump rewards gated on the class flag")
+
+
+def suppress_rampage_rewards():
+    # The RAMPAGE thread pays 50 * n per rampage and a flat 1000 for the last.
+    # The cash and REWARD banners gate on the class flag; the RAMP_P and
+    # RAMP_A pass texts stay. The flat 1000 add shares its text with other
+    # missions, so it anchors on the RAMP_A REWARD banner that follows it.
+    banner_all = "print_with_number_big 'REWARD' number 1000 time 6000 style 6"
+    singles = ["add_score $player_char money += $1401",
+               "print_with_number_big 'REWARD' number $1401 time 6000 style 6",
+               banner_all]
+    targets = []
+    for anchor in singles:
+        hits = [i for i, ln in enumerate(lines) if ln == anchor]
+        assert len(hits) == 1, f"rampage reward: {anchor!r} matched {len(hits)}"
+        targets.append(hits[0])
+    thousand = [i for i, ln in enumerate(lines)
+                if ln == "add_score $player_char money += 1000"
+                and banner_all in lines[i + 1:i + 5]]
+    assert len(thousand) == 1, f"rampage reward: final 1000 matched {len(thousand)}"
+    targets.append(thousand[0])
+    for index in sorted(targets, reverse=True):
+        guard_flag(index, 1, RAMPAGES_ENABLED)
+    edits.append("rampage rewards gated on the class flag")
+
+
+# Each side event's first-completion payout lines, wrapped individually (the
+# lines between them, wanted-level clears and pass tunes, stay unconditional).
+# Completion globals match the SIDE_EVENTS watcher table above.
+SIDE_EVENT_CASH_SITES = [
+    ("Hotring", 79, 9303, [
+        "print_with_number_big 'HOTR_29' number 5000 time 6000 style 6",
+        "add_score $player_char money += 5000",
+    ]),
+    ("Bloodring", 80, 9304, [
+        "print_with_number_big 'BLOD_09' number 1000 time 6000 style 6",
+        "add_score $player_char money += 1000",
+    ]),
+    ("Dirtring", 81, 9305, [
+        "print_with_number_big 'M_PASS' number 50000 time 5000 style 1",
+        "add_score $player_char money += 50000",
+        "print_with_number_big 'M_PASS' number 10000 time 5000 style 1",
+        "add_score $player_char money += 10000",
+        "print_with_number_big 'M_PASS' number 5000 time 5000 style 1",
+        "add_score $player_char money += 5000",
+    ]),
+    ("Downtown Chopper Checkpoint", 84, 9306, [
+        "print_with_number_big 'HELI_1B' number 100 time 5000 style 1",
+        "add_score $player_char money += 100",
+    ]),
+    ("Ocean Beach Chopper Checkpoint", 85, 9307, [
+        "print_with_number_big 'HELI_1B' number 100 time 5000 style 1",
+        "add_score $player_char money += 100",
+    ]),
+    ("Vice Point Chopper Checkpoint", 86, 9308, [
+        "print_with_number_big 'HELI_1B' number 100 time 5000 style 1",
+        "add_score $player_char money += 100",
+    ]),
+    ("Little Haiti Chopper Checkpoint", 87, 9309, [
+        "print_with_number_big 'HELI_1B' number 100 time 5000 style 1",
+        "add_score $player_char money += 100",
+    ]),
+    ("Trial by Dirt", 88, 9313, [
+        "print_with_number_big 'M_PASS' number $1756 time 5000 style 1",
+        "add_score $player_char money += $1756",
+    ]),
+    ("Test Track", 89, 9314, [
+        "print_with_number_big 'M_PASS' number $1774 time 5000 style 1",
+        "add_score $player_char money += $1774",
+    ]),
+    ("PCJ Playground", 90, 9315, [
+        "print_with_number_big 'M_PASS' number $1612 time 5000 style 1",
+        "add_score $player_char money += $1612",
+    ]),
+    ("Cone Crazy", 91, 9316, [
+        "print_with_number_big 'M_PASS' number 200 time 5000 style 1",
+        "add_score $player_char money += 200",
+    ]),
+    ("RC Raider Pickup", 93, 9312, [
+        "print_with_number_big 'M_PASS' number 100 time 5000 style 1",
+        "add_score $player_char money += 100",
+    ]),
+    ("RC Bandit Race", 94, 9310, [
+        "add_score $player_char money += 100",
+        "print_with_number_big 'M_PASS' number 100 time 5000 style 1",
+    ]),
+    ("RC Baron Race", 95, 9311, [
+        "print_with_number_big 'M_PASS' number 100 time 5000 style 1",
+        "add_score $player_char money += 100",
+    ]),
+]
+
+
+def suppress_side_event_first_wins():
+    # Cone Crazy's beat-the-record replay prize and Hotring's second and third
+    # place prizes are repeatable winnings outside these anchors and stay.
+    # Events run highest block first, so the wraps inserted in one block never
+    # shift a block still waiting in the snapshot spans; the assert pins the
+    # block layout the descending order relies on.
+    spans = mission_blocks()
+    total = 0
+    previous_start = len(lines)
+    for name, number, completion, anchors in sorted(
+            SIDE_EVENT_CASH_SITES, key=lambda site: -site[1]):
+        assert spans[number][0] < previous_start, \
+            f"{name}: mission blocks are not in mission-number order"
+        previous_start = spans[number][0]
+        start, end = spans[number]
+        targets = []
+        for anchor in anchors:
+            hits = [i for i in range(start, end) if lines[i] == anchor]
+            assert len(hits) == 1, f"{name}: {anchor!r} matched {len(hits)}"
+            targets.append(hits[0])
+        for index in sorted(targets, reverse=True):
+            guard_replay(index, 1, completion)
+        total += len(targets)
+    edits.append(f"side event first-win payouts gated: {total} lines")
+
+
+# Every cash add and M_PASS banner that stays unguarded on purpose, keyed by
+# mission block (or MAIN) and exact line, with its count. The audit fails on
+# any site outside this table, so a new or shifted payout fails the build.
+EXPECTED_VANILLA_CASH = {
+    # Free-roam skill and income threads.
+    ("MAIN", "add_score $player_char money += $726"): 3,
+    ("MAIN", "add_score $player_char money += $747"): 1,
+    ("MAIN", "add_score $player_char money += 5"): 1,
+    ("MAIN", "add_score $player_char money += $1370"): 1,
+    # In-mission earnings, not pass rewards.
+    ("M25", "add_score $player_char money += 100"): 4,
+    ("M32", "add_score $player_char money += 1000"): 1,
+    ("M56", "add_score $player_char money += 100"): 1,
+    # The finale's money restoration mechanic.
+    ("M52", "add_score $player_char money += $4974"): 1,
+    ("M52", "add_score $player_char money += $4985"): 1,
+    # The rifle range is not a check and stays fully vanilla.
+    ("M66", "add_score $player_char money += 500"): 1,
+    # Emergency-vehicle earnings and level bonuses stay vanilla grind income.
+    ("M75", "add_score $player_char money += $6721"): 1,
+    ("M75", "add_score $player_char money += $6723"): 1,
+    ("M76", "add_score $player_char money += $6751"): 1,
+    ("M76", "add_score $player_char money += 25000"): 1,
+    ("M77", "add_score $player_char money += $6844"): 1,
+    ("M78", "add_score $player_char money += $6897"): 1,
+    ("M92", "add_score $player_char money += 5000"): 1,
+    ("M92", "add_score $player_char money += 10"): 10,
+    # Side-event repeatable winnings beyond the first completion.
+    ("M79", "add_score $player_char money += 1500"): 1,
+    ("M79", "add_score $player_char money += 500"): 1,
+    ("M80", "add_score $player_char money += 100"): 16,
+    ("M82", "add_score $player_char money += 400"): 1,
+    ("M82", "add_score $player_char money += 2000"): 1,
+    ("M82", "add_score $player_char money += 4000"): 1,
+    ("M82", "add_score $player_char money += 8000"): 1,
+    ("M82", "add_score $player_char money += 20000"): 1,
+    ("M82", "add_score $player_char money += 40000"): 1,
+    ("M83", "add_score $player_char money += 10"): 4,
+    ("M83", "add_score $player_char money += 15"): 4,
+    ("M83", "add_score $player_char money += 12"): 8,
+    ("M83", "add_score $player_char money += 8"): 8,
+    ("M83", "add_score $player_char money += 6"): 8,
+    ("M91", "add_score $player_char money += $7926"): 1,
+    ("M96", "add_score $player_char money += 6000"): 1,
+    ("M96", "add_score $player_char money += 7000"): 1,
+    ("M96", "add_score $player_char money += 8000"): 1,
+    ("M96", "add_score $player_char money += 9000"): 1,
+    ("M96", "add_score $player_char money += 15000"): 1,
+}
+EXPECTED_VANILLA_BANNERS = {
+    ("M66", "print_with_number_big 'M_PASS' number 500 time 5000 style 1"): 1,
+    ("M91", "print_with_number_big 'M_PASS' number $7926 time 5000 style 1"): 1,
+    ("M92", "print_with_number_big 'M_PASS' number 5000 time 5000 style 1"): 1,
+    ("M96", "print_with_number_big 'M_PASS' number 6000 time 5000 style 1"): 1,
+    ("M96", "print_with_number_big 'M_PASS' number 7000 time 5000 style 1"): 1,
+    ("M96", "print_with_number_big 'M_PASS' number 8000 time 5000 style 1"): 1,
+    ("M96", "print_with_number_big 'M_PASS' number 9000 time 5000 style 1"): 1,
+    ("M96", "print_with_number_big 'M_PASS' number 15000 time 5000 style 1"): 1,
+}
+AUDIT_BANNER = re.compile(r"^print_with_number_big 'M_PASS' number \S+ time \d+ style 1$")
+AUDIT_CASH = re.compile(r"^add_score \$player_char money \+= (\$?\d+)$")
+
+
+def _inside_apcash_guard(index):
+    # A site is guarded when scanning upward reaches its guard's
+    # goto_if_false before any closing :APCASH_ label; a label first means
+    # the site sits past the guarded span.
+    for j in range(index - 1, max(0, index - 5) - 1, -1):
+        if lines[j].startswith(":APCASH_"):
+            return False
+        if lines[j].startswith("goto_if_false @APCASH_"):
+            return True
+    return False
+
+
+def audit_cash_sites():
+    # Final gate: rescan the whole built source and require every unguarded
+    # positive cash add and every unguarded M_PASS banner to match the pinned
+    # tables exactly, both ways.
+    context = "MAIN"
+    cash_found: dict[tuple, int] = {}
+    banner_found: dict[tuple, int] = {}
+    for i, line in enumerate(lines):
+        header = MISSION_HEADER.match(line)
+        if header:
+            context = f"M{int(header.group(1))}"
+            continue
+        if _inside_apcash_guard(i):
+            continue
+        if AUDIT_CASH.match(line):
+            cash_found[(context, line)] = cash_found.get((context, line), 0) + 1
+        elif AUDIT_BANNER.match(line):
+            banner_found[(context, line)] = banner_found.get((context, line), 0) + 1
+    for label, found, expected in [("cash", cash_found, EXPECTED_VANILLA_CASH),
+                                   ("banner", banner_found, EXPECTED_VANILLA_BANNERS)]:
+        unexpected = {key: n for key, n in found.items() if expected.get(key) != n}
+        missing = {key: n for key, n in expected.items() if found.get(key) != n}
+        assert not unexpected and not missing, \
+            f"cash audit ({label}): unexpected {unexpected}, missing {missing}"
+    edits.append("cash audit: every remaining payout is pinned vanilla")
 
 
 def add_stat_watcher():
@@ -516,9 +833,18 @@ RADIO_REQUEST = 9399
 # The minimap unlock global, index matching scm.py. ASI-facing only (its
 # shuffled flag sits at $9415 and this unlock at $9416; no gate reads either):
 # the ASI hides the radar disc while the flag is set and this global is zero.
-# It is the highest reserved global, so the foundation's sizing line
-# references it.
 MINIMAP_UNLOCK = 9416
+
+# Class-cash config flags, indices matching scm.py. The ASI stamps each to one
+# when its check class is enabled, so the class's one-time completion cash is
+# suppressed (the AP check is the reward); at zero everything pays vanilla.
+# The properties flag gates the venue mission pass cash and Checkpoint
+# Charlie's first run, and is the highest reserved global, so the foundation's
+# sizing line references it.
+SIDE_EVENTS_ENABLED = 9417
+STUNT_JUMPS_ENABLED = 9418
+RAMPAGES_ENABLED = 9419
+PROPERTIES_ENABLED = 9420
 
 # Reward global -> the vanilla weapon flag or car generator it drives, in
 # reward-global order (body armor, chainsaw, .357, flamethrower, sniper, minigun,
@@ -659,13 +985,14 @@ def add_reward_applier():
 # Foundation: initialize the radio resolve map to identity (vanilla until the
 # ASI overwrites it) and reference the highest reserved global once so Sanny
 # sizes the whole $9000..N block as real zero-initialized globals. The last
-# line must equal scm.highest_reserved_global() (now the minimap unlock global
-# $9416: 22 unlocks + 331 completions + 15 reward globals + 3 config flags +
-# 19 radio globals + 15 ownership globals + the minimap flag and unlock above
-# $9000). add_markers.py anchors on that line.
+# line must equal scm.highest_reserved_global() (now the properties class-cash
+# flag $9420: 22 unlocks + 331 completions + 15 reward globals + 3 config
+# flags + 19 radio globals + 15 ownership globals + the minimap flag and
+# unlock + 4 class-cash flags above $9000). add_markers.py anchors on that
+# line.
 foundation = [f"${RADIO_RESOLVE_BASE + station} = {station}" for station in range(9)]
-foundation += [f"${RADIO_REQUEST} = 0", f"${MINIMAP_UNLOCK} = 0"]
-insert_after("script_name 'HOT'", foundation, f"foundation radio identity + ${MINIMAP_UNLOCK} = 0")
+foundation += [f"${RADIO_REQUEST} = 0", f"${PROPERTIES_ENABLED} = 0"]
+insert_after("script_name 'HOT'", foundation, f"foundation radio identity + ${PROPERTIES_ENABLED} = 0")
 for launcher, gate_conditions, completion_global in MISSIONS:
     try:
         wire(launcher, gate_conditions, completion_global)
@@ -681,7 +1008,11 @@ gate_sunshine_import_completion()
 add_store_completions()
 add_activity_gates()
 add_activity_watcher()
-suppress_activity_rewards()
+suppress_mission_rewards()
+suppress_boatyard_first_run_reward()
+suppress_side_event_first_wins()
+suppress_stunt_jump_rewards()
+suppress_rampage_rewards()
 add_stat_watcher()
 add_emergency_instrumentation()
 suppress_package_grants()
@@ -689,6 +1020,7 @@ suppress_emergency_grants()
 add_reward_applier()
 add_radio_watcher()
 redirect_scripted_stations()
+audit_cash_sites()
 
 with open(DST, "wb") as handle:
     handle.write(nl.join(lines).encode("latin-1"))

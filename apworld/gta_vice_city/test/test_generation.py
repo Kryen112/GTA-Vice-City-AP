@@ -222,9 +222,9 @@ class TestRadioStationsOn(WorldTestBase):
             )
 
     def test_reserved_block_stays_below_the_marker_globals(self) -> None:
-        # $9420 up is SCM-internal (marker handles and visibility flags); the
+        # $9421 up is SCM-internal (marker handles and visibility flags); the
         # reserved contract must never grow into it.
-        self.assertLess(scm.highest_reserved_global(), 9420)
+        self.assertLess(scm.highest_reserved_global(), 9421)
 
 
 class TestRadioStationsOff(WorldTestBase):
@@ -775,6 +775,37 @@ class TestConfigFlagsShuffled(WorldTestBase):
         self.assertEqual(config[str(scm.EMERGENCY_SHUFFLED_GLOBAL)], 1)
 
 
+class TestClassCashFlagsAllOn(WorldTestBase):
+    game = "Grand Theft Auto Vice City"
+    # Default options: every check class is on.
+
+    def test_enabled_classes_stamp_their_cash_flags(self) -> None:
+        # With a class enabled its one-time completion cash is suppressed in
+        # the main.scm (the AP check is the reward), so the flag stamps one.
+        config = self.world.fill_slot_data()["config_globals"]
+        self.assertEqual(config[str(scm.SIDE_EVENTS_CASH_GLOBAL)], 1)
+        self.assertEqual(config[str(scm.STUNT_JUMPS_CASH_GLOBAL)], 1)
+        self.assertEqual(config[str(scm.RAMPAGES_CASH_GLOBAL)], 1)
+        self.assertEqual(config[str(scm.PROPERTIES_CASH_GLOBAL)], 1)
+
+
+class TestClassCashFlagsAllOff(WorldTestBase):
+    game = "Grand Theft Auto Vice City"
+    options: ClassVar[dict] = {
+        "enable_side_events": False, "enable_stunt_jumps": False,
+        "enable_rampages": False, "enable_properties": False,
+    }
+
+    def test_disabled_classes_pay_vanilla(self) -> None:
+        # With a class off its cash flag stamps zero, so every payout in the
+        # main.scm falls through to the vanilla add: the toggle invariant.
+        config = self.world.fill_slot_data()["config_globals"]
+        self.assertEqual(config[str(scm.SIDE_EVENTS_CASH_GLOBAL)], 0)
+        self.assertEqual(config[str(scm.STUNT_JUMPS_CASH_GLOBAL)], 0)
+        self.assertEqual(config[str(scm.RAMPAGES_CASH_GLOBAL)], 0)
+        self.assertEqual(config[str(scm.PROPERTIES_CASH_GLOBAL)], 0)
+
+
 class TestRejections(WorldTestBase):
     game = "Grand Theft Auto Vice City"
     auto_construct = False
@@ -1082,9 +1113,11 @@ class TestRewardData(WorldTestBase):
         self.assertEqual(data.stunt_jump_reward(1), 100)
         self.assertEqual(data.stunt_jump_reward(35), 3500)
         self.assertEqual(data.stunt_jump_reward(data.STUNT_JUMP_COUNT), 10_000)
-        # Rampages pay $500 for the first and $500 more for each one after it.
-        self.assertEqual(data.rampage_reward(1), 500)
-        self.assertEqual(data.rampage_reward(data.RAMPAGE_COUNT), 500 * data.RAMPAGE_COUNT)
+        # Rampages pay $50 * n, except the final rampage which pays a flat
+        # $1,000 (the RAMPAGE thread's own numbers).
+        self.assertEqual(data.rampage_reward(1), 50)
+        self.assertEqual(data.rampage_reward(34), 1_700)
+        self.assertEqual(data.rampage_reward(data.RAMPAGE_COUNT), 1_000)
 
     def test_every_location_has_exactly_one_reward_entry(self) -> None:
         # The mirror needs one reward per location: a missing key would KeyError
