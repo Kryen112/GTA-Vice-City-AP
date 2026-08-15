@@ -90,6 +90,17 @@ class EnableSideEvents(DefaultOnToggle):
     display_name = "Enable side events"
 
 
+class RandomizeRadioStations(Toggle):
+    """If on, the nine radio stations become useful items: you start with one
+    at random and the other eight are in the pool. Only unlocked stations play,
+    in your own vehicle and in every car, taxi, or mission vehicle you enter;
+    the radio can always be turned off, and the MP3 player is excluded. A
+    mission that forces a station plays it if unlocked, otherwise the next
+    unlocked one. The police scanner is untouched. If off, the radio is fully
+    vanilla."""
+    display_name = "Randomize radio stations"
+
+
 class TrapPercentage(NamedRange):
     """Percentage of filler items replaced by traps (0 disables). The six trap
     types share the slice equally: raised wanted level, exploding cars, hostile
@@ -126,5 +137,6 @@ class GTAViceCityOptions(PerGameCommonOptions):
     enable_robbable_stores: EnableRobbableStores
     enable_side_events: EnableSideEvents
     shuffle_emergency_rewards: ShuffleEmergencyRewards
+    randomize_radio_stations: RandomizeRadioStations
     trap_percentage: TrapPercentage
     death_link: DeathLink

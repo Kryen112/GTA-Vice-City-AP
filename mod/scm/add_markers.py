@@ -56,7 +56,7 @@ STRANDS = {
                     ("TWAR3", [(9026, 3), (9335, 1)])],
 }
 
-# Fresh scratch globals, all above the ASI-written block ($9378). One handle,
+# Fresh scratch globals, all above the ASI-written block ($9398). One handle,
 # one started-flag, one shown-flag per managed mission.
 HANDLE_BASE = 9400
 STARTED_BASE = 9460
@@ -282,7 +282,7 @@ boot = next(i for i, ln in enumerate(lines) if ln == "start_new_script @HOT ")
 lines[boot + 1:boot + 1] = ["start_new_script @APMARK "]
 
 # Grow the reserved block to cover the new scratch globals.
-found = next(i for i, ln in enumerate(lines) if ln == "$9378 = 0")
+found = next(i for i, ln in enumerate(lines) if ln == "$9398 = 0")
 lines[found + 1:found + 1] = [f"${highest_global} = 0"]
 
 with open(DST, "wb") as handle:

@@ -10,7 +10,8 @@ Contract shipped to the client (and on to the ASI) in slot_data:
 - item_globals: AP item id -> the count global it adds one to. The ASI counts
   received copies of each item and writes the total to that global. Progressive
   giver unlocks count up per strand; an area item writes one; a persistent
-  reward writes one, which the main.scm re-gates its vanilla grant on.
+  reward writes one, which the main.scm re-gates its vanilla grant on; a radio
+  station item writes one to its station unlock global.
 - item_effects: AP item id -> a one-shot effect descriptor. The ASI applies
   each consumable (cash, weapon, health, armor, clear_wanted) and trap (trap_*)
   once past the saved applied-index; the chaos traps wait for the player to be
@@ -59,6 +60,24 @@ REWARD_KEYS: list[str] = list(data.PERSISTENT_REWARD_ITEMS)
 PACKAGES_SHUFFLED_GLOBAL = REWARD_BASE + len(REWARD_KEYS)
 EMERGENCY_SHUFFLED_GLOBAL = PACKAGES_SHUFFLED_GLOBAL + 1
 
+# Radio globals follow the config flags. The randomized flag gates the ASI's
+# radio enforcement. The nine unlock globals (engine station id order, 0
+# Wildstyle through 8 Wave 103) each receive one when their station item is
+# received, through item_globals like any unlock. From them the ASI recomputes
+# the nine resolve globals every frame: station -> itself when unlocked, else
+# the next unlocked station scanning upward with wraparound. The main.scm's
+# scripted set_radio_channel sites read the resolve globals (the foundation
+# initializes them to identity, so with the option off they are vanilla). The
+# request global carries an ASI-requested retune to the APRADIO watcher,
+# encoded station id plus one so the zero-initialized global idles; the
+# watcher decodes, calls set_radio_channel, and resets it to zero. The whole
+# block must stay below $9400, where the SCM-internal marker handles begin.
+RADIO_RANDOMIZED_GLOBAL = EMERGENCY_SHUFFLED_GLOBAL + 1
+RADIO_STATION_COUNT = 9
+RADIO_UNLOCK_BASE = RADIO_RANDOMIZED_GLOBAL + 1
+RADIO_RESOLVE_BASE = RADIO_UNLOCK_BASE + RADIO_STATION_COUNT
+RADIO_REQUEST_GLOBAL = RADIO_RESOLVE_BASE + RADIO_STATION_COUNT
+
 
 def unlock_global(key: str) -> int:
     return UNLOCK_BASE + UNLOCK_KEYS.index(key)
@@ -73,7 +92,7 @@ def reward_global(item_name: str) -> int:
 
 
 def highest_reserved_global() -> int:
-    return EMERGENCY_SHUFFLED_GLOBAL
+    return RADIO_REQUEST_GLOBAL
 
 
 def item_globals() -> dict[int, int]:
@@ -86,6 +105,8 @@ def item_globals() -> dict[int, int]:
         mapping[items.ITEM_NAME_TO_ID[area_item]] = unlock_global(area_item)
     for reward in data.PERSISTENT_REWARD_ITEMS:
         mapping[items.ITEM_NAME_TO_ID[reward]] = reward_global(reward)
+    for index, station in enumerate(data.RADIO_STATION_ITEMS):
+        mapping[items.ITEM_NAME_TO_ID[station]] = RADIO_UNLOCK_BASE + index
     return mapping
 
 
@@ -102,16 +123,19 @@ def item_effects() -> dict[int, list]:
     }
 
 
-def config_flags(packages_shuffled: bool, emergency_shuffled: bool) -> dict[int, int]:
+def config_flags(packages_shuffled: bool, emergency_shuffled: bool,
+                 radio_randomized: bool) -> dict[int, int]:
     """Config-flag global index -> value the ASI stamps once from slot_data.
 
     Each value is the EFFECTIVE shuffled state (whether the reward items are
     actually in the pool), so the SCM only suppresses a vanilla grant when an AP
     item exists to replace it. The caller must AND in the owning check-class
-    toggle, matching _item_enabled."""
+    toggle, matching _item_enabled. The radio flag has no owning class: when the
+    option is on the station items are always in the pool."""
     return {
         PACKAGES_SHUFFLED_GLOBAL: int(bool(packages_shuffled)),
         EMERGENCY_SHUFFLED_GLOBAL: int(bool(emergency_shuffled)),
+        RADIO_RANDOMIZED_GLOBAL: int(bool(radio_randomized)),
     }
 
 

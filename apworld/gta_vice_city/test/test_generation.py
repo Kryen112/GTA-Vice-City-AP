@@ -125,6 +125,8 @@ class TestUniversalTracker(WorldTestBase):
         self.assertFalse(slot_data["enable_properties"])
         self.assertTrue(slot_data["enable_hidden_packages"])
         self.assertIn("shuffle_emergency_rewards", slot_data)
+        self.assertIn("randomize_radio_stations", slot_data)
+        self.assertIn("radio_start_station", slot_data)
         # Carried so a tracker regeneration rebuilds the same filler/trap split.
         self.assertIn("trap_percentage", slot_data)
         for name in CHECK_CLASS_OPTIONS:
@@ -139,6 +141,8 @@ class TestUniversalTracker(WorldTestBase):
             "hidden_packages_required": 80,
             "death_link": True,
             "shuffle_emergency_rewards": True,
+            "randomize_radio_stations": True,
+            "radio_start_station": 3,
             "trap_percentage": 40,
             "enable_hidden_packages": True,
             "enable_rampages": True, "enable_stunt_jumps": True,
@@ -154,8 +158,82 @@ class TestUniversalTracker(WorldTestBase):
         self.assertTrue(bool(self.world.options.death_link.value))
         self.assertTrue(bool(self.world.options.shuffle_emergency_rewards.value))
         self.assertEqual(self.world.options.trap_percentage.value, 40)
+        self.assertTrue(bool(self.world.options.randomize_radio_stations.value))
+        # The played seed's starting station replays instead of rerolling.
+        self.assertEqual(self.world.radio_start_station, 3)
         for name in CHECK_CLASS_OPTIONS:
             self.assertEqual(getattr(self.world.options, name).value, 1)
+
+
+class TestRadioStationsOn(WorldTestBase):
+    game = "Grand Theft Auto Vice City"
+    options: ClassVar[dict] = {"randomize_radio_stations": True}
+
+    def test_one_start_station_and_eight_pool_items(self) -> None:
+        pool = [item.name for item in self.multiworld.itempool
+                if item.name in data.RADIO_STATION_ITEMS]
+        precollected = [
+            item.name for item in self.multiworld.precollected_items[self.player]
+            if item.name in data.RADIO_STATION_ITEMS
+        ]
+        self.assertEqual(len(precollected), 1)
+        self.assertEqual(len(pool), len(data.RADIO_STATION_ITEMS) - 1)
+        self.assertEqual(sorted(pool + precollected), sorted(data.RADIO_STATION_ITEMS))
+        # The precollected station is the seed's chosen start.
+        self.assertIsNotNone(self.world.radio_start_station)
+        self.assertEqual(
+            precollected[0], data.RADIO_STATION_ITEMS[self.world.radio_start_station],
+        )
+
+    def test_stations_are_useful_never_progression(self) -> None:
+        # Useful, never progression: no access rule may require one, and the
+        # generator does not have to guarantee any particular station.
+        for name in data.RADIO_STATION_ITEMS:
+            self.assertEqual(ITEM_CLASSIFICATIONS[name], ItemClassification.useful, name)
+
+    def test_slot_data_carries_the_radio_contract(self) -> None:
+        slot_data = self.world.fill_slot_data()
+        self.assertTrue(slot_data["randomize_radio_stations"])
+        self.assertEqual(slot_data["radio_start_station"], self.world.radio_start_station)
+        self.assertEqual(slot_data["config_globals"][str(scm.RADIO_RANDOMIZED_GLOBAL)], 1)
+        # Each station item counts into its unlock global, in engine station
+        # id order, through the ordinary item_globals mechanism.
+        item_globals = slot_data["item_globals"]
+        for index, name in enumerate(data.RADIO_STATION_ITEMS):
+            self.assertEqual(
+                item_globals[str(ITEM_NAME_TO_ID[name])], scm.RADIO_UNLOCK_BASE + index,
+            )
+
+    def test_radio_block_stays_below_the_marker_globals(self) -> None:
+        # $9400 up is SCM-internal (marker handles and visibility flags); the
+        # reserved contract must never grow into it.
+        self.assertLess(scm.highest_reserved_global(), 9400)
+
+
+class TestRadioStationsOff(WorldTestBase):
+    game = "Grand Theft Auto Vice City"
+    # Default options: randomize_radio_stations is off.
+
+    def test_no_station_items_and_a_vanilla_config_flag(self) -> None:
+        pool_names = {item.name for item in self.multiworld.itempool}
+        precollected = {
+            item.name for item in self.multiworld.precollected_items[self.player]
+        }
+        for name in data.RADIO_STATION_ITEMS:
+            self.assertNotIn(name, pool_names, name)
+            self.assertNotIn(name, precollected, name)
+        slot_data = self.world.fill_slot_data()
+        self.assertFalse(slot_data["randomize_radio_stations"])
+        self.assertIsNone(slot_data["radio_start_station"])
+        self.assertEqual(slot_data["config_globals"][str(scm.RADIO_RANDOMIZED_GLOBAL)], 0)
+
+
+class TestRadioStationsStoryOnly(WorldTestBase):
+    # The tightest pool: story-only plus the eight station items must still
+    # leave every progression item a home. The inherited default tests prove
+    # the seed fills and stays reachable.
+    game = "Grand Theft Auto Vice City"
+    options: ClassVar[dict] = dict(_STORY_ONLY_OPTIONS, randomize_radio_stations=True)
 
 
 class TestStrandAccess(WorldTestBase):

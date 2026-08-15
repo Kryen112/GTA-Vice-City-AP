@@ -164,6 +164,20 @@ EMERGENCY_REWARD_BY_ACTIVITY: dict[str, str] = {
     "Pizza": "Max Health Upgrade",
 }
 
+# The nine radio stations, in the engine's station id order (0..8). When the
+# randomize option is on each becomes a useful item: the player starts with one
+# at random and the other eight enter the pool. The MP3 player and the police
+# scanner are not stations here: the scanner is not music and the MP3 slot
+# depends on the player's own files.
+RADIO_STATION_ITEMS: list[str] = [
+    "Radio Station: Wildstyle", "Radio Station: Flash FM",
+    "Radio Station: K-Chat", "Radio Station: Fever 105",
+    "Radio Station: V-Rock", "Radio Station: VCPR",
+    "Radio Station: Radio Espantoso", "Radio Station: Emotion 98.3",
+    "Radio Station: Wave 103",
+]
+
+
 def cash_item_name(amount: int) -> str:
     return f"Cash ${amount:,}"
 

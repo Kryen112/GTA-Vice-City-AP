@@ -46,7 +46,16 @@ def main() -> int:
           "  (ASI writes 1 when the reward item is received; the SCM re-gates the "
           "vanilla grant on it when its class is shuffled)")
     print(f"- Config flags:   ${scm.PACKAGES_SHUFFLED_GLOBAL} packages_shuffled, "
-          f"${scm.EMERGENCY_SHUFFLED_GLOBAL} emergency_shuffled  (ASI stamps from slot_data)")
+          f"${scm.EMERGENCY_SHUFFLED_GLOBAL} emergency_shuffled, "
+          f"${scm.RADIO_RANDOMIZED_GLOBAL} radio_randomized  (ASI stamps from slot_data)")
+    radio_unlock_top = scm.RADIO_UNLOCK_BASE + scm.RADIO_STATION_COUNT - 1
+    radio_resolve_top = scm.RADIO_RESOLVE_BASE + scm.RADIO_STATION_COUNT - 1
+    print(f"- Radio globals:  ${scm.RADIO_UNLOCK_BASE}..${radio_unlock_top} station "
+          "unlocks (ASI writes 1 per received station, engine station id order), "
+          f"${scm.RADIO_RESOLVE_BASE}..${radio_resolve_top} resolve map (foundation "
+          "initializes to identity, ASI overwrites; the scripted set_radio_channel "
+          f"sites read it), ${scm.RADIO_REQUEST_GLOBAL} retune request (ASI posts "
+          "station id plus one; the APRADIO watcher retunes and resets it)")
     print(f"- Highest reserved global: ${scm.highest_reserved_global()} "
           "(reference it once so Sanny grows the global space to cover the block)")
     print()

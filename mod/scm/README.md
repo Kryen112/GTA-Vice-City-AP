@@ -34,7 +34,13 @@ version control.
   purchase's completion global, so a venue strand stays hidden and unstartable
   until the property is bought. In logic the stand-in is the items to pass
   Shakedown, the mission that puts the businesses up for sale.
-- Reserved globals above `$9378` (`$9400` up) are SCM-internal marker handles and
-  visibility flags. `$9006`, `$9008`, and `$9009` in the bookkeeping gap below
-  `$9378` are SCM-internal scratch (a package counter and two once-guards). The
-  ASI never reads or writes any of these.
+- Reserved globals above `$9398` (`$9400` up, with `$9399` unused padding) are
+  SCM-internal marker handles and visibility flags. `$9006`, `$9008`, and
+  `$9009` in the bookkeeping gap below `$9378` are SCM-internal scratch (a
+  package counter and two once-guards). The ASI never reads or writes any of
+  these.
+- Radio randomization: the foundation initializes the resolve map
+  `$9389..$9397` to identity and the scripted `set_radio_channel` sites read it,
+  so the script is vanilla until the ASI overwrites the map from the station
+  unlocks. The APRADIO watcher consumes the `$9398` retune request the ASI
+  posts (station id plus one, zero idle).

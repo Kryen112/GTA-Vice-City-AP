@@ -1,6 +1,7 @@
 #include "scm_game_state.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cstdlib>
 
 #include "scm_packages.hpp"
@@ -22,6 +23,7 @@
 #include <CAutomobile.h>
 #include <CPed.h>
 #include <CWeather.h>
+#include <eModelID.h>
 #include <eObjective.h>
 #include <eWeather.h>
 #include <common.h>
@@ -36,6 +38,41 @@ constexpr int kSeedHashBase = 9000;
 constexpr int kSeedHashGlobalCount = 4;
 constexpr int kSeedHashLength = kSeedHashGlobalCount * 4;
 constexpr int kAppliedIndexGlobal = 9005;
+// The radio contract, matching apworld scm.py: the randomized flag, nine
+// station unlock globals (engine station id order), nine resolve globals the
+// ASI recomputes each frame, and the retune request global the APRADIO
+// watcher consumes (encoded station id plus one, so the zero-initialized
+// global idles).
+constexpr int kRadioRandomizedGlobal = 9379;
+constexpr int kRadioUnlockBase = 9380;
+constexpr int kRadioResolveBase = 9389;
+constexpr int kRadioRequestGlobal = 9398;
+// A script-channel request for station 9 selects the MP3 player, which the
+// game remaps to the city ambience: the radio-off soundscape. The ambience
+// track id equals the off position (10), so the commit's writeback leaves the
+// vehicle byte exactly where the enforcer put it, for the off path and the
+// station path alike; the correction can never oscillate.
+constexpr int kRadioAmbientRequest = 9;
+
+// Whether the vehicle plays the police scanner instead of its station byte,
+// mirroring the game's own test: the fixed model set, then the siren flag,
+// with the ice cream van and the Hunter explicitly on music.
+bool UsesPoliceScanner(CVehicle* vehicle) {
+  switch (vehicle->m_nModelIndex) {
+    case MODEL_VCNMAV:
+    case MODEL_POLMAV:
+    case MODEL_COASTG:
+    case MODEL_RHINO:
+    case MODEL_BARRACKS:
+      return true;
+    case MODEL_MRWHOOP:
+    case MODEL_HUNTER:
+      return false;
+    default:
+      break;
+  }
+  return vehicle->UsesSiren();
+}
 // The streaming flag the give-weapon script opcode uses (load as a dependency).
 constexpr int kStreamModelDependency = 0x04;
 // A weapon pickup grants two magazines: a reloaded weapon plus a spare, floored
@@ -205,6 +242,54 @@ void ScmGameState::CalmPedestrians() {
     if (ped == nullptr || ped == player) continue;
     ped->ClearObjective();
   }
+}
+
+void ScmGameState::EnforceRadioStations() {
+  if (GetGlobal(kRadioRandomizedGlobal) == 0) return;
+  std::array<bool, kRadioStationCount> unlocked{};
+  bool any_unlocked = false;
+  for (int station = 0; station < kRadioStationCount; ++station) {
+    unlocked[station] = GetGlobal(kRadioUnlockBase + station) >= 1;
+    any_unlocked = any_unlocked || unlocked[station];
+  }
+  // No station received yet (the resync has not landed): leave the radio
+  // alone rather than lock every vehicle onto one arbitrary station.
+  if (!any_unlocked) return;
+  const std::array<int, kRadioStationCount> resolve = ResolveRadioStations(unlocked);
+  for (int station = 0; station < kRadioStationCount; ++station) {
+    SetGlobal(kRadioResolveBase + station, resolve[station]);
+  }
+  CPool<CVehicle, CAutomobile>* pool = CPools::ms_pVehiclePool;
+  if (pool == nullptr) return;
+  CVehicle* player_vehicle = FindPlayerVehicle();
+  for (int index = 0; index < pool->m_nSize; ++index) {
+    CVehicle* vehicle = pool->GetAt(index);
+    if (vehicle == nullptr || vehicle == player_vehicle) continue;
+    // Scanner vehicles play police chatter regardless of the byte; leave
+    // them fully alone, matching the option's scanner-untouched promise.
+    if (UsesPoliceScanner(vehicle)) continue;
+    const int station = vehicle->m_nRadioStation;
+    // The off position stays: the radio-less spawns (the RC vehicles) and any
+    // radio left off.
+    if (station >= kRadioOff) continue;
+    const int corrected = CorrectedVehicleStation(station, resolve);
+    if (corrected != station) {
+      vehicle->m_nRadioStation = static_cast<unsigned char>(corrected);
+    }
+  }
+  if (player_vehicle == nullptr || UsesPoliceScanner(player_vehicle)) return;
+  const int station = player_vehicle->m_nRadioStation;
+  if (station >= kRadioOff) return;
+  if (station < kRadioStationCount && unlocked[station]) return;
+  // A locked station (or the MP3 player) reached the player's vehicle, from a
+  // retune commit or an entry the remap missed. The music manager re-reads
+  // the byte only on entry or on a commit, so fixing the byte alone leaves
+  // the wrong audio playing; the APRADIO watcher's set_radio_channel switches
+  // the live track.
+  const int target = NextAllowedTuning(station, unlocked);
+  player_vehicle->m_nRadioStation = static_cast<unsigned char>(target);
+  const int request = (target == kRadioOff) ? kRadioAmbientRequest : target;
+  SetGlobal(kRadioRequestGlobal, request + 1);
 }
 
 void ScmGameState::ApplyOneShot(const ItemEffect& effect) {
@@ -404,6 +489,11 @@ void ScmGameState::OnGameFrame() {
   // Hold or revert the timed traps (sped-up or slowed clock, hostile
   // pedestrians) whether or not new items arrived this frame.
   UpdateTimedTraps();
+
+  // Keep every vehicle radio on an unlocked station while the randomize
+  // option is on. Reads the config and unlock globals written above, so a
+  // save's own persisted state keeps it working offline too.
+  EnforceRadioStations();
 
   // Set each collected hidden package's completion global from the pickup pool,
   // so the poll below reports every package as its own check. Only when the world

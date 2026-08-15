@@ -36,6 +36,16 @@ CONFIGURATIONS: list[tuple[str, dict]] = [
         "enable_properties": False,
         "enable_robbable_stores": False, "enable_side_events": False,
     }),
+    # Radio stations add eight useful items to the pool; story-only is the
+    # tightest config they must still fit into.
+    ("radio stations on", {"randomize_radio_stations": True}),
+    ("radio stations on, story only", {
+        "randomize_radio_stations": True,
+        "enable_hidden_packages": False, "enable_rampages": False,
+        "enable_stunt_jumps": False, "enable_emergency_vehicles": False,
+        "enable_properties": False,
+        "enable_robbable_stores": False, "enable_side_events": False,
+    }),
     ("100 percent, all classes on", {
         "goal": "hundred_percent", "enable_hidden_packages": True,
         "enable_rampages": True, "enable_stunt_jumps": True,

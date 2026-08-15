@@ -364,6 +364,16 @@ def add_emergency_instrumentation():
 PACKAGES_SHUFFLED = 9377
 EMERGENCY_SHUFFLED = 9378
 
+# Radio randomization, indices matching scm.py. The ASI writes the nine resolve
+# globals (station -> itself when its item is owned, else the next unlocked
+# station); the scripted set_radio_channel sites read them, so they need no
+# flag check of their own: the foundation initializes the map to identity,
+# which is vanilla until the ASI overwrites it. The request global carries an
+# ASI-posted retune to the APRADIO watcher, encoded station id plus one so the
+# zero-initialized global idles.
+RADIO_RESOLVE_BASE = 9389
+RADIO_REQUEST = 9398
+
 # Reward global -> the vanilla weapon flag or car generator it drives, in
 # reward-global order (body armor, chainsaw, .357, flamethrower, sniper, minigun,
 # rocket launcher, sea sparrow, rhino, hunter).
@@ -435,6 +445,38 @@ def suppress_emergency_grants():
     edits.append("suppress emergency grants (sprint x2, fire, taxi, armour, health)")
 
 
+def add_radio_watcher():
+    # Retunes the live radio on ASI request. The ASI fixes a vehicle's station
+    # byte itself, but only the script channel switches the playing track, so
+    # it posts the station here. Station 9 is the MP3 player, which the game
+    # remaps to the city ambience: the radio-off soundscape.
+    body = ["", ":APRADIO", "script_name 'APRADIO'", "",
+            ":APRADIO_LOOP", "wait 0",
+            "if ", f"  ${RADIO_REQUEST} >= 1", "goto_if_false @APRADIO_LOOP",
+            f"${RADIO_REQUEST} -= 1",
+            f"set_radio_channel ${RADIO_REQUEST} -1",
+            f"${RADIO_REQUEST} = 0",
+            "goto @APRADIO_LOOP"]
+    insert_before(":GEN1", body, "APRADIO retune watcher")
+    insert_after("start_new_script @HOT ", ["start_new_script @APRADIO "], "boot start @APRADIO")
+
+
+def redirect_scripted_stations():
+    # The vanilla scripts force a music station in 14 places; each immediate
+    # becomes its station's resolve global. The two channel-9 calls restore
+    # the city ambience, not a music station, and stay as they are.
+    pattern = re.compile(r"^set_radio_channel ([0-8]) -1$")
+    replaced = 0
+    for index, line in enumerate(lines):
+        match = pattern.match(line)
+        if match is None:
+            continue
+        lines[index] = f"set_radio_channel ${RADIO_RESOLVE_BASE + int(match.group(1))} -1"
+        replaced += 1
+    assert replaced == 14, f"radio redirect: {replaced} sites (expected 14)"
+    edits.append(f"radio redirect: {replaced} scripted stations")
+
+
 def add_reward_applier():
     # Boot-started watcher: when a reward group is shuffled, apply each owned
     # reward from its reward global. Booleans re-apply idempotently every loop;
@@ -468,11 +510,15 @@ def add_reward_applier():
     insert_after("start_new_script @HOT ", ["start_new_script @APREWD "], "boot start @APREWD")
 
 
-# Foundation: reference the highest reserved global once so Sanny sizes the
-# whole $9000..N block as real zero-initialized globals. Must equal
-# scm.highest_reserved_global() (now the emergency-shuffled config flag $9378:
-# 21 unlocks + 331 completions + 15 reward globals + 2 config flags above $9000).
-insert_after("script_name 'HOT'", ["$9378 = 0"], "foundation $9378 = 0")
+# Foundation: initialize the radio resolve map to identity (vanilla until the
+# ASI overwrites it) and reference the highest reserved global once so Sanny
+# sizes the whole $9000..N block as real zero-initialized globals. The last
+# line must equal scm.highest_reserved_global() (now the radio request global
+# $9398: 21 unlocks + 331 completions + 15 reward globals + 3 config flags +
+# 19 radio globals above $9000). add_markers.py anchors on that line.
+foundation = [f"${RADIO_RESOLVE_BASE + station} = {station}" for station in range(9)]
+foundation += [f"${RADIO_REQUEST} = 0"]
+insert_after("script_name 'HOT'", foundation, f"foundation radio identity + ${RADIO_REQUEST} = 0")
 for launcher, gate_conditions, completion_global in MISSIONS:
     try:
         wire(launcher, gate_conditions, completion_global)
@@ -490,6 +536,8 @@ add_emergency_instrumentation()
 suppress_package_grants()
 suppress_emergency_grants()
 add_reward_applier()
+add_radio_watcher()
+redirect_scripted_stations()
 
 with open(DST, "wb") as handle:
     handle.write(nl.join(lines).encode("latin-1"))

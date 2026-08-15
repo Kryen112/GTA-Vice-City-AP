@@ -113,6 +113,10 @@ class GTAViceCityWorld(World):
     # interpret_slot_data), so it needs no yaml on hand.
     ut_can_gen_without_yaml = True
 
+    # The starting radio station's index into data.RADIO_STATION_ITEMS, chosen
+    # in generate_early when the randomize option is on; None when it is off.
+    radio_start_station: int | None = None
+
     item_name_to_id = ITEM_NAME_TO_ID
     location_name_to_id = LOCATION_NAME_TO_ID
     item_name_groups = ITEM_GROUPS
@@ -134,6 +138,8 @@ class GTAViceCityWorld(World):
         options.death_link.value = int(bool(slot_data["death_link"]))
         if "shuffle_emergency_rewards" in slot_data:
             options.shuffle_emergency_rewards.value = int(bool(slot_data["shuffle_emergency_rewards"]))
+        if "randomize_radio_stations" in slot_data:
+            options.randomize_radio_stations.value = int(bool(slot_data["randomize_radio_stations"]))
         if "trap_percentage" in slot_data:
             options.trap_percentage.value = int(slot_data["trap_percentage"])
         for name in CHECK_CLASS_OPTIONS:
@@ -147,8 +153,10 @@ class GTAViceCityWorld(World):
         passthrough = getattr(self.multiworld, "re_gen_passthrough", {}).get(self.game)
         if passthrough is not None:
             self._restore_options(passthrough)
+            self._choose_radio_start(passthrough)
             return
         options = self.options
+        self._choose_radio_start(None)
         if options.goal == Goal.option_hundred_percent:
             missing = [name for name in CHECK_CLASS_OPTIONS
                        if not getattr(options, name).value]
@@ -163,6 +171,19 @@ class GTAViceCityWorld(World):
                 f"{self.game}: the hidden-packages goal needs the hidden "
                 "packages class enabled."
             )
+
+    def _choose_radio_start(self, passthrough: dict | None) -> None:
+        # The starting radio station, one of the nine at random. Fixed here,
+        # before the pool builds, and carried in slot_data so a tracker
+        # regeneration replays the seed's choice instead of rerolling.
+        if not self.options.randomize_radio_stations:
+            self.radio_start_station = None
+            return
+        restored = (passthrough or {}).get("radio_start_station")
+        self.radio_start_station = (
+            int(restored) if restored is not None
+            else self.random.randrange(len(data.RADIO_STATION_ITEMS))
+        )
 
     def _location_enabled(self, name: str) -> bool:
         # Story missions carry no toggle and are always on. Every other class
@@ -241,6 +262,15 @@ class GTAViceCityWorld(World):
         placeable.extend(
             reward for reward in data.EMERGENCY_REWARD_ITEMS if self._item_enabled(reward)
         )
+        if self.options.randomize_radio_stations:
+            # One random station is the start (precollected, so it arrives as
+            # starting inventory); the other eight are useful pool items. In
+            # game only unlocked stations play.
+            for index, name in enumerate(data.RADIO_STATION_ITEMS):
+                if index == self.radio_start_station:
+                    self.multiworld.push_precollected(self.create_item(name))
+                else:
+                    placeable.append(name)
         if self.options.goal == Goal.option_hidden_packages:
             # The hunt: one Hidden Package macguffin per physical package,
             # scattered across the multiworld. The goal counts how many are
@@ -353,6 +383,10 @@ class GTAViceCityWorld(World):
             "final_location_id": LOCATION_NAME_TO_ID[data.FINAL_MISSION],
             "death_link": bool(self.options.death_link.value),
             "shuffle_emergency_rewards": bool(self.options.shuffle_emergency_rewards.value),
+            "randomize_radio_stations": bool(self.options.randomize_radio_stations.value),
+            # The starting station's index (None when the option is off), so a
+            # tracker regeneration precollects the same station.
+            "radio_start_station": self.radio_start_station,
             "trap_percentage": self.options.trap_percentage.value,
             "item_globals": {
                 str(item_id): global_index
@@ -367,6 +401,7 @@ class GTAViceCityWorld(World):
                     bool(self.options.enable_hidden_packages.value),
                     bool(self.options.enable_emergency_vehicles.value
                          and self.options.shuffle_emergency_rewards.value),
+                    bool(self.options.randomize_radio_stations.value),
                 ).items()
             },
             "completion_watch": {

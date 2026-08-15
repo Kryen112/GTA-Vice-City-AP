@@ -1,10 +1,10 @@
 """Item tables. Names, ids, classification, and groups, derived from data.py.
 
 Classification is decided here in one place. Progressive giver unlocks and
-area access are progression; package rewards and emergency-vehicle rewards are
-useful; cash denominations, the weapon pickup, the health and armor top-ups,
-and the wanted-level clear are filler; the trap items are traps. Money never
-gates logic, so cash is never progression.
+area access are progression; package rewards, emergency-vehicle rewards, and
+radio stations are useful; cash denominations, the weapon pickup, the health
+and armor top-ups, and the wanted-level clear are filler; the trap items are
+traps. Money never gates logic, so cash is never progression.
 """
 
 from __future__ import annotations
@@ -38,6 +38,7 @@ _ORDERED_ITEM_NAMES: list[str] = (
     + VENUE_PROGRESSIVE_NAMES
     + [data.HIDDEN_PACKAGE_ITEM]
     + data.TRAP_ITEMS
+    + data.RADIO_STATION_ITEMS
 )
 
 ITEM_NAME_TO_ID: dict[str, int] = {
@@ -58,7 +59,8 @@ def _classify(name: str) -> ItemClassification:
         # reachable, skip_balancing because there are many and none unlocks
         # anything, so they must not distort progression balancing.
         return ItemClassification.progression_skip_balancing
-    if name in data.PACKAGE_REWARD_ITEMS or name in data.EMERGENCY_REWARD_ITEMS:
+    if (name in data.PACKAGE_REWARD_ITEMS or name in data.EMERGENCY_REWARD_ITEMS
+            or name in data.RADIO_STATION_ITEMS):
         return ItemClassification.useful
     if name in data.TRAP_ITEMS:
         return ItemClassification.trap
@@ -76,6 +78,7 @@ ITEM_GROUPS: dict[str, list[str]] = {
     "Emergency Rewards": list(data.EMERGENCY_REWARD_ITEMS),
     "Filler": list(data.FILLER_ITEMS),
     "Traps": list(data.TRAP_ITEMS),
+    "Radio Stations": list(data.RADIO_STATION_ITEMS),
 }
 
 # The item quantity each name contributes to the pool. Progressive items have

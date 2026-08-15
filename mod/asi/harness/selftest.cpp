@@ -1,6 +1,7 @@
 // Standalone protocol self-test: round-trips framing (small and chunked) and
 // checks the guards, with no socket and no game. Proves the C++ protocol layer
 // compiles and behaves in the 32-bit MSVC toolchain.
+#include <array>
 #include <iostream>
 #include <map>
 #include <set>
@@ -10,6 +11,7 @@
 #include "../src/scm_completion.hpp"
 #include "../src/scm_effects.hpp"
 #include "../src/scm_packages.hpp"
+#include "../src/scm_radio.hpp"
 
 using namespace gtavc;
 
@@ -181,6 +183,42 @@ int main() {
     Expect(EffectDefersUntilControllable("trap_wanted"), "a chaos trap defers");
     Expect(!EffectDefersUntilControllable("trap_weather"), "weather does not defer");
     Expect(!EffectDefersUntilControllable("cash"), "a consumable does not defer");
+  }
+
+  // Radio planning: the resolve map sends a locked station to the next
+  // unlocked one with wraparound; the retune cycle visits unlocked stations
+  // and the off position in the vanilla wrap order, skipping the MP3 player,
+  // so the radio can always be turned off but never plays a locked station.
+  {
+    std::array<bool, kRadioStationCount> only_fever{};
+    only_fever[3] = true;
+    const auto single = ResolveRadioStations(only_fever);
+    bool all_fever = true;
+    for (int station = 0; station < kRadioStationCount; ++station) {
+      all_fever = all_fever && single[station] == 3;
+    }
+    Expect(all_fever, "everything resolves to the one unlocked station");
+
+    std::array<bool, kRadioStationCount> two{};
+    two[2] = true;
+    two[7] = true;
+    const auto resolve = ResolveRadioStations(two);
+    Expect(resolve[2] == 2 && resolve[7] == 7, "an unlocked station resolves to itself");
+    Expect(resolve[3] == 7, "a locked station resolves upward to the next unlocked one");
+    Expect(resolve[8] == 2, "resolution wraps past Wave back around");
+
+    Expect(CorrectedVehicleStation(9, resolve) == 2, "a rolled MP3 player re-resolves from Wildstyle");
+    Expect(CorrectedVehicleStation(5, resolve) == 7, "a spawn remap follows the resolve map");
+
+    Expect(NextAllowedTuning(2, two) == 7, "the cycle steps to the next unlocked station");
+    Expect(NextAllowedTuning(7, two) == kRadioOff, "the cycle reaches off after the last station");
+    Expect(NextAllowedTuning(kRadioOff, two) == 2, "the cycle wraps from off to the first unlocked");
+    Expect(NextAllowedTuning(8, two) == kRadioOff, "the MP3 player is skipped, never landed on");
+
+    std::array<bool, kRadioStationCount> only_wave{};
+    only_wave[8] = true;
+    Expect(NextAllowedTuning(8, only_wave) == kRadioOff, "a single station cycles to off");
+    Expect(NextAllowedTuning(kRadioOff, only_wave) == 8, "and off cycles back to it");
   }
 
   if (failures == 0) {

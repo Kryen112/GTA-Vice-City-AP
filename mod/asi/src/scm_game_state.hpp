@@ -16,6 +16,7 @@
 #include "game_state.hpp"
 #include "scm_completion.hpp"
 #include "scm_effects.hpp"
+#include "scm_radio.hpp"
 
 namespace gtavc {
 
@@ -77,6 +78,11 @@ class ScmGameState : public GameState {
   static void MakePedestriansHostile();
   // Clears the attack objective from every loaded pedestrian when the window ends.
   static void CalmPedestrians();
+  // Keeps every vehicle radio on an unlocked station while the randomize
+  // option is on: recomputes the resolve globals from the station unlocks,
+  // remaps vehicle station bytes, and posts a retune request to the APRADIO
+  // watcher when a locked station reaches the player's own vehicle.
+  static void EnforceRadioStations();
 
   Logger logger_;
   std::mutex mutex_;
