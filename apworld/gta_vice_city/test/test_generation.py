@@ -245,18 +245,41 @@ class TestHiddenPackagesGoalNeedsMainland(WorldTestBase):
         self.assertTrue(self.can_reach_location("Hidden Package - Escobar International - 1"))
 
 
-class TestMainlandPropertyPurchase(WorldTestBase):
+class TestPropertyAccess(WorldTestBase):
     game = "Grand Theft Auto Vice City"
     options: ClassVar[dict] = {"enable_properties": True}
 
-    def test_mainland_purchase_needs_mainland_access(self) -> None:
-        # A purchase carries no rule beyond its region. A mainland business must
-        # gate on Mainland Access so the fill cannot strand Mainland Access behind
-        # it; a start-island business does not.
+    def test_business_purchase_needs_the_shakedown_items(self) -> None:
+        # A business goes on sale only when Shakedown passes, so its purchase
+        # requires the items to pass Shakedown; the price itself is grindable
+        # money and needs no item.
+        self.assertFalse(self.can_reach_location("Malibu Club Purchase"))
+        self.collect_by_name(["Progressive Vercetti Protection"])
+        self.assertTrue(self.can_reach_location("Malibu Club Purchase"))
+
+    def test_mainland_purchase_needs_mainland_access_too(self) -> None:
+        # A mainland business must also gate on Mainland Access so the fill
+        # cannot strand Mainland Access behind it; a start-island business
+        # does not.
+        self.collect_by_name(["Progressive Vercetti Protection"])
         self.assertTrue(self.can_reach_location("Malibu Club Purchase"))
         self.assertFalse(self.can_reach_location("Kaufman Cabs Purchase"))
         self.collect_by_name(["Mainland Access"])
         self.assertTrue(self.can_reach_location("Kaufman Cabs Purchase"))
+
+    def test_safehouse_purchase_is_free(self) -> None:
+        # A safehouse is for sale from a new game, so a start-island safehouse
+        # purchase is reachable with an empty inventory.
+        self.assertTrue(self.can_reach_location("El Swanko Casa Purchase"))
+
+    def test_venue_mission_needs_the_property_bought(self) -> None:
+        # No Escape? is the Malibu Club's first mission. The club must be
+        # bought first and goes on sale only after Shakedown, so the mission
+        # needs the Shakedown items besides its own progressive.
+        self.collect_by_name(["Progressive Malibu Club"])
+        self.assertFalse(self.can_reach_location("No Escape?"))
+        self.collect_by_name(["Progressive Vercetti Protection"])
+        self.assertTrue(self.can_reach_location("No Escape?"))
 
 
 class TestDeferredClassIslands(WorldTestBase):

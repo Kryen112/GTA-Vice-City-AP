@@ -44,12 +44,16 @@ STRANDS = {
     "MrBlack": [("ASSIN_1", [(9021, 1)]), ("ASSIN_2", [(9021, 2)]), ("ASSIN_3", [(9021, 3)]),
                 ("ASSIN_4", [(9021, 4)]), ("ASSIN_5", [(9021, 5)])],
     "VercettiFinale": [("FIN1", [(9022, 1), (9016, 3)]), ("FIN2", [(9022, 2), (9016, 3)])],
-    "Malibu": [("BANK1", [(9023, 1)]), ("BANK2", [(9023, 2)]),
-               ("BANK3", [(9023, 3)]), ("BANK4", [(9023, 4)])],
-    "FilmStudio": [("PORN1", [(9024, 1)]), ("PORN2", [(9024, 2)]),
-                   ("PORN3", [(9024, 3)]), ("PORN4", [(9024, 4)])],
-    "Printworks": [("COU1", [(9025, 1)]), ("COU2", [(9025, 2)])],
-    "KaufmanCabs": [("TWAR1", [(9026, 1)]), ("TWAR2", [(9026, 2)]), ("TWAR3", [(9026, 3)])],
+    # Venue strand gates also require the property bought (the venue purchase's
+    # completion global), so the beam and blip stay hidden and the launcher
+    # stays unstarted until both the progressive and the purchase exist.
+    "Malibu": [("BANK1", [(9023, 1), (9336, 1)]), ("BANK2", [(9023, 2), (9336, 1)]),
+               ("BANK3", [(9023, 3), (9336, 1)]), ("BANK4", [(9023, 4), (9336, 1)])],
+    "FilmStudio": [("PORN1", [(9024, 1), (9333, 1)]), ("PORN2", [(9024, 2), (9333, 1)]),
+                   ("PORN3", [(9024, 3), (9333, 1)]), ("PORN4", [(9024, 4), (9333, 1)])],
+    "Printworks": [("COU1", [(9025, 1), (9331, 1)]), ("COU2", [(9025, 2), (9331, 1)])],
+    "KaufmanCabs": [("TWAR1", [(9026, 1), (9335, 1)]), ("TWAR2", [(9026, 2), (9335, 1)]),
+                    ("TWAR3", [(9026, 3), (9335, 1)])],
 }
 
 # Fresh scratch globals, all above the ASI-written block ($9378). One handle,
@@ -77,7 +81,12 @@ def launcher_locate_coords(label: str):
     start = label_at.get(label)
     if start is None:
         return None
-    for j in range(start, min(start + 60, len(lines))):
+    # Scan the launcher's own thread only, ending at the next thread's
+    # script_name: a fixed window breaks when inserted gate conditions push the
+    # locate down, and an unbounded one could borrow the next thread's locate.
+    for j in range(start + 2, len(lines)):
+        if lines[j].startswith("script_name '"):
+            break
         m = re.match(r"^  locate_player_\S+ \$player_char \S+ (\S+) (\S+) (\S+) radius", lines[j])
         if m:
             return (m.group(1), m.group(2), m.group(3))

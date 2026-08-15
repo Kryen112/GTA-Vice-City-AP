@@ -62,9 +62,11 @@ STORY_GIVERS: dict[str, list[str]] = {
 }
 
 # Venue mission strands, the Properties class. Each venue is bought (a purchase
-# check) and then plays its own mission strand; buying is money, which is
-# grindable, so ownership is not a logic gate. Progressive unlocks work the
-# same as story givers.
+# check) and then plays its own mission strand. The purchase price is money,
+# which is grindable and never a gate, but a venue mission needs its property
+# bought in game and the businesses go on sale only when Shakedown passes, so
+# venue missions carry the items to pass Shakedown as a requirement (see
+# PROPERTY_UNLOCK_MISSION). Progressive unlocks work the same as story givers.
 VENUE_STRANDS: dict[str, list[str]] = {
     "Malibu Club": ["No Escape?", "The Shootist", "The Driver", "The Job"],
     "Film Studio": [
@@ -77,9 +79,11 @@ VENUE_STRANDS: dict[str, list[str]] = {
     "Sunshine Autos": ["Sunshine Autos Races"],
 }
 
-# Property purchase checks. Buying a property is reachable once its area is
-# (money is grindable), so these carry no access rule beyond their region.
-# The businesses front the venue strands above; the rest are safehouses.
+# Property purchase checks. The businesses front the venue strands above (plus
+# Pole Position, a business with no strand); the rest are safehouses. A
+# safehouse is for sale from a new game, so its purchase carries no rule beyond
+# its region (money is grindable). A business goes on sale only when Shakedown
+# passes, so its purchase also requires the items to pass Shakedown.
 PROPERTY_PURCHASES: list[str] = [
     "Printworks Purchase", "Sunshine Autos Purchase", "Film Studio Purchase",
     "Cherry Popper Purchase", "Kaufman Cabs Purchase", "Malibu Club Purchase",
@@ -88,6 +92,19 @@ PROPERTY_PURCHASES: list[str] = [
     "Ocean Heights Apartment Purchase", "1102 Washington Street Purchase",
     "Vice Point Purchase", "Skumole Shack Purchase",
 ]
+
+# The mission that puts the businesses up for sale. Pinned from the vanilla
+# decompile: init creates the eight business pickups unavailable, and
+# Shakedown's pass path flips all eight to for-sale and starts their buy
+# watcher threads; the seven safehouse pickups are for sale from init. In the
+# SCM the ownership gate reads each purchase's completion global directly; in
+# logic the stand-in is the items to pass this mission.
+PROPERTY_UNLOCK_MISSION = "Shakedown"
+
+# The business purchases: the seven venue fronts plus Pole Position.
+BUSINESS_PURCHASES: list[str] = [
+    f"{venue} Purchase" for venue in VENUE_STRANDS
+] + ["Pole Position Purchase"]
 
 # The Rosenberg strand opens on a new game with no unlock item (sphere 0).
 # Every other giver's first mission needs its first progressive unlock.

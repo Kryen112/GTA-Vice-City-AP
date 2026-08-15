@@ -54,19 +54,28 @@ def main() -> int:
     print("## Mission gates (per launcher, in vanilla order)")
     print("Gate the launcher before load_and_launch_mission_internal: allow the")
     print("mission only when every listed global is at least its count. Set the")
-    print("completion global to 1 when the mission passes.")
+    print("completion global to 1 when the mission passes. A venue mission also")
+    print("gates on its property being bought, read from the venue purchase's")
+    print("completion global (in logic the stand-in is the items to pass")
+    print(f"{data.PROPERTY_UNLOCK_MISSION}, the mission that puts the businesses up for sale).")
+    print("The ownership condition is the required behavior; for the Boatyard and")
+    print("Sunshine Autos activity launchers the SCM emits no explicit condition,")
+    print("because their threads only start at the buy cutscene, which already")
+    print("carries it.")
     for strand, (class_key, missions) in data.progressive_strands().items():
         print()
         print(f"### {strand}  [{class_key}]  unlock global ${scm.unlock_global(strand)}")
         for position, mission in enumerate(missions, start=1):
             giver = locations.MISSION_GIVER[mission]
             requirements = rules._mission_requirements(mission, giver)
-            if requirements:
-                gate = " AND ".join(
-                    f"${scm.unlock_global(_strand_of(item))} >= {count}"
-                    for item, count in requirements)
-            else:
-                gate = "(free, no unlock)"
+            parts = [
+                f"${scm.unlock_global(_strand_of(item))} >= {count}"
+                for item, count in requirements
+            ]
+            if strand in data.VENUE_STRANDS:
+                purchase = f"{strand} Purchase"
+                parts.append(f"${scm.completion_global(purchase)} >= 1 (property bought)")
+            gate = " AND ".join(parts) if parts else "(free, no unlock)"
             print(f"  #{position} {mission}")
             print(f"      gate:       {gate}")
             print(f"      completion: ${scm.completion_global(mission)} = 1 on pass")

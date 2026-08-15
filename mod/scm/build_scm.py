@@ -50,19 +50,24 @@ MISSIONS = [
     ("ASSIN_4", [(9021, 4)], 9071), ("ASSIN_5", [(9021, 5)], 9072),
     # Vercetti Finale (9022, after the protection strand 9016>=3)
     ("FIN1", [(9022, 1), (9016, 3)], 9073), ("FIN2", [(9022, 2), (9016, 3)], 9074),
-    # Malibu Club (9023)
-    ("BANK1", [(9023, 1)], 9346), ("BANK2", [(9023, 2)], 9347),
-    ("BANK3", [(9023, 3)], 9348), ("BANK4", [(9023, 4)], 9349),
-    # Film Studio (9024)
-    ("PORN1", [(9024, 1)], 9350), ("PORN2", [(9024, 2)], 9351),
-    ("PORN3", [(9024, 3)], 9352), ("PORN4", [(9024, 4)], 9353),
-    # Printworks (9025)
-    ("COU1", [(9025, 1)], 9354), ("COU2", [(9025, 2)], 9355),
-    # Kaufman Cabs (9026)
-    ("TWAR1", [(9026, 1)], 9356), ("TWAR2", [(9026, 2)], 9357), ("TWAR3", [(9026, 3)], 9358),
-    # Cherry Popper (9027). Boatyard (9028) and Sunshine Autos (9029) are
-    # activity launchers with no passed-flag guard, wired bespoke in ACTIVITIES.
-    ("ICE1", [(9027, 1)], 9359),
+    # Venue strands also require their property bought, read from the venue
+    # purchase's completion global (set at the buy cutscene, save-persisted).
+    # Malibu Club (9023, bought $9336)
+    ("BANK1", [(9023, 1), (9336, 1)], 9346), ("BANK2", [(9023, 2), (9336, 1)], 9347),
+    ("BANK3", [(9023, 3), (9336, 1)], 9348), ("BANK4", [(9023, 4), (9336, 1)], 9349),
+    # Film Studio (9024, bought $9333)
+    ("PORN1", [(9024, 1), (9333, 1)], 9350), ("PORN2", [(9024, 2), (9333, 1)], 9351),
+    ("PORN3", [(9024, 3), (9333, 1)], 9352), ("PORN4", [(9024, 4), (9333, 1)], 9353),
+    # Printworks (9025, bought $9331)
+    ("COU1", [(9025, 1), (9331, 1)], 9354), ("COU2", [(9025, 2), (9331, 1)], 9355),
+    # Kaufman Cabs (9026, bought $9335)
+    ("TWAR1", [(9026, 1), (9335, 1)], 9356), ("TWAR2", [(9026, 2), (9335, 1)], 9357),
+    ("TWAR3", [(9026, 3), (9335, 1)], 9358),
+    # Cherry Popper (9027, bought $9334; the buy cutscene is also what starts
+    # its launcher). Boatyard (9028) and Sunshine Autos (9029) are activity
+    # launchers with no passed-flag guard, wired bespoke in ACTIVITIES; their
+    # threads too start only at the buy cutscene, which carries ownership.
+    ("ICE1", [(9027, 1), (9334, 1)], 9359),
 ]
 
 with open(SRC, "rb") as handle:

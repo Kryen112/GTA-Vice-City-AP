@@ -30,6 +30,10 @@ version control.
 - The gate tables in `build_scm.py` and `add_markers.py` mirror the world tables
   (`scm.py`, `data.py`, `rules.py`). `scripts/dump_scm_spec.py` prints the same
   spec derived directly from those tables; keep the two in agreement.
+- Venue mission gates (launch and marker) additionally require the venue
+  purchase's completion global, so a venue strand stays hidden and unstartable
+  until the property is bought. In logic the stand-in is the items to pass
+  Shakedown, the mission that puts the businesses up for sale.
 - Reserved globals above `$9378` (`$9400` up) are SCM-internal marker handles and
   visibility flags. `$9006`, `$9008`, and `$9009` in the bookkeeping gap below
   `$9378` are SCM-internal scratch (a package counter and two once-guards). The
