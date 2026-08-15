@@ -86,8 +86,12 @@ for _mission, _strand in MISSION_GIVER.items():
     LOCATION_REGIONS[_mission] = data.mission_region(_strand, _mission)
 for _name in data.MAINLAND_RAMPAGES:
     LOCATION_REGIONS[_name] = data.REGION_MAINLAND
+for _name in data.STARFISH_RAMPAGES:
+    LOCATION_REGIONS[_name] = data.REGION_STARFISH
 for _name in data.MAINLAND_PACKAGES:
     LOCATION_REGIONS[_name] = data.REGION_MAINLAND
+for _name in data.STARFISH_PACKAGES:
+    LOCATION_REGIONS[_name] = data.REGION_STARFISH
 for _activity, _level_count in data.EMERGENCY_LEVELS.items():
     for _level in range(_level_count // 2 + 1, _level_count + 1):
         LOCATION_REGIONS[data.emergency_name(_activity, _level)] = data.REGION_MAINLAND

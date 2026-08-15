@@ -78,7 +78,8 @@ def main() -> int:
             giver = locations.MISSION_GIVER[mission]
             requirements = rules._mission_requirements(mission, giver)
             parts = [
-                f"${scm.unlock_global(_strand_of(item))} >= {count}"
+                f"${scm.unlock_global(item if item in data.AREA_ITEMS else _strand_of(item))}"
+                f" >= {count}"
                 for item, count in requirements
             ]
             if strand in data.VENUE_STRANDS:
@@ -91,10 +92,15 @@ def main() -> int:
 
     print()
     print("## Area access")
-    for area in data.AREA_ITEMS:
-        print(f"- {area}: unlock global ${scm.unlock_global(area)}. When it is >= 1, "
-              "open the area (Mainland: delete roadblocks $1781/$1782/$1783 and set "
-              "$847 = 1, mirroring the Phnom Penh '86 flip).")
+    mainland = scm.unlock_global(data.AREA_ITEM_BY_REGION[data.REGION_MAINLAND])
+    starfish = scm.unlock_global(data.AREA_ITEM_BY_REGION[data.REGION_STARFISH])
+    print(f"- Mainland Access: unlock global ${mainland}. When it is >= 1, open "
+          "the mainland (delete the bridge roadblocks and set $847 = 1, "
+          "mirroring the Phnom Penh '86 flip, without the Starfish west gate).")
+    print(f"- Starfish Island Access: unlock global ${starfish}. When it is >= 1, "
+          "open the island's east gate ($1780); when Mainland Access is also "
+          ">= 1, open the west gate ($1779) too, the sole barrier on the "
+          "island's mainland crossing.")
 
     print()
     print("## Persistent-reward globals (re-gate the vanilla grant on these when "

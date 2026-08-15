@@ -43,20 +43,21 @@ STRANDS = {
     "LoveFist": [("ROC1", [(9020, 1)]), ("ROC2", [(9020, 2)]), ("ROC3", [(9020, 3)])],
     "MrBlack": [("ASSIN_1", [(9021, 1)]), ("ASSIN_2", [(9021, 2)]), ("ASSIN_3", [(9021, 3)]),
                 ("ASSIN_4", [(9021, 4)]), ("ASSIN_5", [(9021, 5)])],
-    "VercettiFinale": [("FIN1", [(9022, 1), (9016, 3)]), ("FIN2", [(9022, 2), (9016, 3)])],
+    "VercettiFinale": [("FIN1", [(9022, 1), (9016, 3)]),
+                       ("FIN2", [(9022, 2), (9016, 3), (9030, 1)])],
     # Venue strand gates also require the property bought (the venue purchase's
     # completion global), so the beam and blip stay hidden and the launcher
     # stays unstarted until both the progressive and the purchase exist.
-    "Malibu": [("BANK1", [(9023, 1), (9336, 1)]), ("BANK2", [(9023, 2), (9336, 1)]),
-               ("BANK3", [(9023, 3), (9336, 1)]), ("BANK4", [(9023, 4), (9336, 1)])],
-    "FilmStudio": [("PORN1", [(9024, 1), (9333, 1)]), ("PORN2", [(9024, 2), (9333, 1)]),
-                   ("PORN3", [(9024, 3), (9333, 1)]), ("PORN4", [(9024, 4), (9333, 1)])],
-    "Printworks": [("COU1", [(9025, 1), (9331, 1)]), ("COU2", [(9025, 2), (9331, 1)])],
-    "KaufmanCabs": [("TWAR1", [(9026, 1), (9335, 1)]), ("TWAR2", [(9026, 2), (9335, 1)]),
-                    ("TWAR3", [(9026, 3), (9335, 1)])],
+    "Malibu": [("BANK1", [(9023, 1), (9337, 1)]), ("BANK2", [(9023, 2), (9337, 1)]),
+               ("BANK3", [(9023, 3), (9337, 1)]), ("BANK4", [(9023, 4), (9337, 1)])],
+    "FilmStudio": [("PORN1", [(9024, 1), (9334, 1)]), ("PORN2", [(9024, 2), (9334, 1)]),
+                   ("PORN3", [(9024, 3), (9334, 1)]), ("PORN4", [(9024, 4), (9334, 1)])],
+    "Printworks": [("COU1", [(9025, 1), (9332, 1)]), ("COU2", [(9025, 2), (9332, 1)])],
+    "KaufmanCabs": [("TWAR1", [(9026, 1), (9336, 1)]), ("TWAR2", [(9026, 2), (9336, 1)]),
+                    ("TWAR3", [(9026, 3), (9336, 1)])],
 }
 
-# Fresh scratch globals, all above the ASI-written block ($9398). One handle,
+# Fresh scratch globals, all above the ASI-written block ($9399). One handle,
 # one started-flag, one shown-flag per managed mission.
 HANDLE_BASE = 9400
 STARTED_BASE = 9460
@@ -171,7 +172,7 @@ lines = kept
 # heaviest MAIN-section threads and poll only numeric globals, so they port to a
 # CLEO script unchanged. Moving them out of the MAIN script buffer makes room for
 # APMARK without overflowing VC's fixed main-script buffer. The completion globals
-# they set ($9075.. and $9175..) are unchanged, so the ASI polls them identically.
+# they set ($9076.. and $9176..) are unchanged, so the ASI polls them identically.
 def remove_thread(label, loop_goto):
     start = next((i for i, ln in enumerate(lines) if ln == f":{label}"), None)
     assert start is not None, f"relocate: :{label} not found"
@@ -190,20 +191,20 @@ lines = [ln for ln in lines
 # collectable pickup to its coordinate), so the CLEO watcher no longer counts
 # them; it polls the stat and activity/side-event flags only.
 cleo = ["{$CLEO .cs}", "", "0000:", "", ":AW_LOOP", "wait 500"]
-stat_checks = ([(f"${1439 + n} == 1", 9175 + n) for n in range(35)]
-               + [(f"${795 + n} == 1", 9210 + n) for n in range(36)]
-               + [(f"$369 >= {10 * n}", 9281 + n) for n in range(1, 11)])
+stat_checks = ([(f"${1439 + n} == 1", 9176 + n) for n in range(35)]
+               + [(f"${795 + n} == 1", 9211 + n) for n in range(36)]
+               + [(f"$369 >= {10 * n}", 9282 + n) for n in range(1, 11)])
 for idx, (cond, comp) in enumerate(stat_checks):
     cleo += ["if ", f"  {cond}", f"goto_if_false @AW_S{idx}", f"${comp} = 1", f":AW_S{idx}"]
 # Activity + side events (APACT). Checkpoint Charlie ($607), the six Sunshine
 # races (all of $1588..$1593), and 14 independent side-event win flags.
-cleo += ["if ", "  $607 == 1", "goto_if_false @AW_RACES", "$9360 = 1", ":AW_RACES"]
+cleo += ["if ", "  $607 == 1", "goto_if_false @AW_RACES", "$9361 = 1", ":AW_RACES"]
 for race_flag in range(1588, 1594):
     cleo += ["if ", f"  ${race_flag} == 1", "goto_if_false @AW_SIDE"]
-cleo += ["$9361 = 1", ":AW_SIDE"]
-side_events = [(1597, 9302), (1598, 9303), (55, 9304), (1584, 9305), (1585, 9306),
-               (1586, 9307), (1587, 9308), (8241, 9309), (8485, 9310), (8156, 9311),
-               (363, 9312), (364, 9313), (339, 9314), (351, 9315)]
+cleo += ["$9362 = 1", ":AW_SIDE"]
+side_events = [(1597, 9303), (1598, 9304), (55, 9305), (1584, 9306), (1585, 9307),
+               (1586, 9308), (1587, 9309), (8241, 9310), (8485, 9311), (8156, 9312),
+               (363, 9313), (364, 9314), (339, 9315), (351, 9316)]
 for idx, (flag, comp) in enumerate(side_events):
     cleo += ["if ", f"  ${flag} == 1", f"goto_if_false @AW_E{idx}", f"${comp} = 1", f":AW_E{idx}"]
 cleo += ["goto @AW_LOOP", ""]
@@ -282,7 +283,7 @@ boot = next(i for i, ln in enumerate(lines) if ln == "start_new_script @HOT ")
 lines[boot + 1:boot + 1] = ["start_new_script @APMARK "]
 
 # Grow the reserved block to cover the new scratch globals.
-found = next(i for i, ln in enumerate(lines) if ln == "$9398 = 0")
+found = next(i for i, ln in enumerate(lines) if ln == "$9399 = 0")
 lines[found + 1:found + 1] = [f"${highest_global} = 0"]
 
 with open(DST, "wb") as handle:

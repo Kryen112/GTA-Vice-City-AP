@@ -7,10 +7,13 @@ mission-specific cross-giver edge. A venue mission additionally requires the
 items to pass Shakedown: its property must be bought in game, and the
 businesses go on sale only when Shakedown passes. The same requirement gates
 each business purchase; the price itself is money, which is grindable and
-never a gate. The area requirement is carried by the region the location sits
-in, so it is not repeated here. Collectibles, activities, safehouse purchases,
-and stores have no rule (free within their region). The sphere-0 giver's first
-mission has no requirement at all.
+never a gate. A location's own area requirement is carried by the region it
+sits in; a rule names an area item only when the requirement crosses regions
+(the finale's Mainland Access, and the Starfish Island Access inside the
+property-sale requirements, since Shakedown gives from the mansion).
+Collectibles, activities, safehouse purchases, and stores have no rule (free
+within their region). The sphere-0 giver's first mission has no requirement
+at all.
 """
 
 from __future__ import annotations
@@ -35,10 +38,11 @@ def _requires(requirements: list[Requirement]) -> RulePredicate:
 
 
 def _mission_requirements(mission: str, giver: str) -> list[Requirement]:
-    # The launcher-gate view: progressive unlocks only. The SCM mission gates
-    # mirror exactly this; a venue's ownership requirement is added on top in
-    # build_location_rules (in game the gate reads the purchase's completion
-    # global instead of items).
+    # The launcher-gate view: progressive unlocks, plus any area item the
+    # mission needs beyond its own region (the finale's Mainland Access). The
+    # SCM mission gates mirror the unlock counts; a venue's ownership
+    # requirement is added on top in build_location_rules (in game the gate
+    # reads the purchase's completion global instead of items).
     requirements: list[Requirement] = []
     index = locations.MISSION_INDEX[mission]
     # Sphere-0 giver: first mission (index 0) is free; mission i needs i.
@@ -50,15 +54,25 @@ def _mission_requirements(mission: str, giver: str) -> list[Requirement]:
         requirements.append((data.progressive_item_name(prerequisite_giver), count))
     for prerequisite_giver, count in data.MISSION_PREREQUISITES.get(mission, []):
         requirements.append((data.progressive_item_name(prerequisite_giver), count))
+    requirements.extend(
+        (area_item, 1) for area_item in data.MISSION_AREA_REQUIREMENTS.get(mission, [])
+    )
     return requirements
 
 
 def _property_sale_requirements() -> list[Requirement]:
     # A business is for sale only once Shakedown passes, so anything behind
-    # buying one requires the items to pass Shakedown. The purchase price is
-    # money, which is grindable and never gates logic.
+    # buying one requires everything logic needs to pass Shakedown: its items
+    # and the area item of the region its marker sits in (the mansion on
+    # Starfish Island). The purchase price is money, which is grindable and
+    # never gates logic.
     mission = data.PROPERTY_UNLOCK_MISSION
-    return _mission_requirements(mission, locations.MISSION_GIVER[mission])
+    requirements = _mission_requirements(mission, locations.MISSION_GIVER[mission])
+    region = locations.LOCATION_REGIONS[mission]
+    area_item = data.AREA_ITEM_BY_REGION.get(region)
+    if area_item is not None:
+        requirements = [*requirements, (area_item, 1)]
+    return requirements
 
 
 def build_location_rules() -> dict[str, RulePredicate]:

@@ -112,11 +112,13 @@ SPHERE_ZERO_GIVER = "Rosenberg"
 
 # Strands granted at the start when a seed has too little free sphere-0 room
 # (every collectible class off). Each of these sits on the start island, so
-# the granted missions are playable immediately. Avery and the early Mr.
-# Black payphones also start on the start island but stay in the pool, so
-# the fill keeps start-island progression to place.
+# the granted missions are playable immediately. Diaz and Vercetti Protection
+# give from the mansion on Starfish Island, behind Starfish Island Access, so
+# granting them would enlarge nothing; they stay in the pool. Avery and the
+# early Mr. Black payphones also start on the start island but stay in the
+# pool, so the fill keeps start-island progression to place.
 OPENING_GRANT_GIVERS: list[str] = [
-    SPHERE_ZERO_GIVER, "Cortez", "Diaz", "Death Row", "Vercetti Protection",
+    SPHERE_ZERO_GIVER, "Cortez", "Death Row",
 ]
 
 # The default goal mission.
@@ -146,7 +148,7 @@ PACKAGE_REWARD_ITEMS: list[str] = [
     "Hunter Spawn", "$100,000",
 ]
 
-AREA_ITEMS: list[str] = ["Mainland Access"]
+AREA_ITEMS: list[str] = ["Mainland Access", "Starfish Island Access"]
 
 # The five emergency-vehicle completion rewards. When the shuffle option is on
 # they enter the pool as useful items and the vanilla full-completion grant is
@@ -415,27 +417,49 @@ MISSION_PREREQUISITES: dict[str, list[tuple[str, int]]] = {
 }
 
 
-# Region model, pinned from the SCM. The vanilla map has one persistent island
-# barrier: three bridge roadblocks that all delete together, and the flag $847
-# that all set, when Phnom Penh '86 (Diaz's second mission) passes, opening the
-# whole west island (the mainland). The AP item Mainland Access stands in for
-# that flip. Leaf Links is not a roamable gated area (its gate opens inside Four
-# Iron), so the start island is the east beaches plus Starfish, Prawn, and Leaf
-# Links; the mainland is everything west of the bridge channel. Island membership
-# below is read from each check's world coordinates in the decompile: giver
-# marker positions, rampage pickup positions, and payphone positions, split at
-# the channel (start-island givers reach X = -379, mainland givers begin at
-# X = -597).
+# Region model, pinned from the SCM. The vanilla map has two persistent
+# barriers. The mainland barrier: three bridge roadblocks that all delete
+# together, and the flag $847 that all set, when Phnom Penh '86 (Diaz's second
+# mission) passes, opening the whole west island; the AP item Mainland Access
+# stands in for that flip. The Starfish Island barrier: two gates, the east
+# gate ($1780) that the phone-chain thread opens after Guardian Angels and the
+# west gate ($1779) that the mainland flip opens; the AP item Starfish Island
+# Access stands in for the island, opening the east gate alone and the west
+# gate together with Mainland Access, so neither area item ever implies the
+# other. Leaf Links is not a roamable gated area (its gate opens inside Four
+# Iron), so the start island is the east beaches plus Prawn and Leaf Links;
+# the mainland is everything west of the bridge channel; Starfish Island is
+# its own region between them. Island membership below is read from each
+# check's world coordinates in the decompile (giver marker positions, rampage
+# pickup positions, and payphone positions), with the Starfish members
+# verified against the island's map instances (starisl.ipl and mansion.ipl).
 REGION_VICE_CITY = "Vice City"
 REGION_MAINLAND = "Mainland"
+REGION_STARFISH = "Starfish Island"
+
+# The area item that opens each gated region, for requirements that must name
+# the item itself (the region carries it for the locations inside it).
+AREA_ITEM_BY_REGION: dict[str, str] = {
+    REGION_MAINLAND: "Mainland Access",
+    REGION_STARFISH: "Starfish Island Access",
+}
 
 # Story givers whose whole strand sits on the mainland (marker west of the
 # channel). Mr. Black is absent because his payphones span both islands (his
-# mainland ones are in MAINLAND_MISSIONS). The finale spans both islands but
-# stays mainland since it is end-game, past Mainland Access anyway.
+# mainland ones are in MAINLAND_MISSIONS). The finale giver marker is at the
+# mansion, so its missions are split per mission below: Cap the Collector
+# starts at the Print Works on the mainland, Keep Your Friends Close... at the
+# mansion on Starfish.
 MAINLAND_GIVERS: frozenset[str] = frozenset({
     "Big Mitch Baker", "Umberto Robina", "Auntie Poulet",
-    "Phil Cassidy", "Love Fist", "Vercetti Finale",
+    "Phil Cassidy", "Love Fist",
+})
+
+# Story givers whose whole strand gives from the Vercetti (Diaz) mansion on
+# Starfish Island: Diaz's markers sit at the mansion and near the island's
+# east entrance, Vercetti Protection's all sit on the estate.
+STARFISH_GIVERS: frozenset[str] = frozenset({
+    "Diaz", "Vercetti Protection",
 })
 
 # Venue strands whose business sits on the mainland.
@@ -446,14 +470,33 @@ MAINLAND_VENUES: frozenset[str] = frozenset({
 # Individual mainland missions whose giver is not a whole-mainland giver. Mr.
 # Black's last two payphones (Check Out at the Check In at X = -1482, Loose Ends
 # at X = -978) are on the mainland; his first three are on the start island.
+# Cap the Collector, the finale's first mission, starts at the Print Works.
 MAINLAND_MISSIONS: frozenset[str] = frozenset({
-    "Check Out at the Check In", "Loose Ends",
+    "Check Out at the Check In", "Loose Ends", "Cap the Collector",
 })
+
+# Individual Starfish Island missions whose giver is not a whole-island giver.
+# The finale's last mission starts at the mansion.
+STARFISH_MISSIONS: frozenset[str] = frozenset({
+    "Keep Your Friends Close...",
+})
+
+# Area items a mission needs beyond its own region. Keep Your Friends Close...
+# sits on Starfish, but its launcher only activates once Cap the Collector
+# passes, and that mission is on the mainland, so the finale also needs
+# Mainland Access.
+MISSION_AREA_REQUIREMENTS: dict[str, list[str]] = {
+    "Keep Your Friends Close...": ["Mainland Access"],
+}
 
 
 def mission_region(giver: str, mission: str) -> str:
     if mission in MAINLAND_MISSIONS:
         return REGION_MAINLAND
+    if mission in STARFISH_MISSIONS:
+        return REGION_STARFISH
+    if giver in STARFISH_GIVERS:
+        return REGION_STARFISH
     if giver in MAINLAND_GIVERS or giver in MAINLAND_VENUES:
         return REGION_MAINLAND
     return REGION_VICE_CITY
@@ -466,14 +509,21 @@ def mission_region(giver: str, mission: str) -> str:
 # beaches and count as mainland too.
 MAINLAND_RAMPAGES: frozenset[str] = frozenset(
     rampage_name(index)
-    for index in (2, 7, 8, 9, 10, 11, 14, 15, 16, 17, 18, 19, 25, 26, 27, 28, 32, 33, 35)
+    for index in (2, 7, 8, 9, 10, 11, 15, 16, 17, 18, 19, 25, 26, 27, 28, 32, 33, 35)
 )
+
+# Rampages on Starfish Island. Rampage 14's pickup at (-679.7, -419.7) sits on
+# the island's west tip, verified against the starisl.ipl map instances; its
+# provisional Little Havana district name is wrong and the naming pass renames
+# it.
+STARFISH_RAMPAGES: frozenset[str] = frozenset({rampage_name(14)})
 
 # Hidden packages are per package, each detected individually by the ASI (by
 # coordinate) rather than by a running count. Island membership and coordinates
 # come from package_data, in the SCM placement order. PACKAGE_COORDS is sent to
 # the ASI via slot_data so it can match a collected pickup to its package.
 MAINLAND_PACKAGES: frozenset[str] = package_data.MAINLAND_PACKAGES
+STARFISH_PACKAGES: frozenset[str] = package_data.STARFISH_PACKAGES
 PACKAGE_COORDS: list[tuple[float, float, float]] = package_data.PACKAGE_COORDS
 
 # Property purchases on the mainland: the five mainland venue businesses and the
@@ -496,9 +546,11 @@ MAINLAND_STORES: frozenset[str] = frozenset(
 # Side events on the mainland. The three stadium events (Hyman Stadium, Downtown)
 # and the Downtown and Little Haiti chopper checkpoints are confirmed mainland. RC
 # Raider, Trial by Dirt, and Test Track are not coordinate-pinned, so they count
-# as mainland for safety (over-gating never softlocks); refine to the start island
-# once confirmed. RC Bandit, RC Baron, PCJ Playground, Cone Crazy, and the Ocean
-# Beach and Vice Point chopper checkpoints are on the start island.
+# as mainland provisionally; the in-game audit refines them and must also confirm
+# none sits on Starfish Island, since mainland gating no longer covers the island
+# (with Mainland Access alone both island gates stay shut). RC Bandit, RC Baron,
+# PCJ Playground, Cone Crazy, and the Ocean Beach and Vice Point chopper
+# checkpoints are on the start island.
 MAINLAND_SIDE_EVENTS: frozenset[str] = frozenset({
     "Hotring", "Bloodring", "Dirtring",
     "Downtown Chopper Checkpoint", "Little Haiti Chopper Checkpoint",
@@ -507,7 +559,9 @@ MAINLAND_SIDE_EVENTS: frozenset[str] = frozenset({
 
 # Stunt jumps are exe-native: the SCM only registers a found jump by its engine
 # id, so their per-jump islands are not readable from the decompile. All 36 count
-# as mainland provisionally (safe over-gating) until an in-game audit places each.
+# as mainland provisionally until an in-game audit places each; the audit must
+# also confirm none sits on Starfish Island, since mainland gating no longer
+# covers the island (with Mainland Access alone both island gates stay shut).
 MAINLAND_STUNT_JUMPS: frozenset[str] = frozenset(
     stunt_jump_name(index) for index in range(1, STUNT_JUMP_COUNT + 1)
 )

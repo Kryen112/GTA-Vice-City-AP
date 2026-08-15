@@ -229,8 +229,6 @@ MAINLAND_PACKAGES: frozenset[str] = frozenset({
     "Hidden Package - Downtown - 2",
     "Hidden Package - Downtown - 3",
     "Hidden Package - Little Havana - 2",
-    "Hidden Package - Little Havana - 3",
-    "Hidden Package - Little Havana - 4",
     "Hidden Package - Downtown - 4",
     "Hidden Package - Downtown - 5",
     "Hidden Package - Downtown - 6",
@@ -276,4 +274,18 @@ MAINLAND_PACKAGES: frozenset[str] = frozenset({
     "Hidden Package - Little Havana - 14",
     "Hidden Package - Escobar International - 17",
     "Hidden Package - Escobar International - 18",
+})
+
+# Packages on Starfish Island, verified against the map instances (starisl.ipl
+# and the estate's mansion.ipl). The provisional district names disagree with
+# the geography in both directions: Starfish Island 1 and 2 sit on the east
+# bridge east of the closed gate (start-island reachable), and Little Havana 3
+# and 4 sit on the island; the naming pass renames them, membership here is by
+# position.
+STARFISH_PACKAGES: frozenset[str] = frozenset({
+    "Hidden Package - Starfish Island - 3",
+    "Hidden Package - Little Havana - 3",
+    "Hidden Package - Little Havana - 4",
+    "Hidden Package - Starfish Island - 4",
+    "Hidden Package - Starfish Island - 5",
 })

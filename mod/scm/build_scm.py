@@ -1,5 +1,6 @@
 """Apply AP edits to a clean VC decompile: foundation, per-mission gate +
-completion write + reward suppression, and the Mainland area watcher.
+completion write + reward suppression, and the area watcher that opens the
+mainland and the two Starfish Island gates on their AP items.
 
 Config per mission is just (launcher_label, gate_conditions, completion_global).
 The launcher's guard flag, gate-block label, and loop-back label are derived
@@ -16,58 +17,62 @@ SRC, DST = sys.argv[1], sys.argv[2]
 # = free mission. Order mirrors the strands in the spec.
 MISSIONS = [
     # Rosenberg (9010)
-    ("HOT", [], 9031), ("LAW1", [(9010, 1)], 9032), ("LAW2", [(9010, 2)], 9033),
-    ("LAW3", [(9010, 3)], 9034), ("LAW4", [(9010, 4)], 9035),
+    ("HOT", [], 9032), ("LAW1", [(9010, 1)], 9033), ("LAW2", [(9010, 2)], 9034),
+    ("LAW3", [(9010, 3)], 9035), ("LAW4", [(9010, 4)], 9036),
     # Cortez (9011)
-    ("GEN1", [(9011, 1)], 9036), ("GEN2", [(9011, 2)], 9037),
-    ("GEN3", [(9011, 3)], 9038), ("GEN4", [(9011, 4)], 9039),
-    ("GEN5", [(9011, 5)], 9040),
+    ("GEN1", [(9011, 1)], 9037), ("GEN2", [(9011, 2)], 9038),
+    ("GEN3", [(9011, 3)], 9039), ("GEN4", [(9011, 4)], 9040),
+    ("GEN5", [(9011, 5)], 9041),
     # Diaz (9012). Rub Out additionally needs Lance rescued in Death Row.
-    ("BAR1", [(9012, 1)], 9041), ("BAR2", [(9012, 2)], 9042),
-    ("BAR3", [(9012, 3)], 9043), ("BAR4", [(9012, 4)], 9044),
-    ("BAR5", [(9012, 5), (9013, 1)], 9045),
+    ("BAR1", [(9012, 1)], 9042), ("BAR2", [(9012, 2)], 9043),
+    ("BAR3", [(9012, 3)], 9044), ("BAR4", [(9012, 4)], 9045),
+    ("BAR5", [(9012, 5), (9013, 1)], 9046),
     # Death Row (9013)
-    ("KEN1", [(9013, 1)], 9046),
+    ("KEN1", [(9013, 1)], 9047),
     # Avery (9014): Four Iron, Two Bit Hit, Demolition Man
-    ("SER1", [(9014, 1)], 9047), ("SER3", [(9014, 2)], 9048), ("SER2", [(9014, 3)], 9049),
+    ("SER1", [(9014, 1)], 9048), ("SER3", [(9014, 2)], 9049), ("SER2", [(9014, 3)], 9050),
     # Phil Cassidy (9015)
-    ("PHI1", [(9015, 1)], 9050), ("PHI2", [(9015, 2)], 9051),
+    ("PHI1", [(9015, 1)], 9051), ("PHI2", [(9015, 2)], 9052),
     # Vercetti Protection (9016)
-    ("PRO1", [(9016, 1)], 9052),
-    ("PRO2", [(9016, 2)], 9053),
-    ("PRO3", [(9016, 3)], 9054),
+    ("PRO1", [(9016, 1)], 9053),
+    ("PRO2", [(9016, 2)], 9054),
+    ("PRO3", [(9016, 3)], 9055),
     # Big Mitch Baker (9017)
-    ("BIK1", [(9017, 1)], 9055), ("BIK2", [(9017, 2)], 9056), ("BIK3", [(9017, 3)], 9057),
+    ("BIK1", [(9017, 1)], 9056), ("BIK2", [(9017, 2)], 9057), ("BIK3", [(9017, 3)], 9058),
     # Umberto Robina (9018)
-    ("CUB1", [(9018, 1)], 9058), ("CUB2", [(9018, 2)], 9059),
-    ("CUB3", [(9018, 3)], 9060), ("CUB4", [(9018, 4)], 9061),
+    ("CUB1", [(9018, 1)], 9059), ("CUB2", [(9018, 2)], 9060),
+    ("CUB3", [(9018, 3)], 9061), ("CUB4", [(9018, 4)], 9062),
     # Auntie Poulet (9019)
-    ("HAT1", [(9019, 1)], 9062), ("HAT2", [(9019, 2)], 9063), ("HAT3", [(9019, 3)], 9064),
+    ("HAT1", [(9019, 1)], 9063), ("HAT2", [(9019, 2)], 9064), ("HAT3", [(9019, 3)], 9065),
     # Love Fist (9020)
-    ("ROC1", [(9020, 1)], 9065), ("ROC2", [(9020, 2)], 9066), ("ROC3", [(9020, 3)], 9067),
+    ("ROC1", [(9020, 1)], 9066), ("ROC2", [(9020, 2)], 9067), ("ROC3", [(9020, 3)], 9068),
     # Mr. Black (9021)
-    ("ASSIN_1", [(9021, 1)], 9068), ("ASSIN_2", [(9021, 2)], 9069), ("ASSIN_3", [(9021, 3)], 9070),
-    ("ASSIN_4", [(9021, 4)], 9071), ("ASSIN_5", [(9021, 5)], 9072),
-    # Vercetti Finale (9022, after the protection strand 9016>=3)
-    ("FIN1", [(9022, 1), (9016, 3)], 9073), ("FIN2", [(9022, 2), (9016, 3)], 9074),
+    ("ASSIN_1", [(9021, 1)], 9069), ("ASSIN_2", [(9021, 2)], 9070), ("ASSIN_3", [(9021, 3)], 9071),
+    ("ASSIN_4", [(9021, 4)], 9072), ("ASSIN_5", [(9021, 5)], 9073),
+    # Vercetti Finale (9022, after the protection strand 9016>=3). The last
+    # mission also mirrors logic's Mainland Access requirement ($9030): its
+    # launcher only activates once Cap the Collector passes on the mainland,
+    # so the condition is already true whenever it can fire.
+    ("FIN1", [(9022, 1), (9016, 3)], 9074),
+    ("FIN2", [(9022, 2), (9016, 3), (9030, 1)], 9075),
     # Venue strands also require their property bought, read from the venue
     # purchase's completion global (set at the buy cutscene, save-persisted).
-    # Malibu Club (9023, bought $9336)
-    ("BANK1", [(9023, 1), (9336, 1)], 9346), ("BANK2", [(9023, 2), (9336, 1)], 9347),
-    ("BANK3", [(9023, 3), (9336, 1)], 9348), ("BANK4", [(9023, 4), (9336, 1)], 9349),
-    # Film Studio (9024, bought $9333)
-    ("PORN1", [(9024, 1), (9333, 1)], 9350), ("PORN2", [(9024, 2), (9333, 1)], 9351),
-    ("PORN3", [(9024, 3), (9333, 1)], 9352), ("PORN4", [(9024, 4), (9333, 1)], 9353),
-    # Printworks (9025, bought $9331)
-    ("COU1", [(9025, 1), (9331, 1)], 9354), ("COU2", [(9025, 2), (9331, 1)], 9355),
-    # Kaufman Cabs (9026, bought $9335)
-    ("TWAR1", [(9026, 1), (9335, 1)], 9356), ("TWAR2", [(9026, 2), (9335, 1)], 9357),
-    ("TWAR3", [(9026, 3), (9335, 1)], 9358),
-    # Cherry Popper (9027, bought $9334; the buy cutscene is also what starts
+    # Malibu Club (9023, bought $9337)
+    ("BANK1", [(9023, 1), (9337, 1)], 9347), ("BANK2", [(9023, 2), (9337, 1)], 9348),
+    ("BANK3", [(9023, 3), (9337, 1)], 9349), ("BANK4", [(9023, 4), (9337, 1)], 9350),
+    # Film Studio (9024, bought $9334)
+    ("PORN1", [(9024, 1), (9334, 1)], 9351), ("PORN2", [(9024, 2), (9334, 1)], 9352),
+    ("PORN3", [(9024, 3), (9334, 1)], 9353), ("PORN4", [(9024, 4), (9334, 1)], 9354),
+    # Printworks (9025, bought $9332)
+    ("COU1", [(9025, 1), (9332, 1)], 9355), ("COU2", [(9025, 2), (9332, 1)], 9356),
+    # Kaufman Cabs (9026, bought $9336)
+    ("TWAR1", [(9026, 1), (9336, 1)], 9357), ("TWAR2", [(9026, 2), (9336, 1)], 9358),
+    ("TWAR3", [(9026, 3), (9336, 1)], 9359),
+    # Cherry Popper (9027, bought $9335; the buy cutscene is also what starts
     # its launcher). Boatyard (9028) and Sunshine Autos (9029) are activity
     # launchers with no passed-flag guard, wired bespoke in ACTIVITIES; their
     # threads too start only at the buy cutscene, which carries ownership.
-    ("ICE1", [(9027, 1), (9334, 1)], 9359),
+    ("ICE1", [(9027, 1), (9335, 1)], 9360),
 ]
 
 with open(SRC, "rb") as handle:
@@ -169,6 +174,11 @@ def wire(launcher, gate_conditions, completion_global):
 
 
 def relocate_mainland_open():
+    # Extracts Phnom Penh's mainland-open routine and splits out the Starfish
+    # west-gate piece (the $1779 swap and its bridge-span road switches): the
+    # mainland part fires on Mainland Access alone, the west gate only when
+    # Starfish Island Access is also held, since that gate is the only barrier
+    # on the island's mainland crossing.
     anchor = [i for i, ln in enumerate(lines) if ln == "$passed_COK2_Phnom_Penh_86 = 1"]
     assert len(anchor) == 1, f"mainland: passed anchor matched {len(anchor)}"
     start = next(j for j in range(anchor[0], anchor[0] + 20) if lines[j] == "$847 = 1")
@@ -177,17 +187,43 @@ def relocate_mainland_open():
     assert 20 <= len(block) <= 32 and "delete_object $1781" in block, \
         f"mainland: extracted block looks wrong ({len(block)} lines)"
     del lines[start:end + 1]
-    edits.append(f"relocated mainland-open ({len(block)} lines)")
+    west_start = block.index("delete_object $1779") - 2
+    west_gate = block[west_start:west_start + 5]
+    assert west_gate[0].startswith("switch_ped_roads_on -787.8") \
+        and west_gate[4] == "dont_remove_object $1779", \
+        f"mainland: west-gate piece looks wrong ({west_gate})"
+    mainland = block[:west_start] + block[west_start + 5:]
+    edits.append(f"relocated mainland-open ({len(mainland)} + {len(west_gate)} lines)")
+    return mainland, west_gate
+
+
+def sever_starfish_east_open():
+    # Extracts the east-gate opening from the CELL phone thread's Diaz intro
+    # (the $1780 swap and its bridge-span road switches), which vanilla runs
+    # once Guardian Angels passes. The phone call and its $1157 once-guard stay
+    # in CELL; the gate moves to the watcher so it opens on the item, and a
+    # Rub Out passed before Guardian Angels can no longer suppress it.
+    anchor = [i for i, ln in enumerate(lines)
+              if ln.startswith("create_object_no_offset $1780 = init_object #COMGATE2OPEN at -183.824")]
+    assert len(anchor) == 1, f"starfish: east-gate anchor matched {len(anchor)}"
+    start = anchor[0] - 3
+    block = lines[start:start + 5]
+    assert block[0].startswith("switch_ped_roads_on -230.0") \
+        and block[2] == "delete_object $1780" \
+        and block[4] == "dont_remove_object $1780", \
+        f"starfish: east-gate piece looks wrong ({block})"
+    del lines[start:start + 5]
+    edits.append("severed starfish east-gate open from CELL")
     return block
 
 
 # Property purchases: each buy mission-let is a post-purchase cutscene, so mark
 # its completion at the mission-let start. Order matches the apworld order.
 PURCHASES = [
-    ("BUYPRO1", 9331), ("CARBUY1", 9332), ("BUYPRO2", 9333), ("ICECUT", 9334),
-    ("TAXCUT", 9335), ("BUYPRO3", 9336), ("BOATBY", 9337), ("BUYPRO4", 9338),
-    ("BUYPRO5", 9339), ("LNKVBUY", 9340), ("HYCOBUY", 9341), ("OCHEBUY", 9342),
-    ("WASHBUY", 9343), ("VCPTBUY", 9344), ("SKUMBUY", 9345),
+    ("BUYPRO1", 9332), ("CARBUY1", 9333), ("BUYPRO2", 9334), ("ICECUT", 9335),
+    ("TAXCUT", 9336), ("BUYPRO3", 9337), ("BOATBY", 9338), ("BUYPRO4", 9339),
+    ("BUYPRO5", 9340), ("LNKVBUY", 9341), ("HYCOBUY", 9342), ("OCHEBUY", 9343),
+    ("WASHBUY", 9344), ("VCPTBUY", 9345), ("SKUMBUY", 9346),
 ]
 
 
@@ -198,17 +234,17 @@ def add_purchase_completions():
 
 def add_store_completions():
     # Each of the 15 store robberies calls add_stores_knocked_off; mark that
-    # store's completion right after it. Source order maps to $9316..$9330.
+    # store's completion right after it. Source order maps to $9317..$9331.
     sites = [i for i, ln in enumerate(lines) if ln == "add_stores_knocked_off 1"]
     assert len(sites) == 15, f"stores: found {len(sites)} sites (expected 15)"
     for k in range(len(sites) - 1, -1, -1):
-        lines[sites[k] + 1:sites[k] + 1] = [f"${9316 + k} = 1"]
-    edits.append(f"stores: {len(sites)} completions $9316..$9330")
+        lines[sites[k] + 1:sites[k] + 1] = [f"${9317 + k} = 1"]
+    edits.append(f"stores: {len(sites)} completions $9317..$9331")
 
 
 def add_package_watcher():
     # Hidden packages are count-only in the SCM (get_collectable1s_collected),
-    # so mark package N's completion global ($9074+N) once at least N are
+    # so mark package N's completion global ($9075+N) once at least N are
     # collected. Unrolled per package with a chained early-exit (the counts are
     # cumulative, so the first unmet threshold ends the sweep). VC's script VM
     # does NOT execute Sanny's dynamic global-array access (a read silently
@@ -218,17 +254,36 @@ def add_package_watcher():
             ":APPKG_LOOP", "wait 500",
             "get_collectable1s_collected $9006"]
     for count in range(1, 101):
-        body += ["if ", f"  $9006 >= {count}", "goto_if_false @APPKG_DONE", f"${9074 + count} = 1"]
+        body += ["if ", f"  $9006 >= {count}", "goto_if_false @APPKG_DONE", f"${9075 + count} = 1"]
     body += [":APPKG_DONE", "goto @APPKG_LOOP"]
     insert_before(":GEN1", body, "APPKG package watcher")
     insert_after("start_new_script @HOT ", ["start_new_script @APPKG "], "boot start @APPKG")
 
 
-def add_area_watcher(open_block):
+def add_area_watcher(mainland_block, east_gate, west_gate):
+    # One watcher, three independent branches per loop: the mainland opens on
+    # Mainland Access ($9030, once-guarded by the vanilla flag $847 it sets);
+    # the Starfish east gate opens on Starfish Island Access ($9031); the west
+    # gate opens only with both items, since it is the sole barrier on the
+    # island's mainland crossing. The gate branches once-guard on the reserved
+    # scratch globals $9004 (east) and $9007 (west); the vanilla flag $1157
+    # stays with the phone call in CELL, which would block a watcher keyed on
+    # it if the call fired first.
     body = ["", ":APAREA", "script_name 'APAREA'", "", ":APAREA_LOOP", "wait 500",
+            "if ", "  $9030 >= 1", "goto_if_false @APAREA_STAR",
+            "if ", "  $847 == 0", "goto_if_false @APAREA_STAR",
+            *mainland_block,
+            ":APAREA_STAR",
+            "if ", "  $9031 >= 1", "goto_if_false @APAREA_LOOP",
+            "if ", "  $9004 == 0", "goto_if_false @APAREA_WEST",
+            "$9004 = 1",
+            *east_gate,
+            ":APAREA_WEST",
             "if ", "  $9030 >= 1", "goto_if_false @APAREA_LOOP",
-            "if ", "  $847 == 0", "goto_if_false @APAREA_LOOP",
-            *open_block, "goto @APAREA_LOOP"]
+            "if ", "  $9007 == 0", "goto_if_false @APAREA_LOOP",
+            "$9007 = 1",
+            *west_gate,
+            "goto @APAREA_LOOP"]
     insert_before(":GEN1", body, "APAREA watcher thread")
     insert_after("start_new_script @HOT ", ["start_new_script @APAREA "], "boot start @APAREA")
 
@@ -255,28 +310,28 @@ def add_activity_gates():
 
 # Side events (14): completion-only, no gate (always playable). Each is a
 # vanilla win flag set to 1 once on first completion. (win_flag, completion).
-# Order matches the spec's side_events block ($9302..$9315).
+# Order matches the spec's side_events block ($9303..$9316).
 SIDE_EVENTS = [
-    (1597, 9302), (1598, 9303), (55, 9304),                  # Hotring, Bloodring, Dirtring
-    (1584, 9305), (1585, 9306), (1586, 9307), (1587, 9308),  # chopper checkpoints
-    (8241, 9309), (8485, 9310), (8156, 9311),                # RC Bandit, Baron, Raider
-    (363, 9312), (364, 9313), (339, 9314), (351, 9315),      # Trial, Test Track, PCJ, Cone
+    (1597, 9303), (1598, 9304), (55, 9305),                  # Hotring, Bloodring, Dirtring
+    (1584, 9306), (1585, 9307), (1586, 9308), (1587, 9309),  # chopper checkpoints
+    (8241, 9310), (8485, 9311), (8156, 9312),                # RC Bandit, Baron, Raider
+    (363, 9313), (364, 9314), (339, 9315), (351, 9316),      # Trial, Test Track, PCJ, Cone
 ]
 
 
 def add_activity_watcher():
     # Boot-started watcher that polls vanilla win flags and marks completions:
-    # Checkpoint Charlie ($607 -> $9360), the six Sunshine Autos races (all of
-    # $1588..$1593 -> $9361), and the 14 side events (each flag -> its global).
+    # Checkpoint Charlie ($607 -> $9361), the six Sunshine Autos races (all of
+    # $1588..$1593 -> $9362), and the 14 side events (each flag -> its global).
     # Each check is independent except the races, which require all six.
     body = ["", ":APACT", "script_name 'APACT'", "",
             ":APACT_LOOP", "wait 1000",
             "if ", "  $607 == 1", "goto_if_false @APACT_RACES",
-            "$9360 = 1",
+            "$9361 = 1",
             "", ":APACT_RACES"]
     for race_flag in range(1588, 1594):
         body += ["if ", f"  ${race_flag} == 1", "goto_if_false @APACT_SIDE"]
-    body += ["$9361 = 1", "", ":APACT_SIDE"]
+    body += ["$9362 = 1", "", ":APACT_SIDE"]
     for index, (win_flag, completion_global) in enumerate(SIDE_EVENTS):
         skip = "@APACT_LOOP" if index == len(SIDE_EVENTS) - 1 else f"@APACT_EVENT_{index}"
         body += ["if ", f"  ${win_flag} == 1", f"goto_if_false {skip}", f"${completion_global} = 1"]
@@ -312,13 +367,13 @@ def add_stat_watcher():
     # watcher copies each flag to its completion global. Checks are UNROLLED per
     # instance: Sanny's dynamic array READ ($dst = $base($idx,Ni)) silently
     # compiles to nothing (only array WRITE round-trips), so a loop cannot read
-    # the flags. Rampages $1439..$1473 -> $9175..$9209 (35); stunts $795..$830 ->
-    # $9210..$9245 (36); Taxi $369 (persistent career fares) -> $9282..$9291 at
+    # the flags. Rampages $1439..$1473 -> $9176..$9210 (35); stunts $795..$830 ->
+    # $9211..$9246 (36); Taxi $369 (persistent career fares) -> $9283..$9292 at
     # every tenth fare.
     body = ["", ":APSTAT", "script_name 'APSTAT'", "", ":APSTAT_LOOP", "wait 1000"]
-    checks = ([(f"${1439 + n} == 1", 9175 + n) for n in range(35)]
-              + [(f"${795 + n} == 1", 9210 + n) for n in range(36)]
-              + [(f"$369 >= {10 * n}", 9281 + n) for n in range(1, 11)])
+    checks = ([(f"${1439 + n} == 1", 9176 + n) for n in range(35)]
+              + [(f"${795 + n} == 1", 9211 + n) for n in range(36)]
+              + [(f"$369 >= {10 * n}", 9282 + n) for n in range(1, 11)])
     for index, (condition, completion) in enumerate(checks):
         label = f"@APSTAT_C{index}"
         body += ["if ", f"  {condition}", f"goto_if_false {label}", f"${completion} = 1", f":APSTAT_C{index}"]
@@ -344,25 +399,25 @@ def add_emergency_instrumentation():
     # level at its in-mission completion point rather than from a watcher. At
     # register_*_level the level global holds the just-completed level (1..N).
     for anchor, level_var, base, maxlevel, done in [
-        ("register_ambulance_level $6756", "$6756", 9246, 12, "APAMB_DONE"),
-        ("register_fire_level $6848", "$6848", 9270, 12, "APFIR_DONE"),
-        ("register_vigilante_level $6938", "$6938", 9258, 12, "APVIG_DONE"),
+        ("register_ambulance_level $6756", "$6756", 9247, 12, "APAMB_DONE"),
+        ("register_fire_level $6848", "$6848", 9271, 12, "APFIR_DONE"),
+        ("register_vigilante_level $6938", "$6938", 9259, 12, "APVIG_DONE"),
     ]:
         insert_after(anchor, _level_marks(level_var, base, maxlevel, done), f"emergency {level_var}")
     # Pizza levels 1..9 complete just before $7994 advances (pre-increment value
     # is the completed level); level 10 completes at the win flag $389 = 1.
-    insert_before("$7994 += 1", _level_marks("$7994", 9292, 9, "APPIZ_DONE"),
+    insert_before("$7994 += 1", _level_marks("$7994", 9293, 9, "APPIZ_DONE"),
                   "emergency pizza levels 1-9")
-    insert_after("$389 = 1", ["$9301 = 1"], "emergency pizza level 10")
+    insert_after("$389 = 1", ["$9302 = 1"], "emergency pizza level 10")
 
 
 # Persistent-reward re-gating (Phase 3). When a reward group is shuffled (the
 # ASI stamps its config flag from slot_data), the vanilla grant is suppressed and
 # the APREWD applier drives it from the AP reward global instead. Indices match
-# scm.py: rewards $9362..$9376, packages_shuffled $9377, emergency_shuffled $9378.
+# scm.py: rewards $9363..$9377, packages_shuffled $9378, emergency_shuffled $9379.
 # $9008/$9009 are reserved once-guards for the two additive stat rewards.
-PACKAGES_SHUFFLED = 9377
-EMERGENCY_SHUFFLED = 9378
+PACKAGES_SHUFFLED = 9378
+EMERGENCY_SHUFFLED = 9379
 
 # Radio randomization, indices matching scm.py. The ASI writes the nine resolve
 # globals (station -> itself when its item is owned, else the next unlocked
@@ -371,19 +426,19 @@ EMERGENCY_SHUFFLED = 9378
 # which is vanilla until the ASI overwrites it. The request global carries an
 # ASI-posted retune to the APRADIO watcher, encoded station id plus one so the
 # zero-initialized global idles.
-RADIO_RESOLVE_BASE = 9389
-RADIO_REQUEST = 9398
+RADIO_RESOLVE_BASE = 9390
+RADIO_REQUEST = 9399
 
 # Reward global -> the vanilla weapon flag or car generator it drives, in
 # reward-global order (body armor, chainsaw, .357, flamethrower, sniper, minigun,
 # rocket launcher, sea sparrow, rhino, hunter).
 PACKAGE_REWARD_APPLY = [
-    (9362, "$1309 = 1"), (9363, "$1310 = 1"), (9364, "$1308 = 1"),
-    (9365, "$1311 = 1"), (9366, "$1312 = 1"), (9367, "$1313 = 1"),
-    (9368, "$1314 = 1"),
-    (9369, "switch_car_generator $1977 cars_to_generate_to 101"),
-    (9370, "switch_car_generator $1978 cars_to_generate_to 101"),
-    (9371, "switch_car_generator $1979 cars_to_generate_to 101"),
+    (9363, "$1309 = 1"), (9364, "$1310 = 1"), (9365, "$1308 = 1"),
+    (9366, "$1311 = 1"), (9367, "$1312 = 1"), (9368, "$1313 = 1"),
+    (9369, "$1314 = 1"),
+    (9370, "switch_car_generator $1977 cars_to_generate_to 101"),
+    (9371, "switch_car_generator $1978 cars_to_generate_to 101"),
+    (9372, "switch_car_generator $1979 cars_to_generate_to 101"),
 ]
 
 # The vanilla :PACKAGE grant blocks: label -> lines after it (progress + help +
@@ -489,19 +544,19 @@ def add_reward_applier():
     body += ["", ":APREWD_EMERGENCY",
              "if ", f"  ${EMERGENCY_SHUFFLED} == 1", "goto_if_false @APREWD_LOOP"]
     booleans = [
-        (9372, "set_player_never_gets_tired $player_char infinite_run_to True"),
-        (9373, "make_player_fire_proof $player_char fireproof 1"),
-        (9375, "set_all_taxis_have_nitro 1"),
+        (9373, "set_player_never_gets_tired $player_char infinite_run_to True"),
+        (9374, "make_player_fire_proof $player_char fireproof 1"),
+        (9376, "set_all_taxis_have_nitro 1"),
     ]
     for index, (reward, grant) in enumerate(booleans):
         body += ["if ", f"  ${reward} >= 1", f"goto_if_false @APREWD_ABIL_{index}",
                  grant, f":APREWD_ABIL_{index}"]
-    body += ["if ", "  $9374 >= 1", "goto_if_false @APREWD_ARMOUR",
+    body += ["if ", "  $9375 >= 1", "goto_if_false @APREWD_ARMOUR",
              "if ", "  $9008 == 0", "goto_if_false @APREWD_ARMOUR",
              "increase_player_max_armour $player_char max_armour += 50",
              "add_armour_to_char $player_actor armour_to 150",
              "$9008 = 1", ":APREWD_ARMOUR"]
-    body += ["if ", "  $9376 >= 1", "goto_if_false @APREWD_HEALTH",
+    body += ["if ", "  $9377 >= 1", "goto_if_false @APREWD_HEALTH",
              "if ", "  $9009 == 0", "goto_if_false @APREWD_HEALTH",
              "increase_player_max_health $player_char max_health += 50",
              "$9009 = 1", ":APREWD_HEALTH"]
@@ -514,7 +569,7 @@ def add_reward_applier():
 # ASI overwrites it) and reference the highest reserved global once so Sanny
 # sizes the whole $9000..N block as real zero-initialized globals. The last
 # line must equal scm.highest_reserved_global() (now the radio request global
-# $9398: 21 unlocks + 331 completions + 15 reward globals + 3 config flags +
+# $9399: 22 unlocks + 331 completions + 15 reward globals + 3 config flags +
 # 19 radio globals above $9000). add_markers.py anchors on that line.
 foundation = [f"${RADIO_RESOLVE_BASE + station} = {station}" for station in range(9)]
 foundation += [f"${RADIO_REQUEST} = 0"]
@@ -524,7 +579,8 @@ for launcher, gate_conditions, completion_global in MISSIONS:
         wire(launcher, gate_conditions, completion_global)
     except NonStandard as reason:
         skipped.append(f"{launcher}: {reason}")
-add_area_watcher(relocate_mainland_open())
+mainland_open, west_gate_open = relocate_mainland_open()
+add_area_watcher(mainland_open, sever_starfish_east_open(), west_gate_open)
 add_package_watcher()
 add_purchase_completions()
 add_store_completions()

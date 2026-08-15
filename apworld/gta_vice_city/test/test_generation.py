@@ -90,12 +90,13 @@ class TestStoryOnly(WorldTestBase):
 
     def test_opening_grant_givers_enlarge_sphere_zero(self) -> None:
         # The grant exists to enlarge sphere 0, so every granted strand must
-        # be a story giver off the mainland (a mainland strand cannot open
-        # before Mainland Access), with the free sphere-0 giver included.
+        # be a story giver on the start island (a strand behind an area item
+        # cannot open before that item), with the free sphere-0 giver included.
         self.assertIn(data.SPHERE_ZERO_GIVER, data.OPENING_GRANT_GIVERS)
         for giver in data.OPENING_GRANT_GIVERS:
             self.assertIn(giver, data.STORY_GIVERS, giver)
             self.assertNotIn(giver, data.MAINLAND_GIVERS, giver)
+            self.assertNotIn(giver, data.STARFISH_GIVERS, giver)
         # And the grant really landed: the granted unlocks are precollected.
         precollected = [item.name for item in self.multiworld.precollected_items[self.player]]
         for giver in data.OPENING_GRANT_GIVERS:
@@ -240,16 +241,18 @@ class TestStrandAccess(WorldTestBase):
     game = "Grand Theft Auto Vice City"
 
     def test_strand_opens_on_its_own_unlocks_alone(self) -> None:
-        # The Chase is Diaz's first mission. Strand starts are independent, so
-        # its rule is a Diaz unlock alone; no other strand's items are needed.
-        self.assertFalse(self.can_reach_location("The Chase"))
+        # The Chase is Diaz's first mission, given from the mansion on Starfish
+        # Island. Strand starts are independent, so its rule is a Diaz unlock
+        # plus the island; no other strand's items are needed.
         self.collect_by_name(["Progressive Diaz"])
+        self.assertFalse(self.can_reach_location("The Chase"))
+        self.collect_by_name(["Starfish Island Access"])
         self.assertTrue(self.can_reach_location("The Chase"))
 
     def test_rub_out_requires_death_row(self) -> None:
         # Rub Out, Diaz's last mission, keeps the one mission-level cross-giver
         # edge: Lance must be rescued in Death Row first.
-        self.collect_by_name(["Progressive Diaz"])
+        self.collect_by_name(["Progressive Diaz", "Starfish Island Access"])
         self.assertFalse(self.can_reach_location("Rub Out"))
         self.collect_by_name(["Progressive Death Row"])
         self.assertTrue(self.can_reach_location("Rub Out"))
@@ -257,8 +260,10 @@ class TestStrandAccess(WorldTestBase):
     def test_final_mission_requires_the_protection_strand(self) -> None:
         # The finale keeps the one strand-level cross-giver edge: it sits
         # behind the protection strand, and nothing else beyond its own
-        # unlocks and Mainland Access.
-        self.collect_by_name(["Progressive Vercetti Finale", "Mainland Access"])
+        # unlocks and the two area items.
+        self.collect_by_name([
+            "Progressive Vercetti Finale", "Mainland Access", "Starfish Island Access",
+        ])
         self.assertFalse(self.can_reach_location(data.FINAL_MISSION))
         self.collect_by_name(["Progressive Vercetti Protection"])
         self.assertTrue(self.can_reach_location(data.FINAL_MISSION))
@@ -309,6 +314,58 @@ class TestMainlandGating(WorldTestBase):
         self.assertTrue(self.can_reach_location("Loose Ends"))
 
 
+class TestStarfishGating(WorldTestBase):
+    game = "Grand Theft Auto Vice City"
+    options: ClassVar[dict] = {
+        "enable_hidden_packages": True, "enable_rampages": True,
+    }
+
+    def test_starfish_checks_need_starfish_access(self) -> None:
+        # Starfish Island is its own region behind Starfish Island Access:
+        # a package and a rampage on the island (both coordinate-verified)
+        # wait for the item, and Mainland Access does not stand in for it,
+        # because with Mainland Access alone both island gates stay shut.
+        starfish = ["Hidden Package - Starfish Island - 3", data.rampage_name(14)]
+        self.collect_by_name(["Mainland Access"])
+        for name in starfish:
+            self.assertFalse(self.can_reach_location(name), name)
+        self.collect_by_name(["Starfish Island Access"])
+        for name in starfish:
+            self.assertTrue(self.can_reach_location(name), name)
+
+    def test_starfish_access_alone_leaves_the_mainland_sealed(self) -> None:
+        # The island's west gate opens only with both area items, so Starfish
+        # Island Access alone never opens a walkable route onto the mainland.
+        self.collect_by_name(["Starfish Island Access"])
+        self.assertFalse(self.can_reach_location("Hidden Package - Viceport - 1"))
+        self.collect_by_name(["Mainland Access"])
+        self.assertTrue(self.can_reach_location("Hidden Package - Viceport - 1"))
+
+    def test_mansion_giver_missions_sit_on_the_island(self) -> None:
+        # Diaz and Vercetti Protection give from the mansion, so their first
+        # missions need Starfish Island Access besides their own unlock.
+        self.collect_by_name(["Progressive Diaz", "Progressive Vercetti Protection"])
+        for name in ["The Chase", "Shakedown"]:
+            self.assertFalse(self.can_reach_location(name), name)
+        self.collect_by_name(["Starfish Island Access"])
+        for name in ["The Chase", "Shakedown"]:
+            self.assertTrue(self.can_reach_location(name), name)
+
+    def test_finale_needs_both_area_items(self) -> None:
+        # Keep Your Friends Close... starts at the mansion but only activates
+        # once Cap the Collector (mainland) passes, so it needs both islands.
+        self.collect_by_name([
+            "Progressive Vercetti Finale", "Progressive Vercetti Protection",
+        ])
+        self.collect_by_name(["Starfish Island Access"])
+        self.assertFalse(self.can_reach_location(data.FINAL_MISSION))
+        self.collect_by_name(["Mainland Access"])
+        self.assertTrue(self.can_reach_location(data.FINAL_MISSION))
+        # And Cap the Collector itself is a mainland check, startable without
+        # the island (its gate reads unlock counts, not passed flags).
+        self.assertTrue(self.can_reach_location("Cap the Collector"))
+
+
 class TestHiddenPackagesGoalNeedsMainland(WorldTestBase):
     game = "Grand Theft Auto Vice City"
     options: ClassVar[dict] = {"goal": "hidden_packages", "hidden_packages_required": 80}
@@ -329,17 +386,20 @@ class TestPropertyAccess(WorldTestBase):
 
     def test_business_purchase_needs_the_shakedown_items(self) -> None:
         # A business goes on sale only when Shakedown passes, so its purchase
-        # requires the items to pass Shakedown; the price itself is grindable
-        # money and needs no item.
+        # requires everything logic needs to pass Shakedown: its unlock item
+        # and Starfish Island Access, since Shakedown gives from the mansion.
+        # The price itself is grindable money and needs no item.
         self.assertFalse(self.can_reach_location("Malibu Club Purchase"))
         self.collect_by_name(["Progressive Vercetti Protection"])
+        self.assertFalse(self.can_reach_location("Malibu Club Purchase"))
+        self.collect_by_name(["Starfish Island Access"])
         self.assertTrue(self.can_reach_location("Malibu Club Purchase"))
 
     def test_mainland_purchase_needs_mainland_access_too(self) -> None:
         # A mainland business must also gate on Mainland Access so the fill
         # cannot strand Mainland Access behind it; a start-island business
         # does not.
-        self.collect_by_name(["Progressive Vercetti Protection"])
+        self.collect_by_name(["Progressive Vercetti Protection", "Starfish Island Access"])
         self.assertTrue(self.can_reach_location("Malibu Club Purchase"))
         self.assertFalse(self.can_reach_location("Kaufman Cabs Purchase"))
         self.collect_by_name(["Mainland Access"])
@@ -354,7 +414,7 @@ class TestPropertyAccess(WorldTestBase):
         # No Escape? is the Malibu Club's first mission. The club must be
         # bought first and goes on sale only after Shakedown, so the mission
         # needs the Shakedown items besides its own progressive.
-        self.collect_by_name(["Progressive Malibu Club"])
+        self.collect_by_name(["Progressive Malibu Club", "Starfish Island Access"])
         self.assertFalse(self.can_reach_location("No Escape?"))
         self.collect_by_name(["Progressive Vercetti Protection"])
         self.assertTrue(self.can_reach_location("No Escape?"))

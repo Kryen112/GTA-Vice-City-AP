@@ -44,10 +44,10 @@ constexpr int kAppliedIndexGlobal = 9005;
 // ASI recomputes each frame, and the retune request global the APRADIO
 // watcher consumes (encoded station id plus one, so the zero-initialized
 // global idles).
-constexpr int kRadioRandomizedGlobal = 9379;
-constexpr int kRadioUnlockBase = 9380;
-constexpr int kRadioResolveBase = 9389;
-constexpr int kRadioRequestGlobal = 9398;
+constexpr int kRadioRandomizedGlobal = 9380;
+constexpr int kRadioUnlockBase = 9381;
+constexpr int kRadioResolveBase = 9390;
+constexpr int kRadioRequestGlobal = 9399;
 // A script-channel request for station 9 selects the MP3 player, which the
 // game remaps to the city ambience: the radio-off soundscape. The ambience
 // track id equals the off position (10), so the commit's writeback leaves the
