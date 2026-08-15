@@ -586,6 +586,15 @@ class TestTables(WorldTestBase):
         for mission in ["No Escape?", "Recruitment Drive", "Cabmaggedon"]:
             self.assertNotIn(mission, STORY_MISSION_NAMES)
 
+    def test_package_rewards_are_named_as_spawns(self) -> None:
+        # Every non-cash package reward re-gates a respawning safehouse pickup
+        # or vehicle, so its name says Spawn; a bare weapon name would read as
+        # an inventory grant.
+        for reward in data.PACKAGE_REWARD_ITEMS:
+            if reward == data.PACKAGE_CASH_REWARD:
+                continue
+            self.assertTrue(reward.endswith(" Spawn"), reward)
+
 
 class TestReservedGlobals(WorldTestBase):
     game = "Grand Theft Auto Vice City"

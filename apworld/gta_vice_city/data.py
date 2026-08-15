@@ -141,11 +141,13 @@ def hidden_package_name(index: int) -> str:
 
 
 # Rewards that leave the vanilla hidden-package threshold and enter the pool
-# when the hidden-packages class is on. Useful items, never progression.
+# when the hidden-packages class is on. Useful items, never progression. Every
+# non-cash reward is a respawning safehouse pickup or vehicle, so each name
+# carries the Spawn suffix; nothing lands in the inventory on receipt.
 PACKAGE_REWARD_ITEMS: list[str] = [
-    "Body Armor", "Chainsaw", ".357", "Flamethrower", ".308 Sniper",
-    "Minigun", "Rocket Launcher", "Sea Sparrow Spawn", "Rhino Spawn",
-    "Hunter Spawn", "$100,000",
+    "Body Armor Spawn", "Chainsaw Spawn", ".357 Spawn", "Flamethrower Spawn",
+    ".308 Sniper Spawn", "Minigun Spawn", "Rocket Launcher Spawn",
+    "Sea Sparrow Spawn", "Rhino Spawn", "Hunter Spawn", "$100,000",
 ]
 
 AREA_ITEMS: list[str] = ["Mainland Access", "Starfish Island Access"]
