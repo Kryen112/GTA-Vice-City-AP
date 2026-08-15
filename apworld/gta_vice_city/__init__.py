@@ -335,7 +335,7 @@ class GTAViceCityWorld(World):
         ]
 
     def _random_trap(self) -> str:
-        # The six trap types are equally weighted, so each filler-replacing slot
+        # The trap types are equally weighted, so each filler-replacing slot
         # draws one uniformly at random.
         return self.multiworld.random.choice(data.TRAP_ITEMS)
 

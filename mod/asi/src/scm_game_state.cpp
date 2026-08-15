@@ -90,13 +90,18 @@ constexpr eWeaponType kWeaponPool[] = {
 };
 
 // Trap tuning. The sped-up and slowed clock imitate ONSPEED and BOOOOOORING; the
-// wanted spike caps at the game maximum; stormy weather is the rain state
-// CATSANDDOGS forces. The default duration matches data.TRAP_DURATION_SECONDS.
+// wanted spike caps at the game maximum; a weather trap carries its eWeather id
+// as the param, falling back to the rain state CATSANDDOGS forces. Drunk vision
+// uses the Boomshine Saigon drive's own values: full drunk visuals and an
+// eight-frame steering lag (the buffer holds ten). The default duration matches
+// data.TRAP_DURATION_SECONDS.
 constexpr float kSpeedUpTimeScale = 2.0f;
 constexpr float kSlowDownTimeScale = 0.35f;
 constexpr float kNormalTimeScale = 1.0f;
 constexpr int kMaxWantedLevel = 6;
 constexpr short kStormyWeather = WEATHER_RAINY;
+constexpr unsigned char kDrunkVisualsLevel = 255;
+constexpr int kDrunkSteeringDelay = 8;
 constexpr int kDefaultTrapSeconds = 30;
 
 // The trap duration in real milliseconds, from the descriptor's seconds param.
@@ -338,8 +343,26 @@ void ScmGameState::ApplyTrap(const ItemEffect& effect) {
   } else if (effect.type == "trap_explode_cars") {
     ExplodeAllVehicles();
   } else if (effect.type == "trap_weather") {
-    // Weather applies any time, so it is fired here with no control gate.
-    CWeather::ForceWeatherNow(kStormyWeather);
+    // Weather applies any time, so it is fired here with no control gate. The
+    // param is the eWeather id to force. Forcing pins the weather until it is
+    // released, so the release follows immediately: the weather switches now
+    // and the game's own hourly cycle blends it away naturally, unlike the
+    // weather cheats, which stay pinned.
+    const short weather =
+        effect.has_amount ? static_cast<short>(effect.amount) : kStormyWeather;
+    CWeather::ForceWeatherNow(weather);
+    CWeather::ReleaseWeather();
+  } else if (effect.type == "trap_drunk") {
+    // The Boomshine Saigon drunk drive: full-screen blur, camera sway, and
+    // lagged steering. Setting the drunkenness field is enough for the visuals;
+    // the game itself drives the blur and sway from it every frame. Clearing
+    // the fade flag holds the effect at full strength until the deadline.
+    player->m_nDrunkenness = kDrunkVisualsLevel;
+    player->m_nFadeDrunkenness = 0;
+    CPad* pad = CPad::GetPad(0);
+    if (pad != nullptr) pad->SetDrunkInputDelay(kDrunkSteeringDelay);
+    drunk_trap_active_ = true;
+    drunk_trap_until_ = RealTimeMs() + TrapDurationMs(effect);
   } else if (effect.type == "trap_hostile_peds") {
     hostile_pedestrians_active_ = true;
     hostile_pedestrians_until_ = RealTimeMs() + TrapDurationMs(effect);
@@ -375,6 +398,20 @@ void ScmGameState::UpdateTimedTraps() {
       hostile_pedestrians_active_ = false;
     } else {
       MakePedestriansHostile();
+    }
+  }
+  if (drunk_trap_active_) {
+    if (static_cast<int>(now - drunk_trap_until_) >= 0) {
+      // Sober up the way a mission end does: raise the fade flag so the game
+      // winds the drunkenness down and clears its own blur when it reaches
+      // zero (zeroing the field directly would leave the last blur frame
+      // stuck), and restore steering immediately. If a mission end or death
+      // already sobered the player, both writes are harmless no-ops.
+      CPlayerPed* player = FindPlayerPed();
+      if (player != nullptr) player->m_nFadeDrunkenness = 1;
+      CPad* pad = CPad::GetPad(0);
+      if (pad != nullptr) pad->SetDrunkInputDelay(0);
+      drunk_trap_active_ = false;
     }
   }
 }
@@ -512,7 +549,7 @@ void ScmGameState::OnGameFrame() {
   }
 
   // Hold or revert the timed traps (sped-up or slowed clock, hostile
-  // pedestrians) whether or not new items arrived this frame.
+  // pedestrians, drunk vision) whether or not new items arrived this frame.
   UpdateTimedTraps();
 
   // Keep every vehicle radio on an unlocked station while the randomize

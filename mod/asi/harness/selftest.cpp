@@ -181,8 +181,23 @@ int main() {
            "a fully applied list repeats nothing");
 
     Expect(EffectDefersUntilControllable("trap_wanted"), "a chaos trap defers");
+    Expect(EffectDefersUntilControllable("trap_drunk"), "drunk vision defers");
     Expect(!EffectDefersUntilControllable("trap_weather"), "weather does not defer");
     Expect(!EffectDefersUntilControllable("cash"), "a consumable does not defer");
+
+    // A weather trap carrying its eWeather id param is still exempt from the
+    // deferral, so fog and rain alike apply mid-cutscene.
+    const std::map<std::int64_t, ItemEffect> weather_effects = {
+        {20, make("trap_weather", 3, true)}, {21, make("trap_drunk", 30, true)}};
+    const std::vector<std::pair<std::int64_t, std::int64_t>> weather_items = {
+        {0, 20}, {1, 21}};
+    auto cutscene = PlanEffects(weather_items, weather_effects, 0, false);
+    Expect(cutscene.to_apply.size() == 1 &&
+               cutscene.to_apply[0].type == "trap_weather" &&
+               cutscene.to_apply[0].has_amount && cutscene.to_apply[0].amount == 3,
+           "a weather trap with a weather id applies while not controllable");
+    Expect(cutscene.new_applied_index == 1,
+           "the deferred drunk trap holds the index behind it");
   }
 
   // Radio planning: the resolve map sends a locked station to the next

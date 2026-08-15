@@ -60,11 +60,13 @@ class ScmGameState : public GameState {
   // Applies one one-shot effect: a consumable field write or a trap world
   // action. Arms the timed traps' revert deadlines, so it is not static.
   void ApplyOneShot(const ItemEffect& effect);
-  // Fires one trap into the world through plugin-sdk. The timed traps
-  // (hostile peds, sped-up and slowed time) record a deadline for UpdateTimedTraps.
+  // Fires one trap into the world through plugin-sdk. The timed traps (hostile
+  // peds, sped-up and slowed time, drunk vision) record a deadline for
+  // UpdateTimedTraps.
   void ApplyTrap(const ItemEffect& effect);
-  // Holds the sped-up/slowed clock and the hostile-pedestrian window for their
-  // duration, reverting each once its deadline passes. Runs every frame.
+  // Holds the sped-up/slowed clock, the hostile-pedestrian window, and the
+  // drunk-vision window for their duration, reverting each once its deadline
+  // passes. Runs every frame.
   void UpdateTimedTraps();
   // True when the game hands the player control: not in a cutscene, on a
   // mission pass/fail screen, or otherwise script-owned. The one flag the trap
@@ -120,6 +122,8 @@ class ScmGameState : public GameState {
   float time_scale_trap_factor_ = 1.0f;
   bool hostile_pedestrians_active_ = false;
   unsigned int hostile_pedestrians_until_ = 0;
+  bool drunk_trap_active_ = false;
+  unsigned int drunk_trap_until_ = 0;
   // Retune press bookkeeping: how many presses the player has logically made
   // this scroll, and the raw value last written back, so fresh presses can be
   // told apart from the rewritten count.

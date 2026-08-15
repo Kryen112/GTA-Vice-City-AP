@@ -208,23 +208,33 @@ PERSISTENT_REWARD_ITEMS: list[str] = (
 # Traps take an equally weighted share of the filler slots, tuned by the
 # trap_percentage option. Like consumables they are one-shot effects the ASI
 # applies once past the applied-index, so a reconnect never re-fires one. Unlike
-# consumables the five chaos traps defer until the player is controllable (the
-# one deferral the design allows); stormy weather applies any time. Hostile
-# pedestrians, sped-up time, and slowed time last a fixed duration then revert.
-# The effect type mirrors the cheat each imitates: wanted level like
-# YOUWONTTAKEMEALIVE, exploding cars like BIGBANG, hostile peds like
-# NOBODYLIKESME, stormy weather like CATSANDDOGS, speed up like ONSPEED, and
-# slow down like BOOOOOORING.
+# consumables the chaos traps defer until the player is controllable (the one
+# deferral the design allows); the weather traps apply any time. Hostile
+# pedestrians, sped-up time, slowed time, and drunk vision last a fixed duration
+# then revert. Most effect types mirror the cheat each imitates: wanted level
+# like YOUWONTTAKEMEALIVE, exploding cars like BIGBANG, hostile peds like
+# NOBODYLIKESME, stormy weather like CATSANDDOGS, foggy weather like
+# CANTSEEATHING, speed up like ONSPEED, and slow down like BOOOOOORING. Drunk
+# vision has no cheat: it imitates the Boomshine Saigon drunk drive. Unlike the
+# cheats, which pin the forced weather until a script changes it, a weather trap
+# releases immediately after forcing, so the game's own hourly weather cycle
+# resumes and blends the trap weather away naturally.
 TRAP_DURATION_SECONDS = 30
 TRAP_WANTED_STARS = 3
+
+# Engine weather ids (eWeather) the weather traps carry as their param.
+WEATHER_RAINY = 2
+WEATHER_FOGGY = 3
 
 TRAP_EFFECTS: dict[str, tuple] = {
     "Wanted Level Trap": ("trap_wanted", TRAP_WANTED_STARS),
     "Exploding Cars Trap": ("trap_explode_cars",),
     "Hostile Pedestrians Trap": ("trap_hostile_peds", TRAP_DURATION_SECONDS),
-    "Stormy Weather Trap": ("trap_weather",),
+    "Stormy Weather Trap": ("trap_weather", WEATHER_RAINY),
     "Speed Up Trap": ("trap_speed_up", TRAP_DURATION_SECONDS),
     "Slow Motion Trap": ("trap_slow_down", TRAP_DURATION_SECONDS),
+    "Foggy Weather Trap": ("trap_weather", WEATHER_FOGGY),
+    "Drunk Vision Trap": ("trap_drunk", TRAP_DURATION_SECONDS),
 }
 
 # The trap item names, in a stable order.

@@ -102,10 +102,11 @@ class RandomizeRadioStations(Toggle):
 
 
 class TrapPercentage(NamedRange):
-    """Percentage of filler items replaced by traps (0 disables). The six trap
-    types share the slice equally: raised wanted level, exploding cars, hostile
-    pedestrians, stormy weather, sped-up time, and slowed time. Traps only ever
-    replace filler, so they never crowd out progression."""
+    """Percentage of filler items replaced by traps (0 disables). The eight
+    trap types share the slice equally: raised wanted level, exploding cars,
+    hostile pedestrians, stormy weather, foggy weather, sped-up time, slowed
+    time, and drunk vision. Traps only ever replace filler, so they never
+    crowd out progression."""
     display_name = "Trap percentage"
     range_start = 0
     range_end = 100

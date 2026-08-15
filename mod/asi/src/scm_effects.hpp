@@ -4,8 +4,8 @@
 // One-shot effects (consumables and traps) apply once, in received order, past
 // the saved applied-index. The one wrinkle traps add is deferral: a chaos trap
 // only fires while the player is controllable, the single deferral the design
-// allows. Stormy weather is exempt (it applies any time), and the consumables
-// are never traps, so they never defer. Planning stops at the first effect that
+// allows. Weather is exempt (it applies any time), and the consumables are
+// never traps, so they never defer. Planning stops at the first effect that
 // must wait, so the applied-index never skips past a deferred trap; that effect
 // is retried on a later frame once the player is controllable. The caller
 // guarantees the player exists before applying anything the plan returns.

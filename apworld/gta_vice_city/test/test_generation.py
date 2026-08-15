@@ -572,12 +572,12 @@ class TestReservedGlobals(WorldTestBase):
         effect_ids = set(scm.item_effects().keys())
         count_ids = set(scm.item_globals().keys())
         self.assertTrue(effect_ids.isdisjoint(count_ids))
-        # Every effect names a known type: the five consumables plus the six
+        # Every effect names a known type: the five consumables plus the seven
         # trap types the ASI knows how to apply.
         known_types = {
             "cash", "weapon", "health", "armor", "clear_wanted",
             "trap_wanted", "trap_explode_cars", "trap_hostile_peds",
-            "trap_weather", "trap_speed_up", "trap_slow_down",
+            "trap_weather", "trap_speed_up", "trap_slow_down", "trap_drunk",
         }
         for effect in scm.item_effects().values():
             self.assertIn(effect[0], known_types)
@@ -665,12 +665,33 @@ class TestTraps(WorldTestBase):
         self.assertTrue(all(item.classification == ItemClassification.trap for item in traps))
         self.assertTrue(all(not item.advancement for item in traps))
 
-    def test_effects_carry_the_six_trap_types(self) -> None:
+    def test_effects_carry_every_trap_type(self) -> None:
         # The item-effect contract sent to the ASI names every trap effect type.
         types = {effect[0] for effect in scm.item_effects().values()}
         for trap_type in ("trap_wanted", "trap_explode_cars", "trap_hostile_peds",
-                          "trap_weather", "trap_speed_up", "trap_slow_down"):
+                          "trap_weather", "trap_speed_up", "trap_slow_down",
+                          "trap_drunk"):
             self.assertIn(trap_type, types)
+
+    def test_weather_traps_carry_their_engine_weather_id(self) -> None:
+        # Both weather traps share the trap_weather type; the param is the
+        # eWeather id the ASI forces, so the two items stay distinguishable.
+        self.assertEqual(
+            scm.item_effects()[ITEM_NAME_TO_ID["Stormy Weather Trap"]],
+            ["trap_weather", data.WEATHER_RAINY],
+        )
+        self.assertEqual(
+            scm.item_effects()[ITEM_NAME_TO_ID["Foggy Weather Trap"]],
+            ["trap_weather", data.WEATHER_FOGGY],
+        )
+
+    def test_drunk_vision_trap_carries_its_duration(self) -> None:
+        # Drunk vision is a timed trap: the param is the seconds the ASI holds
+        # the drunk effect before letting it fade.
+        self.assertEqual(
+            scm.item_effects()[ITEM_NAME_TO_ID["Drunk Vision Trap"]],
+            ["trap_drunk", data.TRAP_DURATION_SECONDS],
+        )
 
 
 class TestRemoveWantedLevelFiller(WorldTestBase):
