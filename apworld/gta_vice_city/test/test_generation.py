@@ -141,6 +141,7 @@ class TestUniversalTracker(WorldTestBase):
         self.assertIn("shuffle_emergency_rewards", slot_data)
         self.assertIn("randomize_radio_stations", slot_data)
         self.assertIn("radio_start_station", slot_data)
+        self.assertIn("shuffle_minimap", slot_data)
         # Carried so a tracker regeneration rebuilds the same filler/trap split.
         self.assertIn("trap_percentage", slot_data)
         for name in CHECK_CLASS_OPTIONS:
@@ -157,6 +158,7 @@ class TestUniversalTracker(WorldTestBase):
             "shuffle_emergency_rewards": True,
             "randomize_radio_stations": True,
             "radio_start_station": 3,
+            "shuffle_minimap": True,
             "trap_percentage": 40,
             "enable_hidden_packages": True,
             "enable_rampages": True, "enable_stunt_jumps": True,
@@ -173,6 +175,7 @@ class TestUniversalTracker(WorldTestBase):
         self.assertTrue(bool(self.world.options.shuffle_emergency_rewards.value))
         self.assertEqual(self.world.options.trap_percentage.value, 40)
         self.assertTrue(bool(self.world.options.randomize_radio_stations.value))
+        self.assertTrue(bool(self.world.options.shuffle_minimap.value))
         # The played seed's starting station replays instead of rerolling.
         self.assertEqual(self.world.radio_start_station, 3)
         for name in CHECK_CLASS_OPTIONS:
@@ -248,6 +251,64 @@ class TestRadioStationsStoryOnly(WorldTestBase):
     # the seed fills and stays reachable.
     game = "Grand Theft Auto Vice City"
     options: ClassVar[dict] = dict(_STORY_ONLY_OPTIONS, randomize_radio_stations=True)
+
+
+class TestMinimapShuffleOn(WorldTestBase):
+    game = "Grand Theft Auto Vice City"
+    options: ClassVar[dict] = {"shuffle_minimap": True}
+
+    def test_one_minimap_item_in_the_pool(self) -> None:
+        minimaps = [item for item in self.multiworld.itempool
+                    if item.name == data.MINIMAP_ITEM and item.player == self.player]
+        self.assertEqual(len(minimaps), 1)
+
+    def test_minimap_is_useful_never_progression(self) -> None:
+        # Useful, never progression: no access rule requires the minimap, so
+        # the generator owes it no reachability guarantee and it may land
+        # anywhere, the very end of the seed included.
+        self.assertEqual(
+            ITEM_CLASSIFICATIONS[data.MINIMAP_ITEM], ItemClassification.useful,
+        )
+
+    def test_slot_data_carries_the_minimap_contract(self) -> None:
+        # The ASI hides the radar disc while the shuffled flag is set and the
+        # unlock global is zero, so the config stamp and the item mapping must
+        # both travel.
+        slot_data = self.world.fill_slot_data()
+        self.assertTrue(slot_data["shuffle_minimap"])
+        self.assertEqual(
+            slot_data["config_globals"][str(scm.MINIMAP_SHUFFLED_GLOBAL)], 1,
+        )
+        self.assertEqual(
+            slot_data["item_globals"][str(ITEM_NAME_TO_ID[data.MINIMAP_ITEM])],
+            scm.MINIMAP_UNLOCK_GLOBAL,
+        )
+
+
+class TestMinimapShuffleOff(WorldTestBase):
+    game = "Grand Theft Auto Vice City"
+    # Default options: shuffle_minimap is off.
+
+    def test_no_minimap_item_and_a_vanilla_config_flag(self) -> None:
+        pool_names = {item.name for item in self.multiworld.itempool}
+        precollected = {
+            item.name for item in self.multiworld.precollected_items[self.player]
+        }
+        self.assertNotIn(data.MINIMAP_ITEM, pool_names)
+        self.assertNotIn(data.MINIMAP_ITEM, precollected)
+        slot_data = self.world.fill_slot_data()
+        self.assertFalse(slot_data["shuffle_minimap"])
+        self.assertEqual(
+            slot_data["config_globals"][str(scm.MINIMAP_SHUFFLED_GLOBAL)], 0,
+        )
+
+
+class TestMinimapStoryOnly(WorldTestBase):
+    # Story-only plus the Minimap item: the extra useful item must still leave
+    # every progression item a home. The inherited default tests prove the
+    # seed fills and stays reachable.
+    game = "Grand Theft Auto Vice City"
+    options: ClassVar[dict] = dict(_STORY_ONLY_OPTIONS, shuffle_minimap=True)
 
 
 class TestStrandAccess(WorldTestBase):
@@ -799,22 +860,27 @@ class TestReservedGlobals(WorldTestBase):
         self.assertEqual(len(unlocks), len(scm.UNLOCK_KEYS))
         self.assertEqual(len(completions), len(LOCATION_NAME_TO_ID))
         rewards = {scm.reward_global(key) for key in scm.REWARD_KEYS}
-        config = {scm.PACKAGES_SHUFFLED_GLOBAL, scm.EMERGENCY_SHUFFLED_GLOBAL}
+        config = {scm.PACKAGES_SHUFFLED_GLOBAL, scm.EMERGENCY_SHUFFLED_GLOBAL,
+                  scm.MINIMAP_SHUFFLED_GLOBAL}
         ownership = {scm.ownership_global(key) for key in scm.OWNERSHIP_KEYS}
+        minimap = {scm.MINIMAP_UNLOCK_GLOBAL}
         self.assertEqual(len(rewards), len(scm.REWARD_KEYS))
         self.assertEqual(len(ownership), len(scm.OWNERSHIP_KEYS))
         self.assertTrue(seed_hash.isdisjoint(unlocks))
         self.assertTrue(seed_hash.isdisjoint(completions))
         self.assertTrue(unlocks.isdisjoint(completions))
-        # The reward, config-flag, and ownership blocks must not collide with
-        # anything else, and must stay within the declared reserved block the
-        # foundation sizes.
+        # The reward, config-flag, ownership, and minimap blocks must not
+        # collide with anything else, and must stay within the declared
+        # reserved block the foundation sizes.
         self.assertTrue(rewards.isdisjoint(seed_hash | unlocks | completions | config))
         self.assertTrue(config.isdisjoint(seed_hash | unlocks | completions | rewards))
         self.assertTrue(
             ownership.isdisjoint(seed_hash | unlocks | completions | rewards | config)
         )
-        for global_index in rewards | config | ownership:
+        self.assertTrue(minimap.isdisjoint(
+            seed_hash | unlocks | completions | rewards | config | ownership
+        ))
+        for global_index in rewards | config | ownership | minimap:
             self.assertLessEqual(global_index, scm.highest_reserved_global())
         self.assertNotIn(scm.APPLIED_INDEX_GLOBAL, unlocks | completions | rewards | config)
 

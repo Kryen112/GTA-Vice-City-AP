@@ -16,6 +16,7 @@
 #include "game_state.hpp"
 #include "scm_completion.hpp"
 #include "scm_effects.hpp"
+#include "scm_minimap.hpp"
 #include "scm_radio.hpp"
 
 class CVehicle;
@@ -94,6 +95,10 @@ class ScmGameState : public GameState {
   // a pinned raw address); elsewhere the post-commit correction covers it.
   void RewriteRetunePresses(CVehicle* player_vehicle,
                             const std::array<bool, kRadioStationCount>& unlocked);
+  // Keeps the radar disc hidden while the shuffle option is on and the
+  // Minimap item has not arrived, through the game's script-facing radar-hide
+  // flag; on the item it releases the flag back to the game once.
+  void EnforceMinimap();
 
   Logger logger_;
   std::mutex mutex_;
@@ -129,6 +134,9 @@ class ScmGameState : public GameState {
   // told apart from the rewritten count.
   int retune_logical_presses_ = 0;
   int retune_written_presses_ = 0;
+  // Whether the minimap enforcement is holding the radar-hide flag, so the
+  // unlock releases it exactly once and then leaves the flag to the game.
+  bool minimap_forcing_hidden_ = false;
 };
 
 }  // namespace gtavc

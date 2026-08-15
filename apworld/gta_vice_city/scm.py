@@ -11,7 +11,8 @@ Contract shipped to the client (and on to the ASI) in slot_data:
   received copies of each item and writes the total to that global. Progressive
   giver unlocks count up per strand; an area item writes one; a persistent
   reward writes one, which the main.scm re-gates its vanilla grant on; a radio
-  station item writes one to its station unlock global.
+  station item writes one to its station unlock global; the Minimap item
+  writes one to the minimap unlock global.
 - item_effects: AP item id -> a one-shot effect descriptor. The ASI applies
   each consumable (cash, weapon, health, armor, clear_wanted) and trap (trap_*)
   once past the saved applied-index; like all item application, every effect
@@ -88,10 +89,20 @@ RADIO_REQUEST_GLOBAL = RADIO_RESOLVE_BASE + RADIO_STATION_COUNT
 # purchase's completion global. With the properties class disabled the client
 # instead stamps every ownership global through config_globals
 # (properties_vanilla_globals below), so the static gates collapse to
-# purchase-only, the vanilla semantics. The whole reserved block must stay
-# below the SCM-internal marker handles, which begin right above it.
+# purchase-only, the vanilla semantics.
 OWNERSHIP_BASE = RADIO_REQUEST_GLOBAL + 1
 OWNERSHIP_KEYS: list[str] = list(data.PROPERTY_OWNERSHIP_ITEMS)
+
+# Minimap globals follow the ownership block. Both are ASI-facing only (the
+# main.scm never reads them; they persist inside saves like every reserved
+# global): the shuffled flag gates the ASI's per-frame radar enforcement, and
+# the unlock global receives one when the Minimap item arrives, through
+# item_globals like any unlock. While the flag is set and the unlock is zero
+# the ASI holds the game's script-facing radar-hide flag; on unlock it
+# releases the flag back to the game once. The whole reserved block must stay
+# below the SCM-internal marker handles, which begin right above it.
+MINIMAP_SHUFFLED_GLOBAL = OWNERSHIP_BASE + len(OWNERSHIP_KEYS)
+MINIMAP_UNLOCK_GLOBAL = MINIMAP_SHUFFLED_GLOBAL + 1
 
 
 def unlock_global(key: str) -> int:
@@ -111,7 +122,7 @@ def reward_global(item_name: str) -> int:
 
 
 def highest_reserved_global() -> int:
-    return OWNERSHIP_BASE + len(OWNERSHIP_KEYS) - 1
+    return MINIMAP_UNLOCK_GLOBAL
 
 
 def item_globals() -> dict[int, int]:
@@ -128,6 +139,7 @@ def item_globals() -> dict[int, int]:
         mapping[items.ITEM_NAME_TO_ID[station]] = RADIO_UNLOCK_BASE + index
     for ownership in data.PROPERTY_OWNERSHIP_ITEMS:
         mapping[items.ITEM_NAME_TO_ID[ownership]] = ownership_global(ownership)
+    mapping[items.ITEM_NAME_TO_ID[data.MINIMAP_ITEM]] = MINIMAP_UNLOCK_GLOBAL
     return mapping
 
 
@@ -163,18 +175,19 @@ def item_effects() -> dict[int, list]:
 
 
 def config_flags(packages_shuffled: bool, emergency_shuffled: bool,
-                 radio_randomized: bool) -> dict[int, int]:
+                 radio_randomized: bool, minimap_shuffled: bool) -> dict[int, int]:
     """Config-flag global index -> value the ASI stamps once from slot_data.
 
     Each value is the EFFECTIVE shuffled state (whether the reward items are
     actually in the pool), so the SCM only suppresses a vanilla grant when an AP
     item exists to replace it. The caller must AND in the owning check-class
-    toggle, matching _item_enabled. The radio flag has no owning class: when the
-    option is on the station items are always in the pool."""
+    toggle, matching _item_enabled. The radio and minimap flags have no owning
+    class: when their option is on their items are always in the pool."""
     return {
         PACKAGES_SHUFFLED_GLOBAL: int(bool(packages_shuffled)),
         EMERGENCY_SHUFFLED_GLOBAL: int(bool(emergency_shuffled)),
         RADIO_RANDOMIZED_GLOBAL: int(bool(radio_randomized)),
+        MINIMAP_SHUFFLED_GLOBAL: int(bool(minimap_shuffled)),
     }
 
 

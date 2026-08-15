@@ -8,6 +8,7 @@
 #include "scm_packages.hpp"
 
 #include <plugin.h>
+#include <CHud.h>
 #include <CMessages.h>
 #include <CTheScripts.h>
 #include <CWorld.h>
@@ -54,6 +55,12 @@ constexpr int kRadioRequestGlobal = 9399;
 // vehicle byte exactly where the enforcer put it, for the off path and the
 // station path alike; the correction can never oscillate.
 constexpr int kRadioAmbientRequest = 9;
+// The minimap contract, matching apworld scm.py: the shuffled flag and the
+// Minimap item's unlock global. Both are ASI-facing only; the main.scm never
+// reads them, but as reserved globals they persist inside saves, so the
+// enforcement keeps working offline from a save.
+constexpr int kMinimapShuffledGlobal = 9415;
+constexpr int kMinimapUnlockGlobal = 9416;
 
 // Whether the vehicle plays the police scanner instead of its station byte,
 // mirroring the game's own test: the fixed model set, then the siren flag,
@@ -322,6 +329,24 @@ void ScmGameState::RewriteRetunePresses(
   retune_written_presses_ = plan.written_presses;
 }
 
+void ScmGameState::EnforceMinimap() {
+  const MinimapPlan plan = PlanMinimapEnforcement(
+      GetGlobal(kMinimapShuffledGlobal) != 0,
+      GetGlobal(kMinimapUnlockGlobal) != 0,
+      minimap_forcing_hidden_);
+  if (plan.action == MinimapAction::kForceHidden) {
+    // The DISPLAY_RADAR opcode's backing static: while set, the whole radar
+    // disc (map, blips, north marker) stops drawing. Asserted every frame, so
+    // a vanilla script showing the radar cannot bring it back early.
+    CHud::bScriptDontDisplayRadar = true;
+  } else if (plan.action == MinimapAction::kReleaseOnce) {
+    // The item arrived: clear the flag once and hand it back to the game, so
+    // the vanilla missions that hide the radar keep their hide afterwards.
+    CHud::bScriptDontDisplayRadar = false;
+  }
+  minimap_forcing_hidden_ = plan.forcing;
+}
+
 void ScmGameState::ApplyOneShot(const ItemEffect& effect) {
   if (effect.type.rfind("trap_", 0) == 0) {
     ApplyTrap(effect);
@@ -508,6 +533,9 @@ void ScmGameState::OnGameFrame() {
     // reconnect keeps the set intact, so a package collected mid-session is
     // never missed by a clear between its present and gone frames.
     package_seen_present_.clear();
+    // The minimap forcing memory belongs to the game that set it; the next
+    // game re-derives it from its own globals on the first frame.
+    minimap_forcing_hidden_ = false;
     return;
   }
 
@@ -564,6 +592,11 @@ void ScmGameState::OnGameFrame() {
   // option is on. Reads the config and unlock globals written above, so a
   // save's own persisted state keeps it working offline too.
   EnforceRadioStations();
+
+  // Keep the radar disc hidden while the minimap shuffle is on and the item
+  // has not arrived. Same global-driven shape as the radio, so it also works
+  // offline from a save.
+  EnforceMinimap();
 
   // Set each collected hidden package's completion global from the pickup pool,
   // so the poll below reports every package as its own check. Only when the world

@@ -251,7 +251,6 @@ def add_purchase_completions():
 # bought AND owned.
 OWNERSHIP_SUNSHINE = 9401
 OWNERSHIP_POLE_POSITION = 9407
-OWNERSHIP_TOP = 9414
 
 # Safehouse save threads: (save thread, ownership global, garage grant lines
 # moved out of the buy cutscene). Each SAVEn thread is started only by its buy
@@ -514,6 +513,13 @@ EMERGENCY_SHUFFLED = 9379
 RADIO_RESOLVE_BASE = 9390
 RADIO_REQUEST = 9399
 
+# The minimap unlock global, index matching scm.py. ASI-facing only (its
+# shuffled flag sits at $9415 and this unlock at $9416; no gate reads either):
+# the ASI hides the radar disc while the flag is set and this global is zero.
+# It is the highest reserved global, so the foundation's sizing line
+# references it.
+MINIMAP_UNLOCK = 9416
+
 # Reward global -> the vanilla weapon flag or car generator it drives, in
 # reward-global order (body armor, chainsaw, .357, flamethrower, sniper, minigun,
 # rocket launcher, sea sparrow, rhino, hunter).
@@ -653,13 +659,13 @@ def add_reward_applier():
 # Foundation: initialize the radio resolve map to identity (vanilla until the
 # ASI overwrites it) and reference the highest reserved global once so Sanny
 # sizes the whole $9000..N block as real zero-initialized globals. The last
-# line must equal scm.highest_reserved_global() (now the Skumole Shack
-# ownership global $9414: 22 unlocks + 331 completions + 15 reward globals +
-# 3 config flags + 19 radio globals + 15 ownership globals above $9000).
-# add_markers.py anchors on that line.
+# line must equal scm.highest_reserved_global() (now the minimap unlock global
+# $9416: 22 unlocks + 331 completions + 15 reward globals + 3 config flags +
+# 19 radio globals + 15 ownership globals + the minimap flag and unlock above
+# $9000). add_markers.py anchors on that line.
 foundation = [f"${RADIO_RESOLVE_BASE + station} = {station}" for station in range(9)]
-foundation += [f"${RADIO_REQUEST} = 0", f"${OWNERSHIP_TOP} = 0"]
-insert_after("script_name 'HOT'", foundation, f"foundation radio identity + ${OWNERSHIP_TOP} = 0")
+foundation += [f"${RADIO_REQUEST} = 0", f"${MINIMAP_UNLOCK} = 0"]
+insert_after("script_name 'HOT'", foundation, f"foundation radio identity + ${MINIMAP_UNLOCK} = 0")
 for launcher, gate_conditions, completion_global in MISSIONS:
     try:
         wire(launcher, gate_conditions, completion_global)

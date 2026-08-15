@@ -68,8 +68,8 @@ STRANDS = {
 }
 
 # Fresh scratch globals, all above the ASI-written block (its top is the
-# ownership globals, $9414). One handle, one started-flag, one shown-flag per
-# managed mission.
+# minimap unlock global, $9416). One handle, one started-flag, one shown-flag
+# per managed mission.
 HANDLE_BASE = 9420
 STARTED_BASE = 9480
 SHOWN_BASE = 9540
@@ -294,9 +294,9 @@ boot = next(i for i, ln in enumerate(lines) if ln == "start_new_script @HOT ")
 lines[boot + 1:boot + 1] = ["start_new_script @APMARK "]
 
 # Grow the reserved block to cover the new scratch globals. The anchor is the
-# foundation's sizing line, the highest ASI-written global (Skumole Shack's
-# ownership global).
-found = next(i for i, ln in enumerate(lines) if ln == "$9414 = 0")
+# foundation's sizing line, the highest ASI-written global (the minimap
+# unlock global).
+found = next(i for i, ln in enumerate(lines) if ln == "$9416 = 0")
 lines[found + 1:found + 1] = [f"${highest_global} = 0"]
 
 with open(DST, "wb") as handle:

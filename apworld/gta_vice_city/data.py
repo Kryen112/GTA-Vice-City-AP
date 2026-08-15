@@ -210,6 +210,11 @@ RADIO_STATION_ITEMS: list[str] = [
     "Radio Station: Wave 103",
 ]
 
+# The minimap as an item. When the shuffle option is on the radar disc (map,
+# blips, and north marker together) stays hidden until this item is received;
+# when off the minimap is fully vanilla and the item stays out of the pool.
+MINIMAP_ITEM = "Minimap"
+
 
 def cash_item_name(amount: int) -> str:
     return f"Cash ${amount:,}"

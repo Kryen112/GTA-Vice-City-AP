@@ -140,6 +140,8 @@ class GTAViceCityWorld(World):
             options.shuffle_emergency_rewards.value = int(bool(slot_data["shuffle_emergency_rewards"]))
         if "randomize_radio_stations" in slot_data:
             options.randomize_radio_stations.value = int(bool(slot_data["randomize_radio_stations"]))
+        if "shuffle_minimap" in slot_data:
+            options.shuffle_minimap.value = int(bool(slot_data["shuffle_minimap"]))
         if "trap_percentage" in slot_data:
             options.trap_percentage.value = int(slot_data["trap_percentage"])
         for name in CHECK_CLASS_OPTIONS:
@@ -277,6 +279,9 @@ class GTAViceCityWorld(World):
                     self.multiworld.push_precollected(self.create_item(name))
                 else:
                     placeable.append(name)
+        if self.options.shuffle_minimap:
+            # The minimap starts hidden; the item brings the radar disc back.
+            placeable.append(data.MINIMAP_ITEM)
         if self.options.goal == Goal.option_hidden_packages:
             # The hunt: one Hidden Package macguffin per physical package,
             # scattered across the multiworld. The goal counts how many are
@@ -398,6 +403,7 @@ class GTAViceCityWorld(World):
             # The starting station's index (None when the option is off), so a
             # tracker regeneration precollects the same station.
             "radio_start_station": self.radio_start_station,
+            "shuffle_minimap": bool(self.options.shuffle_minimap.value),
             "trap_percentage": self.options.trap_percentage.value,
             "item_globals": {
                 str(item_id): global_index
@@ -434,6 +440,7 @@ class GTAViceCityWorld(World):
             bool(self.options.enable_emergency_vehicles.value
                  and self.options.shuffle_emergency_rewards.value),
             bool(self.options.randomize_radio_stations.value),
+            bool(self.options.shuffle_minimap.value),
         )
         if not self.options.enable_properties.value:
             flags.update(scm.properties_vanilla_globals())

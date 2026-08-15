@@ -10,6 +10,7 @@
 #include "../src/protocol.hpp"
 #include "../src/scm_completion.hpp"
 #include "../src/scm_effects.hpp"
+#include "../src/scm_minimap.hpp"
 #include "../src/scm_packages.hpp"
 #include "../src/scm_radio.hpp"
 
@@ -256,6 +257,34 @@ int main() {
     auto burst = PlanRetunePresses(7, 0, 0, 2, two);
     Expect(burst.logical_presses == 7 && burst.written_presses == 5 && burst.write_needed,
            "an MP3-key burst reduces modulo the cycle and lands on an unlocked stop");
+  }
+
+  // Minimap planning: while shuffled and locked the radar-hide flag is
+  // asserted every frame; the unlock releases it exactly once and then leaves
+  // it to the game, so a vanilla script hiding the radar is never stomped.
+  // With the option off the plan never touches the flag.
+  {
+    const auto off = PlanMinimapEnforcement(false, false, false);
+    Expect(off.action == MinimapAction::kLeaveAlone && !off.forcing,
+           "option off leaves the flag alone");
+    const auto off_stale = PlanMinimapEnforcement(false, false, true);
+    Expect(off_stale.action == MinimapAction::kLeaveAlone && !off_stale.forcing,
+           "option off drops stale forcing state");
+    const auto locked = PlanMinimapEnforcement(true, false, false);
+    Expect(locked.action == MinimapAction::kForceHidden && locked.forcing,
+           "shuffled and locked forces the hide");
+    const auto held = PlanMinimapEnforcement(true, false, locked.forcing);
+    Expect(held.action == MinimapAction::kForceHidden && held.forcing,
+           "the hide is re-asserted every frame while locked");
+    const auto released = PlanMinimapEnforcement(true, true, held.forcing);
+    Expect(released.action == MinimapAction::kReleaseOnce && !released.forcing,
+           "the unlock releases the flag once");
+    const auto after = PlanMinimapEnforcement(true, true, released.forcing);
+    Expect(after.action == MinimapAction::kLeaveAlone && !after.forcing,
+           "after the release the flag belongs to the game");
+    const auto loaded_unlocked = PlanMinimapEnforcement(true, true, false);
+    Expect(loaded_unlocked.action == MinimapAction::kLeaveAlone && !loaded_unlocked.forcing,
+           "a save loaded already unlocked never writes the flag");
   }
 
   if (failures == 0) {

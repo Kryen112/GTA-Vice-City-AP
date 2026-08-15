@@ -2,10 +2,10 @@
 
 Classification is decided here in one place. Progressive giver unlocks, area
 access, and the business property ownerships are progression; package rewards,
-emergency-vehicle rewards, radio stations, and the safehouse ownerships are
-useful; cash denominations, the weapon pickup, the health and armor top-ups,
-and the wanted-level clear are filler; the trap items are traps. Money never
-gates logic, so cash is never progression.
+emergency-vehicle rewards, radio stations, the minimap, and the safehouse
+ownerships are useful; cash denominations, the weapon pickup, the health and
+armor top-ups, and the wanted-level clear are filler; the trap items are
+traps. Money never gates logic, so cash is never progression.
 """
 
 from __future__ import annotations
@@ -41,6 +41,7 @@ _ORDERED_ITEM_NAMES: list[str] = (
     + data.TRAP_ITEMS
     + data.RADIO_STATION_ITEMS
     + data.PROPERTY_OWNERSHIP_ITEMS
+    + [data.MINIMAP_ITEM]
 )
 
 ITEM_NAME_TO_ID: dict[str, int] = {
@@ -67,7 +68,8 @@ def _classify(name: str) -> ItemClassification:
         return ItemClassification.progression_skip_balancing
     if (name in data.PACKAGE_REWARD_ITEMS or name in data.EMERGENCY_REWARD_ITEMS
             or name in data.RADIO_STATION_ITEMS
-            or name in data.SAFEHOUSE_OWNERSHIP_ITEMS):
+            or name in data.SAFEHOUSE_OWNERSHIP_ITEMS
+            or name == data.MINIMAP_ITEM):
         return ItemClassification.useful
     if name in data.TRAP_ITEMS:
         return ItemClassification.trap

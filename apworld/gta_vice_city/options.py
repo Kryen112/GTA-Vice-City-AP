@@ -101,6 +101,14 @@ class RandomizeRadioStations(Toggle):
     display_name = "Randomize radio stations"
 
 
+class ShuffleMinimap(Toggle):
+    """If on, the minimap starts hidden and the Minimap item joins the pool as
+    a useful item; the radar disc comes back when it is received. Mission blips
+    are part of the disc, so until then navigation runs on the world markers
+    and memory. If off, the minimap is fully vanilla."""
+    display_name = "Shuffle minimap"
+
+
 class TrapPercentage(NamedRange):
     """Percentage of filler items replaced by traps (0 disables). The eight
     trap types share the slice equally: raised wanted level, exploding cars,
@@ -139,5 +147,6 @@ class GTAViceCityOptions(PerGameCommonOptions):
     enable_side_events: EnableSideEvents
     shuffle_emergency_rewards: ShuffleEmergencyRewards
     randomize_radio_stations: RandomizeRadioStations
+    shuffle_minimap: ShuffleMinimap
     trap_percentage: TrapPercentage
     death_link: DeathLink
