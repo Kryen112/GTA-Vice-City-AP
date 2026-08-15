@@ -68,9 +68,9 @@ class EnableEmergencyVehicles(DefaultOnToggle):
 
 class ShuffleEmergencyRewards(Toggle):
     """If on, the five emergency-vehicle completion rewards (infinite sprint,
-    fireproof, max armor, taxi nitro, max health) become useful items in the
-    pool and the vanilla full-completion grant is suppressed. Has no effect
-    unless emergency vehicle missions are enabled."""
+    fireproof, max armor, taxi jump ability, max health) become useful items
+    in the pool and the vanilla full-completion grant is suppressed. Has no
+    effect unless emergency vehicle missions are enabled."""
     display_name = "Shuffle emergency vehicle rewards"
 
 

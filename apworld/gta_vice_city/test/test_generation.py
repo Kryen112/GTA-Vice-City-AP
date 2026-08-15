@@ -473,6 +473,12 @@ class TestEmergencyRewardShuffle(WorldTestBase):
         for reward in data.EMERGENCY_REWARD_ITEMS:
             self.assertIn(reward, item_names)
 
+    def test_taxi_reward_is_named_for_the_jump(self) -> None:
+        # The vanilla reward makes taxis jump; the opcode's nitro wording does
+        # not describe it, so the item name pins the player-facing effect.
+        self.assertEqual(data.EMERGENCY_REWARD_BY_ACTIVITY["Taxi"], "Taxi Jump Ability")
+        self.assertIn("Taxi Jump Ability", data.EMERGENCY_REWARD_ITEMS)
+
 
 class TestEmergencyRewardsUnshuffled(WorldTestBase):
     game = "Grand Theft Auto Vice City"

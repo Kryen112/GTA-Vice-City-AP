@@ -156,7 +156,8 @@ AREA_ITEMS: list[str] = ["Mainland Access", "Starfish Island Access"]
 # they enter the pool as useful items and the vanilla full-completion grant is
 # suppressed; when off they grant vanilla and stay out of the pool.
 EMERGENCY_REWARD_ITEMS: list[str] = [
-    "Infinite Sprint", "Fireproof", "Max Armor Upgrade", "Taxi Nitro", "Max Health Upgrade",
+    "Infinite Sprint", "Fireproof", "Max Armor Upgrade", "Taxi Jump Ability",
+    "Max Health Upgrade",
 ]
 
 # Which reward item each activity's full completion grants.
@@ -164,7 +165,7 @@ EMERGENCY_REWARD_BY_ACTIVITY: dict[str, str] = {
     "Paramedic": "Infinite Sprint",
     "Firefighter": "Fireproof",
     "Vigilante": "Max Armor Upgrade",
-    "Taxi": "Taxi Nitro",
+    "Taxi": "Taxi Jump Ability",
     "Pizza": "Max Health Upgrade",
 }
 
