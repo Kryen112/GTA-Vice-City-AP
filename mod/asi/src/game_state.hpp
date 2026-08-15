@@ -20,10 +20,9 @@ namespace gtavc {
 // Traps: "trap_wanted" (amount is stars to add), "trap_explode_cars",
 // "trap_hostile_peds" / "trap_speed_up" / "trap_slow_down" / "trap_drunk"
 // (amount is the duration in seconds), and "trap_weather" (amount is the
-// eWeather id to force). The chaos traps defer until the player is
-// controllable; weather and the consumables apply any time the world is
-// loaded. has_amount records whether the descriptor carried the amount, so a
-// round trip echoes the exact param list.
+// eWeather id to force). Like all item application, every effect waits until
+// the player is controllable. has_amount records whether the descriptor
+// carried the amount, so a round trip echoes the exact param list.
 struct ItemEffect {
   std::string type;
   int amount = 0;

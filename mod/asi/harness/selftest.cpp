@@ -144,8 +144,8 @@ int main() {
   }
 
   // One-shot effect planning: effects apply in received order past the applied
-  // index; a chaos trap waits until the player is controllable, so the index
-  // never skips it; weather and consumables never defer.
+  // index; nothing applies while the player is not controllable, and the index
+  // holds there so no effect is ever skipped.
   {
     auto make = [](const char* type, int amount, bool has) {
       ItemEffect effect;
@@ -164,40 +164,28 @@ int main() {
         {0, 10}, {1, 99}, {2, 11}, {3, 12}, {4, 13}};
 
     auto blocked = PlanEffects(items, effects, 0, false);
-    Expect(blocked.to_apply.size() == 2 && blocked.to_apply[0].type == "cash" &&
-               blocked.to_apply[1].type == "trap_weather",
-           "cash and weather apply while not controllable");
-    Expect(blocked.new_applied_index == 2,
-           "the deferring trap stops the plan and the index does not skip it");
+    Expect(blocked.to_apply.empty(),
+           "nothing applies while the player is not controllable");
+    Expect(blocked.new_applied_index == 0,
+           "the index holds while the player is not controllable");
 
-    auto freed = PlanEffects(items, effects, 2, true);
-    Expect(freed.to_apply.size() == 2 && freed.to_apply[0].type == "trap_wanted" &&
-               freed.to_apply[1].type == "trap_speed_up",
-           "deferred traps apply in received order once controllable");
+    auto freed = PlanEffects(items, effects, 0, true);
+    Expect(freed.to_apply.size() == 4 && freed.to_apply[0].type == "cash" &&
+               freed.to_apply[1].type == "trap_weather" &&
+               freed.to_apply[2].type == "trap_wanted" &&
+               freed.to_apply[3].type == "trap_speed_up",
+           "every pending effect applies in received order once controllable");
     Expect(freed.new_applied_index == 4, "the index reaches the last effect item");
+
+    auto resumed = PlanEffects(items, effects, 2, true);
+    Expect(resumed.to_apply.size() == 2 &&
+               resumed.to_apply[0].type == "trap_wanted" &&
+               resumed.to_apply[1].type == "trap_speed_up",
+           "a saved index resumes past the already-applied effects");
 
     auto done = PlanEffects(items, effects, 4, true);
     Expect(done.to_apply.empty() && done.new_applied_index == 4,
            "a fully applied list repeats nothing");
-
-    Expect(EffectDefersUntilControllable("trap_wanted"), "a chaos trap defers");
-    Expect(EffectDefersUntilControllable("trap_drunk"), "drunk vision defers");
-    Expect(!EffectDefersUntilControllable("trap_weather"), "weather does not defer");
-    Expect(!EffectDefersUntilControllable("cash"), "a consumable does not defer");
-
-    // A weather trap carrying its eWeather id param is still exempt from the
-    // deferral, so fog and rain alike apply mid-cutscene.
-    const std::map<std::int64_t, ItemEffect> weather_effects = {
-        {20, make("trap_weather", 3, true)}, {21, make("trap_drunk", 30, true)}};
-    const std::vector<std::pair<std::int64_t, std::int64_t>> weather_items = {
-        {0, 20}, {1, 21}};
-    auto cutscene = PlanEffects(weather_items, weather_effects, 0, false);
-    Expect(cutscene.to_apply.size() == 1 &&
-               cutscene.to_apply[0].type == "trap_weather" &&
-               cutscene.to_apply[0].has_amount && cutscene.to_apply[0].amount == 3,
-           "a weather trap with a weather id applies while not controllable");
-    Expect(cutscene.new_applied_index == 1,
-           "the deferred drunk trap holds the index behind it");
   }
 
   // Radio planning: the resolve map sends a locked station to the next

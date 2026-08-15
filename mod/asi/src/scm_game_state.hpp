@@ -69,8 +69,8 @@ class ScmGameState : public GameState {
   // passes. Runs every frame.
   void UpdateTimedTraps();
   // True when the game hands the player control: not in a cutscene, on a
-  // mission pass/fail screen, or otherwise script-owned. The one flag the trap
-  // deferral keys on.
+  // mission pass/fail screen, or otherwise script-owned. The one flag all item
+  // application keys on: unlock globals and one-shot effects alike wait for it.
   static bool PlayerIsControllable();
   // The pause-mode millisecond clock, which advances in real time regardless of
   // any time-scale trap, so a trap's own effect cannot distort its own timer.

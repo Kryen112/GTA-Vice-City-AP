@@ -14,8 +14,8 @@ Contract shipped to the client (and on to the ASI) in slot_data:
   station item writes one to its station unlock global.
 - item_effects: AP item id -> a one-shot effect descriptor. The ASI applies
   each consumable (cash, weapon, health, armor, clear_wanted) and trap (trap_*)
-  once past the saved applied-index; the chaos traps wait for the player to be
-  controllable.
+  once past the saved applied-index; like all item application, every effect
+  waits for the player to be controllable.
 - config_globals: config-flag global index -> value. The ASI stamps these once
   from slot_data so the main.scm knows whether each reward group is shuffled.
 - completion_watch: completion global index -> AP location id. The mission or
@@ -113,9 +113,9 @@ def item_globals() -> dict[int, int]:
 def item_effects() -> dict[int, list]:
     """AP item id -> one-shot effect descriptor [type, *params], applied once by
     the ASI past the saved applied-index. Covers the consumables (cash, weapon,
-    health, armor, clear_wanted) and the traps (trap_*); the ASI defers the chaos
-    traps until the player is controllable and reverts the timed ones after their
-    duration."""
+    health, armor, clear_wanted) and the traps (trap_*); the ASI holds every
+    effect until the player is controllable and reverts the timed traps after
+    their duration."""
     combined = {**data.CONSUMABLE_EFFECTS, **data.TRAP_EFFECTS}
     return {
         items.ITEM_NAME_TO_ID[name]: [effect[0], *effect[1:]]

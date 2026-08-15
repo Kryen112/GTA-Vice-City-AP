@@ -72,8 +72,9 @@ gitignore them. Stage explicit paths only; never `git add -A` or `git add .`.
   death or old saves stay lost.
 - Bridge protocol: newline guard on every outbound frame, chunked large
   frames, version handshake, seed-hash refusal on mismatch.
-- Traps and DeathLink defer on exactly one condition, the game's
-  player-not-controllable flag. No other deferral list exists.
+- All item application (unlock globals, one-shot effects) and DeathLink
+  defer on exactly one condition, the game's player-not-controllable flag.
+  No other deferral list exists.
 - Item and location id tables freeze at the first public release. After that,
   only append and never reorder or remove entries, since existing seeds and
   trackers depend on the ids. Before release they are free to change.

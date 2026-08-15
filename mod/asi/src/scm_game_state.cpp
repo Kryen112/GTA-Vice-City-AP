@@ -209,7 +209,7 @@ void ScmGameState::ApplyEffect(const ItemEffect& effect) {
 
 bool ScmGameState::PlayerIsControllable() {
   const CPad* pad = CPad::GetPad(0);
-  // No pad yet (still loading) reads as not controllable, so a trap waits.
+  // No pad yet (still loading) reads as not controllable, so items wait.
   if (pad == nullptr) return false;
   return pad->DisablePlayerControls == 0;
 }
@@ -511,7 +511,15 @@ void ScmGameState::OnGameFrame() {
     return;
   }
 
-  if (items_dirty_) {
+  // No item applies until the player is controllable. Before control a script
+  // still owns the world (the new-game intro, a cutscene), so a side effect an
+  // SCM watcher fires off a fresh unlock global (an area gate opening) would be
+  // silently undone by it, and its once-guard would keep it from re-firing.
+  // Pending items simply wait: the dirty flag holds until the first
+  // controllable frame.
+  const bool controllable = PlayerIsControllable();
+
+  if (items_dirty_ && controllable) {
     // Re-derive every unlock global from the full item list: zero each distinct
     // unlock global, then tally received copies per global.
     std::map<int, int> counts;
@@ -534,13 +542,13 @@ void ScmGameState::OnGameFrame() {
   // Apply one-shot effects (consumables and traps) once, past the saved
   // applied-index. Only when the player exists, so a grant is never lost to a
   // still-loading world; the index counts effect items in received order and
-  // persists in the save. The chaos traps defer until the player is
-  // controllable: planning stops at the first deferred trap so the index never
-  // skips it, and it is retried on a later frame.
+  // persists in the save. Every effect waits for the same control flag as the
+  // unlock globals: planning returns nothing while the player is not
+  // controllable, the index holds, and the effects land on a later frame.
   if (FindPlayerPed() != nullptr) {
     const int applied = GetGlobal(kAppliedIndexGlobal);
     const EffectPlan plan =
-        PlanEffects(items_, item_effects_, applied, PlayerIsControllable());
+        PlanEffects(items_, item_effects_, applied, controllable);
     for (const ItemEffect& effect : plan.to_apply) ApplyOneShot(effect);
     if (plan.new_applied_index != applied) {
       SetGlobal(kAppliedIndexGlobal, plan.new_applied_index);

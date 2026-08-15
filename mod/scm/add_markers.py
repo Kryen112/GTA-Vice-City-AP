@@ -263,7 +263,7 @@ def strand_block(strand, missions):
 # Defer all marker work while the player is not controllable (loading, cutscene,
 # script-owned interior) or is on a mission, so a marker create or launcher start
 # never runs during a cutscene or mission transition. The not-controllable half
-# is the same flag the trap and DeathLink systems defer on; the on-mission half
+# is the same flag all item application defers on; the on-mission half
 # additionally keeps a launcher start out of an already-running mission.
 body = ["", ":APMARK", "script_name 'APMARK'", "", ":APMARK_LOOP", "wait 250",
         "if ", "  is_player_playing $player_char", "goto_if_false @APMARK_LOOP",

@@ -211,11 +211,11 @@ PERSISTENT_REWARD_ITEMS: list[str] = (
 
 # Traps take an equally weighted share of the filler slots, tuned by the
 # trap_percentage option. Like consumables they are one-shot effects the ASI
-# applies once past the applied-index, so a reconnect never re-fires one. Unlike
-# consumables the chaos traps defer until the player is controllable (the one
-# deferral the design allows); the weather traps apply any time. Hostile
-# pedestrians, sped-up time, slowed time, and drunk vision last a fixed duration
-# then revert. Most effect types mirror the cheat each imitates: wanted level
+# applies once past the applied-index, so a reconnect never re-fires one. Like
+# all item application they wait for the player to be controllable (the one
+# deferral condition the design allows). Hostile pedestrians, sped-up time,
+# slowed time, and drunk vision last a fixed duration then revert. Most effect
+# types mirror the cheat each imitates: wanted level
 # like YOUWONTTAKEMEALIVE, exploding cars like BIGBANG, hostile peds like
 # NOBODYLIKESME, stormy weather like CATSANDDOGS, foggy weather like
 # CANTSEEATHING, speed up like ONSPEED, and slow down like BOOOOOORING. Drunk
@@ -708,8 +708,8 @@ FILLER_ITEMS: list[str] = [cash_item_name(amount) for amount in CASH_VALUES] + G
 
 # One-shot consumable effects, each applied once by the ASI past the saved
 # applied-index. (item name -> (effect type, *params)); cash carries its amount.
-# The wanted-level clear is beneficial, so unlike the chaos traps it never
-# defers; it applies the moment the player exists, like every other consumable.
+# Like all item application they wait for the player to be controllable, so a
+# grant can never land on a world a script still owns and be undone by it.
 CONSUMABLE_EFFECTS: dict[str, tuple] = {
     **{cash_item_name(amount): ("cash", amount) for amount in CASH_VALUES},
     PACKAGE_CASH_REWARD: ("cash", 100000),
