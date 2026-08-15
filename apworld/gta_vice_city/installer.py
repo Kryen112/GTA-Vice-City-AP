@@ -9,6 +9,9 @@ only our own files; the player supplies Ultimate ASI Loader and CLEO.
 When the apworld carries no payload, every entry point here is a no-op, so the
 installer can ship before the mod does without touching a game install.
 
+``remove`` reverses deploy: it deletes our own files and brings the backed-up
+stock main.scm back, returning the install to stock.
+
 Destinations follow the standard GTA Vice City layout:
     GtaVcAp.VC.asi -> the install root, where the ASI loader finds it
     cleo/*.cs      -> CLEO/
@@ -22,6 +25,20 @@ from pathlib import Path
 BACKUP_DIR_NAME = "AP_mod_backup"
 ASI_SUFFIX = ".asi"
 MAIN_SCM = "main.scm"
+
+# Every relative path any payload has ever deployed, so removal cleans a modded
+# install even when this apworld carries no payload of its own. main.scm is
+# absent on purpose: it is restored from its backup, never deleted. Append every
+# newly shipped file and never remove entries; build_apworld.py refuses to stage
+# a payload that outgrows this list.
+SHIPPED_PAYLOAD_PATHS = ("GtaVcAp.VC.asi", "cleo/apwatchers.cs")
+
+
+def unlisted_payload_paths(staged_relative_paths: list[str]) -> list[str]:
+    """The staged payload paths remove() would not clean: not on the shipped
+    list and not main.scm (restored from its backup instead of deleted). The
+    build refuses to stage these, so the removal manifest can never drift."""
+    return sorted(set(staged_relative_paths) - set(SHIPPED_PAYLOAD_PATHS) - {MAIN_SCM})
 
 
 def _payload_root():
@@ -122,4 +139,70 @@ def deploy(install_dir: Path, payload: list[tuple[str, bytes]] | None = None) ->
         log.append(f"Installed {relative_path}.")
     if not log:
         log.append("The mod is already up to date.")
+    return log
+
+
+def remove(install_dir: Path, payload: list[tuple[str, bytes]] | None = None) -> list[str]:
+    """Take the deployed mod back out of the install, reversing deploy: our own
+    files are deleted and the backed-up stock main.scm comes back. Removal
+    covers the bundled payload plus every file the mod has ever shipped, so an
+    apworld packaged without a payload still cleans a modded install. Missing
+    pieces are skipped, so a partial install cleans up the same way. Idempotent.
+    Returns log lines; an empty list means the install was already stock."""
+    files = payload_files() if payload is None else payload
+    install_dir = Path(install_dir)
+    log: list[str] = []
+
+    relative_paths = sorted({relative for relative, _ in files} | set(SHIPPED_PAYLOAD_PATHS))
+    for relative_path in relative_paths:
+        # main.scm is a stock file: it is restored from its backup below,
+        # never deleted.
+        if relative_path == MAIN_SCM:
+            continue
+        destination = _destination(install_dir, relative_path)
+        if destination.is_file():
+            destination.unlink()
+            log.append(f"Removed {relative_path}.")
+
+    # Removing the CLEO folder only when empty can never take a player file;
+    # the player's own CLEO runtime files and scripts keep it alive.
+    cleo_dir = install_dir / "CLEO"
+    if cleo_dir.is_dir() and not any(cleo_dir.iterdir()):
+        cleo_dir.rmdir()
+        log.append("Removed the empty CLEO folder.")
+
+    # main.scm is restored from its backup only over a file this mod put there
+    # (or none at all). An unrecognized file is player-authored, so it stays,
+    # and so does the backup for a by-hand restore.
+    backup_dir = install_dir / BACKUP_DIR_NAME
+    backup = backup_dir / MAIN_SCM
+    installed_scm = install_dir / "data" / MAIN_SCM
+    payload_scm = dict(files).get(MAIN_SCM)
+    installed_bytes = installed_scm.read_bytes() if installed_scm.is_file() else None
+    keep_backup = False
+    if backup.is_file():
+        if installed_bytes == backup.read_bytes():
+            pass  # already stock; only the backup is left to clean up
+        elif installed_bytes is None or installed_bytes == payload_scm:
+            installed_scm.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(backup, installed_scm)
+            log.append("Restored the stock main.scm.")
+        else:
+            keep_backup = True
+            log.append("data/main.scm was not recognized, so it was left alone; "
+                       f"the stock backup stays in {BACKUP_DIR_NAME}.")
+    elif payload_scm is not None and installed_bytes == payload_scm:
+        log.append("No main.scm backup found, so the modded main.scm is still "
+                   "in place. Restore data/main.scm from your own copy of the "
+                   "game files.")
+
+    # Only the known backup file goes, and the folder only when empty, so a
+    # stray file parked there (or a backup this version does not know about)
+    # survives.
+    if not keep_backup:
+        if backup.is_file():
+            backup.unlink()
+        if backup_dir.is_dir() and not any(backup_dir.iterdir()):
+            backup_dir.rmdir()
+            log.append("Removed the mod backup folder.")
     return log

@@ -103,6 +103,13 @@ class GTAViceCityCommandProcessor(ClientCommandProcessor):
         folder. Close the game first."""
         self.ctx.install_mod()
 
+    def _cmd_uninstall(self) -> None:
+        """Remove the mod from the install folder, bring the backed-up stock
+        main.scm back, and restore your normal saves. Close the game first.
+        Connecting to a room sets everything up again while auto_install_mod
+        and isolate_saves are on (the defaults)."""
+        self.ctx.uninstall_mod()
+
 
 class GTAViceCityContext(CommonContext):
     game = "Grand Theft Auto Vice City"
@@ -347,6 +354,49 @@ class GTAViceCityContext(CommonContext):
                 logger.info(line)
         except Exception as error:
             logger.error(f"Could not install the mod ({error}).")
+
+    def uninstall_mod(self) -> None:
+        """Take the mod back out of the install and bring the normal saves home
+        (manual, via /uninstall). The saves come back first, and a failure there
+        stops everything, so the mod is never removed while save state is in
+        doubt."""
+        from .. import installer
+        if not self.install_dir:
+            logger.warning("No install folder set. Use /setfolder first.")
+            return
+        if self.game_running():
+            logger.warning("Close the game before uninstalling the mod.")
+            return
+        if self.save_manager and self.save_manager.is_isolated():
+            try:
+                logger.info(self.save_manager.restore())
+            except Exception as error:
+                logger.error(f"Could not restore your normal saves ({error}); the "
+                             "uninstall stopped before touching the mod. Run "
+                             "/uninstall again once that is resolved.")
+                return
+        try:
+            removal_log = installer.remove(self.install_dir)
+        except Exception as error:
+            logger.error(f"Could not remove the mod ({error}).")
+            return
+        for line in removal_log:
+            logger.info(line)
+        if not removal_log:
+            logger.info("No mod files found; the install was already stock.")
+        if self.save_manager:
+            try:
+                note = self.save_manager.discard_isolation_state()
+            except OSError as error:
+                note = f"Could not tidy the save isolation bookkeeping: {error}"
+            if note:
+                logger.info(note)
+        # A later connect is the full opt-in again: unlike /restore, uninstall
+        # does not suspend isolation, so the setup runs whole or not at all.
+        logger.info("Mod uninstall finished. Connecting to an Archipelago room "
+                    "installs the mod and isolates seed saves again while "
+                    "auto_install_mod and isolate_saves are on in host.yaml "
+                    "(the defaults).")
 
     def game_running(self) -> bool:
         # The client-launched process is authoritative, but a game the player

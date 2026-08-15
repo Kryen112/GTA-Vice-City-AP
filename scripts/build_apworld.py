@@ -14,6 +14,7 @@ overridable with the AP_CUSTOM_WORLDS environment variable.
 
 from __future__ import annotations
 
+import importlib.util
 import json
 import os
 import pathlib
@@ -45,6 +46,16 @@ def _included(path: pathlib.Path) -> bool:
     return path.suffix not in EXCLUDED_SUFFIXES
 
 
+def _installer_module():
+    # Loads installer.py on its own, without importing the world package, which
+    # would need the Archipelago core on the path.
+    spec = importlib.util.spec_from_file_location(
+        "gta_vice_city_installer", WORLD_SOURCE / "installer.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
 def _stage_mod_payload(bundle: zipfile.ZipFile) -> None:
     # The mod needs both the compiled ASI (the AP communication layer) and the
     # compiled main.scm (mission gating) to be playable. Ship a payload only
@@ -59,14 +70,22 @@ def _stage_mod_payload(bundle: zipfile.ZipFile) -> None:
         print(f"Mod payload not staged: {missing} is missing, so the payload would "
               "be incomplete. Fix the build before shipping the mod.")
         return
+    cleo_scripts = sorted(MOD_CLEO_DIR.glob("*.cs")) if MOD_CLEO_DIR.is_dir() else []
+    staged = [MOD_ASI.name] + [f"cleo/{script.name}" for script in cleo_scripts] + ["main.scm"]
+    # Every staged file must be on the installer's removal manifest (main.scm is
+    # restored from its backup instead), so /uninstall keeps removing every file
+    # any payload has ever shipped.
+    unlisted = _installer_module().unlisted_payload_paths(staged)
+    if unlisted:
+        raise SystemExit(
+            f"Staged payload files not in installer.SHIPPED_PAYLOAD_PATHS: "
+            f"{', '.join(unlisted)}. Append them (never remove entries) so "
+            "/uninstall cleans every install.")
     base = pathlib.PurePosixPath(WORLD_NAME) / "data" / "mod"
-    staged = [MOD_ASI.name, "main.scm"]
     bundle.write(MOD_ASI, str(base / MOD_ASI.name))
     bundle.write(MOD_SCM, str(base / "main.scm"))
-    if MOD_CLEO_DIR.is_dir():
-        for script in sorted(MOD_CLEO_DIR.glob("*.cs")):
-            bundle.write(script, str(base / "cleo" / script.name))
-            staged.append(f"cleo/{script.name}")
+    for script in cleo_scripts:
+        bundle.write(script, str(base / "cleo" / script.name))
     print(f"Staged mod payload: {', '.join(staged)}.")
 
 

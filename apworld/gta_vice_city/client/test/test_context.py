@@ -244,6 +244,16 @@ class TestCommands(unittest.TestCase):
 
         asyncio.run(scenario())
 
+    def test_uninstall_delegates(self) -> None:
+        async def scenario() -> None:
+            with _fake_settings(""):
+                context = _context()
+                with mock.patch.object(context, "uninstall_mod") as uninstall_mod:
+                    context_module.GTAViceCityCommandProcessor(context)._cmd_uninstall()
+                    uninstall_mod.assert_called_once_with()
+
+        asyncio.run(scenario())
+
 
 class TestSaveIsolation(unittest.TestCase):
     def test_isolates_this_seed_when_enabled_and_the_game_is_not_running(self) -> None:
@@ -339,6 +349,97 @@ class TestModInstall(unittest.TestCase):
                 with mock.patch.object(context, "install_mod") as install_mod:
                     await context.setup_and_launch()
                     install_mod.assert_not_called()
+
+        asyncio.run(scenario())
+
+
+class TestModUninstall(unittest.TestCase):
+    def test_restores_saves_removes_the_mod_and_discards_state(self) -> None:
+        async def scenario() -> None:
+            with _install_folder_with_exe() as folder, _fake_settings(folder):
+                context = _context()
+                context.save_manager = mock.Mock()
+                context.save_manager.is_isolated.return_value = True
+                context.save_manager.restore.return_value = "Restored your normal saves."
+                context.save_manager.discard_isolation_state.return_value = None
+                with mock.patch.object(context, "game_running", return_value=False), \
+                     mock.patch.object(installer, "remove",
+                                       return_value=["Removed GtaVcAp.VC.asi."]) as remove:
+                    context.uninstall_mod()
+                    context.save_manager.restore.assert_called_once_with()
+                    remove.assert_called_once_with(context.install_dir)
+                    context.save_manager.discard_isolation_state.assert_called_once_with()
+                    # Unlike /restore, uninstall leaves isolation unsuspended:
+                    # a later connect is the full opt-in again, reinstalling
+                    # the mod and re-isolating seed saves together.
+                    self.assertFalse(context.isolation_suspended)
+
+        asyncio.run(scenario())
+
+    def test_a_failed_restore_stops_before_touching_the_mod(self) -> None:
+        async def scenario() -> None:
+            with _install_folder_with_exe() as folder, _fake_settings(folder):
+                context = _context()
+                context.save_manager = mock.Mock()
+                context.save_manager.is_isolated.return_value = True
+                context.save_manager.restore.side_effect = RuntimeError("collision")
+                with mock.patch.object(context, "game_running", return_value=False), \
+                     mock.patch.object(installer, "remove") as remove:
+                    context.uninstall_mod()
+                    remove.assert_not_called()
+                    context.save_manager.discard_isolation_state.assert_not_called()
+
+        asyncio.run(scenario())
+
+    def test_blocked_while_the_game_is_running(self) -> None:
+        async def scenario() -> None:
+            with _install_folder_with_exe() as folder, _fake_settings(folder):
+                context = _context()
+                context.save_manager = mock.Mock()
+                with mock.patch.object(context, "game_running", return_value=True), \
+                     mock.patch.object(installer, "remove") as remove:
+                    context.uninstall_mod()
+                    remove.assert_not_called()
+                    context.save_manager.restore.assert_not_called()
+
+        asyncio.run(scenario())
+
+    def test_no_install_folder_warns_and_does_nothing(self) -> None:
+        async def scenario() -> None:
+            with _fake_settings(""):
+                context = _context()
+                with mock.patch.object(installer, "remove") as remove:
+                    context.uninstall_mod()
+                    remove.assert_not_called()
+
+        asyncio.run(scenario())
+
+    def test_a_failed_discard_still_finishes(self) -> None:
+        async def scenario() -> None:
+            with _install_folder_with_exe() as folder, _fake_settings(folder):
+                context = _context()
+                context.save_manager = mock.Mock()
+                context.save_manager.is_isolated.return_value = False
+                context.save_manager.discard_isolation_state.side_effect = OSError("locked")
+                with mock.patch.object(context, "game_running", return_value=False), \
+                     mock.patch.object(installer, "remove", return_value=[]) as remove:
+                    context.uninstall_mod()  # the note is logged, nothing raises
+                    remove.assert_called_once_with(context.install_dir)
+
+        asyncio.run(scenario())
+
+    def test_saves_never_isolated_still_removes_the_mod(self) -> None:
+        async def scenario() -> None:
+            with _install_folder_with_exe() as folder, _fake_settings(folder):
+                context = _context()
+                context.save_manager = mock.Mock()
+                context.save_manager.is_isolated.return_value = False
+                context.save_manager.discard_isolation_state.return_value = None
+                with mock.patch.object(context, "game_running", return_value=False), \
+                     mock.patch.object(installer, "remove", return_value=[]) as remove:
+                    context.uninstall_mod()
+                    context.save_manager.restore.assert_not_called()
+                    remove.assert_called_once_with(context.install_dir)
 
         asyncio.run(scenario())
 

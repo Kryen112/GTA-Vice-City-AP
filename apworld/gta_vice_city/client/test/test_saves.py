@@ -105,6 +105,46 @@ class TestSaveManager(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             self.manager.restore()
 
+    def test_discard_refuses_while_the_career_is_stashed(self) -> None:
+        _touch(self.user_files / "GTAVC1.b")
+        self.manager.isolate("seed_a")
+        note = self.manager.discard_isolation_state()
+        self.assertIn("stashed", note.lower())
+        self.assertTrue(self.manager.state_path.is_file())
+        self.assertTrue(self.manager.is_isolated())
+
+    def test_discard_removes_the_bookkeeping_and_empty_folders(self) -> None:
+        _touch(self.user_files / "GTAVC1.b")
+        self.manager.isolate("seed_a")
+        self.manager.restore()
+        note = self.manager.discard_isolation_state()
+        self.assertIsNone(note)
+        self.assertFalse(self.manager.career.exists())
+        self.assertFalse(self.manager.state_path.exists())
+        self.assertEqual(self._live_saves(), ["GTAVC1.b"])  # normal saves untouched
+
+    def test_discard_keeps_seed_saves_with_a_note(self) -> None:
+        _touch(self.user_files / "GTAVC1.b")
+        self.manager.isolate("seed_a")
+        _touch(self.user_files / "GTAVC3.b")  # a save made while playing the seed
+        self.manager.restore()                # persists it under AP_Seeds/seed_a
+        note = self.manager.discard_isolation_state()
+        self.assertIn("seed saves are kept", note.lower())
+        self.assertTrue((self.manager._seed_dir("seed_a") / "GTAVC3.b").is_file())
+        self.assertFalse(self.manager.state_path.exists())
+
+    def test_discard_drops_seed_folders_emptied_by_a_resume(self) -> None:
+        _touch(self.user_files / "GTAVC1.b")
+        self.manager.isolate("seed_a")
+        self.manager.restore()
+        (self.manager.seeds_root / "seed_a").mkdir(parents=True)  # left by a resume
+        note = self.manager.discard_isolation_state()
+        self.assertIsNone(note)
+        self.assertFalse(self.manager.seeds_root.exists())
+
+    def test_discard_with_no_bookkeeping_is_a_noop(self) -> None:
+        self.assertIsNone(self.manager.discard_isolation_state())
+
 
 if __name__ == "__main__":
     unittest.main()
