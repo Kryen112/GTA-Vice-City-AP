@@ -18,6 +18,8 @@
 #include "scm_effects.hpp"
 #include "scm_radio.hpp"
 
+class CVehicle;
+
 namespace gtavc {
 
 using Logger = std::function<void(const std::string&)>;
@@ -80,9 +82,16 @@ class ScmGameState : public GameState {
   static void CalmPedestrians();
   // Keeps every vehicle radio on an unlocked station while the randomize
   // option is on: recomputes the resolve globals from the station unlocks,
-  // remaps vehicle station bytes, and posts a retune request to the APRADIO
-  // watcher when a locked station reaches the player's own vehicle.
-  static void EnforceRadioStations();
+  // remaps vehicle station bytes, rewrites pending retune presses so the
+  // scroll only visits unlocked stations, and posts a retune request to the
+  // APRADIO watcher when a locked station reaches the player's own vehicle.
+  void EnforceRadioStations();
+  // Rewrites the game's pending retune press count so the vanilla commit
+  // lands on the next stop of the allowed cycle instead of the vanilla
+  // eleven-position wheel. Classic 1.0 executable only (the press static is
+  // a pinned raw address); elsewhere the post-commit correction covers it.
+  void RewriteRetunePresses(CVehicle* player_vehicle,
+                            const std::array<bool, kRadioStationCount>& unlocked);
 
   Logger logger_;
   std::mutex mutex_;
@@ -111,6 +120,11 @@ class ScmGameState : public GameState {
   float time_scale_trap_factor_ = 1.0f;
   bool hostile_pedestrians_active_ = false;
   unsigned int hostile_pedestrians_until_ = 0;
+  // Retune press bookkeeping: how many presses the player has logically made
+  // this scroll, and the raw value last written back, so fresh presses can be
+  // told apart from the rewritten count.
+  int retune_logical_presses_ = 0;
+  int retune_written_presses_ = 0;
 };
 
 }  // namespace gtavc

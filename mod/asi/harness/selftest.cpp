@@ -219,6 +219,40 @@ int main() {
     only_wave[8] = true;
     Expect(NextAllowedTuning(8, only_wave) == kRadioOff, "a single station cycles to off");
     Expect(NextAllowedTuning(kRadioOff, only_wave) == 8, "and off cycles back to it");
+
+    // Press shaping: presses walk the allowed cycle, and the rewritten raw
+    // count makes the vanilla eleven-position commit land on that stop.
+    Expect(AdvanceTuning(2, 1, two) == 7, "one press advances one allowed stop");
+    Expect(AdvanceTuning(2, 2, two) == kRadioOff, "two presses reach the off position");
+    Expect(AdvanceTuning(2, 3, two) == 2, "a full lap of the cycle comes back around");
+    Expect(AdvanceTuning(2, 7, two) == 7, "press bursts reduce modulo the cycle length");
+    Expect(AdvanceTuning(kRadioOff, 1, two) == 2, "advancing from off reaches the first unlocked");
+    Expect(RetunePressesForTarget(2, 7) == 5, "the raw count is the wheel distance to the target");
+    Expect(RetunePressesForTarget(7, 2) == 6, "the wheel distance wraps forward past off");
+    Expect(RetunePressesForTarget(2, 2) == 11, "a same-station target becomes a full lap");
+
+    // Press-plan bookkeeping across frames: fresh presses fold into the
+    // logical total, an unchanged raw count plans no write, a raw count of
+    // zero clears the scroll, and a commit plus a fresh press in one frame
+    // restarts the count from the new byte.
+    auto first = PlanRetunePresses(1, 0, 0, 2, two);
+    Expect(first.logical_presses == 1 && first.written_presses == 5 && first.write_needed,
+           "one fresh press aims the commit at the next unlocked station");
+    auto second = PlanRetunePresses(6, first.logical_presses, first.written_presses, 2, two);
+    Expect(second.logical_presses == 2 && second.written_presses == 8 && second.write_needed,
+           "a second press advances the plan to the off position");
+    auto idle = PlanRetunePresses(8, second.logical_presses, second.written_presses, 2, two);
+    Expect(idle.logical_presses == 2 && idle.written_presses == 8 && !idle.write_needed,
+           "an unchanged raw count plans no write");
+    auto consumed = PlanRetunePresses(0, idle.logical_presses, idle.written_presses, 10, two);
+    Expect(consumed.logical_presses == 0 && consumed.written_presses == 0 && !consumed.write_needed,
+           "a consumed commit clears the scroll bookkeeping");
+    auto restarted = PlanRetunePresses(1, 2, 8, 7, two);
+    Expect(restarted.logical_presses == 1 && restarted.written_presses == 3 && restarted.write_needed,
+           "a commit plus a fresh press restarts from the new byte");
+    auto burst = PlanRetunePresses(7, 0, 0, 2, two);
+    Expect(burst.logical_presses == 7 && burst.written_presses == 5 && burst.write_needed,
+           "an MP3-key burst reduces modulo the cycle and lands on an unlocked stop");
   }
 
   if (failures == 0) {

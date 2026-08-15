@@ -4,6 +4,7 @@
 #include <array>
 #include <cstdlib>
 
+#include "game_addresses.hpp"
 #include "scm_packages.hpp"
 
 #include <plugin.h>
@@ -277,19 +278,43 @@ void ScmGameState::EnforceRadioStations() {
       vehicle->m_nRadioStation = static_cast<unsigned char>(corrected);
     }
   }
-  if (player_vehicle == nullptr || UsesPoliceScanner(player_vehicle)) return;
+  if (player_vehicle == nullptr || UsesPoliceScanner(player_vehicle)) {
+    retune_logical_presses_ = 0;
+    retune_written_presses_ = 0;
+    return;
+  }
   const int station = player_vehicle->m_nRadioStation;
-  if (station >= kRadioOff) return;
-  if (station < kRadioStationCount && unlocked[station]) return;
-  // A locked station (or the MP3 player) reached the player's vehicle, from a
-  // retune commit or an entry the remap missed. The music manager re-reads
-  // the byte only on entry or on a commit, so fixing the byte alone leaves
-  // the wrong audio playing; the APRADIO watcher's set_radio_channel switches
-  // the live track.
-  const int target = NextAllowedTuning(station, unlocked);
-  player_vehicle->m_nRadioStation = static_cast<unsigned char>(target);
-  const int request = (target == kRadioOff) ? kRadioAmbientRequest : target;
-  SetGlobal(kRadioRequestGlobal, request + 1);
+  if (station < kRadioOff && !(station < kRadioStationCount && unlocked[station])) {
+    // A locked station (or the MP3 player) reached the player's vehicle, from
+    // an entry the remap missed, the pause-menu selector, or a commit on an
+    // executable where press shaping is unavailable. The music manager
+    // re-reads the byte only on entry or on a commit, so fixing the byte
+    // alone leaves the wrong audio playing; the APRADIO watcher's
+    // set_radio_channel switches the live track.
+    const int snapped = NextAllowedTuning(station, unlocked);
+    player_vehicle->m_nRadioStation = static_cast<unsigned char>(snapped);
+    const int request = (snapped == kRadioOff) ? kRadioAmbientRequest : snapped;
+    SetGlobal(kRadioRequestGlobal, request + 1);
+  }
+  // Shape any pending scroll after the snap, from the corrected byte, so the
+  // vanilla commit itself lands only on unlocked stations and the scroll
+  // preview never names a locked one.
+  RewriteRetunePresses(player_vehicle, unlocked);
+}
+
+void ScmGameState::RewriteRetunePresses(
+    CVehicle* player_vehicle, const std::array<bool, kRadioStationCount>& unlocked) {
+  // The press static is pinned for the classic 1.0 executable only; any other
+  // build keeps vanilla scrolling and relies on the post-commit correction.
+  if (plugin::GetGameVersion() != GAME_10EN) return;
+  int* presses = reinterpret_cast<int*>(kRetunePressesAddress10);
+  // The byte only changes at the commit, so it is the stable scroll origin.
+  const RetunePressPlan plan = PlanRetunePresses(
+      *presses, retune_logical_presses_, retune_written_presses_,
+      player_vehicle->m_nRadioStation, unlocked);
+  if (plan.write_needed) *presses = plan.written_presses;
+  retune_logical_presses_ = plan.logical_presses;
+  retune_written_presses_ = plan.written_presses;
 }
 
 void ScmGameState::ApplyOneShot(const ItemEffect& effect) {
