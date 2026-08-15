@@ -73,6 +73,19 @@ _STORY_ONLY_OPTIONS: dict = {
 }
 
 
+# The items that satisfy the finale's asset prerequisite (the mandatory
+# Printworks asset plus five optional ones), for tests whose subject is a
+# different finale edge and needs the asset terms out of the way.
+_FINALE_ASSET_ITEMS: list[str] = [
+    "Printworks Ownership", "Progressive Printworks",
+    "Malibu Club Ownership", "Progressive Malibu Club",
+    "Film Studio Ownership", "Progressive Film Studio",
+    "Kaufman Cabs Ownership", "Progressive Kaufman Cabs",
+    "Cherry Popper Ownership", "Progressive Cherry Popper",
+    "Pole Position Ownership",
+]
+
+
 class TestStoryOnly(WorldTestBase):
     game = "Grand Theft Auto Vice City"
     options: ClassVar[dict] = dict(_STORY_ONLY_OPTIONS)
@@ -205,10 +218,10 @@ class TestRadioStationsOn(WorldTestBase):
                 item_globals[str(ITEM_NAME_TO_ID[name])], scm.RADIO_UNLOCK_BASE + index,
             )
 
-    def test_radio_block_stays_below_the_marker_globals(self) -> None:
-        # $9400 up is SCM-internal (marker handles and visibility flags); the
+    def test_reserved_block_stays_below_the_marker_globals(self) -> None:
+        # $9420 up is SCM-internal (marker handles and visibility flags); the
         # reserved contract must never grow into it.
-        self.assertLess(scm.highest_reserved_global(), 9400)
+        self.assertLess(scm.highest_reserved_global(), 9420)
 
 
 class TestRadioStationsOff(WorldTestBase):
@@ -259,11 +272,12 @@ class TestStrandAccess(WorldTestBase):
 
     def test_final_mission_requires_the_protection_strand(self) -> None:
         # The finale keeps the one strand-level cross-giver edge: it sits
-        # behind the protection strand, and nothing else beyond its own
-        # unlocks and the two area items.
+        # behind the protection strand. The asset items are collected up
+        # front so the protection edge is the only thing under test.
         self.collect_by_name([
             "Progressive Vercetti Finale", "Mainland Access", "Starfish Island Access",
         ])
+        self.collect_by_name(_FINALE_ASSET_ITEMS)
         self.assertFalse(self.can_reach_location(data.FINAL_MISSION))
         self.collect_by_name(["Progressive Vercetti Protection"])
         self.assertTrue(self.can_reach_location(data.FINAL_MISSION))
@@ -354,15 +368,19 @@ class TestStarfishGating(WorldTestBase):
     def test_finale_needs_both_area_items(self) -> None:
         # Keep Your Friends Close... starts at the mansion but only activates
         # once Cap the Collector (mainland) passes, so it needs both islands.
+        # The asset items are collected up front so the area edge is the only
+        # thing under test.
         self.collect_by_name([
             "Progressive Vercetti Finale", "Progressive Vercetti Protection",
         ])
+        self.collect_by_name(_FINALE_ASSET_ITEMS)
         self.collect_by_name(["Starfish Island Access"])
         self.assertFalse(self.can_reach_location(data.FINAL_MISSION))
         self.collect_by_name(["Mainland Access"])
         self.assertTrue(self.can_reach_location(data.FINAL_MISSION))
         # And Cap the Collector itself is a mainland check, startable without
-        # the island (its gate reads unlock counts, not passed flags).
+        # the island... except its property-sale requirements name Starfish
+        # Island Access, which this test has already collected.
         self.assertTrue(self.can_reach_location("Cap the Collector"))
 
 
@@ -410,14 +428,149 @@ class TestPropertyAccess(WorldTestBase):
         # purchase is reachable with an empty inventory.
         self.assertTrue(self.can_reach_location("El Swanko Casa Purchase"))
 
-    def test_venue_mission_needs_the_property_bought(self) -> None:
+    def test_venue_mission_needs_the_property_bought_and_owned(self) -> None:
         # No Escape? is the Malibu Club's first mission. The club must be
-        # bought first and goes on sale only after Shakedown, so the mission
-        # needs the Shakedown items besides its own progressive.
+        # bought (it goes on sale only after Shakedown, so the mission needs
+        # the Shakedown items) and owned (the building arrives as its
+        # ownership item), besides its own progressive.
         self.collect_by_name(["Progressive Malibu Club", "Starfish Island Access"])
         self.assertFalse(self.can_reach_location("No Escape?"))
         self.collect_by_name(["Progressive Vercetti Protection"])
+        self.assertFalse(self.can_reach_location("No Escape?"))
+        self.collect_by_name(["Malibu Club Ownership"])
         self.assertTrue(self.can_reach_location("No Escape?"))
+
+    def test_ownership_items_are_in_the_pool(self) -> None:
+        item_names = {item.name for item in self.multiworld.itempool}
+        for ownership in data.PROPERTY_OWNERSHIP_ITEMS:
+            self.assertIn(ownership, item_names, ownership)
+
+    def test_ownership_classification_splits_business_from_safehouse(self) -> None:
+        # Business ownerships gate venue missions or the finale's asset
+        # threshold, so logic may require them; safehouse ownerships gate only
+        # a save point and garage, which no location needs.
+        for ownership in data.BUSINESS_OWNERSHIP_ITEMS:
+            self.assertEqual(
+                ITEM_CLASSIFICATIONS[ownership], ItemClassification.progression, ownership,
+            )
+        for ownership in data.SAFEHOUSE_OWNERSHIP_ITEMS:
+            self.assertEqual(
+                ITEM_CLASSIFICATIONS[ownership], ItemClassification.useful, ownership,
+            )
+
+    def test_safehouse_purchase_needs_no_ownership(self) -> None:
+        # Buying stays a pure money-for-check trade: the ownership item gates
+        # what the safehouse provides, never the purchase itself.
+        self.assertTrue(self.can_reach_location("El Swanko Casa Purchase"))
+
+
+class TestFinaleAssetThreshold(WorldTestBase):
+    game = "Grand Theft Auto Vice City"
+    options: ClassVar[dict] = {"enable_properties": True}
+
+    def _collect_finale_base(self) -> None:
+        self.collect_by_name([
+            "Progressive Vercetti Finale", "Progressive Vercetti Protection",
+            "Mainland Access", "Starfish Island Access",
+        ])
+
+    def test_finale_needs_the_printworks_asset(self) -> None:
+        # Cap the Collector keeps its vanilla prerequisite: Hit the Courier
+        # passed is individually mandatory, so the Printworks items are too.
+        self._collect_finale_base()
+        self.collect_by_name([
+            "Malibu Club Ownership", "Progressive Malibu Club",
+            "Film Studio Ownership", "Progressive Film Studio",
+            "Kaufman Cabs Ownership", "Progressive Kaufman Cabs",
+            "Cherry Popper Ownership", "Progressive Cherry Popper",
+            "Boatyard Ownership", "Progressive Boatyard",
+            "Sunshine Autos Ownership", "Pole Position Ownership",
+        ])
+        self.assertFalse(self.can_reach_location("Cap the Collector"))
+        self.collect_by_name(["Printworks Ownership", "Progressive Printworks"])
+        self.assertTrue(self.can_reach_location("Cap the Collector"))
+
+    def test_finale_needs_enough_optional_assets(self) -> None:
+        # Seven of the nine assets must be completable. Printworks and the
+        # estate are mandatory, leaving five of the seven optional assets;
+        # four are one short, and an ownership-only asset crosses the line.
+        self._collect_finale_base()
+        self.collect_by_name(["Printworks Ownership", "Progressive Printworks"])
+        self.assertFalse(self.can_reach_location("Cap the Collector"))
+        self.collect_by_name([
+            "Malibu Club Ownership", "Progressive Malibu Club",
+            "Film Studio Ownership", "Progressive Film Studio",
+            "Kaufman Cabs Ownership", "Progressive Kaufman Cabs",
+            "Cherry Popper Ownership", "Progressive Cherry Popper",
+        ])
+        self.assertFalse(self.can_reach_location("Cap the Collector"))
+        self.collect_by_name(["Pole Position Ownership"])
+        self.assertTrue(self.can_reach_location("Cap the Collector"))
+        # The last mission chains through Cap the Collector in game, so it
+        # carries the same asset terms and is reachable with the same set.
+        self.assertTrue(self.can_reach_location(data.FINAL_MISSION))
+
+    def test_an_asset_needs_its_ownership_not_just_missions(self) -> None:
+        # Progressives alone complete nothing: an asset counts only while its
+        # property is owned, so ownership items cannot be swapped for extra
+        # mission unlocks.
+        self._collect_finale_base()
+        self.collect_by_name([
+            "Printworks Ownership", "Progressive Printworks",
+            "Progressive Malibu Club", "Progressive Film Studio",
+            "Progressive Kaufman Cabs", "Progressive Cherry Popper",
+            "Progressive Boatyard",
+        ])
+        self.assertFalse(self.can_reach_location("Cap the Collector"))
+
+    def test_optional_asset_table_matches_the_strands(self) -> None:
+        # Each optional asset that completes through its venue strand needs
+        # every progressive of that strand (the asset completes on the last
+        # mission). Sunshine Autos completes through the import garage lists
+        # instead of its race strand, and Pole Position has no missions, so
+        # both are deliberately ownership-only.
+        for asset, progressive_count in data.FINALE_OPTIONAL_ASSETS.items():
+            self.assertIn(data.ownership_item_name(asset), data.BUSINESS_OWNERSHIP_ITEMS)
+            if asset in ("Sunshine Autos", "Pole Position"):
+                self.assertEqual(progressive_count, 0, asset)
+            else:
+                self.assertEqual(progressive_count, len(data.VENUE_STRANDS[asset]), asset)
+        self.assertNotIn("Printworks", data.FINALE_OPTIONAL_ASSETS)
+        self.assertEqual(
+            data.FINALE_OPTIONAL_ASSETS_REQUIRED, data.FINALE_ASSET_THRESHOLD - 2,
+        )
+
+
+class TestPropertiesOnly(WorldTestBase):
+    # The tightest properties pool: with every collectible class off, the
+    # class's 31 items (16 venue progressives, 15 ownerships) outnumber its 31
+    # locations once the story pool joins, so the seed leans on the opening
+    # grant for sphere-0 room. The inherited default tests prove it fills and
+    # stays beatable through the finale's asset threshold.
+    game = "Grand Theft Auto Vice City"
+    options: ClassVar[dict] = dict(_STORY_ONLY_OPTIONS, enable_properties=True)
+
+
+class TestFinaleWithoutProperties(WorldTestBase):
+    game = "Grand Theft Auto Vice City"
+    options: ClassVar[dict] = {"enable_properties": False}
+
+    def test_finale_keeps_the_sale_requirements_when_the_class_is_off(self) -> None:
+        # With the properties class off the asset items leave the pool and
+        # assets complete vanilla-style with grindable money, so no ownership
+        # or venue items appear in the rule. But the FIN1 gate still reads the
+        # vanilla flags, and Shakedown and Cop Land are given from the
+        # mansion, so the finale must keep Starfish Island Access or the fill
+        # could strand that item behind Cap the Collector, an in-game
+        # deadlock.
+        self.collect_by_name([
+            "Progressive Vercetti Finale", "Progressive Vercetti Protection",
+            "Mainland Access",
+        ])
+        self.assertFalse(self.can_reach_location("Cap the Collector"))
+        self.collect_by_name(["Starfish Island Access"])
+        self.assertTrue(self.can_reach_location("Cap the Collector"))
+        self.assertTrue(self.can_reach_location(data.FINAL_MISSION))
 
 
 class TestDeferredClassIslands(WorldTestBase):
@@ -456,9 +609,35 @@ class TestPropertiesToggle(WorldTestBase):
             item.name for item in self.multiworld.precollected_items[self.player]
         }
         self.assertNotIn("Progressive Malibu Club", item_names)
+        for ownership in data.PROPERTY_OWNERSHIP_ITEMS:
+            self.assertNotIn(ownership, item_names, ownership)
         location_names = {loc.name for loc in self.multiworld.get_locations(self.player)}
         self.assertNotIn("No Escape?", location_names)
         self.assertNotIn("Malibu Club Purchase", location_names)
+
+    def test_config_globals_carry_the_vanilla_collapse(self) -> None:
+        # With the class off the static property gates must reduce to
+        # purchase-only, so the client stamps the venue unlock globals maxed
+        # and every ownership global to 1 through config_globals.
+        config = self.world.fill_slot_data()["config_globals"]
+        for venue, missions in data.VENUE_STRANDS.items():
+            self.assertEqual(config[str(scm.unlock_global(venue))], len(missions), venue)
+        for ownership in data.PROPERTY_OWNERSHIP_ITEMS:
+            self.assertEqual(config[str(scm.ownership_global(ownership))], 1, ownership)
+
+
+class TestPropertiesOnConfigGlobals(WorldTestBase):
+    game = "Grand Theft Auto Vice City"
+    options: ClassVar[dict] = {"enable_properties": True}
+
+    def test_no_vanilla_collapse_while_the_class_is_on(self) -> None:
+        # With the class on the ownership globals are item-driven, so the
+        # config stamp must not touch them or the gates would open for free.
+        config = self.world.fill_slot_data()["config_globals"]
+        for ownership in data.PROPERTY_OWNERSHIP_ITEMS:
+            self.assertNotIn(str(scm.ownership_global(ownership)), config, ownership)
+        for venue in data.VENUE_STRANDS:
+            self.assertNotIn(str(scm.unlock_global(venue)), config, venue)
 
 
 class TestEmergencyRewardShuffle(WorldTestBase):
@@ -621,15 +800,21 @@ class TestReservedGlobals(WorldTestBase):
         self.assertEqual(len(completions), len(LOCATION_NAME_TO_ID))
         rewards = {scm.reward_global(key) for key in scm.REWARD_KEYS}
         config = {scm.PACKAGES_SHUFFLED_GLOBAL, scm.EMERGENCY_SHUFFLED_GLOBAL}
+        ownership = {scm.ownership_global(key) for key in scm.OWNERSHIP_KEYS}
         self.assertEqual(len(rewards), len(scm.REWARD_KEYS))
+        self.assertEqual(len(ownership), len(scm.OWNERSHIP_KEYS))
         self.assertTrue(seed_hash.isdisjoint(unlocks))
         self.assertTrue(seed_hash.isdisjoint(completions))
         self.assertTrue(unlocks.isdisjoint(completions))
-        # The reward and config-flag blocks must not collide with anything else,
-        # and must stay within the declared reserved block the foundation sizes.
+        # The reward, config-flag, and ownership blocks must not collide with
+        # anything else, and must stay within the declared reserved block the
+        # foundation sizes.
         self.assertTrue(rewards.isdisjoint(seed_hash | unlocks | completions | config))
         self.assertTrue(config.isdisjoint(seed_hash | unlocks | completions | rewards))
-        for global_index in rewards | config:
+        self.assertTrue(
+            ownership.isdisjoint(seed_hash | unlocks | completions | rewards | config)
+        )
+        for global_index in rewards | config | ownership:
             self.assertLessEqual(global_index, scm.highest_reserved_global())
         self.assertNotIn(scm.APPLIED_INDEX_GLOBAL, unlocks | completions | rewards | config)
 
@@ -639,6 +824,10 @@ class TestReservedGlobals(WorldTestBase):
             self.assertIn(ITEM_NAME_TO_ID[data.progressive_item_name(strand)], mapping)
         for area_item in data.AREA_ITEMS:
             self.assertIn(ITEM_NAME_TO_ID[area_item], mapping)
+        for ownership in data.PROPERTY_OWNERSHIP_ITEMS:
+            self.assertEqual(
+                mapping[ITEM_NAME_TO_ID[ownership]], scm.ownership_global(ownership),
+            )
 
     def test_one_shot_effects_are_disjoint_from_count_globals(self) -> None:
         # A one-shot effect (consumable or trap) is applied once past the

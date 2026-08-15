@@ -31,16 +31,26 @@ version control.
   (`scm.py`, `data.py`, `rules.py`). `scripts/dump_scm_spec.py` prints the same
   spec derived directly from those tables; keep the two in agreement.
 - Venue mission gates (launch and marker) additionally require the venue
-  purchase's completion global, so a venue strand stays hidden and unstartable
-  until the property is bought. In logic the stand-in is the items to pass
-  Shakedown, the mission that puts the businesses up for sale.
+  purchase's completion global and its ownership global (`$9400..$9414`, one
+  per purchasable property in purchase order, ASI-written from the ownership
+  items), so a venue strand stays hidden and unstartable until the property is
+  bought and owned. In logic the purchase's stand-in is the items to pass
+  Shakedown, the mission that puts the businesses up for sale. The safehouse
+  save threads gate on the same ownership globals (save pickup and garage wait
+  for bought plus owned), and the Pole Position and Sunshine Autos
+  asset-completion recognitions do too. With the properties class disabled the
+  client stamps every ownership global and maxes the venue unlock globals
+  through config_globals, collapsing all of it to vanilla purchase-only.
+- Cap the Collector keeps its vanilla asset prerequisite in the FIN1 gate:
+  Hit the Courier passed (`$273`), Cop Land passed (`$268`), and the vanilla
+  owned-asset count `$1175` at seven or more of the nine income assets.
 - Area gating: the APAREA watcher opens the mainland on Mainland Access
   (`$9030`) and the two Starfish Island gates on Starfish Island Access
   (`$9031`): the east gate on the item alone, the west gate only together
   with Mainland Access, since that gate is the sole barrier on the island's
   mainland crossing.
-- Reserved globals above `$9399` (`$9400` up) are SCM-internal marker handles
-  and visibility flags. `$9004`, `$9006`, `$9007`, `$9008`, and `$9009` in the
+- Reserved globals above `$9414` are SCM-internal: `$9415..$9419` are unused
+  padding and `$9420` up are marker handles and visibility flags. `$9004`, `$9006`, `$9007`, `$9008`, and `$9009` in the
   bookkeeping gap below `$9379` are SCM-internal scratch (the two island-gate
   once-guards, a package counter, and two reward once-guards). The ASI never
   reads or writes any of these.

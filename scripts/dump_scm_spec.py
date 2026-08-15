@@ -56,21 +56,36 @@ def main() -> int:
           "initializes to identity, ASI overwrites; the scripted set_radio_channel "
           f"sites read it), ${scm.RADIO_REQUEST_GLOBAL} retune request (ASI posts "
           "station id plus one; the APRADIO watcher retunes and resets it)")
+    ownership_top = scm.OWNERSHIP_BASE + len(scm.OWNERSHIP_KEYS) - 1
+    print(f"- Ownership:      ${scm.OWNERSHIP_BASE}..${ownership_top}  (ASI writes 1 "
+          "when the property's ownership item is received; with the properties "
+          "class off the client stamps them all to 1 through config_globals, the "
+          "vanilla collapse. The SCM gates venue missions, the safehouse save "
+          "threads, and the Pole Position and Sunshine Autos asset-completion "
+          "recognitions on them)")
     print(f"- Highest reserved global: ${scm.highest_reserved_global()} "
           "(reference it once so Sanny grows the global space to cover the block)")
+    print()
+    for ownership in scm.OWNERSHIP_KEYS:
+        print(f"  ${scm.ownership_global(ownership)}  {ownership}")
     print()
 
     print("## Mission gates (per launcher, in vanilla order)")
     print("Gate the launcher before load_and_launch_mission_internal: allow the")
     print("mission only when every listed global is at least its count. Set the")
     print("completion global to 1 when the mission passes. A venue mission also")
-    print("gates on its property being bought, read from the venue purchase's")
-    print("completion global (in logic the stand-in is the items to pass")
-    print(f"{data.PROPERTY_UNLOCK_MISSION}, the mission that puts the businesses up for sale).")
-    print("The ownership condition is the required behavior; for the Boatyard and")
-    print("Sunshine Autos activity launchers the SCM emits no explicit condition,")
-    print("because their threads only start at the buy cutscene, which already")
-    print("carries it.")
+    print("gates on its property being bought (the venue purchase's completion")
+    print("global) and owned (its ownership global); in logic the purchase's")
+    print(f"stand-in is the items to pass {data.PROPERTY_UNLOCK_MISSION}, the mission")
+    print("that puts the businesses up for sale. The Boatyard and Sunshine Autos")
+    print("activity launchers carry only the ownership condition explicitly,")
+    print("because their threads start at the buy cutscene, which already carries")
+    print("the purchase. Cap the Collector keeps its vanilla asset prerequisite,")
+    print(f"read from the vanilla globals: ${data.FINALE_HIT_THE_COURIER_FLAG} >= 1 "
+          f"(Hit the Courier), ${data.FINALE_COP_LAND_FLAG} >= 1 (Cop Land), and")
+    print(f"${data.FINALE_ASSET_COUNT_GLOBAL} >= {data.FINALE_ASSET_THRESHOLD} "
+          f"(owned-asset count, {data.FINALE_ASSET_THRESHOLD} of the 9 income assets "
+          "complete).")
     for strand, (class_key, missions) in data.progressive_strands().items():
         print()
         print(f"### {strand}  [{class_key}]  unlock global ${scm.unlock_global(strand)}")
@@ -85,6 +100,13 @@ def main() -> int:
             if strand in data.VENUE_STRANDS:
                 purchase = f"{strand} Purchase"
                 parts.append(f"${scm.completion_global(purchase)} >= 1 (property bought)")
+                ownership = data.ownership_item_name(strand)
+                parts.append(f"${scm.ownership_global(ownership)} >= 1 (property owned)")
+            if mission == "Cap the Collector":
+                parts.append(f"${data.FINALE_COP_LAND_FLAG} >= 1 (Cop Land passed)")
+                parts.append(f"${data.FINALE_HIT_THE_COURIER_FLAG} >= 1 (Hit the Courier passed)")
+                parts.append(f"${data.FINALE_ASSET_COUNT_GLOBAL} >= "
+                             f"{data.FINALE_ASSET_THRESHOLD} (owned-asset count)")
             gate = " AND ".join(parts) if parts else "(free, no unlock)"
             print(f"  #{position} {mission}")
             print(f"      gate:       {gate}")

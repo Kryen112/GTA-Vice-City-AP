@@ -49,30 +49,42 @@ MISSIONS = [
     # Mr. Black (9021)
     ("ASSIN_1", [(9021, 1)], 9069), ("ASSIN_2", [(9021, 2)], 9070), ("ASSIN_3", [(9021, 3)], 9071),
     ("ASSIN_4", [(9021, 4)], 9072), ("ASSIN_5", [(9021, 5)], 9073),
-    # Vercetti Finale (9022, after the protection strand 9016>=3). The last
-    # mission also mirrors logic's Mainland Access requirement ($9030): its
-    # launcher only activates once Cap the Collector passes on the mainland,
-    # so the condition is already true whenever it can fire.
-    ("FIN1", [(9022, 1), (9016, 3)], 9074),
+    # Vercetti Finale (9022, after the protection strand 9016>=3). Cap the
+    # Collector keeps its vanilla asset prerequisite, read from the vanilla
+    # globals: Hit the Courier passed ($273), Cop Land passed ($268), and the
+    # owned-asset count $1175 at seven or more (the CELL controller required
+    # $1175 > 6). The last mission also mirrors logic's Mainland Access
+    # requirement ($9030): its launcher only activates once Cap the Collector
+    # passes on the mainland, so the condition is already true whenever it can
+    # fire.
+    ("FIN1", [(9022, 1), (9016, 3), (268, 1), (273, 1), (1175, 7)], 9074),
     ("FIN2", [(9022, 2), (9016, 3), (9030, 1)], 9075),
     # Venue strands also require their property bought, read from the venue
-    # purchase's completion global (set at the buy cutscene, save-persisted).
-    # Malibu Club (9023, bought $9337)
-    ("BANK1", [(9023, 1), (9337, 1)], 9347), ("BANK2", [(9023, 2), (9337, 1)], 9348),
-    ("BANK3", [(9023, 3), (9337, 1)], 9349), ("BANK4", [(9023, 4), (9337, 1)], 9350),
-    # Film Studio (9024, bought $9334)
-    ("PORN1", [(9024, 1), (9334, 1)], 9351), ("PORN2", [(9024, 2), (9334, 1)], 9352),
-    ("PORN3", [(9024, 3), (9334, 1)], 9353), ("PORN4", [(9024, 4), (9334, 1)], 9354),
-    # Printworks (9025, bought $9332)
-    ("COU1", [(9025, 1), (9332, 1)], 9355), ("COU2", [(9025, 2), (9332, 1)], 9356),
-    # Kaufman Cabs (9026, bought $9336)
-    ("TWAR1", [(9026, 1), (9336, 1)], 9357), ("TWAR2", [(9026, 2), (9336, 1)], 9358),
-    ("TWAR3", [(9026, 3), (9336, 1)], 9359),
-    # Cherry Popper (9027, bought $9335; the buy cutscene is also what starts
-    # its launcher). Boatyard (9028) and Sunshine Autos (9029) are activity
-    # launchers with no passed-flag guard, wired bespoke in ACTIVITIES; their
-    # threads too start only at the buy cutscene, which carries ownership.
-    ("ICE1", [(9027, 1), (9335, 1)], 9360),
+    # purchase's completion global (set at the buy cutscene, save-persisted),
+    # and owned, read from the ownership global its AP item drives.
+    # Malibu Club (9023, bought $9337, owned $9405)
+    ("BANK1", [(9023, 1), (9337, 1), (9405, 1)], 9347),
+    ("BANK2", [(9023, 2), (9337, 1), (9405, 1)], 9348),
+    ("BANK3", [(9023, 3), (9337, 1), (9405, 1)], 9349),
+    ("BANK4", [(9023, 4), (9337, 1), (9405, 1)], 9350),
+    # Film Studio (9024, bought $9334, owned $9402)
+    ("PORN1", [(9024, 1), (9334, 1), (9402, 1)], 9351),
+    ("PORN2", [(9024, 2), (9334, 1), (9402, 1)], 9352),
+    ("PORN3", [(9024, 3), (9334, 1), (9402, 1)], 9353),
+    ("PORN4", [(9024, 4), (9334, 1), (9402, 1)], 9354),
+    # Printworks (9025, bought $9332, owned $9400)
+    ("COU1", [(9025, 1), (9332, 1), (9400, 1)], 9355),
+    ("COU2", [(9025, 2), (9332, 1), (9400, 1)], 9356),
+    # Kaufman Cabs (9026, bought $9336, owned $9404)
+    ("TWAR1", [(9026, 1), (9336, 1), (9404, 1)], 9357),
+    ("TWAR2", [(9026, 2), (9336, 1), (9404, 1)], 9358),
+    ("TWAR3", [(9026, 3), (9336, 1), (9404, 1)], 9359),
+    # Cherry Popper (9027, bought $9335, owned $9403; the buy cutscene is also
+    # what starts its launcher). Boatyard (9028) and Sunshine Autos (9029) are
+    # activity launchers with no passed-flag guard, wired bespoke in
+    # ACTIVITIES; their threads too start only at the buy cutscene, which
+    # carries the purchase condition.
+    ("ICE1", [(9027, 1), (9335, 1), (9403, 1)], 9360),
 ]
 
 with open(SRC, "rb") as handle:
@@ -232,6 +244,74 @@ def add_purchase_completions():
         insert_after(f"script_name '{label}'", [f"${completion} = 1"], f"purchase {label} ${completion}")
 
 
+# Property ownership globals, indices matching scm.py: one per purchasable
+# property in purchase order ($9400 Printworks .. $9414 Skumole Shack), written
+# by the ASI when the ownership item arrives (or all stamped to 1 when the
+# properties class is off, the vanilla collapse). Every property grant reads
+# bought AND owned.
+OWNERSHIP_SUNSHINE = 9401
+OWNERSHIP_POLE_POSITION = 9407
+OWNERSHIP_TOP = 9414
+
+# Safehouse save threads: (save thread, ownership global, garage grant lines
+# moved out of the buy cutscene). Each SAVEn thread is started only by its buy
+# cutscene and persists inside saves, so gating its body on the ownership
+# global defers the save pickup until the property is bought and owned in
+# either order, and the garage changes ride the same gate. The buy cutscene
+# keeps its camera work, money, blip swap, and owned-property stat.
+SAFEHOUSES = [
+    ("SAVE1", 9408, ["change_garage_type $663 change_to_type 16"]),   # El Swanko Casa
+    ("SAVE2", 9409, ["change_garage_type $655 change_to_type 26"]),   # Links View Apartment
+    ("SAVE3", 9410, ["change_garage_type $667 change_to_type 17",     # Hyman Condo
+                     "change_garage_type $668 change_to_type 18",
+                     "change_garage_type $669 change_to_type 24"]),
+    ("SAVE4", 9412, []),                                              # 1102 Washington Street
+    ("SAVE5", 9411, ["change_garage_type $659 change_to_type 25"]),   # Ocean Heights Apartment
+    ("SAVE6", 9413, []),                                              # Vice Point
+    ("SAVE7", 9414, []),                                              # Skumole Shack
+]
+
+
+def defer_safehouse_grants():
+    for save_thread, ownership, garage_lines in SAFEHOUSES:
+        for grant in garage_lines:
+            hits = [i for i, ln in enumerate(lines) if ln == grant]
+            assert len(hits) == 1, f"safehouse {save_thread}: {grant!r} matched {len(hits)}"
+            del lines[hits[0]]
+        gate = [f":AP{save_thread}", "wait 250",
+                "if ", f"  ${ownership} >= 1", f"goto_if_false @AP{save_thread}",
+                *garage_lines]
+        insert_after(f"script_name '{save_thread}'", gate,
+                     f"safehouse {save_thread} ownership ${ownership}")
+
+
+def gate_pole_position_completion():
+    # The Pole Position asset completes on the back-room spend ($1086 > 299,
+    # once), inside the strip-club interior thread. The recognition waits for
+    # the property to be owned; the club itself stays open vanilla-style, and
+    # a spend made before ownership counts on the next club exit after it.
+    anchor = [i for i, ln in enumerate(lines)
+              if ln == "  $1086 > 299" and lines[i + 1] == "  $1096 == 0"]
+    assert len(anchor) == 1, f"pole position: spend guard matched {len(anchor)}"
+    lines[anchor[0] + 2:anchor[0] + 2] = [f"  ${OWNERSHIP_POLE_POSITION} >= 1"]
+    edits.append(f"pole position completion owned ${OWNERSHIP_POLE_POSITION}")
+
+
+def gate_sunshine_import_completion():
+    # The Sunshine Autos asset completes when the import garage's last list
+    # fills. The recognition branch re-polls every loop, so lists filled
+    # before ownership complete once the item arrives.
+    anchor = [i for i, ln in enumerate(lines) if ln == ":IMPORT1_87"]
+    assert len(anchor) == 1, f"sunshine import: :IMPORT1_87 matched {len(anchor)}"
+    i = anchor[0]
+    assert lines[i + 1] == "if " and lines[i + 2] == "  $1107 == 0" \
+        and lines[i + 3] == "goto_if_false @IMPORT1_822", \
+        f"sunshine import: branch shape looks wrong ({lines[i + 1:i + 4]})"
+    lines[i + 4:i + 4] = ["if ", f"  ${OWNERSHIP_SUNSHINE} >= 1",
+                          "goto_if_false @IMPORT1_822"]
+    edits.append(f"sunshine import completion owned ${OWNERSHIP_SUNSHINE}")
+
+
 def add_store_completions():
     # Each of the 15 store robberies calls add_stores_knocked_off; mark that
     # store's completion right after it. Source order maps to $9317..$9331.
@@ -291,21 +371,26 @@ def add_area_watcher(mainland_block, east_gate, west_gate):
 # Activity launchers (Boatyard's Checkpoint Charlie, Sunshine Autos Races) are
 # repeatable and have no passed-flag guard, so they are wired bespoke: a gate at
 # the launcher top and completion from the vanilla win flags via the APACT
-# watcher. (launcher-10 label, unlock global, count, loop-back label.)
+# watcher. Each also requires its property's ownership global; the purchase
+# condition is implicit, since these threads start only at the buy cutscene.
+# (launcher-10 label, [(global, count), ...], loop-back label.)
 ACTIVITIES = [
-    ("COKRUN_10", 9028, 1, "COKRUN_345"),
-    ("RACES_10", 9029, 1, "RACES_121"),
+    ("COKRUN_10", [(9028, 1), (9406, 1)], "COKRUN_345"),
+    ("RACES_10", [(9029, 1), (9401, 1)], "RACES_121"),
 ]
 
 
 def add_activity_gates():
-    for label, unlock, count, loopback in ACTIVITIES:
+    for label, conditions, loopback in ACTIVITIES:
         starts = [i for i, ln in enumerate(lines) if ln == f":{label}"]
         assert len(starts) == 1, f"activity gate: :{label} matched {len(starts)}"
         i = starts[0]
         assert lines[i + 1] == "wait $default_wait_time", f"activity gate: {label} missing wait"
-        lines[i + 2:i + 2] = ["if ", f"  ${unlock} >= {count}", f"goto_if_false @{loopback}"]
-        edits.append(f"activity gate {label} ${unlock}>={count}")
+        gate = []
+        for global_index, count in conditions:
+            gate += ["if ", f"  ${global_index} >= {count}", f"goto_if_false @{loopback}"]
+        lines[i + 2:i + 2] = gate
+        edits.append(f"activity gate {label} {conditions}")
 
 
 # Side events (14): completion-only, no gate (always playable). Each is a
@@ -568,12 +653,13 @@ def add_reward_applier():
 # Foundation: initialize the radio resolve map to identity (vanilla until the
 # ASI overwrites it) and reference the highest reserved global once so Sanny
 # sizes the whole $9000..N block as real zero-initialized globals. The last
-# line must equal scm.highest_reserved_global() (now the radio request global
-# $9399: 22 unlocks + 331 completions + 15 reward globals + 3 config flags +
-# 19 radio globals above $9000). add_markers.py anchors on that line.
+# line must equal scm.highest_reserved_global() (now the Skumole Shack
+# ownership global $9414: 22 unlocks + 331 completions + 15 reward globals +
+# 3 config flags + 19 radio globals + 15 ownership globals above $9000).
+# add_markers.py anchors on that line.
 foundation = [f"${RADIO_RESOLVE_BASE + station} = {station}" for station in range(9)]
-foundation += [f"${RADIO_REQUEST} = 0"]
-insert_after("script_name 'HOT'", foundation, f"foundation radio identity + ${RADIO_REQUEST} = 0")
+foundation += [f"${RADIO_REQUEST} = 0", f"${OWNERSHIP_TOP} = 0"]
+insert_after("script_name 'HOT'", foundation, f"foundation radio identity + ${OWNERSHIP_TOP} = 0")
 for launcher, gate_conditions, completion_global in MISSIONS:
     try:
         wire(launcher, gate_conditions, completion_global)
@@ -583,6 +669,9 @@ mainland_open, west_gate_open = relocate_mainland_open()
 add_area_watcher(mainland_open, sever_starfish_east_open(), west_gate_open)
 add_package_watcher()
 add_purchase_completions()
+defer_safehouse_grants()
+gate_pole_position_completion()
+gate_sunshine_import_completion()
 add_store_completions()
 add_activity_gates()
 add_activity_watcher()

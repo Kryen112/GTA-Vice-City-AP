@@ -43,25 +43,36 @@ STRANDS = {
     "LoveFist": [("ROC1", [(9020, 1)]), ("ROC2", [(9020, 2)]), ("ROC3", [(9020, 3)])],
     "MrBlack": [("ASSIN_1", [(9021, 1)]), ("ASSIN_2", [(9021, 2)]), ("ASSIN_3", [(9021, 3)]),
                 ("ASSIN_4", [(9021, 4)]), ("ASSIN_5", [(9021, 5)])],
-    "VercettiFinale": [("FIN1", [(9022, 1), (9016, 3)]),
+    # Cap the Collector keeps its vanilla asset prerequisite: Hit the Courier
+    # passed ($273), Cop Land passed ($268), and the owned-asset count $1175
+    # at seven or more, so the finale marker and launcher wait for the assets.
+    "VercettiFinale": [("FIN1", [(9022, 1), (9016, 3), (268, 1), (273, 1), (1175, 7)]),
                        ("FIN2", [(9022, 2), (9016, 3), (9030, 1)])],
     # Venue strand gates also require the property bought (the venue purchase's
-    # completion global), so the beam and blip stay hidden and the launcher
-    # stays unstarted until both the progressive and the purchase exist.
-    "Malibu": [("BANK1", [(9023, 1), (9337, 1)]), ("BANK2", [(9023, 2), (9337, 1)]),
-               ("BANK3", [(9023, 3), (9337, 1)]), ("BANK4", [(9023, 4), (9337, 1)])],
-    "FilmStudio": [("PORN1", [(9024, 1), (9334, 1)]), ("PORN2", [(9024, 2), (9334, 1)]),
-                   ("PORN3", [(9024, 3), (9334, 1)]), ("PORN4", [(9024, 4), (9334, 1)])],
-    "Printworks": [("COU1", [(9025, 1), (9332, 1)]), ("COU2", [(9025, 2), (9332, 1)])],
-    "KaufmanCabs": [("TWAR1", [(9026, 1), (9336, 1)]), ("TWAR2", [(9026, 2), (9336, 1)]),
-                    ("TWAR3", [(9026, 3), (9336, 1)])],
+    # completion global) and owned (the ownership global its AP item drives),
+    # so the beam and blip stay hidden and the launcher stays unstarted until
+    # the progressive, the purchase, and the ownership item all exist.
+    "Malibu": [("BANK1", [(9023, 1), (9337, 1), (9405, 1)]),
+               ("BANK2", [(9023, 2), (9337, 1), (9405, 1)]),
+               ("BANK3", [(9023, 3), (9337, 1), (9405, 1)]),
+               ("BANK4", [(9023, 4), (9337, 1), (9405, 1)])],
+    "FilmStudio": [("PORN1", [(9024, 1), (9334, 1), (9402, 1)]),
+                   ("PORN2", [(9024, 2), (9334, 1), (9402, 1)]),
+                   ("PORN3", [(9024, 3), (9334, 1), (9402, 1)]),
+                   ("PORN4", [(9024, 4), (9334, 1), (9402, 1)])],
+    "Printworks": [("COU1", [(9025, 1), (9332, 1), (9400, 1)]),
+                   ("COU2", [(9025, 2), (9332, 1), (9400, 1)])],
+    "KaufmanCabs": [("TWAR1", [(9026, 1), (9336, 1), (9404, 1)]),
+                    ("TWAR2", [(9026, 2), (9336, 1), (9404, 1)]),
+                    ("TWAR3", [(9026, 3), (9336, 1), (9404, 1)])],
 }
 
-# Fresh scratch globals, all above the ASI-written block ($9399). One handle,
-# one started-flag, one shown-flag per managed mission.
-HANDLE_BASE = 9400
-STARTED_BASE = 9460
-SHOWN_BASE = 9520
+# Fresh scratch globals, all above the ASI-written block (its top is the
+# ownership globals, $9414). One handle, one started-flag, one shown-flag per
+# managed mission.
+HANDLE_BASE = 9420
+STARTED_BASE = 9480
+SHOWN_BASE = 9540
 MARKER_SPRITE_DEFAULT = "34"  # generic mission-attempt sprite; overridden per giver
 
 with open(SRC, "rb") as handle:
@@ -282,8 +293,10 @@ lines[anchor:anchor] = body
 boot = next(i for i, ln in enumerate(lines) if ln == "start_new_script @HOT ")
 lines[boot + 1:boot + 1] = ["start_new_script @APMARK "]
 
-# Grow the reserved block to cover the new scratch globals.
-found = next(i for i, ln in enumerate(lines) if ln == "$9399 = 0")
+# Grow the reserved block to cover the new scratch globals. The anchor is the
+# foundation's sizing line, the highest ASI-written global (Skumole Shack's
+# ownership global).
+found = next(i for i, ln in enumerate(lines) if ln == "$9414 = 0")
 lines[found + 1:found + 1] = [f"${highest_global} = 0"]
 
 with open(DST, "wb") as handle:

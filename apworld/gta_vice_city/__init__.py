@@ -207,6 +207,8 @@ class GTAViceCityWorld(World):
         if name in data.EMERGENCY_REWARD_ITEMS:
             return bool(self.options.enable_emergency_vehicles.value
                         and self.options.shuffle_emergency_rewards.value)
+        if name in data.PROPERTY_OWNERSHIP_ITEMS:
+            return bool(self.options.enable_properties.value)
         return True
 
     def create_item(self, name: str) -> GTAViceCityItem:
@@ -261,6 +263,10 @@ class GTAViceCityWorld(World):
         )
         placeable.extend(
             reward for reward in data.EMERGENCY_REWARD_ITEMS if self._item_enabled(reward)
+        )
+        placeable.extend(
+            ownership for ownership in data.PROPERTY_OWNERSHIP_ITEMS
+            if self._item_enabled(ownership)
         )
         if self.options.randomize_radio_stations:
             # One random station is the start (precollected, so it arrives as
@@ -352,7 +358,12 @@ class GTAViceCityWorld(World):
 
     def set_rules(self) -> None:
         from worlds.generic.Rules import set_rule
-        for location_name, rule in rules.LOCATION_RULES.items():
+        # Built per world: the finale missions carry the asset prerequisite
+        # only while the properties class is on (its items are in the pool).
+        location_rules = rules.build_location_rules(
+            bool(self.options.enable_properties.value)
+        )
+        for location_name, rule in location_rules.items():
             if not self._location_enabled(location_name):
                 continue
             set_rule(self.multiworld.get_location(location_name, self.player), self._bind(rule))
@@ -397,12 +408,7 @@ class GTAViceCityWorld(World):
             },
             "config_globals": {
                 str(global_index): value
-                for global_index, value in scm.config_flags(
-                    bool(self.options.enable_hidden_packages.value),
-                    bool(self.options.enable_emergency_vehicles.value
-                         and self.options.shuffle_emergency_rewards.value),
-                    bool(self.options.randomize_radio_stations.value),
-                ).items()
+                for global_index, value in self._config_globals().items()
             },
             "completion_watch": {
                 str(global_index): location_id
@@ -416,6 +422,22 @@ class GTAViceCityWorld(World):
             } if self.options.enable_hidden_packages.value else {},
             **{name: bool(getattr(self.options, name).value) for name in CHECK_CLASS_OPTIONS},
         }
+
+    def _config_globals(self) -> dict[int, int]:
+        # The reward-group config flags, plus the vanilla-collapse writes when
+        # the properties class is off: with the ownership items out of the
+        # pool, the client stamps the venue unlock and ownership globals so
+        # every static property gate reduces to purchase-only, the vanilla
+        # semantics the toggle invariant demands.
+        flags = scm.config_flags(
+            bool(self.options.enable_hidden_packages.value),
+            bool(self.options.enable_emergency_vehicles.value
+                 and self.options.shuffle_emergency_rewards.value),
+            bool(self.options.randomize_radio_stations.value),
+        )
+        if not self.options.enable_properties.value:
+            flags.update(scm.properties_vanilla_globals())
+        return flags
 
     def _completion_condition(self) -> Callable[[CollectionState], bool]:
         player = self.player

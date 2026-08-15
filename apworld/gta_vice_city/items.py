@@ -1,10 +1,11 @@
 """Item tables. Names, ids, classification, and groups, derived from data.py.
 
-Classification is decided here in one place. Progressive giver unlocks and
-area access are progression; package rewards, emergency-vehicle rewards, and
-radio stations are useful; cash denominations, the weapon pickup, the health
-and armor top-ups, and the wanted-level clear are filler; the trap items are
-traps. Money never gates logic, so cash is never progression.
+Classification is decided here in one place. Progressive giver unlocks, area
+access, and the business property ownerships are progression; package rewards,
+emergency-vehicle rewards, radio stations, and the safehouse ownerships are
+useful; cash denominations, the weapon pickup, the health and armor top-ups,
+and the wanted-level clear are filler; the trap items are traps. Money never
+gates logic, so cash is never progression.
 """
 
 from __future__ import annotations
@@ -39,6 +40,7 @@ _ORDERED_ITEM_NAMES: list[str] = (
     + [data.HIDDEN_PACKAGE_ITEM]
     + data.TRAP_ITEMS
     + data.RADIO_STATION_ITEMS
+    + data.PROPERTY_OWNERSHIP_ITEMS
 )
 
 ITEM_NAME_TO_ID: dict[str, int] = {
@@ -54,13 +56,18 @@ GENERAL_FILLER_NAMES: list[str] = list(data.GENERAL_FILLER)
 def _classify(name: str) -> ItemClassification:
     if name in PROGRESSIVE_ITEM_NAMES or name in data.AREA_ITEMS:
         return ItemClassification.progression
+    if name in data.BUSINESS_OWNERSHIP_ITEMS:
+        # A business ownership gates its venue missions or, for Pole Position,
+        # counts toward the finale's asset threshold, so logic may require it.
+        return ItemClassification.progression
     if name == data.HIDDEN_PACKAGE_ITEM:
         # A goal macguffin: progression so the generator guarantees enough are
         # reachable, skip_balancing because there are many and none unlocks
         # anything, so they must not distort progression balancing.
         return ItemClassification.progression_skip_balancing
     if (name in data.PACKAGE_REWARD_ITEMS or name in data.EMERGENCY_REWARD_ITEMS
-            or name in data.RADIO_STATION_ITEMS):
+            or name in data.RADIO_STATION_ITEMS
+            or name in data.SAFEHOUSE_OWNERSHIP_ITEMS):
         return ItemClassification.useful
     if name in data.TRAP_ITEMS:
         return ItemClassification.trap
@@ -79,6 +86,7 @@ ITEM_GROUPS: dict[str, list[str]] = {
     "Filler": list(data.FILLER_ITEMS),
     "Traps": list(data.TRAP_ITEMS),
     "Radio Stations": list(data.RADIO_STATION_ITEMS),
+    "Property Ownership": list(data.PROPERTY_OWNERSHIP_ITEMS),
 }
 
 # The item quantity each name contributes to the pool. Progressive items have

@@ -106,6 +106,34 @@ BUSINESS_PURCHASES: list[str] = [
     f"{venue} Purchase" for venue in VENUE_STRANDS
 ] + ["Pole Position Purchase"]
 
+
+def ownership_item_name(property_name: str) -> str:
+    # The property's base name, the purchase name without its suffix.
+    return f"{property_name} Ownership"
+
+
+# Property ownership items, one per purchasable property in purchase order.
+# Buying a property stays the check; the building itself arrives as this item.
+# Nothing a property provides works until it is bought AND owned, in either
+# order: a venue's missions, a safehouse's save point and garage, and an
+# income asset's completion recognition. The eight business ownerships are
+# progression (seven gate venue mission strands, and Pole Position counts
+# toward the finale's asset threshold); the seven safehouse ownerships are
+# useful, since a save point gates no location.
+PROPERTY_OWNERSHIP_ITEMS: list[str] = [
+    ownership_item_name(purchase.removesuffix(" Purchase"))
+    for purchase in PROPERTY_PURCHASES
+]
+
+BUSINESS_OWNERSHIP_ITEMS: list[str] = [
+    ownership_item_name(purchase.removesuffix(" Purchase"))
+    for purchase in BUSINESS_PURCHASES
+]
+
+SAFEHOUSE_OWNERSHIP_ITEMS: list[str] = [
+    item for item in PROPERTY_OWNERSHIP_ITEMS if item not in BUSINESS_OWNERSHIP_ITEMS
+]
+
 # The Rosenberg strand opens on a new game with no unlock item (sphere 0).
 # Every other giver's first mission needs its first progressive unlock.
 SPHERE_ZERO_GIVER = "Rosenberg"
@@ -407,8 +435,8 @@ def progressive_item_count(strand: str) -> int:
 # after Rub Out) is deliberately not enforced, and the mod severs the
 # vanilla marker reveals and launcher starts that carried it. The one
 # strand-level edge kept is the finale, the goal mission, behind the
-# protection strand. Asset ownership before the finale is money, which is
-# grindable, so it is not encoded as a logic gate.
+# protection strand. The finale's vanilla asset prerequisite has its own
+# encoding, the FINALE tables below.
 STRAND_PREREQUISITES: dict[str, list[tuple[str, int]]] = {
     "Vercetti Finale": [("Vercetti Protection", 3)],
 }
@@ -418,6 +446,33 @@ STRAND_PREREQUISITES: dict[str, list[tuple[str, int]]] = {
 MISSION_PREREQUISITES: dict[str, list[tuple[str, int]]] = {
     "Rub Out": [("Death Row", 1)],
 }
+
+
+# The finale's vanilla asset prerequisite, pinned from the decompile. The CELL
+# controller starts Cap the Collector's launcher once Hit the Courier ($273)
+# and Cop Land ($268) have passed and the owned-asset count $1175 exceeds six:
+# seven of the nine income assets complete. Each asset completes differently:
+# a venue strand's last mission, the Sunshine Autos import garage lists, the
+# Pole Position back-room spend, or Cop Land for the Vercetti Estate. The
+# custom FIN1 gate reads the same vanilla globals, and an asset's completion
+# is recognized only while its property is bought and owned, so logic mirrors
+# the prerequisite as the items to complete each asset.
+FINALE_HIT_THE_COURIER_FLAG = 273
+FINALE_COP_LAND_FLAG = 268
+FINALE_ASSET_COUNT_GLOBAL = 1175
+FINALE_ASSET_THRESHOLD = 7
+
+# The assets logic may pick from for the threshold: venue or business name ->
+# the progressive unlocks its completion needs (0 = free-roam money once the
+# property is bought and owned). Printworks is absent because Hit the Courier
+# is individually mandatory, and the Vercetti Estate because Cop Land arrives
+# through the protection progressives the finale already requires; both count
+# toward the threshold, leaving this many to pick from the seven below.
+FINALE_OPTIONAL_ASSETS: dict[str, int] = {
+    "Malibu Club": 4, "Film Studio": 4, "Kaufman Cabs": 3, "Cherry Popper": 1,
+    "Boatyard": 1, "Sunshine Autos": 0, "Pole Position": 0,
+}
+FINALE_OPTIONAL_ASSETS_REQUIRED = FINALE_ASSET_THRESHOLD - 2
 
 
 # Region model, pinned from the SCM. The vanilla map has two persistent

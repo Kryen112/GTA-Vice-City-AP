@@ -18,6 +18,9 @@ Contract shipped to the client (and on to the ASI) in slot_data:
   waits for the player to be controllable.
 - config_globals: config-flag global index -> value. The ASI stamps these once
   from slot_data so the main.scm knows whether each reward group is shuffled.
+  With the properties class disabled the map also carries the vanilla-collapse
+  writes (properties_vanilla_globals), maxing the venue unlock and ownership
+  globals so every property gate reduces to purchase-only.
 - completion_watch: completion global index -> AP location id. The mission or
   collectible sets its completion global to one when done; the ASI polls these
   and reports the location.
@@ -70,17 +73,33 @@ EMERGENCY_SHUFFLED_GLOBAL = PACKAGES_SHUFFLED_GLOBAL + 1
 # initializes them to identity, so with the option off they are vanilla). The
 # request global carries an ASI-requested retune to the APRADIO watcher,
 # encoded station id plus one so the zero-initialized global idles; the
-# watcher decodes, calls set_radio_channel, and resets it to zero. The whole
-# block must stay below $9400, where the SCM-internal marker handles begin.
+# watcher decodes, calls set_radio_channel, and resets it to zero.
 RADIO_RANDOMIZED_GLOBAL = EMERGENCY_SHUFFLED_GLOBAL + 1
 RADIO_STATION_COUNT = 9
 RADIO_UNLOCK_BASE = RADIO_RANDOMIZED_GLOBAL + 1
 RADIO_RESOLVE_BASE = RADIO_UNLOCK_BASE + RADIO_STATION_COUNT
 RADIO_REQUEST_GLOBAL = RADIO_RESOLVE_BASE + RADIO_STATION_COUNT
 
+# Property ownership globals follow the radio block, one per purchasable
+# property in purchase order. The ASI writes one when the property's ownership
+# item is received (through item_globals like any unlock); the main.scm gates
+# venue missions, the safehouse save threads, and the Pole Position and
+# Sunshine Autos asset-completion recognitions on them, alongside each
+# purchase's completion global. With the properties class disabled the client
+# instead stamps every ownership global through config_globals
+# (properties_vanilla_globals below), so the static gates collapse to
+# purchase-only, the vanilla semantics. The whole reserved block must stay
+# below the SCM-internal marker handles, which begin right above it.
+OWNERSHIP_BASE = RADIO_REQUEST_GLOBAL + 1
+OWNERSHIP_KEYS: list[str] = list(data.PROPERTY_OWNERSHIP_ITEMS)
+
 
 def unlock_global(key: str) -> int:
     return UNLOCK_BASE + UNLOCK_KEYS.index(key)
+
+
+def ownership_global(item_name: str) -> int:
+    return OWNERSHIP_BASE + OWNERSHIP_KEYS.index(item_name)
 
 
 def completion_global(location_name: str) -> int:
@@ -92,7 +111,7 @@ def reward_global(item_name: str) -> int:
 
 
 def highest_reserved_global() -> int:
-    return RADIO_REQUEST_GLOBAL
+    return OWNERSHIP_BASE + len(OWNERSHIP_KEYS) - 1
 
 
 def item_globals() -> dict[int, int]:
@@ -107,7 +126,27 @@ def item_globals() -> dict[int, int]:
         mapping[items.ITEM_NAME_TO_ID[reward]] = reward_global(reward)
     for index, station in enumerate(data.RADIO_STATION_ITEMS):
         mapping[items.ITEM_NAME_TO_ID[station]] = RADIO_UNLOCK_BASE + index
+    for ownership in data.PROPERTY_OWNERSHIP_ITEMS:
+        mapping[items.ITEM_NAME_TO_ID[ownership]] = ownership_global(ownership)
     return mapping
+
+
+def properties_vanilla_globals() -> dict[int, int]:
+    """Global index -> value the client adds to config_globals when the
+    properties class is disabled, so the game behaves fully vanilla: the venue
+    unlock globals maxed (every gate's progressive condition always holds) and
+    every ownership global set (every ownership condition always holds),
+    leaving each purchase's completion global as the only live condition, the
+    vanilla purchase-grants-everything semantics."""
+    globals_map = {
+        unlock_global(venue): len(missions)
+        for venue, missions in data.VENUE_STRANDS.items()
+    }
+    globals_map.update({
+        ownership_global(ownership): 1
+        for ownership in data.PROPERTY_OWNERSHIP_ITEMS
+    })
+    return globals_map
 
 
 def item_effects() -> dict[int, list]:
