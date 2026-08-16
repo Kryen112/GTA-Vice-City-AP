@@ -48,7 +48,7 @@ class Recorder:
             await bridge.send_config(
                 self.config["item_globals"], self.config["completion_watch"],
                 self.config.get("item_effects", {}), self.config.get("config_globals", {}),
-                self.config.get("package_coords", {}),
+                self.config.get("package_coords", {}), self.config.get("pickup_layout", []),
             )
         await bridge.send_items(self.resync_items)
         await bridge.send_checked(self.resync_checked)

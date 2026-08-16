@@ -58,12 +58,15 @@ gitignore them. Stage explicit paths only; never `git add -A` or `git add .`.
   `create_item` alone.
 - `completion_condition` and every N-of-item threshold is a solvability
   contract. Any edit is high-risk and needs a test.
-- Money never gates logic. All money is free-roam grindable; cash items
-  exist only to reduce grind.
+- Money AMOUNTS never gate logic. All money is free-roam grindable once
+  Tommy can hold it; cash items exist only to reduce grind. The one item
+  that may gate a money-spending check is Wallet, and only while the
+  `ability_locks` wallet key is selected.
 - Toggle semantics: a disabled check class behaves fully vanilla in game.
   The content stays playable, its vanilla rewards reactivate, its locations
   do not exist, its class-specific items leave the pool. Story missions are
-  always on.
+  always on. The same holds per `ability_locks` key: an unselected key means
+  no lock, no item, and no access rule naming that item.
 - The 100% goal requires every check class enabled; generation rejects it
   otherwise.
 - New game per seed. Received state re-derives from AP server state on

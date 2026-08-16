@@ -57,6 +57,11 @@ Type these in the client console:
 | `/installmod` | Reinstall or update the bundled mod. Close the game first. |
 | `/restore` | Restore your normal saves and stop Archipelago save isolation. Close the game first. |
 
+## In-game keys
+
+- **F6**: with ability locks enabled in your YAML, shows which abilities are
+  still locked and which have arrived.
+
 ## Saves are kept separate
 
 Each seed gets its own save slots, and your existing Vice City saves are left untouched. Your original `main.scm` is backed up once when the mod installs. Run `/restore` (with the game closed) to switch back to your normal saves.

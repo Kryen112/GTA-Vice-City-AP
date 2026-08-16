@@ -8,16 +8,25 @@ property's ownership item (the building arrives as an item, not with the
 purchase) and the items to pass Shakedown: the property must also be bought in
 game, and the businesses go on sale only when Shakedown passes. The same sale
 requirement gates each business purchase; the price itself is money, which is
-grindable and never a gate. The two finale missions carry the vanilla asset
-prerequisite when the properties class is on: Hit the Courier completable plus
-enough of the optional income assets completable, each through its ownership
-item and progressives. A location's own area requirement is carried by the
-region it sits in; a rule names an area item only when the requirement crosses
-regions (the finale's Mainland Access, and the Starfish Island Access inside
-the property-sale requirements, since Shakedown gives from the mansion).
-Collectibles, activities, safehouse purchases, and stores have no rule (free
-within their region). The sphere-0 giver's first mission has no requirement
-at all.
+grindable and never a gate by amount. The two finale missions carry the vanilla
+asset prerequisite when the properties class is on: Hit the Courier completable
+plus enough of the optional income assets completable, each through its
+ownership item and progressives. A location's own area requirement is carried
+by the region it sits in; a rule names an area item only when the requirement
+crosses regions (the finale's Mainland Access, and the Starfish Island Access
+inside the property-sale requirements, since Shakedown gives from the mansion).
+
+Ability locks add terms only while their ability_locks key is selected (with
+the key off the item is not in the pool, so no rule may name it). The wallet
+rides the property-sale requirements, covering business purchases, venue
+missions, and the finale's assets in one place; safehouse purchases and the
+collectible classes carry their ability items directly from
+data.LOCATION_ABILITY_REQUIREMENTS. The terms are the minimal day-one set;
+the pre-release manual runthrough adds the rest.
+
+Without ability terms, collectibles, activities, safehouse purchases, and
+stores have no rule (free within their region). The sphere-0 giver's first
+mission has no requirement at all.
 """
 
 from __future__ import annotations
@@ -58,13 +67,26 @@ def _requires_with_asset_threshold(
     )
 
 
-def _mission_requirements(mission: str, giver: str) -> list[Requirement]:
+def _ability_terms(location_name: str, active_items: frozenset[str]) -> list[Requirement]:
+    # The location's ability items, kept only while their ability_locks key is
+    # selected (active): an unselected key leaves the item out of the pool, so
+    # naming it would make the location unreachable, not vanilla.
+    return [
+        (item, 1)
+        for item in data.LOCATION_ABILITY_REQUIREMENTS.get(location_name, [])
+        if item in active_items
+    ]
+
+
+def _mission_requirements(mission: str, giver: str,
+                          active_items: frozenset[str]) -> list[Requirement]:
     # The launcher-gate view: progressive unlocks, plus any area item the
-    # mission needs beyond its own region (the finale's Mainland Access). The
-    # SCM mission gates mirror the unlock counts; a venue's ownership and
-    # purchase requirements are added on top in build_location_rules (in game
-    # the gate reads the ownership global and the purchase's completion
-    # global).
+    # mission needs beyond its own region (the finale's Mainland Access), plus
+    # the mission's ability terms. The SCM mission gates mirror the unlock
+    # counts; a venue's ownership and purchase requirements are added on top in
+    # build_location_rules (in game the gate reads the ownership global and the
+    # purchase's completion global), and an ability lock is ASI-enforced, not
+    # gated in the SCM.
     requirements: list[Requirement] = []
     index = locations.MISSION_INDEX[mission]
     # Sphere-0 giver: first mission (index 0) is free; mission i needs i.
@@ -79,58 +101,103 @@ def _mission_requirements(mission: str, giver: str) -> list[Requirement]:
     requirements.extend(
         (area_item, 1) for area_item in data.MISSION_AREA_REQUIREMENTS.get(mission, [])
     )
+    requirements.extend(_ability_terms(mission, active_items))
     return requirements
 
 
-def _property_sale_requirements() -> list[Requirement]:
+def _property_sale_requirements(active_items: frozenset[str]) -> list[Requirement]:
     # A business is for sale only once Shakedown passes, so anything behind
     # buying one requires everything logic needs to pass Shakedown: its items
     # and the area item of the region its marker sits in (the mansion on
-    # Starfish Island). The purchase price is money, which is grindable and
-    # never gates logic.
+    # Starfish Island). The purchase price is money: grindable by amount, but
+    # holdable only with the Wallet item while the wallet lock is selected, so
+    # the wallet term rides here, covering business purchases, venue missions,
+    # and the finale's assets in one place.
     mission = data.PROPERTY_UNLOCK_MISSION
-    requirements = _mission_requirements(mission, locations.MISSION_GIVER[mission])
+    requirements = _mission_requirements(
+        mission, locations.MISSION_GIVER[mission], active_items)
     region = locations.LOCATION_REGIONS[mission]
     area_item = data.AREA_ITEM_BY_REGION.get(region)
     if area_item is not None:
         requirements = [*requirements, (area_item, 1)]
+    if data.WALLET_ITEM in active_items:
+        requirements = [*requirements, (data.WALLET_ITEM, 1)]
     return requirements
 
 
-def _asset_completion_requirements(asset: str, progressive_count: int) -> list[Requirement]:
+def _deduplicated(requirements: list[Requirement]) -> list[Requirement]:
+    # Same item twice is the same requirement; keep the higher count and the
+    # first position, so a gathered list stays one entry per item.
+    highest: dict[str, int] = {}
+    for item, count in requirements:
+        highest[item] = max(highest.get(item, 0), count)
+    seen: set[str] = set()
+    ordered: list[Requirement] = []
+    for item, _count in requirements:
+        if item in seen:
+            continue
+        seen.add(item)
+        ordered.append((item, highest[item]))
+    return ordered
+
+
+def _asset_completion_requirements(asset: str, progressive_count: int,
+                                   active_items: frozenset[str]) -> list[Requirement]:
     # The items to complete an income asset: its ownership item (buying the
     # property is covered by the property-sale requirements the finale rule
-    # carries once) and, where the asset completes through its venue strand,
-    # the progressives to reach the strand's last mission.
+    # carries once), where the asset completes through its venue strand the
+    # progressives to reach the strand's last mission, and the ability terms
+    # of the missions that completion actually reaches plus the asset's own
+    # (the Sunshine Autos import lists take delivering vehicles). The strand
+    # is sliced to the progressives the asset needs: Sunshine Autos completes
+    # through the import lists, not its race, so the race's terms are none of
+    # the threshold's business. The count doubles as a mission count because a
+    # venue strand's nth mission is exactly what its nth progressive opens.
     requirements: list[Requirement] = [(data.ownership_item_name(asset), 1)]
     if progressive_count > 0:
         requirements.append((data.progressive_item_name(asset), progressive_count))
-    return requirements
+    for mission in data.VENUE_STRANDS.get(asset, [])[:progressive_count]:
+        requirements.extend(_ability_terms(mission, active_items))
+    requirements.extend(
+        (item, 1)
+        for item in data.ASSET_ABILITY_REQUIREMENTS.get(asset, [])
+        if item in active_items
+    )
+    return _deduplicated(requirements)
 
 
-def _finale_asset_terms() -> tuple[list[Requirement], list[list[Requirement]]]:
+def _finale_asset_terms(
+    active_items: frozenset[str],
+) -> tuple[list[Requirement], list[list[Requirement]]]:
     # The finale's vanilla asset prerequisite as items. Hit the Courier
     # (Printworks' last mission) is individually mandatory, Cop Land arrives
     # through the protection progressives already in the finale's own
     # requirements, and the remaining threshold picks from the optional
     # assets. The sale requirements ride along once, covering every purchase.
     mandatory = (
-        _asset_completion_requirements("Printworks", len(data.VENUE_STRANDS["Printworks"]))
-        + _property_sale_requirements()
+        _asset_completion_requirements(
+            "Printworks", len(data.VENUE_STRANDS["Printworks"]), active_items)
+        + _property_sale_requirements(active_items)
     )
     optional = [
-        _asset_completion_requirements(asset, progressive_count)
+        _asset_completion_requirements(asset, progressive_count, active_items)
         for asset, progressive_count in data.FINALE_OPTIONAL_ASSETS.items()
     ]
     return mandatory, optional
 
 
-def build_location_rules(properties_enabled: bool = True) -> dict[str, RulePredicate]:
+def build_location_rules(
+    properties_enabled: bool = True,
+    ability_locks: frozenset[str] = frozenset(),
+) -> dict[str, RulePredicate]:
+    active_items = frozenset(
+        item for key in ability_locks for item in data.ABILITY_LOCK_ITEMS[key]
+    )
     rules: dict[str, RulePredicate] = {}
-    sale_requirements = _property_sale_requirements()
-    finale_mandatory, finale_optional = _finale_asset_terms()
+    sale_requirements = _property_sale_requirements(active_items)
+    finale_mandatory, finale_optional = _finale_asset_terms(active_items)
     for mission, giver in locations.MISSION_GIVER.items():
-        requirements = _mission_requirements(mission, giver)
+        requirements = _mission_requirements(mission, giver, active_items)
         if giver in data.VENUE_STRANDS:
             requirements = [
                 *requirements,
@@ -150,14 +217,22 @@ def build_location_rules(properties_enabled: bool = True) -> dict[str, RulePredi
                 # the FIN1 gate still reads the vanilla flags, and Shakedown
                 # and Cop Land are given from the mansion: the finale keeps
                 # the property-sale requirements (Starfish Island Access
-                # included) so the fill cannot strand that item behind it.
+                # included, and the wallet term while its lock is selected,
+                # since vanilla asset completion still spends money) so the
+                # fill cannot strand those items behind it.
                 rules[mission] = _requires(requirements + sale_requirements)
             continue
         if requirements:
             rules[mission] = _requires(requirements)
     for purchase in data.BUSINESS_PURCHASES:
         rules[purchase] = _requires(sale_requirements)
+    # Every remaining location with ability terms: the collectible and
+    # activity classes and the safehouse purchases, which carry no other rule.
+    handled = set(locations.MISSION_GIVER) | set(data.BUSINESS_PURCHASES)
+    for location_name in data.LOCATION_ABILITY_REQUIREMENTS:
+        if location_name in handled:
+            continue
+        ability_terms = _ability_terms(location_name, active_items)
+        if ability_terms:
+            rules[location_name] = _requires(ability_terms)
     return rules
-
-
-LOCATION_RULES: dict[str, RulePredicate] = build_location_rules()

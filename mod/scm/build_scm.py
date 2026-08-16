@@ -839,12 +839,18 @@ MINIMAP_UNLOCK = 9416
 # when its check class is enabled, so the class's one-time completion cash is
 # suppressed (the AP check is the reward); at zero everything pays vanilla.
 # The properties flag gates the venue mission pass cash and Checkpoint
-# Charlie's first run, and is the highest reserved global, so the foundation's
-# sizing line references it.
+# Charlie's first run.
 SIDE_EVENTS_ENABLED = 9417
 STUNT_JUMPS_ENABLED = 9418
 RAMPAGES_ENABLED = 9419
 PROPERTIES_ENABLED = 9420
+
+# The ability lock block, indices matching scm.py: eight lock flags at
+# $9421..$9428 then eight unlock globals at $9429..$9436, all ASI-facing only
+# (no gate reads them; the ASI enforces the locks per frame and they persist
+# inside saves). The top unlock is the highest reserved global, so the
+# foundation's sizing line references it; add_markers.py anchors on that line.
+ABILITY_TOP = 9436
 
 # Reward global -> the vanilla weapon flag or car generator it drives, in
 # reward-global order (body armor, chainsaw, .357, flamethrower, sniper, minigun,
@@ -985,14 +991,14 @@ def add_reward_applier():
 # Foundation: initialize the radio resolve map to identity (vanilla until the
 # ASI overwrites it) and reference the highest reserved global once so Sanny
 # sizes the whole $9000..N block as real zero-initialized globals. The last
-# line must equal scm.highest_reserved_global() (now the properties class-cash
-# flag $9420: 22 unlocks + 331 completions + 15 reward globals + 3 config
-# flags + 19 radio globals + 15 ownership globals + the minimap flag and
-# unlock + 4 class-cash flags above $9000). add_markers.py anchors on that
-# line.
+# line must equal scm.highest_reserved_global() (now the top ability unlock
+# $9436: 22 unlocks + 331 completions + 15 reward globals + 3 config flags +
+# 19 radio globals + 15 ownership globals + the minimap flag and unlock + 4
+# class-cash flags + 16 ability globals above $9000). add_markers.py anchors
+# on that line.
 foundation = [f"${RADIO_RESOLVE_BASE + station} = {station}" for station in range(9)]
-foundation += [f"${RADIO_REQUEST} = 0", f"${PROPERTIES_ENABLED} = 0"]
-insert_after("script_name 'HOT'", foundation, f"foundation radio identity + ${PROPERTIES_ENABLED} = 0")
+foundation += [f"${RADIO_REQUEST} = 0", f"${PROPERTIES_ENABLED} = 0", f"${ABILITY_TOP} = 0"]
+insert_after("script_name 'HOT'", foundation, f"foundation radio identity + ${ABILITY_TOP} = 0")
 for launcher, gate_conditions, completion_global in MISSIONS:
     try:
         wire(launcher, gate_conditions, completion_global)

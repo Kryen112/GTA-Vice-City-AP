@@ -6,13 +6,16 @@ Archipelago checkout and invokes pytest.
 
 from __future__ import annotations
 
+import io
+import math
+import random
 from typing import ClassVar
 
 from BaseClasses import CollectionState, ItemClassification
 from Options import OptionError
 from test.bases import WorldTestBase
 
-from .. import data, scm
+from .. import MINIMUM_SPHERE_ZERO, data, scm
 from ..items import ITEM_CLASSIFICATIONS, ITEM_NAME_TO_ID
 from ..locations import LOCATION_NAME_TO_ID, PACKAGE_NAMES, STORY_MISSION_NAMES
 from ..options import CHECK_CLASS_OPTIONS
@@ -142,6 +145,10 @@ class TestUniversalTracker(WorldTestBase):
         self.assertIn("randomize_radio_stations", slot_data)
         self.assertIn("radio_start_station", slot_data)
         self.assertIn("shuffle_minimap", slot_data)
+        self.assertIn("randomize_pickups", slot_data)
+        self.assertIn("pickup_permutation", slot_data)
+        self.assertIn("pickup_layout", slot_data)
+        self.assertIn("ability_locks", slot_data)
         # Carried so a tracker regeneration rebuilds the same filler/trap split.
         self.assertIn("trap_percentage", slot_data)
         for name in CHECK_CLASS_OPTIONS:
@@ -159,6 +166,9 @@ class TestUniversalTracker(WorldTestBase):
             "randomize_radio_stations": True,
             "radio_start_station": 3,
             "shuffle_minimap": True,
+            "randomize_pickups": True,
+            "pickup_permutation": list(reversed(range(len(data.PICKUP_SLOTS)))),
+            "ability_locks": ["vehicles", "wallet"],
             "trap_percentage": 40,
             "enable_hidden_packages": True,
             "enable_rampages": True, "enable_stunt_jumps": True,
@@ -178,6 +188,14 @@ class TestUniversalTracker(WorldTestBase):
         self.assertTrue(bool(self.world.options.shuffle_minimap.value))
         # The played seed's starting station replays instead of rerolling.
         self.assertEqual(self.world.radio_start_station, 3)
+        # And so does the played seed's pickup layout.
+        self.assertTrue(bool(self.world.options.randomize_pickups.value))
+        self.assertEqual(
+            self.world.pickup_permutation,
+            list(reversed(range(len(data.PICKUP_SLOTS)))),
+        )
+        # The played seed's ability locks restore, so pool and rules match.
+        self.assertEqual(self.world.options.ability_locks.value, {"vehicles", "wallet"})
         for name in CHECK_CLASS_OPTIONS:
             self.assertEqual(getattr(self.world.options, name).value, 1)
 
@@ -222,9 +240,9 @@ class TestRadioStationsOn(WorldTestBase):
             )
 
     def test_reserved_block_stays_below_the_marker_globals(self) -> None:
-        # $9421 up is SCM-internal (marker handles and visibility flags); the
+        # $9437 up is SCM-internal (marker handles and visibility flags); the
         # reserved contract must never grow into it.
-        self.assertLess(scm.highest_reserved_global(), 9421)
+        self.assertLess(scm.highest_reserved_global(), 9437)
 
 
 class TestRadioStationsOff(WorldTestBase):
@@ -309,6 +327,364 @@ class TestMinimapStoryOnly(WorldTestBase):
     # seed fills and stays reachable.
     game = "Grand Theft Auto Vice City"
     options: ClassVar[dict] = dict(_STORY_ONLY_OPTIONS, shuffle_minimap=True)
+
+
+class TestPickupRandomizerOn(WorldTestBase):
+    game = "Grand Theft Auto Vice City"
+    options: ClassVar[dict] = {"randomize_pickups": True}
+
+    def test_permutation_conserves_the_vanilla_multiset(self) -> None:
+        # A true permutation: every vanilla item lands somewhere exactly once,
+        # so the world holds the same count of every weapon, heart, armor,
+        # pill, and bribe as vanilla.
+        permutation = self.world.pickup_permutation
+        self.assertIsNotNone(permutation)
+        self.assertEqual(sorted(permutation), list(range(len(data.PICKUP_SLOTS))))
+
+    def test_no_bribe_lands_on_a_shop_slot(self) -> None:
+        # The in-shop cost lookup misreads on the bribe model, so the
+        # permutation keeps bribes off shop-type slots.
+        for slot_index, source_index in enumerate(self.world.pickup_permutation):
+            if data.PICKUP_SLOTS[slot_index][3] == data.PICKUP_SHOP_TYPE:
+                self.assertNotEqual(
+                    data.PICKUP_SLOTS[source_index][4], data.PICKUP_BRIBE_MODEL,
+                    slot_index,
+                )
+
+    def test_slot_data_carries_the_layout(self) -> None:
+        slot_data = self.world.fill_slot_data()
+        self.assertTrue(slot_data["randomize_pickups"])
+        self.assertEqual(slot_data["pickup_permutation"], self.world.pickup_permutation)
+        layout = slot_data["pickup_layout"]
+        self.assertEqual(len(layout), len(data.PICKUP_SLOTS))
+        for slot_index, row in enumerate(layout):
+            x, y, z, pickup_type, _model, _ammo = data.PICKUP_SLOTS[slot_index]
+            source = data.PICKUP_SLOTS[self.world.pickup_permutation[slot_index]]
+            self.assertEqual(row, [x, y, z, pickup_type, source[4], source[5]])
+
+    def test_forced_shop_conflict_is_swapped_away(self) -> None:
+        # The fix branch only runs when the shuffle happens to drop a bribe on
+        # a shop slot, so force that exact layout and reroll: the bribe must
+        # trade places with a non-bribe on a non-shop slot while the result
+        # stays a permutation.
+        slots = data.PICKUP_SLOTS
+        shop_slot = next(
+            index for index, slot in enumerate(slots)
+            if slot[3] == data.PICKUP_SHOP_TYPE
+        )
+        bribe_slot = next(
+            index for index, slot in enumerate(slots)
+            if slot[4] == data.PICKUP_BRIBE_MODEL
+        )
+        forced = list(range(len(slots)))
+        forced[shop_slot], forced[bribe_slot] = forced[bribe_slot], forced[shop_slot]
+
+        class ForcedShuffleRandom(random.Random):
+            def shuffle(self, sequence: list) -> None:
+                sequence[:] = forced
+
+        self.world.random = ForcedShuffleRandom()
+        self.world._choose_pickup_permutation(None)
+        permutation = self.world.pickup_permutation
+        self.assertEqual(sorted(permutation), list(range(len(slots))))
+        for slot_index, source_index in enumerate(permutation):
+            if slots[slot_index][3] == data.PICKUP_SHOP_TYPE:
+                self.assertNotEqual(
+                    slots[source_index][4], data.PICKUP_BRIBE_MODEL, slot_index,
+                )
+
+    def test_spoiler_names_every_slot(self) -> None:
+        handle = io.StringIO()
+        self.world.write_spoiler(handle)
+        lines = [line for line in handle.getvalue().splitlines() if ": " in line]
+        self.assertEqual(len(lines), len(data.PICKUP_SLOTS))
+
+    def test_slot_table_invariants(self) -> None:
+        # Every slot has a named model, a known pickup type, and non-negative
+        # ammo, and slots sit farther apart than the ASI's matching tolerance,
+        # so a position match is always unambiguous.
+        for _x, _y, _z, pickup_type, model, ammo in data.PICKUP_SLOTS:
+            self.assertIn(model, data.PICKUP_MODEL_NAMES)
+            self.assertIn(pickup_type, (1, 2, 15))
+            self.assertGreaterEqual(ammo, 0)
+        positions = [slot[:3] for slot in data.PICKUP_SLOTS]
+        closest = min(
+            math.dist(positions[first], positions[second])
+            for first in range(len(positions))
+            for second in range(first + 1, len(positions))
+        )
+        self.assertGreater(closest, 2.0)
+        # The bribe fix always has somewhere to swap to: strictly more
+        # non-shop slots than bribes, so a non-shop slot holding a non-bribe
+        # always exists.
+        non_shop_slots = sum(
+            1 for slot in data.PICKUP_SLOTS if slot[3] != data.PICKUP_SHOP_TYPE
+        )
+        bribes = sum(
+            1 for slot in data.PICKUP_SLOTS if slot[4] == data.PICKUP_BRIBE_MODEL
+        )
+        self.assertGreater(non_shop_slots, bribes)
+
+
+class TestPickupRandomizerOff(WorldTestBase):
+    game = "Grand Theft Auto Vice City"
+    # Default options: randomize_pickups is off.
+
+    def test_no_permutation_and_an_empty_layout(self) -> None:
+        # Off means fully vanilla: no permutation rolls and the ASI receives
+        # an empty layout, so it never touches the pickup pool.
+        self.assertIsNone(self.world.pickup_permutation)
+        slot_data = self.world.fill_slot_data()
+        self.assertFalse(slot_data["randomize_pickups"])
+        self.assertIsNone(slot_data["pickup_permutation"])
+        self.assertEqual(slot_data["pickup_layout"], [])
+        handle = io.StringIO()
+        self.world.write_spoiler(handle)
+        self.assertEqual(handle.getvalue(), "")
+
+
+_ALL_ABILITY_LOCKS: list[str] = [
+    "sprint", "jump", "crouch", "vehicles", "weapon_equip", "wallet",
+]
+
+
+class TestAbilityLocksAll(WorldTestBase):
+    game = "Grand Theft Auto Vice City"
+    options: ClassVar[dict] = {"ability_locks": _ALL_ABILITY_LOCKS}
+
+    def test_all_eight_items_enter_the_pool(self) -> None:
+        pool_names = [item.name for item in self.multiworld.itempool
+                      if item.player == self.player]
+        for name in data.ABILITY_ITEMS:
+            self.assertEqual(pool_names.count(name), 1, name)
+
+    def test_classification_splits_crouch_from_the_rest(self) -> None:
+        # Crouch gates nothing, so it is useful; every other ability item may
+        # appear in a rule, Sprint included (termless today, progression so a
+        # runthrough-found term needs no classification flip).
+        for name in data.ABILITY_ITEMS:
+            expected = (ItemClassification.useful if name == data.CROUCH_ITEM
+                        else ItemClassification.progression)
+            self.assertEqual(ITEM_CLASSIFICATIONS[name], expected, name)
+
+    def test_sphere_zero_mission_stays_free(self) -> None:
+        # The first Rosenberg mission carries no ability term, so a locked
+        # seed always has a sphere 0.
+        self.assertTrue(self.can_reach_location("An Old Friend"))
+
+    def test_stunt_jump_needs_a_land_vehicle(self) -> None:
+        self.collect_by_name(["Mainland Access"])
+        self.assertFalse(self.can_reach_location("Unique Stunt Jump 01"))
+        self.collect_by_name([data.LAND_VEHICLES_ITEM])
+        self.assertTrue(self.can_reach_location("Unique Stunt Jump 01"))
+
+    def test_emergency_level_needs_a_land_vehicle(self) -> None:
+        self.assertFalse(self.can_reach_location("Paramedic Level 01"))
+        self.collect_by_name([data.LAND_VEHICLES_ITEM])
+        self.assertTrue(self.can_reach_location("Paramedic Level 01"))
+
+    def test_chopper_checkpoint_needs_an_air_vehicle(self) -> None:
+        # A start-island checkpoint: the helicopter is the requirement, not a
+        # land vehicle.
+        self.collect_by_name([data.LAND_VEHICLES_ITEM])
+        self.assertFalse(self.can_reach_location("Ocean Beach Chopper Checkpoint"))
+        self.collect_by_name([data.AIR_VEHICLES_ITEM])
+        self.assertTrue(self.can_reach_location("Ocean Beach Chopper Checkpoint"))
+
+    def test_warp_seated_side_events_need_no_vehicle(self) -> None:
+        # Hotring and Bloodring take the player on foot and warp them into the
+        # event car, which no lock constrains, so they carry no term. Dirtring
+        # sets the player down beside a Sanchez to mount, so it does.
+        self.collect_by_name(["Mainland Access"])
+        self.assertTrue(self.can_reach_location("Hotring"))
+        self.assertTrue(self.can_reach_location("Bloodring"))
+        self.assertFalse(self.can_reach_location("Dirtring"))
+        self.collect_by_name([data.LAND_VEHICLES_ITEM])
+        self.assertTrue(self.can_reach_location("Dirtring"))
+
+    def test_robbable_store_needs_weapon_equip(self) -> None:
+        self.assertFalse(self.can_reach_location("Robbable Store 01"))
+        self.collect_by_name([data.WEAPON_EQUIP_ITEM])
+        self.assertTrue(self.can_reach_location("Robbable Store 01"))
+
+    def test_rampages_split_weapon_from_vehicle(self) -> None:
+        # A weapon rampage waits for Weapon Equip; the run-them-down rampage
+        # (21, Ocean Beach, no handed weapon) takes a land vehicle instead.
+        weapon_rampage = data.rampage_name(1)
+        vehicle_rampage = data.rampage_name(21)
+        self.collect_by_name([data.LAND_VEHICLES_ITEM])
+        self.assertFalse(self.can_reach_location(weapon_rampage))
+        self.assertTrue(self.can_reach_location(vehicle_rampage))
+        self.collect_by_name([data.WEAPON_EQUIP_ITEM])
+        self.assertTrue(self.can_reach_location(weapon_rampage))
+
+    def test_sunshine_asset_keeps_its_driving_term(self) -> None:
+        # The finale threshold is a solvability contract, and Sunshine Autos
+        # is the one asset whose strand slices away entirely (it completes on
+        # the import lists, not its race, so it needs zero progressives). Its
+        # driving requirement must survive that slice through the asset's own
+        # entry, or the threshold would count an asset the player cannot
+        # actually finish.
+        self.assertEqual(data.FINALE_OPTIONAL_ASSETS["Sunshine Autos"], 0)
+        self.assertIn(
+            data.LAND_VEHICLES_ITEM,
+            data.ASSET_ABILITY_REQUIREMENTS["Sunshine Autos"],
+        )
+        # And in the built rule, with Sunshine Autos as the deciding asset
+        # rather than a passenger: hold the mandatory Printworks plus exactly
+        # four optional assets that need no land vehicle (Kaufman Cabs,
+        # Cherry Popper and Pole Position carry no ability term at all, and
+        # Boatyard needs only the boat), so the threshold of five rests on
+        # Sunshine Autos alone and Land Vehicles is what completes it.
+        self.collect_by_name([
+            "Progressive Vercetti Finale", "Progressive Vercetti Protection",
+            "Mainland Access", "Starfish Island Access", data.WALLET_ITEM,
+            data.SEA_VEHICLES_ITEM,
+            "Printworks Ownership", "Progressive Printworks",
+            "Kaufman Cabs Ownership", "Progressive Kaufman Cabs",
+            "Cherry Popper Ownership", "Progressive Cherry Popper",
+            "Pole Position Ownership",
+            "Boatyard Ownership", "Progressive Boatyard",
+            "Sunshine Autos Ownership",
+        ])
+        self.assertFalse(self.can_reach_location("Cap the Collector"))
+        self.collect_by_name([data.LAND_VEHICLES_ITEM])
+        self.assertTrue(self.can_reach_location("Cap the Collector"))
+
+    def test_purchases_need_the_wallet(self) -> None:
+        # A safehouse is for sale from a new game but locked money still blocks
+        # paying; a business purchase carries the wallet through the sale
+        # requirements.
+        self.assertFalse(self.can_reach_location("El Swanko Casa Purchase"))
+        self.collect_by_name([
+            "Progressive Vercetti Protection", "Starfish Island Access",
+        ])
+        self.assertFalse(self.can_reach_location("Malibu Club Purchase"))
+        self.collect_by_name([data.WALLET_ITEM])
+        self.assertTrue(self.can_reach_location("El Swanko Casa Purchase"))
+        self.assertTrue(self.can_reach_location("Malibu Club Purchase"))
+
+    def test_venue_race_mission_needs_its_vehicle(self) -> None:
+        # The Driver is a forced car race, so it needs Land Vehicles on top of
+        # the venue's own requirements.
+        self.collect_by_name([
+            "Progressive Malibu Club", "Malibu Club Ownership",
+            "Progressive Vercetti Protection", "Starfish Island Access",
+            data.WALLET_ITEM,
+        ])
+        self.assertTrue(self.can_reach_location("No Escape?"))
+        self.assertFalse(self.can_reach_location("The Driver"))
+        self.collect_by_name([data.LAND_VEHICLES_ITEM])
+        self.assertTrue(self.can_reach_location("The Driver"))
+
+    def test_slot_data_carries_the_ability_contract(self) -> None:
+        slot_data = self.world.fill_slot_data()
+        self.assertEqual(slot_data["ability_locks"], sorted(_ALL_ABILITY_LOCKS))
+        config = slot_data["config_globals"]
+        item_globals = slot_data["item_globals"]
+        for name in data.ABILITY_ITEMS:
+            self.assertEqual(config[str(scm.ability_lock_flag_global(name))], 1, name)
+            self.assertEqual(
+                item_globals[str(ITEM_NAME_TO_ID[name])],
+                scm.ability_unlock_global(name), name,
+            )
+
+
+class TestAbilityLocksOff(WorldTestBase):
+    game = "Grand Theft Auto Vice City"
+    # Default options: ability_locks is empty.
+
+    def test_no_ability_items_and_vanilla_flags(self) -> None:
+        pool_names = {item.name for item in self.multiworld.itempool}
+        precollected = {
+            item.name for item in self.multiworld.precollected_items[self.player]
+        }
+        for name in data.ABILITY_ITEMS:
+            self.assertNotIn(name, pool_names, name)
+            self.assertNotIn(name, precollected, name)
+        slot_data = self.world.fill_slot_data()
+        self.assertEqual(slot_data["ability_locks"], [])
+        config = slot_data["config_globals"]
+        for name in data.ABILITY_ITEMS:
+            self.assertEqual(config[str(scm.ability_lock_flag_global(name))], 0, name)
+
+    def test_no_ability_terms_without_the_locks(self) -> None:
+        # With every key off a stunt jump needs only its region and a store
+        # nothing at all: no rule may name an item that is not in the pool.
+        self.assertTrue(self.can_reach_location("Robbable Store 01"))
+        self.collect_by_name(["Mainland Access"])
+        self.assertTrue(self.can_reach_location("Unique Stunt Jump 01"))
+
+
+class TestAbilityLocksWalletOnly(WorldTestBase):
+    game = "Grand Theft Auto Vice City"
+    options: ClassVar[dict] = {"ability_locks": ["wallet"]}
+
+    def test_only_the_wallet_locks(self) -> None:
+        # The wallet term binds, and no vehicle term exists because the
+        # vehicles key is off (its items are not in the pool).
+        pool_names = {item.name for item in self.multiworld.itempool}
+        self.assertIn(data.WALLET_ITEM, pool_names)
+        self.assertNotIn(data.LAND_VEHICLES_ITEM, pool_names)
+        self.assertFalse(self.can_reach_location("El Swanko Casa Purchase"))
+        self.collect_by_name(["Mainland Access"])
+        self.assertTrue(self.can_reach_location("Unique Stunt Jump 01"))
+        self.collect_by_name([data.WALLET_ITEM])
+        self.assertTrue(self.can_reach_location("El Swanko Casa Purchase"))
+
+    def test_finale_carries_the_wallet_through_the_sale_requirements(self) -> None:
+        # Vanilla asset completion spends money, so the finale must hold the
+        # wallet term or the fill could strand Wallet behind Cap the Collector.
+        self.collect_by_name([
+            "Progressive Vercetti Finale", "Progressive Vercetti Protection",
+            "Mainland Access", "Starfish Island Access",
+        ])
+        self.collect_by_name(_FINALE_ASSET_ITEMS)
+        self.assertFalse(self.can_reach_location("Cap the Collector"))
+        self.collect_by_name([data.WALLET_ITEM])
+        self.assertTrue(self.can_reach_location("Cap the Collector"))
+
+
+class TestAbilityLocksCollapsedSphereZero(WorldTestBase):
+    # The config where the sphere-zero guard actually bites: one collectible
+    # class, entirely gated by one lock, so every start-region location has a
+    # rule and the free count collapses. The world must fall back on the
+    # opening grant and still fill; the inherited default tests prove it.
+    game = "Grand Theft Auto Vice City"
+    options: ClassVar[dict] = dict(
+        _STORY_ONLY_OPTIONS, enable_robbable_stores=True,
+        ability_locks=["weapon_equip"],
+    )
+
+    def test_locked_class_collapses_the_free_start_count(self) -> None:
+        # Every store needs Weapon Equip, so nothing in the start region is
+        # free but the first mission, and the opening grant must fire.
+        self.assertLess(self.world._free_start_location_count(), MINIMUM_SPHERE_ZERO)
+        precollected = {
+            item.name for item in self.multiworld.precollected_items[self.player]
+        }
+        for giver in data.OPENING_GRANT_GIVERS:
+            self.assertIn(data.progressive_item_name(giver), precollected, giver)
+
+
+class TestAbilityLocksStoryOnly(WorldTestBase):
+    # The tightest locked pool: story-only plus all eight ability items must
+    # still fill, with sphere 0 resting on the opening grant and the free
+    # first mission. The inherited default tests prove it fills and stays
+    # reachable.
+    game = "Grand Theft Auto Vice City"
+    options: ClassVar[dict] = dict(_STORY_ONLY_OPTIONS, ability_locks=_ALL_ABILITY_LOCKS)
+
+
+class TestAbilityLocksHundredPercent(WorldTestBase):
+    # Every check class plus every lock: the widest rule surface. The
+    # inherited default tests prove the 100 percent completion stays
+    # satisfiable with every ability term active.
+    game = "Grand Theft Auto Vice City"
+    options: ClassVar[dict] = {
+        "goal": "hundred_percent",
+        "ability_locks": _ALL_ABILITY_LOCKS,
+    }
 
 
 class TestStrandAccess(WorldTestBase):
@@ -863,6 +1239,26 @@ class TestTables(WorldTestBase):
         for mission in ["No Escape?", "Recruitment Drive", "Cabmaggedon"]:
             self.assertNotIn(mission, STORY_MISSION_NAMES)
 
+    def test_vehicle_rampages_are_the_unnamed_weapon_ones(self) -> None:
+        # The ASI holds the weapon rampage icons by coordinate while this
+        # table splits them by index, two hand-written mirrors of one
+        # decompile fact. A rampage the RAMPAGE controller hands no weapon is
+        # named without a weapon prefix, so the two views must agree or an
+        # icon gets sunk for a check whose rule says Land Vehicles.
+        unnamed = {
+            index for index in range(1, data.RAMPAGE_COUNT + 1)
+            if data.rampage_name(index).startswith("Rampage - ")
+        }
+        self.assertEqual(unnamed, set(data.VEHICLE_RAMPAGE_INDICES))
+        # And each side of the split carries the ability its kill frenzy needs.
+        for index in range(1, data.RAMPAGE_COUNT + 1):
+            expected = (data.LAND_VEHICLES_ITEM if index in data.VEHICLE_RAMPAGE_INDICES
+                        else data.WEAPON_EQUIP_ITEM)
+            self.assertEqual(
+                data.LOCATION_ABILITY_REQUIREMENTS[data.rampage_name(index)],
+                [expected], index,
+            )
+
     def test_package_rewards_are_named_as_spawns(self) -> None:
         # Every non-cash package reward re-gates a respawning safehouse pickup
         # or vehicle, so its name says Spawn; a bare weapon name would read as
@@ -895,13 +1291,18 @@ class TestReservedGlobals(WorldTestBase):
                   scm.MINIMAP_SHUFFLED_GLOBAL}
         ownership = {scm.ownership_global(key) for key in scm.OWNERSHIP_KEYS}
         minimap = {scm.MINIMAP_UNLOCK_GLOBAL}
+        ability = (
+            {scm.ability_lock_flag_global(name) for name in scm.ABILITY_KEYS}
+            | {scm.ability_unlock_global(name) for name in scm.ABILITY_KEYS}
+        )
         self.assertEqual(len(rewards), len(scm.REWARD_KEYS))
         self.assertEqual(len(ownership), len(scm.OWNERSHIP_KEYS))
+        self.assertEqual(len(ability), 2 * len(scm.ABILITY_KEYS))
         self.assertTrue(seed_hash.isdisjoint(unlocks))
         self.assertTrue(seed_hash.isdisjoint(completions))
         self.assertTrue(unlocks.isdisjoint(completions))
-        # The reward, config-flag, ownership, and minimap blocks must not
-        # collide with anything else, and must stay within the declared
+        # The reward, config-flag, ownership, minimap, and ability blocks must
+        # not collide with anything else, and must stay within the declared
         # reserved block the foundation sizes.
         self.assertTrue(rewards.isdisjoint(seed_hash | unlocks | completions | config))
         self.assertTrue(config.isdisjoint(seed_hash | unlocks | completions | rewards))
@@ -911,9 +1312,24 @@ class TestReservedGlobals(WorldTestBase):
         self.assertTrue(minimap.isdisjoint(
             seed_hash | unlocks | completions | rewards | config | ownership
         ))
-        for global_index in rewards | config | ownership | minimap:
+        self.assertTrue(ability.isdisjoint(
+            seed_hash | unlocks | completions | rewards | config | ownership | minimap
+        ))
+        for global_index in rewards | config | ownership | minimap | ability:
             self.assertLessEqual(global_index, scm.highest_reserved_global())
         self.assertNotIn(scm.APPLIED_INDEX_GLOBAL, unlocks | completions | rewards | config)
+
+    def test_ability_globals_match_the_hand_written_mirrors(self) -> None:
+        # The ASI hard-codes these two bases (scm_ability_locks.hpp) and the
+        # SCM build scripts hard-code the top and the marker scratch that
+        # follows it, while this module derives them from the block above.
+        # Inserting a reserved global earlier would shift the Python side
+        # alone and silently break every lock, so the contract is pinned
+        # here: update all four places together.
+        self.assertEqual(scm.ABILITY_LOCK_FLAG_BASE, 9421)
+        self.assertEqual(scm.ABILITY_UNLOCK_BASE, 9429)
+        self.assertEqual(scm.highest_reserved_global(), 9436)
+        self.assertEqual(scm.ABILITY_KEYS, data.ABILITY_ITEMS)
 
     def test_item_globals_cover_every_progression_item(self) -> None:
         mapping = scm.item_globals()

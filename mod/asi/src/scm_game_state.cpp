@@ -10,6 +10,7 @@
 #include <plugin.h>
 #include <CHud.h>
 #include <CMessages.h>
+#include <CModelInfo.h>
 #include <CTheScripts.h>
 #include <CWorld.h>
 #include <CPlayerPed.h>
@@ -27,10 +28,21 @@
 #include <CWeather.h>
 #include <eModelID.h>
 #include <eObjective.h>
+#include <ePedStates.h>
 #include <eWeather.h>
 #include <common.h>
 
 namespace gtavc {
+
+// The planner's appearance ids are a copy of the game's own, kept free of
+// game headers so the console self-test can exercise the planner. This is
+// the one place that sees both, so it holds them together.
+static_assert(kAppearanceAutomobile == VEHICLE_APPEARANCE_AUTOMOBILE, "automobile appearance");
+static_assert(kAppearanceBike == VEHICLE_APPEARANCE_BIKE, "bike appearance");
+static_assert(kAppearanceHeli == VEHICLE_APPEARANCE_HELI, "heli appearance");
+static_assert(kAppearanceBoat == VEHICLE_APPEARANCE_BOAT, "boat appearance");
+static_assert(kAppearancePlane == VEHICLE_APPEARANCE_PLANE, "plane appearance");
+
 namespace {
 // Fixed part of the reserved layout, matching apworld scm.py: the seed hash
 // occupies four globals from $9000, sixteen hex characters packed four per
@@ -61,6 +73,13 @@ constexpr int kRadioAmbientRequest = 9;
 // enforcement keeps working offline from a save.
 constexpr int kMinimapShuffledGlobal = 9415;
 constexpr int kMinimapUnlockGlobal = 9416;
+// The game's pickup pool size, matching plugin-sdk's CPickup (&aPickUps)[336].
+constexpr int kPickupPoolSize = 336;
+// The enforcement frame on which a still-unmatched layout slot is logged:
+// hundreds of frames past the init mission's pickup creation window (which
+// also advances per frame), so slots still being placed at the start are
+// never reported as missing.
+constexpr int kPickupUnmatchedLogFrame = 600;
 
 // Whether the vehicle plays the police scanner instead of its station byte,
 // mirroring the game's own test: the fixed model set, then the siren flag,
@@ -116,6 +135,31 @@ unsigned int TrapDurationMs(const ItemEffect& effect) {
   const int seconds = (effect.has_amount && effect.amount > 0) ? effect.amount : kDefaultTrapSeconds;
   return static_cast<unsigned int>(seconds) * 1000u;
 }
+
+// Player-facing names for the ability status list, AbilityIndex order.
+constexpr const char* kAbilityNames[kAbilityCount] = {
+    "Sprint", "Jump", "Crouch", "Land Vehicles", "Sea Vehicles",
+    "Air Vehicles", "Weapon Equip", "Wallet",
+};
+// The blocked-attempt toast per ability. The wallet has no blockable input,
+// so it never toasts; the status key and the client window carry its state.
+constexpr const char* kAbilityBlockedText[kAbilityCount] = {
+    "Sprinting is locked.", "Jumping is locked.", "Crouching is locked.",
+    "Land vehicles are locked.", "Sea vehicles are locked.",
+    "Air vehicles are locked.", "Weapons are locked.", nullptr,
+};
+// The key listing every configured ability's locked or unlocked state.
+constexpr int kAbilityStatusKey = VK_F6;
+// The kill-frenzy skull's model name in the game's object definitions.
+constexpr const char* kKillFrenzyModelName = "killfrenzy";
+
+// Whether the foreground window belongs to this game, so a key pressed in
+// another application while the player is alt-tabbed is ignored.
+bool GameWindowHasFocus() {
+  DWORD process_id = 0;
+  GetWindowThreadProcessId(GetForegroundWindow(), &process_id);
+  return process_id == GetCurrentProcessId();
+}
 }  // namespace
 
 ScmGameState::ScmGameState(Logger logger) : logger_(std::move(logger)) {}
@@ -157,13 +201,16 @@ void ScmGameState::ApplyConfig(const std::map<std::int64_t, int>& item_globals,
                                const std::map<int, std::int64_t>& completion_watch,
                                const std::map<std::int64_t, ItemEffect>& item_effects,
                                const std::map<int, int>& config_globals,
-                               const std::vector<PackageLocation>& package_locations) {
+                               const std::vector<PackageLocation>& package_locations,
+                               const std::vector<PickupTarget>& pickup_targets) {
   std::lock_guard<std::mutex> lock(mutex_);
   item_globals_ = item_globals;
   item_effects_ = item_effects;
   config_globals_ = config_globals;
   completion_watch_ = completion_watch;
   package_locations_ = package_locations;
+  pickup_targets_ = pickup_targets;
+  pickup_enforce_frames_ = 0;
   location_to_global_.clear();
   for (const auto& [global_index, location] : completion_watch_) {
     location_to_global_[location] = global_index;
@@ -347,6 +394,223 @@ void ScmGameState::EnforceMinimap() {
   minimap_forcing_hidden_ = plan.forcing;
 }
 
+void ScmGameState::ToastAbilityBlocked(int ability) {
+  const char* text = kAbilityBlockedText[ability];
+  if (text == nullptr) return;
+  const unsigned int now = RealTimeMs();
+  if (!ShouldShowAbilityToast(now, ability_toast_shown_[ability],
+                              ability_toast_last_ms_[ability])) {
+    return;
+  }
+  ability_toast_shown_[ability] = true;
+  ability_toast_last_ms_[ability] = now;
+  // Queued, not shown here: the frame's own toast drain owns the message
+  // strings and their lifetime, so every toast takes one path. The caller
+  // already holds the lock, so the queue is touched directly.
+  pending_toasts_.push_back(text);
+}
+
+void ScmGameState::ToastAbilityStatus(
+    const AbilityLocks& locked, const std::array<int, kAbilityCount>& lock_flags) {
+  // Only the abilities this seed configured appear; an unselected key is
+  // fully vanilla and listing it would only mislead.
+  std::string locked_list;
+  std::string unlocked_list;
+  for (int index = 0; index < kAbilityCount; ++index) {
+    if (lock_flags[index] == 0) continue;
+    std::string& list = locked[index] ? locked_list : unlocked_list;
+    if (!list.empty()) list += ", ";
+    list += kAbilityNames[index];
+  }
+  pending_toasts_.push_back(
+      "Locked: " + (locked_list.empty() ? std::string("nothing") : locked_list));
+  if (!unlocked_list.empty()) {
+    pending_toasts_.push_back("Unlocked: " + unlocked_list);
+  }
+}
+
+void ScmGameState::EnforceRampageIcons(bool weapon_locked) {
+  // Resolve the kill-frenzy skull model by name; the SCM creates every
+  // rampage icon from it, so the pool entries carry its id. Only a hit
+  // latches: a miss (the model table not populated yet) retries on the next
+  // frame rather than disabling the hold for the rest of the session, and
+  // the diagnostic is logged once per game.
+  if (kill_frenzy_model_ < 0) {
+    int model = -1;
+    if (CModelInfo::GetModelInfo(kKillFrenzyModelName, &model) != nullptr) {
+      kill_frenzy_model_ = model;
+    } else {
+      if (!kill_frenzy_lookup_logged_ && logger_) {
+        logger_("ability locks: kill frenzy model not found yet, rampage icons stay vanilla");
+      }
+      kill_frenzy_lookup_logged_ = true;
+      return;
+    }
+  }
+  for (int index = 0; index < kPickupPoolSize; ++index) {
+    CPickup& pickup = CPickups::aPickUps[index];
+    if (pickup.bPickupType == 0) continue;
+    if (static_cast<int>(pickup.nModelId) != kill_frenzy_model_) continue;
+    const RampageIconAction action = PlanRampageIcon(
+        weapon_locked,
+        IsVehicleRampagePickup(pickup.vecPos.x, pickup.vecPos.y),
+        pickup.vecPos.z);
+    if (action == RampageIconAction::kLeaveAlone) continue;
+    pickup.vecPos.z += (action == RampageIconAction::kLower)
+                           ? -kRampageLowerOffset
+                           : kRampageLowerOffset;
+    // Drop the visible objects the way the game's own remove does; the
+    // pickup update recreates them at the moved position on the next frame.
+    if (pickup.pObject != nullptr) {
+      CObject* object = static_cast<CObject*>(pickup.pObject);
+      CWorld::Remove(object);
+      delete object;
+      pickup.pObject = nullptr;
+    }
+    if (pickup.pExtraObject != nullptr) {
+      CObject* extra_object = static_cast<CObject*>(pickup.pExtraObject);
+      CWorld::Remove(extra_object);
+      delete extra_object;
+      pickup.pExtraObject = nullptr;
+    }
+  }
+}
+
+AbilityLocks ScmGameState::ReadAbilityLocks(
+    std::array<int, kAbilityCount>& lock_flags) {
+  std::array<int, kAbilityCount> unlocks{};
+  for (int index = 0; index < kAbilityCount; ++index) {
+    lock_flags[index] = GetGlobal(kAbilityLockFlagBase + index);
+    unlocks[index] = GetGlobal(kAbilityUnlockBase + index);
+  }
+  return PlanAbilityLocks(lock_flags, unlocks);
+}
+
+void ScmGameState::ApplyAbilityInputLocks() {
+  std::lock_guard<std::mutex> lock(mutex_);
+  // The seed hash marks a stamped game; before that ScriptSpace holds no
+  // meaningful state, exactly as OnGameFrame requires.
+  if (ReadSeedHash().empty()) return;
+  std::array<int, kAbilityCount> lock_flags{};
+  const AbilityLocks locked = ReadAbilityLocks(lock_flags);
+  bool any_flag_set = false;
+  for (int index = 0; index < kAbilityCount; ++index) {
+    any_flag_set = any_flag_set || lock_flags[index] != 0;
+  }
+  // No key selected this seed: fully vanilla, the pad is never touched.
+  if (!any_flag_set) return;
+  CPlayerPed* player = FindPlayerPed();
+  if (player == nullptr) return;
+  const AbilityInputPlan plan = PlanAbilityInputs(
+      locked, !player->m_bInVehicle, PlayerIsControllable(),
+      CWorld::Players[0].m_pRemoteVehicle != nullptr);
+
+  CPad* pad = CPad::GetPad(0);
+  if (pad != nullptr) {
+    // An attempt is the raw press before masking; the toast rate-limits
+    // itself per ability. Both pad states zero so no just-pressed or
+    // just-released edge survives the mask. The fields are the ones the
+    // game's own accessors read: sprint ButtonCross, jump ButtonSquare,
+    // crouch ShockButtonL, weapon cycle the two second shoulders.
+    if (plan.mask_sprint) {
+      if (pad->NewState.ButtonCross != 0) ToastAbilityBlocked(kAbilitySprint);
+      pad->NewState.ButtonCross = 0;
+      pad->OldState.ButtonCross = 0;
+    }
+    if (plan.mask_jump) {
+      if (pad->NewState.ButtonSquare != 0) ToastAbilityBlocked(kAbilityJump);
+      pad->NewState.ButtonSquare = 0;
+      pad->OldState.ButtonSquare = 0;
+    }
+    if (plan.mask_crouch) {
+      if (pad->NewState.ShockButtonL != 0) ToastAbilityBlocked(kAbilityCrouch);
+      pad->NewState.ShockButtonL = 0;
+      pad->OldState.ShockButtonL = 0;
+    }
+    if (plan.mask_weapon_cycle) {
+      if (pad->NewState.LeftShoulder2 != 0 || pad->NewState.RightShoulder2 != 0) {
+        ToastAbilityBlocked(kAbilityWeaponEquip);
+      }
+      pad->NewState.LeftShoulder2 = 0;
+      pad->OldState.LeftShoulder2 = 0;
+      pad->NewState.RightShoulder2 = 0;
+      pad->OldState.RightShoulder2 = 0;
+    }
+  }
+
+  if (plan.force_unarmed && player->m_nCurrentWeapon != 0) {
+    // Slot zero is the bare fists. Holding the weapon there every frame is
+    // what blocks drive-by (fists cannot fire from a vehicle) and what
+    // undoes the engine's auto-equip when an unarmed player walks over a
+    // weapon pickup; the weapon stays owned, just not wielded.
+    player->SetCurrentWeapon(0);
+  }
+}
+
+void ScmGameState::EnforceAbilityLocks() {
+  std::array<int, kAbilityCount> lock_flags{};
+  const AbilityLocks locked = ReadAbilityLocks(lock_flags);
+  bool any_flag_set = false;
+  for (int index = 0; index < kAbilityCount; ++index) {
+    any_flag_set = any_flag_set || lock_flags[index] != 0;
+  }
+  // No key selected this seed: fully vanilla, nothing to enforce.
+  if (!any_flag_set) return;
+
+  // The status key lists every configured ability, locked or unlocked, on
+  // its press edge, and only while this game owns the keyboard, so a press
+  // meant for another application never reaches the queue.
+  const bool status_key_down = GameWindowHasFocus() &&
+      (GetAsyncKeyState(kAbilityStatusKey) & 0x8000) != 0;
+  if (status_key_down && !ability_status_key_was_down_) {
+    ToastAbilityStatus(locked, lock_flags);
+  }
+  ability_status_key_was_down_ = status_key_down;
+
+  if (locked[kAbilityWallet]) {
+    // Tommy cannot hold money: everything earned or received while the
+    // wallet is locked burns, cash items included (deliberate, not a bug).
+    // Money is state rather than input, so the pin holds through cutscenes.
+    CWorld::Players[0].m_nMoney = 0;
+    CWorld::Players[0].m_nDisplayMoney = 0;
+  }
+
+  CPlayerPed* player = FindPlayerPed();
+  // Everything below reads the world: the pickup pool and the player ped are
+  // only meaningful once the world is loaded, as the sibling pool walkers
+  // require too.
+  if (player == nullptr) return;
+
+  EnforceRampageIcons(locked[kAbilityWeaponEquip]);
+
+  // Cancel a player-initiated entry into a locked vehicle class. The entry
+  // runs through the player ped's objective, which only the enter-vehicle
+  // press sets; scripts seat the player by warping, which never comes
+  // through here, so cutscenes keep working.
+  if ((locked[kAbilityLandVehicles] || locked[kAbilitySeaVehicles] ||
+       locked[kAbilityAirVehicles]) &&
+      PlayerIsControllable() &&
+      (player->m_nObjective == OBJECTIVE_ENTER_CAR_AS_DRIVER ||
+       player->m_nObjective == OBJECTIVE_ENTER_CAR_AS_PASSENGER) &&
+      player->m_pObjectiveVehicle != nullptr) {
+    const int blocking = VehicleEntryLockIndex(
+        locked, player->m_pObjectiveVehicle->GetVehicleAppearance());
+    if (blocking != kAbilityCount) {
+      player->ClearObjective();
+      const int state = static_cast<int>(player->m_ePedState);
+      if (state == STATES_OPEN_DOOR || state == STATES_CARJACK ||
+          state == STATES_ENTER_CAR || state == STATES_STEAL_CAR) {
+        // Already reaching for the door: unwind the enter sequence the way
+        // an interrupted jack does, so the ped returns to a clean stand.
+        player->QuitEnteringCar();
+      }
+      ToastAbilityBlocked(blocking);
+    }
+  }
+}
+
+void ScmGameState::OnBeforeWorldProcess() { ApplyAbilityInputLocks(); }
+
 void ScmGameState::ApplyOneShot(const ItemEffect& effect) {
   if (effect.type.rfind("trap_", 0) == 0) {
     ApplyTrap(effect);
@@ -484,12 +748,62 @@ bool ScmGameState::TakeGoalReached() {
   return false;
 }
 
+void ScmGameState::EnforcePickupLayout() {
+  if (pickup_targets_.empty()) return;
+  std::vector<PickupPoolEntry> entries;
+  for (int index = 0; index < kPickupPoolSize; ++index) {
+    const CPickup& pickup = CPickups::aPickUps[index];
+    // Type zero is a dead slot (never created, or script-removed); it stays
+    // dead, so a mission's remove_pickup is never resurrected.
+    if (pickup.bPickupType == 0) continue;
+    entries.push_back({pickup.vecPos.x, pickup.vecPos.y, pickup.vecPos.z,
+                       static_cast<int>(pickup.bPickupType),
+                       static_cast<int>(pickup.nModelId), index});
+  }
+  const PickupLayoutPlan plan = PlanPickupLayout(pickup_targets_, entries);
+  // A layout slot the pool never offered stays vanilla by design; one
+  // diagnostic per config delivery records how many (a reconnect re-arms
+  // it), on a frame late enough that the init mission has finished placing
+  // the ambient pickups. A report landing inside a mission's brief
+  // remove-and-recreate window may count that slot once; log noise only.
+  ++pickup_enforce_frames_;
+  if (pickup_enforce_frames_ == kPickupUnmatchedLogFrame &&
+      plan.unmatched_targets > 0 && logger_) {
+    logger_("pickup layout: " + std::to_string(plan.unmatched_targets) + " of " +
+            std::to_string(pickup_targets_.size()) +
+            " slots not found in the pool, left vanilla");
+  }
+  for (const PickupRewrite& rewrite : plan.rewrites) {
+    CPickup& pickup = CPickups::aPickUps[rewrite.pool_index];
+    pickup.nModelId = static_cast<short>(rewrite.model);
+    pickup.dwPickupQuantity = static_cast<unsigned int>(rewrite.quantity);
+    // The byte after bRemoved holds the ammo-collected bit; cleared so a
+    // relocated weapon grants its ammo instead of reading as already drained.
+    pickup.bEffects = false;
+    // Drop the stale visible objects the way the game's own remove does; the
+    // pickup update recreates them from the new model on the next frame. A
+    // collected pickup awaiting respawn has no objects and respawns as the
+    // new model on its own timer.
+    if (pickup.pObject != nullptr) {
+      CObject* object = static_cast<CObject*>(pickup.pObject);
+      CWorld::Remove(object);
+      delete object;
+      pickup.pObject = nullptr;
+    }
+    if (pickup.pExtraObject != nullptr) {
+      CObject* extra_object = static_cast<CObject*>(pickup.pExtraObject);
+      CWorld::Remove(extra_object);
+      delete extra_object;
+      pickup.pExtraObject = nullptr;
+    }
+  }
+}
+
 void ScmGameState::DetectCollectedPackages() {
   if (package_locations_.empty()) return;
-  // World positions of every collectable pickup still present in the pool. The
-  // 336 pool size matches plugin-sdk's CPickup (&aPickUps)[336].
+  // World positions of every collectable pickup still present in the pool.
   std::vector<WorldPoint> present;
-  for (int index = 0; index < 336; ++index) {
+  for (int index = 0; index < kPickupPoolSize; ++index) {
     const CPickup& pickup = CPickups::aPickUps[index];
     if (pickup.bPickupType == PICKUP_COLLECTABLE1 && !pickup.bRemoved) {
       present.push_back({pickup.vecPos.x, pickup.vecPos.y, pickup.vecPos.z});
@@ -536,6 +850,18 @@ void ScmGameState::OnGameFrame() {
     // The minimap forcing memory belongs to the game that set it; the next
     // game re-derives it from its own globals on the first frame.
     minimap_forcing_hidden_ = false;
+    // Ability toast pacing and the status-key edge belong to the game too;
+    // the locks themselves re-derive from the globals every frame.
+    ability_toast_shown_.fill(false);
+    ability_toast_last_ms_.fill(0);
+    ability_status_key_was_down_ = false;
+    // The model table belongs to the game that loaded it.
+    kill_frenzy_model_ = -1;
+    kill_frenzy_lookup_logged_ = false;
+    world_was_loaded_ = false;
+    // The unmatched-slot diagnostic counts frames per game, so a fresh game
+    // gets its own creation window and its own single report.
+    pickup_enforce_frames_ = 0;
     return;
   }
 
@@ -546,6 +872,18 @@ void ScmGameState::OnGameFrame() {
   // Pending items simply wait: the dirty flag holds until the first
   // controllable frame.
   const bool controllable = PlayerIsControllable();
+
+  // A world that has just come up (a new game, or a save loaded mid-session)
+  // carries whatever unlock globals its save file held, which for an item
+  // received after that save was made would take the ability back. Re-derive
+  // from the received items on the load edge, the invariant that received
+  // state never rests on what a save restored.
+  const bool world_loaded = FindPlayerPed() != nullptr;
+  if (ShouldReDeriveUnlocks(world_loaded, world_was_loaded_, !items_.empty())) {
+    items_dirty_ = true;
+    if (logger_) logger_("world loaded, re-deriving unlock globals");
+  }
+  world_was_loaded_ = world_loaded;
 
   if (items_dirty_ && controllable) {
     // Re-derive every unlock global from the full item list: zero each distinct
@@ -597,6 +935,16 @@ void ScmGameState::OnGameFrame() {
   // has not arrived. Same global-driven shape as the radio, so it also works
   // offline from a save.
   EnforceMinimap();
+
+  // Enforce the ability locks from the lock-flag and unlock globals written
+  // above. Same global-driven shape, so a save's own persisted state keeps
+  // the locks working offline too.
+  EnforceAbilityLocks();
+
+  // Keep the ambient pickup pool on the configured layout. Only when the
+  // world is loaded, so the pool holds the placed pickups; runs before the
+  // package detection, though the two never touch the same pickup types.
+  if (FindPlayerPed() != nullptr) EnforcePickupLayout();
 
   // Set each collected hidden package's completion global from the pickup pool,
   // so the poll below reports every package as its own check. Only when the world

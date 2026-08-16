@@ -72,6 +72,11 @@ int main(int argc, char** argv) {
   for (const auto& entry : game.ConfigGlobals()) {
     summary["config_globals"][std::to_string(entry.first)] = entry.second;
   }
+  summary["pickup_layout"] = json::array();
+  for (const auto& target : game.PickupTargets()) {
+    summary["pickup_layout"].push_back(json::array(
+        {target.x, target.y, target.z, target.pickup_type, target.model, target.quantity}));
+  }
   std::cout << summary.dump() << "\n";
   return 0;
 }

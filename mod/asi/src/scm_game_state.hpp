@@ -4,6 +4,7 @@
 // OnGameFrame, so ScriptSpace is only ever touched by the game thread.
 #pragma once
 
+#include <array>
 #include <cstdint>
 #include <functional>
 #include <map>
@@ -14,9 +15,11 @@
 #include <vector>
 
 #include "game_state.hpp"
+#include "scm_ability_locks.hpp"
 #include "scm_completion.hpp"
 #include "scm_effects.hpp"
 #include "scm_minimap.hpp"
+#include "scm_pickup_layout.hpp"
 #include "scm_radio.hpp"
 
 class CVehicle;
@@ -34,7 +37,8 @@ class ScmGameState : public GameState {
                    const std::map<int, std::int64_t>& completion_watch,
                    const std::map<std::int64_t, ItemEffect>& item_effects,
                    const std::map<int, int>& config_globals,
-                   const std::vector<PackageLocation>& package_locations) override;
+                   const std::vector<PackageLocation>& package_locations,
+                   const std::vector<PickupTarget>& pickup_targets) override;
   std::string SeedHash() override;
   void StampSeedHash(const std::string& expected) override;
   void ApplyItems(const std::vector<std::pair<std::int64_t, std::int64_t>>& items) override;
@@ -45,6 +49,10 @@ class ScmGameState : public GameState {
 
   // Called from the game frame. All SCM memory access is here.
   void OnGameFrame();
+
+  // Called from the pre-world-process hook, before the player ped reads the
+  // pad this frame. Applies only the ability locks that constrain input.
+  void OnBeforeWorldProcess();
 
  private:
   static int GetGlobal(int index);
@@ -99,6 +107,37 @@ class ScmGameState : public GameState {
   // Minimap item has not arrived, through the game's script-facing radar-hide
   // flag; on the item it releases the flag back to the game once.
   void EnforceMinimap();
+  // Enforces the ability locks that belong on the game frame, after the
+  // world has processed: pins the wallet balance to zero, cancels a
+  // player-initiated entry into a locked vehicle class, holds the weapon
+  // rampage icons, and answers the status key with the lock list.
+  void EnforceAbilityLocks();
+  // Masks the locked inputs and holds the current weapon on the fists. Runs
+  // from the pre-world-process hook, the one point in the frame where a pad
+  // write still reaches the player ped (see kBeforeWorldProcessCallSite10).
+  void ApplyAbilityInputLocks();
+  // Reads the eight lock flags and eight unlocks into `lock_flags` and
+  // returns which abilities are locked right now. Both enforcement points
+  // derive their own state, so neither depends on the other having run (the
+  // input hook only exists on the classic executable).
+  AbilityLocks ReadAbilityLocks(std::array<int, kAbilityCount>& lock_flags);
+  // Sinks every weapon-rampage kill-frenzy icon out of reach while the weapon
+  // equip is locked and raises them back on the unlock; the two run-them-down
+  // rampage icons stay collectible throughout.
+  void EnforceRampageIcons(bool weapon_locked);
+  // Shows the blocked-attempt toast for one ability, rate-limited per ability.
+  void ToastAbilityBlocked(int ability);
+  // Shows the locked and unlocked ability lists for the seed's configured
+  // locks, on the status key.
+  void ToastAbilityStatus(const AbilityLocks& locked,
+                          const std::array<int, kAbilityCount>& lock_flags);
+  // Keeps the ambient pickup pool on the configured layout: matches each
+  // layout slot to a pool entry by position and type and rewrites the model
+  // and quantity where they differ, dropping the stale visible objects so the
+  // game recreates them from the new model. Runs every frame, so a script
+  // that removes and recreates a slot (the vanilla scripts do, with vanilla
+  // models) is re-enforced on the next frame. Empty layout means vanilla.
+  void EnforcePickupLayout();
 
   Logger logger_;
   std::mutex mutex_;
@@ -107,6 +146,7 @@ class ScmGameState : public GameState {
   std::map<int, int> config_globals_;
   std::map<int, std::int64_t> completion_watch_;
   std::vector<PackageLocation> package_locations_;
+  std::vector<PickupTarget> pickup_targets_;
   std::set<int> package_seen_present_;
   std::map<std::int64_t, int> location_to_global_;
   std::vector<std::pair<std::int64_t, std::int64_t>> items_;
@@ -137,6 +177,24 @@ class ScmGameState : public GameState {
   // Whether the minimap enforcement is holding the radar-hide flag, so the
   // unlock releases it exactly once and then leaves the flag to the game.
   bool minimap_forcing_hidden_ = false;
+  // Blocked-attempt toast rate limiting, one slot per ability, and the
+  // status-key edge detector. Reset on the game boundary.
+  std::array<bool, kAbilityCount> ability_toast_shown_{};
+  std::array<unsigned int, kAbilityCount> ability_toast_last_ms_{};
+  bool ability_status_key_was_down_ = false;
+  // The kill-frenzy skull model, resolved by name and latched on the first
+  // hit; negative while unresolved, when the rampage icons stay vanilla.
+  // Reset on the game boundary with the other per-game state.
+  int kill_frenzy_model_ = -1;
+  bool kill_frenzy_lookup_logged_ = false;
+  // Whether the world was loaded last frame, so a new game or a save load
+  // re-derives the unlock globals from the received items instead of
+  // trusting whatever the save restored.
+  bool world_was_loaded_ = false;
+  // Frames the pickup layout enforcement has run this game, so the
+  // unmatched-slot diagnostic fires once, past the init mission's pickup
+  // creation window. Reset on the game boundary and on a fresh config.
+  int pickup_enforce_frames_ = 0;
 };
 
 }  // namespace gtavc

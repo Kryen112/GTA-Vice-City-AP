@@ -39,6 +39,21 @@ struct PackageLocation {
   float z = 0.0f;
 };
 
+// One ambient pickup slot of the randomize_pickups layout: the slot's world
+// position and pickup type identify it in the pool; model and quantity are
+// what the permutation assigns to stand there. An empty layout means the
+// option is off and the pool is never touched. The position is kept at the
+// wire's double precision so the interop harness echoes it back exactly; the
+// pool matching happens well inside float tolerance either way.
+struct PickupTarget {
+  double x = 0.0;
+  double y = 0.0;
+  double z = 0.0;
+  int pickup_type = 0;
+  int model = 0;
+  int quantity = 0;
+};
+
 class GameState {
  public:
   virtual ~GameState() = default;
@@ -48,11 +63,13 @@ class GameState {
   // or persistent reward). item_effects: AP item id -> a one-shot consumable
   // effect. config_globals: config-flag global index -> value to stamp.
   // completion_watch: completion global index -> AP location id to poll.
+  // pickup_targets: the ambient pickup layout to enforce, empty when vanilla.
   virtual void ApplyConfig(const std::map<std::int64_t, int>& item_globals,
                            const std::map<int, std::int64_t>& completion_watch,
                            const std::map<std::int64_t, ItemEffect>& item_effects,
                            const std::map<int, int>& config_globals,
-                           const std::vector<PackageLocation>& package_locations) = 0;
+                           const std::vector<PackageLocation>& package_locations,
+                           const std::vector<PickupTarget>& pickup_targets) = 0;
 
   // The seed hash to present on hello, read from the reserved SCM global.
   // Empty when no game has been started for this seed.

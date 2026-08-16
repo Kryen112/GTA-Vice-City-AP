@@ -14,11 +14,22 @@
 #include <plugin.h>
 
 #include "bridge.hpp"
+#include "game_addresses.hpp"
 #include "scm_game_state.hpp"
 
 using namespace plugin;
 
 namespace {
+
+// The pre-world-process hook the ability input locks need: plugin-sdk's
+// gameProcessEvent fires after the whole frame, by which time the player ped
+// has already read the pad and the next frame rebuilds it, so a mask written
+// there reaches nobody. This event fires immediately before CWorld::Process
+// instead (see kBeforeWorldProcessCallSite10). The address is tagged for the
+// classic 1.0 executable, and plugin-sdk installs a hook only for the build
+// it detects, so any other executable simply never patches it.
+CdeclEvent<AddressListMulti<gtavc::kBeforeWorldProcessCallSite10, GAME_10EN, H_CALL>,
+           PRIORITY_AFTER, ArgPickNone, void()> beforeWorldProcessEvent;
 
 std::mutex g_log_mutex;
 
@@ -53,15 +64,18 @@ struct AsiMain {
         bridge("127.0.0.1", 52300, &game,
                [](const std::string& line) { LogLine("bridge: " + line); }) {
     LogLine("loaded");
-    // Register the frame handler before starting the bridge, so the game
+    // Register the frame handlers before starting the bridge, so the game
     // thread is priming the seed-hash cache by the time the bridge presents it.
     Events::gameProcessEvent += [] { instance.OnGameProcess(); };
+    beforeWorldProcessEvent += [] { instance.OnBeforeWorldProcess(); };
     bridge.Start();
   }
 
   ~AsiMain() { bridge.Stop(); }
 
   void OnGameProcess() { game.OnGameFrame(); }
+
+  void OnBeforeWorldProcess() { game.OnBeforeWorldProcess(); }
 
   static AsiMain instance;
 };

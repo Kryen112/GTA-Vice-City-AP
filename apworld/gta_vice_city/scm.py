@@ -109,12 +109,24 @@ MINIMAP_UNLOCK_GLOBAL = MINIMAP_SHUFFLED_GLOBAL + 1
 # mirror). At zero everything pays vanilla, the toggle invariant. Side events
 # suppress the first completion only, so replay prizes stay grindable;
 # repeatable earnings (emergency pay, till cash, race winnings) are never
-# touched. The whole reserved block must stay below the SCM-internal marker
-# handles, which begin right above it.
+# touched.
 SIDE_EVENTS_CASH_GLOBAL = MINIMAP_UNLOCK_GLOBAL + 1
 STUNT_JUMPS_CASH_GLOBAL = SIDE_EVENTS_CASH_GLOBAL + 1
 RAMPAGES_CASH_GLOBAL = STUNT_JUMPS_CASH_GLOBAL + 1
 PROPERTIES_CASH_GLOBAL = RAMPAGES_CASH_GLOBAL + 1
+
+# Ability lock globals follow the class-cash flags, ASI-facing only (the
+# main.scm never reads them; as reserved globals they persist inside saves, so
+# the locks keep enforcing offline from a save, the minimap pattern). One
+# lock-flag global per ability item (one while the item's ability_locks key is
+# selected, stamped from slot_data), then one unlock global per item (one when
+# the item is received, through item_globals like any unlock). The ASI
+# enforces a lock per frame while its flag is set and its unlock is zero.
+# Order is data.ABILITY_ITEMS and never reorders. The SCM-internal marker
+# scratch begins right above this block.
+ABILITY_KEYS: list[str] = list(data.ABILITY_ITEMS)
+ABILITY_LOCK_FLAG_BASE = PROPERTIES_CASH_GLOBAL + 1
+ABILITY_UNLOCK_BASE = ABILITY_LOCK_FLAG_BASE + len(ABILITY_KEYS)
 
 
 def unlock_global(key: str) -> int:
@@ -133,8 +145,16 @@ def reward_global(item_name: str) -> int:
     return REWARD_BASE + REWARD_KEYS.index(item_name)
 
 
+def ability_lock_flag_global(item_name: str) -> int:
+    return ABILITY_LOCK_FLAG_BASE + ABILITY_KEYS.index(item_name)
+
+
+def ability_unlock_global(item_name: str) -> int:
+    return ABILITY_UNLOCK_BASE + ABILITY_KEYS.index(item_name)
+
+
 def highest_reserved_global() -> int:
-    return PROPERTIES_CASH_GLOBAL
+    return ABILITY_UNLOCK_BASE + len(ABILITY_KEYS) - 1
 
 
 def item_globals() -> dict[int, int]:
@@ -152,6 +172,8 @@ def item_globals() -> dict[int, int]:
     for ownership in data.PROPERTY_OWNERSHIP_ITEMS:
         mapping[items.ITEM_NAME_TO_ID[ownership]] = ownership_global(ownership)
     mapping[items.ITEM_NAME_TO_ID[data.MINIMAP_ITEM]] = MINIMAP_UNLOCK_GLOBAL
+    for ability in data.ABILITY_ITEMS:
+        mapping[items.ITEM_NAME_TO_ID[ability]] = ability_unlock_global(ability)
     return mapping
 
 
@@ -216,6 +238,21 @@ def class_cash_flags(side_events: bool, stunt_jumps: bool,
         STUNT_JUMPS_CASH_GLOBAL: int(bool(stunt_jumps)),
         RAMPAGES_CASH_GLOBAL: int(bool(rampages)),
         PROPERTIES_CASH_GLOBAL: int(bool(properties)),
+    }
+
+
+def ability_lock_flags(selected_keys: set[str]) -> dict[int, int]:
+    """Ability lock-flag global index -> value the ASI stamps once from
+    slot_data. One while the item's ability starts locked this seed (its
+    ability_locks key is selected, which also puts the item in the pool);
+    zero leaves that ability fully vanilla, the toggle invariant. All eight
+    flags are always stamped so a stale save state cannot linger."""
+    locked_items = {
+        item for key in selected_keys for item in data.ABILITY_LOCK_ITEMS[key]
+    }
+    return {
+        ability_lock_flag_global(item): int(item in locked_items)
+        for item in ABILITY_KEYS
     }
 
 

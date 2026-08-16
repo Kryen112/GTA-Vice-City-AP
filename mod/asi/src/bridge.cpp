@@ -152,8 +152,21 @@ void BridgeClient::HandleMessage(const json& message) {
           package_locations.push_back(package);
         }
       }
+      std::vector<PickupTarget> pickup_targets;
+      if (message.contains("pickup_layout")) {
+        for (const json& row : message.at("pickup_layout")) {
+          PickupTarget target;
+          target.x = row.at(0).get<double>();
+          target.y = row.at(1).get<double>();
+          target.z = row.at(2).get<double>();
+          target.pickup_type = row.at(3).get<int>();
+          target.model = row.at(4).get<int>();
+          target.quantity = row.at(5).get<int>();
+          pickup_targets.push_back(target);
+        }
+      }
       game_->ApplyConfig(item_globals, completion_watch, item_effects, config_globals,
-                         package_locations);
+                         package_locations, pickup_targets);
     } else if (type == msg::kItems) {
       std::vector<std::pair<std::int64_t, std::int64_t>> items;
       for (const json& entry : message.at("items")) {

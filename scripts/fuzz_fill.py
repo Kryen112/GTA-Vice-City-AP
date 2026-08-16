@@ -55,6 +55,38 @@ CONFIGURATIONS: list[tuple[str, dict]] = [
     ("100 percent, one class off EXPECT reject", {
         "goal": "hundred_percent", "enable_side_events": False,
     }),
+    # Ability locks add up to eight items whose terms gate whole check
+    # classes; the matrix covers all locks with everything on, the tightest
+    # story-only pool, the widest 100 percent rule surface, and a partial set.
+    ("ability locks, all keys", {
+        "ability_locks": ["sprint", "jump", "crouch", "vehicles",
+                          "weapon_equip", "wallet"],
+    }),
+    ("ability locks, all keys, story only", {
+        "ability_locks": ["sprint", "jump", "crouch", "vehicles",
+                          "weapon_equip", "wallet"],
+        "enable_hidden_packages": False, "enable_rampages": False,
+        "enable_stunt_jumps": False, "enable_emergency_vehicles": False,
+        "enable_properties": False,
+        "enable_robbable_stores": False, "enable_side_events": False,
+    }),
+    ("ability locks, all keys, 100 percent", {
+        "goal": "hundred_percent",
+        "ability_locks": ["sprint", "jump", "crouch", "vehicles",
+                          "weapon_equip", "wallet"],
+    }),
+    ("ability locks, vehicles and wallet", {
+        "ability_locks": ["vehicles", "wallet"],
+    }),
+    # Hidden packages are the only start-region class with no ability term,
+    # so turning them off while the other classes stay on collapses the free
+    # sphere-0 count to the first mission and leans the whole large pool on
+    # the opening grant.
+    ("ability locks, all keys, packages off", {
+        "ability_locks": ["sprint", "jump", "crouch", "vehicles",
+                          "weapon_equip", "wallet"],
+        "enable_hidden_packages": False,
+    }),
     ("deathlink on", {"death_link": True}),
 ]
 

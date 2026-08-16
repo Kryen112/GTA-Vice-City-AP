@@ -11,7 +11,16 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import ClassVar
 
-from Options import Choice, DeathLink, DefaultOnToggle, NamedRange, PerGameCommonOptions, StartInventoryPool, Toggle
+from Options import (
+    Choice,
+    DeathLink,
+    DefaultOnToggle,
+    NamedRange,
+    OptionSet,
+    PerGameCommonOptions,
+    StartInventoryPool,
+    Toggle,
+)
 
 
 class Goal(Choice):
@@ -109,6 +118,42 @@ class ShuffleMinimap(Toggle):
     display_name = "Shuffle minimap"
 
 
+class RandomizePickups(Toggle):
+    """If on, the ambient world pickups shuffle among their own spots as one
+    permutation: street weapons, health hearts, body armors, adrenaline pills,
+    and police bribes trade places, a weapon's ammo traveling with it. Every
+    spot keeps its respawn behavior. Hidden packages, rampage icons, safehouse
+    reward spawns, property icons, shop stock, and mission-spawned pickups
+    stay vanilla, and no locations or items change: this is in-world flavor
+    only. If off, every pickup is fully vanilla."""
+    display_name = "Randomize pickups"
+
+
+class AbilityLocks(OptionSet):
+    """Abilities locked at new game until their item arrives from the
+    multiworld. Each selected key locks its ability and puts its item in the
+    pool; an unselected key is fully vanilla. Valid keys:
+
+    sprint: the sprint input masks until Sprint arrives; the jog is untouched.
+    jump: Tommy cannot jump until Jump arrives.
+    crouch: Tommy cannot crouch until Crouch arrives.
+    vehicles: Tommy cannot enter vehicles; Land Vehicles, Sea Vehicles, and
+    Air Vehicles each unlock their class. Scripted cutscenes that seat him
+    still work.
+    weapon_equip: owned weapons cannot be equipped and vehicle drive-by fire
+    is blocked until Weapon Equip arrives; bare fists always work. Weapon
+    rampage icons wait for it too; the two run-them-down rampages need a land
+    vehicle instead.
+    wallet: the money balance pins to zero until Wallet arrives. Everything
+    earned or received while locked burns, cash items included, and property
+    purchases logically require the Wallet item."""
+    display_name = "Ability locks"
+    valid_keys = frozenset({
+        "sprint", "jump", "crouch", "vehicles", "weapon_equip", "wallet",
+    })
+    default = frozenset()
+
+
 class TrapPercentage(NamedRange):
     """Percentage of filler items replaced by traps (0 disables). The eight
     trap types share the slice equally: raised wanted level, exploding cars,
@@ -148,5 +193,7 @@ class GTAViceCityOptions(PerGameCommonOptions):
     shuffle_emergency_rewards: ShuffleEmergencyRewards
     randomize_radio_stations: RandomizeRadioStations
     shuffle_minimap: ShuffleMinimap
+    randomize_pickups: RandomizePickups
+    ability_locks: AbilityLocks
     trap_percentage: TrapPercentage
     death_link: DeathLink

@@ -38,6 +38,9 @@ CONFIG = {
         "542100052": ["trap_speed_up", 30], "542100053": ["trap_weather"],
     },
     "config_globals": {"9377": 1, "9378": 0},
+    # Two ambient pickup rows, one weapon with ammo and one consumable, so the
+    # round trip proves the layout decode end to end.
+    "pickup_layout": [[393.9, -60.2, 11.5, 15, 274, 34], [-37.7, -938.3, 10.5, 15, 375, 0]],
 }
 
 
@@ -62,6 +65,7 @@ class Recorder:
         await bridge.send_config(
             CONFIG["item_globals"], CONFIG["completion_watch"],
             CONFIG["item_effects"], CONFIG["config_globals"], {},
+            CONFIG["pickup_layout"],
         )
         await bridge.send_items(RESYNC_ITEMS)
         await bridge.send_checked(RESYNC_CHECKED)
@@ -112,6 +116,8 @@ async def run(harness: str) -> int:
         failures.append(f"item_effects {summary.get('item_effects')} != {CONFIG['item_effects']}")
     if summary.get("config_globals") != CONFIG["config_globals"]:
         failures.append(f"config_globals {summary.get('config_globals')} != {CONFIG['config_globals']}")
+    if summary.get("pickup_layout") != CONFIG["pickup_layout"]:
+        failures.append(f"pickup_layout {summary.get('pickup_layout')} != {CONFIG['pickup_layout']}")
 
     if failures:
         print("FAIL: C++ ASI interop check")

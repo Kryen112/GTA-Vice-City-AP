@@ -60,16 +60,22 @@ version control.
   Repeatable earnings (emergency pay, till cash, race winnings, in-mission
   bonuses) are never touched, and a build-time audit pins every remaining
   payout so a new site fails the build instead of leaking. Reserved globals
-  above `$9420` are SCM-internal: `$9421` up are marker handles and
+  above `$9436` are SCM-internal: `$9437` up are marker handles and
   visibility flags. `$9004`, `$9006`, `$9007`, `$9008`, and `$9009` in the
   bookkeeping gap below `$9379` are SCM-internal scratch (the two island-gate
   once-guards, a package counter, and two reward once-guards). The ASI never
   reads or writes any of these.
+- Ability locks: `$9421..$9428` (one lock flag per ability item, ASI-stamped
+  from slot_data) and `$9429..$9436` (one unlock per item, ASI-written from
+  the received items) are ASI-facing only; no gate reads them. The ASI
+  enforces each lock per frame while its flag is set and its unlock is zero
+  (input masks, the wallet pin, the vehicle-entry cancel, and the weapon
+  rampage icon hold), so the script carries nothing beyond the foundation's
+  sizing line, which references `$9436` as the highest reserved global.
 - Minimap shuffle: `$9415` (the shuffled flag) and `$9416` (the Minimap item
   unlock) are ASI-facing only; no gate reads them. The ASI hides the radar
   disc while the flag is set and the unlock is zero, so the script carries
-  nothing beyond the foundation's sizing line, which references `$9416` as the
-  highest reserved global.
+  nothing for them.
 - Radio randomization: the foundation initializes the resolve map
   `$9390..$9398` to identity and the scripted `set_radio_channel` sites read it,
   so the script is vanilla until the ASI overwrites the map from the station

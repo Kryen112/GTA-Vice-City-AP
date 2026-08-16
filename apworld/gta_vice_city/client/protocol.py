@@ -38,10 +38,13 @@ Client to ASI:
     config   {item_globals,   how the ASI maps play to the SCM: item id -> the
               item_effects,     count global it counts toward; item id -> a
               config_globals,   one-shot effect applied once past the applied
-              completion_watch} index; config-flag global index -> value to
-                              stamp; and completion global index -> location id
-                              to poll and report. Sent once per connection,
-                              before the resync.
+              completion_watch, index; config-flag global index -> value to
+              package_coords,   stamp; completion global index -> location id
+              pickup_layout}    to poll and report; package coordinates for
+                              per-package detection; and the ambient pickup
+                              layout to enforce (empty when pickups are
+                              vanilla). Sent once per connection, before the
+                              resync.
     items    {items}          the full cumulative received-items list, as
                               [index, item_id] pairs. The ASI re-derives all
                               unlock globals from this every time and re-applies
@@ -63,7 +66,7 @@ import base64
 import hashlib
 import json
 
-PROTOCOL_VERSION = 2
+PROTOCOL_VERSION = 3
 
 # A single frame, including its trailing newline, never exceeds this many bytes.
 MAX_FRAME_BYTES = 4096
@@ -114,7 +117,7 @@ def refused_message(reason: str) -> dict:
 
 def config_message(
     item_globals: dict, completion_watch: dict, item_effects: dict, config_globals: dict,
-    package_coords: dict,
+    package_coords: dict, pickup_layout: list,
 ) -> dict:
     return {
         "type": CONFIG,
@@ -123,6 +126,7 @@ def config_message(
         "config_globals": config_globals,
         "completion_watch": completion_watch,
         "package_coords": package_coords,
+        "pickup_layout": pickup_layout,
     }
 
 

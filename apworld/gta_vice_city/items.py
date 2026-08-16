@@ -1,11 +1,12 @@
 """Item tables. Names, ids, classification, and groups, derived from data.py.
 
 Classification is decided here in one place. Progressive giver unlocks, area
-access, and the business property ownerships are progression; package rewards,
-emergency-vehicle rewards, radio stations, the minimap, and the safehouse
-ownerships are useful; cash denominations, the weapon pickup, the health and
-armor top-ups, and the wanted-level clear are filler; the trap items are
-traps. Money never gates logic, so cash is never progression.
+access, the business property ownerships, and every ability item except
+Crouch are progression; package rewards, emergency-vehicle rewards, radio
+stations, the minimap, the safehouse ownerships, and Crouch are useful; cash
+denominations, the weapon pickup, the health and armor top-ups, and the
+wanted-level clear are filler; the trap items are traps. Money amounts never
+gate logic, so cash is never progression.
 """
 
 from __future__ import annotations
@@ -42,6 +43,7 @@ _ORDERED_ITEM_NAMES: list[str] = (
     + data.RADIO_STATION_ITEMS
     + data.PROPERTY_OWNERSHIP_ITEMS
     + [data.MINIMAP_ITEM]
+    + data.ABILITY_ITEMS
 )
 
 ITEM_NAME_TO_ID: dict[str, int] = {
@@ -66,6 +68,13 @@ def _classify(name: str) -> ItemClassification:
         # reachable, skip_balancing because there are many and none unlocks
         # anything, so they must not distort progression balancing.
         return ItemClassification.progression_skip_balancing
+    if name in data.ABILITY_ITEMS:
+        # Crouch gates nothing, so it is useful; every other locked ability may
+        # appear in a rule. Sprint and Jump hold no term today but stay
+        # progression, so a term found in the runthrough needs no
+        # classification flip.
+        return (ItemClassification.useful if name in data.ABILITY_USEFUL_ITEMS
+                else ItemClassification.progression)
     if (name in data.PACKAGE_REWARD_ITEMS or name in data.EMERGENCY_REWARD_ITEMS
             or name in data.RADIO_STATION_ITEMS
             or name in data.SAFEHOUSE_OWNERSHIP_ITEMS
@@ -89,6 +98,7 @@ ITEM_GROUPS: dict[str, list[str]] = {
     "Traps": list(data.TRAP_ITEMS),
     "Radio Stations": list(data.RADIO_STATION_ITEMS),
     "Property Ownership": list(data.PROPERTY_OWNERSHIP_ITEMS),
+    "Abilities": list(data.ABILITY_ITEMS),
 }
 
 # The item quantity each name contributes to the pool. Progressive items have

@@ -17,4 +17,31 @@ namespace gtavc {
 // consistent with the decompiled usage.
 constexpr unsigned int kRetunePressesAddress10 = 0x783998;
 
+// The call site immediately before CWorld::Process inside CGame::Process,
+// classic 1.0 executable only. Hooking it after the call gives the one point
+// in the frame where a pad write still reaches the player: CGame::Process
+// opens by calling CPad::UpdatePads (0x4A4412), which rebuilds the whole
+// controller state from the devices, and CWorld::Process (0x4A45C8) is what
+// runs the player ped's control, so a mask written anywhere after that (the
+// gameProcessEvent handler included) is read by nobody and overwritten on
+// the next frame.
+//
+// Pinned from the executable:
+// - This call and the CWorld::Process call have exactly one caller each in
+//   .text and sit in one run of back-to-back call instructions with no
+//   branch target between them, so the hook runs once on every frame the
+//   world processes.
+// - Its callee, 0x624EC0, takes no arguments and cleans no stack (it opens
+//   on a byte compare against a static and ends in a plain ret, never
+//   touching ecx), which is what lets the hook declare it as a cdecl
+//   zero-argument call; a thiscall or stack-argument callee would corrupt
+//   the frame.
+// - CTheScripts::Process (0x44FED0, plugin-sdk's version-detected address)
+//   runs earlier in the same function, at 0x4A4501, so a script reading
+//   buttons still sees the real pad and mission menus keep working.
+//   plugin-sdk's processScriptsEvent names a different site, 0x4A45AA,
+//   which calls 0x5A92E0 behind a conditional jump and so is not a
+//   per-frame point; it also precedes this call.
+constexpr unsigned int kBeforeWorldProcessCallSite10 = 0x4A45C3;
+
 }  // namespace gtavc

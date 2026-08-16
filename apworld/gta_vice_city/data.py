@@ -10,7 +10,7 @@ Nothing here gates logic on money.
 
 from __future__ import annotations
 
-from . import package_data
+from . import package_data, pickup_data
 
 # Story missions grouped by giver, each list in vanilla play order. Progressive
 # unlocks follow this order (Progressive <giver> #n opens the giver's nth
@@ -214,6 +214,96 @@ RADIO_STATION_ITEMS: list[str] = [
 # blips, and north marker together) stays hidden until this item is received;
 # when off the minimap is fully vanilla and the item stays out of the pool.
 MINIMAP_ITEM = "Minimap"
+
+# Ability locking. Each ability_locks key locks its ability at new game until
+# its item arrives and puts that item in the pool; an unselected key is fully
+# vanilla (no lock, no item, no logic terms). The vehicles key locks all
+# vehicle entry and adds the three access items. The ASI enforces every lock
+# per frame from the reserved lock-flag and unlock globals: the sprint lock
+# masks the sprint input only (the jog is untouched), the weapon lock blocks
+# scrolling to owned weapons and all in-vehicle fire while bare fists keep
+# working, and the wallet lock pins the balance to zero, burning every kind of
+# income while it holds, cash items included (deliberate, not a bug).
+SPRINT_ITEM = "Sprint"
+JUMP_ITEM = "Jump"
+CROUCH_ITEM = "Crouch"
+LAND_VEHICLES_ITEM = "Land Vehicles"
+SEA_VEHICLES_ITEM = "Sea Vehicles"
+AIR_VEHICLES_ITEM = "Air Vehicles"
+WEAPON_EQUIP_ITEM = "Weapon Equip"
+WALLET_ITEM = "Wallet"
+
+ABILITY_LOCK_ITEMS: dict[str, list[str]] = {
+    "sprint": [SPRINT_ITEM],
+    "jump": [JUMP_ITEM],
+    "crouch": [CROUCH_ITEM],
+    "vehicles": [LAND_VEHICLES_ITEM, SEA_VEHICLES_ITEM, AIR_VEHICLES_ITEM],
+    "weapon_equip": [WEAPON_EQUIP_ITEM],
+    "wallet": [WALLET_ITEM],
+}
+
+# The eight ability items in a stable order; the reserved lock-flag and unlock
+# globals follow this order, so it never reorders.
+ABILITY_ITEMS: list[str] = [
+    item for items in ABILITY_LOCK_ITEMS.values() for item in items
+]
+
+# Which ability_locks key owns each ability item.
+ABILITY_ITEM_KEY: dict[str, str] = {
+    item: key for key, items in ABILITY_LOCK_ITEMS.items() for item in items
+}
+
+# Crouch gates nothing (an accuracy comfort, never required); every other
+# ability item may appear in a rule, so it is progression.
+ABILITY_USEFUL_ITEMS: list[str] = [CROUCH_ITEM]
+
+# Ability requirements per mission, the minimal day-one set: only missions
+# whose script demonstrably forces the vehicle (a race or delivery in a
+# specific vehicle the player enters). Everything subtler is deliberately
+# absent and comes from the pre-release manual runthrough; a term only takes
+# effect while its ability_locks key is selected.
+MISSION_ABILITY_REQUIREMENTS: dict[str, list[str]] = {
+    "The Driver": [LAND_VEHICLES_ITEM],
+    "Demolition Man": [LAND_VEHICLES_ITEM],
+    "G-spotlight": [LAND_VEHICLES_ITEM],
+    "Sunshine Autos Races": [LAND_VEHICLES_ITEM],
+    "The Fastest Boat": [SEA_VEHICLES_ITEM],
+    "Supply & Demand": [SEA_VEHICLES_ITEM],
+    "Stunt Boat Challenge": [SEA_VEHICLES_ITEM],
+    "Checkpoint Charlie": [SEA_VEHICLES_ITEM],
+    "Dildo Dodo": [AIR_VEHICLES_ITEM],
+}
+
+# Ability requirements per finale income asset, beyond the asset's own venue
+# missions: the Sunshine Autos import lists take delivering vehicles.
+ASSET_ABILITY_REQUIREMENTS: dict[str, list[str]] = {
+    "Sunshine Autos": [LAND_VEHICLES_ITEM],
+}
+
+# The two rampages whose kill frenzy hands no weapon and expects the player to
+# run the targets down, read from the RAMPAGE controller ($1518 carries no
+# model for them): they need a land vehicle instead of the weapon equip. The
+# ASI holds the other rampage icons by the same split, keyed on their pickup
+# coordinates (-679.66, -419.712) and (468.656, -1608.79); a rampage with no
+# weapon in its name is exactly a member of this set, which the tests pin.
+VEHICLE_RAMPAGE_INDICES: frozenset[int] = frozenset({14, 21})
+
+# Side events started by entering a helicopter: each checkpoint launcher
+# requires the player to be flying a Sparrow (model 199).
+AIR_SIDE_EVENTS: frozenset[str] = frozenset({
+    "Downtown Chopper Checkpoint", "Ocean Beach Chopper Checkpoint",
+    "Vice Point Chopper Checkpoint", "Little Haiti Chopper Checkpoint",
+})
+
+# Side events that need no vehicle of the player's own: the launcher takes
+# the player on foot and the mission warps them into the event vehicle
+# (warp_player_into_car), which no lock constrains. Dirtring is absent
+# because its script sets the player down beside a created Sanchez and the
+# player mounts it, a real entry. Every other side event's launcher requires
+# the player to already be in a specific vehicle: the RC trio in a Top Fun
+# van, the four trials in their own model, and the Sunshine races stopped in
+# a car at the start line.
+SEATED_SIDE_EVENTS: frozenset[str] = frozenset({"Hotring", "Bloodring"})
 
 
 def cash_item_name(amount: int) -> str:
@@ -589,6 +679,17 @@ MAINLAND_PACKAGES: frozenset[str] = package_data.MAINLAND_PACKAGES
 STARFISH_PACKAGES: frozenset[str] = package_data.STARFISH_PACKAGES
 PACKAGE_COORDS: list[tuple[float, float, float]] = package_data.PACKAGE_COORDS
 
+# Ambient pickup slots for the randomize_pickups permutation, extracted from
+# the decompile by scripts/dump_pickups.py: the MAIN-section bribes plus the
+# Mission 0 street weapons, hearts, armors, and adrenalines. Each slot keeps
+# its position and pickup type; the permutation moves the model and ammo. The
+# bribe model breaks the in-shop cost lookup, so bribes never land on
+# shop-type slots.
+PICKUP_SLOTS: list[tuple[float, float, float, int, int, int]] = pickup_data.PICKUP_SLOTS
+PICKUP_MODEL_NAMES: dict[int, str] = pickup_data.PICKUP_MODEL_NAMES
+PICKUP_BRIBE_MODEL: int = pickup_data.BRIBE_MODEL
+PICKUP_SHOP_TYPE: int = pickup_data.SHOP_PICKUP_TYPE
+
 # Property purchases on the mainland: the five mainland venue businesses and the
 # two mainland safehouses (Hyman Condo in Downtown, Skumole Shack in Little
 # Haiti). A purchase needs its island reached, so a mainland purchase must gate on
@@ -628,6 +729,49 @@ MAINLAND_SIDE_EVENTS: frozenset[str] = frozenset({
 MAINLAND_STUNT_JUMPS: frozenset[str] = frozenset(
     stunt_jump_name(index) for index in range(1, STUNT_JUMP_COUNT + 1)
 )
+
+
+def location_ability_requirements() -> dict[str, list[str]]:
+    """Every location's ability items, the minimal day-one set. A term binds
+    only while its ability_locks key is selected (rules.py filters); with the
+    key off the item is not in the pool and the location plays vanilla.
+
+    Class-wide entries: every unique stunt jump and every emergency level
+    takes a land vehicle; a chopper checkpoint takes a helicopter, the two
+    warp-seated stadium events take nothing, and every other side event
+    starts by entering a land vehicle; robbing a store takes aiming a weapon
+    (bare fists cannot); a weapon rampage wields its handed weapon while the
+    two run-them-down rampages take a land vehicle; a safehouse purchase
+    takes holdable money (a business purchase carries the wallet through the
+    property-sale requirements instead).
+    """
+    requirements: dict[str, list[str]] = {}
+    for mission, items in MISSION_ABILITY_REQUIREMENTS.items():
+        requirements[mission] = list(items)
+    for index in range(1, STUNT_JUMP_COUNT + 1):
+        requirements[stunt_jump_name(index)] = [LAND_VEHICLES_ITEM]
+    for name in emergency_names():
+        requirements[name] = [LAND_VEHICLES_ITEM]
+    for name in SIDE_EVENTS:
+        if name in SEATED_SIDE_EVENTS:
+            continue
+        requirements[name] = (
+            [AIR_VEHICLES_ITEM] if name in AIR_SIDE_EVENTS else [LAND_VEHICLES_ITEM]
+        )
+    for index in range(1, ROBBABLE_STORE_COUNT + 1):
+        requirements[robbable_store_name(index)] = [WEAPON_EQUIP_ITEM]
+    for index in range(1, RAMPAGE_COUNT + 1):
+        requirements[rampage_name(index)] = (
+            [LAND_VEHICLES_ITEM] if index in VEHICLE_RAMPAGE_INDICES
+            else [WEAPON_EQUIP_ITEM]
+        )
+    for purchase in PROPERTY_PURCHASES:
+        if purchase not in BUSINESS_PURCHASES:
+            requirements[purchase] = [WALLET_ITEM]
+    return requirements
+
+
+LOCATION_ABILITY_REQUIREMENTS: dict[str, list[str]] = location_ability_requirements()
 
 
 # Reward mirror. The mod pays no cash on a mission pass (build_scm.py strips it);

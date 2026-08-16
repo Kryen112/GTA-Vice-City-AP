@@ -18,7 +18,7 @@ namespace gtavc {
 
 using json = nlohmann::json;
 
-constexpr int kProtocolVersion = 2;
+constexpr int kProtocolVersion = 3;
 constexpr std::size_t kMaxFrameBytes = 4096;
 constexpr int kMaxChunkParts = 4096;
 constexpr int kMaxChunksInFlight = 64;

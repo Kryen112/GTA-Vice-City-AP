@@ -8,10 +8,12 @@
 #include <vector>
 
 #include "../src/protocol.hpp"
+#include "../src/scm_ability_locks.hpp"
 #include "../src/scm_completion.hpp"
 #include "../src/scm_effects.hpp"
 #include "../src/scm_minimap.hpp"
 #include "../src/scm_packages.hpp"
+#include "../src/scm_pickup_layout.hpp"
 #include "../src/scm_radio.hpp"
 
 using namespace gtavc;
@@ -285,6 +287,151 @@ int main() {
     const auto loaded_unlocked = PlanMinimapEnforcement(true, true, false);
     Expect(loaded_unlocked.action == MinimapAction::kLeaveAlone && !loaded_unlocked.forcing,
            "a save loaded already unlocked never writes the flag");
+  }
+
+  // Pickup layout planning: a target matches a pool entry by position and
+  // type; only a model difference rewrites, so the game's own quantity
+  // bookkeeping (ammo extraction zeroes it in place) is never re-stamped; a
+  // dead or script-removed slot (type zero is filtered before planning, a
+  // recreated slot arrives with its vanilla type) and a far entry never match.
+  {
+    const std::vector<PickupTarget> targets = {
+        {393.9, -60.2, 11.5, 15, 274, 34},
+        {30.0, -1330.9, 13.0, 2, 366, 0},
+        {-900.0, 250.0, 17.0, 15, 375, 0},
+    };
+    const std::vector<PickupPoolEntry> pool = {
+        // The first target's slot, still holding its vanilla bribe.
+        {393.9f, -60.2f, 11.5f, 15, 375, 40},
+        // The second target's slot, already rewritten to the heart.
+        {30.0f, -1330.9f, 13.0f, 2, 366, 41},
+        // Near the third target but the wrong type: no match.
+        {-900.0f, 250.0f, 17.0f, 2, 269, 42},
+        // Unrelated pool entry far from every target.
+        {0.0f, 0.0f, 0.0f, 15, 366, 43},
+    };
+    const auto plan = PlanPickupLayout(targets, pool);
+    Expect(plan.rewrites.size() == 1, "exactly the model mismatch rewrites");
+    Expect(!plan.rewrites.empty() && plan.rewrites[0].pool_index == 40 &&
+               plan.rewrites[0].model == 274 && plan.rewrites[0].quantity == 34,
+           "the rewrite carries the target model and ammo to the matched slot");
+    Expect(plan.unmatched_targets == 1,
+           "the type-mismatched slot counts as unmatched, left vanilla");
+    const auto vanilla = PlanPickupLayout({}, pool);
+    Expect(vanilla.rewrites.empty() && vanilla.unmatched_targets == 0,
+           "an empty layout plans nothing");
+  }
+
+  // Ability lock planning: a lock is its flag with no unlock; the input plan
+  // is state-aware (the pad overloads buttons between foot and vehicle) and
+  // constrains only a controllable player, except the wallet pin, which is
+  // state and holds through cutscenes.
+  {
+    std::array<int, kAbilityCount> flags{};
+    std::array<int, kAbilityCount> unlocks{};
+    Expect(!AnyAbilityLocked(PlanAbilityLocks(flags, unlocks)),
+           "no flags means nothing locked");
+    flags.fill(1);
+    const AbilityLocks all_locked = PlanAbilityLocks(flags, unlocks);
+    Expect(AnyAbilityLocked(all_locked), "flags without unlocks lock");
+    unlocks[kAbilitySprint] = 1;
+    Expect(!PlanAbilityLocks(flags, unlocks)[kAbilitySprint],
+           "an unlock releases its own ability");
+    Expect(PlanAbilityLocks(flags, unlocks)[kAbilityJump],
+           "an unlock releases only its own ability");
+
+    const auto foot = PlanAbilityInputs(all_locked, true, true, false);
+    Expect(foot.mask_sprint && foot.mask_jump && foot.mask_crouch &&
+               foot.mask_weapon_cycle && foot.force_unarmed,
+           "on foot masks the foot buttons and holds the weapon");
+    const auto vehicle = PlanAbilityInputs(all_locked, false, true, false);
+    Expect(!vehicle.mask_sprint && !vehicle.mask_jump && !vehicle.mask_crouch &&
+               !vehicle.mask_weapon_cycle,
+           "in a vehicle no button masks: the game reads those fields as "
+           "look-behind and horn there");
+    Expect(vehicle.force_unarmed,
+           "the weapon hold still applies in a vehicle, which is what blocks drive-by");
+    const auto cutscene = PlanAbilityInputs(all_locked, true, false, false);
+    Expect(!cutscene.mask_sprint && !cutscene.mask_jump && !cutscene.mask_crouch &&
+               !cutscene.mask_weapon_cycle && !cutscene.force_unarmed,
+           "a script-owned player keeps every input");
+    const auto remote = PlanAbilityInputs(all_locked, true, true, true);
+    Expect(!remote.mask_sprint && !remote.mask_jump && !remote.mask_crouch &&
+               !remote.mask_weapon_cycle && !remote.force_unarmed,
+           "remote control stands every lock down: the pad drives the RC vehicle");
+  }
+
+  // Re-deriving the unlock globals: only on the edge where a world comes up,
+  // and never from an empty item list, which would write every unlock global
+  // to zero while the first delivery is still in flight.
+  {
+    Expect(ShouldReDeriveUnlocks(true, false, true), "a loaded world re-derives");
+    Expect(!ShouldReDeriveUnlocks(true, true, true),
+           "a world already up does not re-derive every frame");
+    Expect(!ShouldReDeriveUnlocks(false, true, true),
+           "a world going away does not re-derive");
+    Expect(!ShouldReDeriveUnlocks(true, false, false),
+           "no items in hand means nothing to re-derive from");
+  }
+
+  // Vehicle entry: each lock answers for its own appearance class and leaves
+  // the others enterable.
+  {
+    AbilityLocks land_only{};
+    land_only[kAbilityLandVehicles] = true;
+    Expect(VehicleEntryLockIndex(land_only, kAppearanceAutomobile) == kAbilityLandVehicles &&
+               VehicleEntryLockIndex(land_only, kAppearanceBike) == kAbilityLandVehicles,
+           "the land lock blocks cars and bikes");
+    Expect(VehicleEntryLockIndex(land_only, kAppearanceBoat) == kAbilityCount &&
+               VehicleEntryLockIndex(land_only, kAppearanceHeli) == kAbilityCount,
+           "the land lock leaves boats and helicopters enterable");
+    AbilityLocks air_only{};
+    air_only[kAbilityAirVehicles] = true;
+    Expect(VehicleEntryLockIndex(air_only, kAppearanceHeli) == kAbilityAirVehicles &&
+               VehicleEntryLockIndex(air_only, kAppearancePlane) == kAbilityAirVehicles,
+           "the air lock blocks helicopters and planes");
+    AbilityLocks sea_only{};
+    sea_only[kAbilitySeaVehicles] = true;
+    Expect(VehicleEntryLockIndex(sea_only, kAppearanceBoat) == kAbilitySeaVehicles,
+           "the sea lock blocks boats");
+  }
+
+  // Rampage icon planning: while the weapon equip is locked a weapon
+  // rampage's icon sinks and stays sunk, the two run-them-down icons never
+  // move, and the unlock raises a sunk icon, a save made while sunk
+  // included (the band makes the state self-describing).
+  {
+    Expect(IsVehicleRampagePickup(-679.66f, -419.712f) &&
+               IsVehicleRampagePickup(468.656f, -1608.79f),
+           "both run-them-down rampage icons are recognized");
+    Expect(!IsVehicleRampagePickup(218.22f, -1613.76f),
+           "a weapon rampage icon is not");
+    Expect(PlanRampageIcon(true, false, 11.0f) == RampageIconAction::kLower,
+           "the weapon lock sinks a weapon rampage icon");
+    Expect(PlanRampageIcon(true, false, 11.0f - kRampageLowerOffset) ==
+               RampageIconAction::kLeaveAlone,
+           "a sunk icon stays where it is while locked");
+    Expect(PlanRampageIcon(false, false, 11.0f - kRampageLowerOffset) ==
+               RampageIconAction::kRaise,
+           "the unlock raises a sunk icon, a loaded save included");
+    Expect(PlanRampageIcon(false, false, 11.0f) == RampageIconAction::kLeaveAlone,
+           "an unlocked icon in place never moves");
+    Expect(PlanRampageIcon(true, true, 11.0f) == RampageIconAction::kLeaveAlone,
+           "a run-them-down icon stays collectible under the weapon lock");
+  }
+
+  // Ability toast pacing: the first attempt toasts, the cooldown silences the
+  // stream, and the clock wrapping cannot wedge it shut.
+  {
+    Expect(ShouldShowAbilityToast(500, false, 0), "the first attempt toasts");
+    Expect(!ShouldShowAbilityToast(5000, true, 500),
+           "inside the cooldown stays quiet");
+    Expect(ShouldShowAbilityToast(500 + kAbilityToastCooldownMs, true, 500),
+           "past the cooldown toasts again");
+    Expect(!ShouldShowAbilityToast(100, true, 0xFFFFFF00u),
+           "a wrap inside the cooldown stays quiet");
+    Expect(ShouldShowAbilityToast(20000, true, 0xFFFFFF00u),
+           "a wrapped clock still toasts once the cooldown elapses");
   }
 
   if (failures == 0) {
