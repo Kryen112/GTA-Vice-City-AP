@@ -138,17 +138,6 @@ SAFEHOUSE_OWNERSHIP_ITEMS: list[str] = [
 # Every other giver's first mission needs its first progressive unlock.
 SPHERE_ZERO_GIVER = "Rosenberg"
 
-# Strands granted at the start when a seed has too little free sphere-0 room
-# (every collectible class off). Each of these sits on the start island, so
-# the granted missions are playable immediately. Diaz and Vercetti Protection
-# give from the mansion on Starfish Island, behind Starfish Island Access, so
-# granting them would enlarge nothing; they stay in the pool. Avery and the
-# early Mr. Black payphones also start on the start island but stay in the
-# pool, so the fill keeps start-island progression to place.
-OPENING_GRANT_GIVERS: list[str] = [
-    SPHERE_ZERO_GIVER, "Cortez", "Death Row",
-]
-
 # The default goal mission.
 FINAL_MISSION = "Keep Your Friends Close..."
 

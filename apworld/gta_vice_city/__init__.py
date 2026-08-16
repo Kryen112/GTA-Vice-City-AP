@@ -28,10 +28,12 @@ from .items import GENERAL_FILLER_NAMES, ITEM_CLASSIFICATIONS, ITEM_GROUPS, ITEM
 from .locations import CLASS_TOGGLE, LOCATION_GROUPS, LOCATION_NAME_TO_ID, LOCATION_REGIONS, LOCATION_TOGGLE
 from .options import CHECK_CLASS_OPTIONS, Goal, GTAViceCityOptions
 
-# Below this many free-at-start locations, the world grants the start-island
-# story strands in OPENING_GRANT_GIVERS so an all-progression pool (a
-# collectible-free seed) can still fill.
-MINIMUM_SPHERE_ZERO = 10
+# How many checks a seed must leave reachable on a new game. Nothing is granted
+# at the start to widen a narrow seed, so a sphere 0 of one check would leave
+# the fill chaining strictly through that check, which it survives only by luck
+# of the seed. Nothing else about the pool predicts which narrow seeds fill, so
+# the count itself is the guard. Measured against scripts/fuzz_fill.py.
+MINIMUM_SPHERE_ZERO = 2
 
 
 def launch_client(*args: str) -> None:
@@ -350,21 +352,6 @@ class GTAViceCityWorld(World):
         active_locations = sum(
             1 for name in LOCATION_NAME_TO_ID if self._location_enabled(name)
         )
-        # A new game starts with only the first Rosenberg mission free, so the
-        # sphere-0 room comes from the free-roam collectibles (hidden packages
-        # and, later, the other pickup classes). With every collectible class
-        # off the pool is all-progression with a one-location sphere 0 and no
-        # filler slack, a cramped fill. In that case grant the start-island
-        # story strands at the start: this opens a large sphere 0 and leaves
-        # ample filler slack, keeping the seed solvable. A real multiworld would
-        # instead place those unlocks in other worlds.
-        if self._free_start_location_count() < MINIMUM_SPHERE_ZERO:
-            for giver in data.OPENING_GRANT_GIVERS:
-                name = data.progressive_item_name(giver)
-                while name in placeable:
-                    placeable.remove(name)
-                    self.multiworld.push_precollected(self.create_item(name))
-
         overflow = len(placeable) - active_locations
         if overflow > 0:
             # More progression and useful items than checks. Not reachable with
@@ -374,6 +361,7 @@ class GTAViceCityWorld(World):
                 f"only {active_locations} checks this seed. Enable another check "
                 "class so the items have reachable homes."
             )
+        self._guard_fill_room()
 
         pool = [self.create_item(name) for name in placeable]
         # The remaining slots are filler, drawn from the reward mirror: each
@@ -408,6 +396,22 @@ class GTAViceCityWorld(World):
         # The trap types are equally weighted, so each filler-replacing slot
         # draws one uniformly at random.
         return self.multiworld.random.choice(data.TRAP_ITEMS)
+
+    def _guard_fill_room(self) -> None:
+        # A new game opens the sphere-zero giver's first mission plus whatever
+        # start-region check the seed's classes leave unruled. A class narrows
+        # the start two ways: a lock puts its checks behind an item, and a class
+        # whose checks all sit on the mainland (every stunt jump does) puts none
+        # in the start region to begin with.
+        free_start_locations = self._free_start_location_count()
+        if free_start_locations < MINIMUM_SPHERE_ZERO:
+            raise OptionError(
+                f"{self.game}: only {free_start_locations} check is reachable on "
+                "a new game with these options, too narrow for the fill to chain "
+                "through. Enable a class with unlocked checks on the start "
+                "island, hidden packages being the one no ability term touches, "
+                "or drop a lock key."
+            )
 
     def _free_start_location_count(self) -> int:
         # Locations reachable on a new game with no item: enabled start-region

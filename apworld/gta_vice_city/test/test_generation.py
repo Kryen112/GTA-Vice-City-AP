@@ -75,6 +75,12 @@ _STORY_ONLY_OPTIONS: dict = {
     "enable_side_events": False,
 }
 
+# A near-minimal pool that still generates. Story-only is refused on item math
+# (see TestRejections), so this adds the one collectible class needed to give
+# the story pool homes. Every world modifier adds pool items without adding
+# checks, so this is the config their tests stack on.
+_TIGHTEST_OPTIONS: dict = dict(_STORY_ONLY_OPTIONS, enable_robbable_stores=True)
+
 
 # The items that satisfy the finale's asset prerequisite (the mandatory
 # Printworks asset plus five optional ones), for tests whose subject is a
@@ -89,34 +95,24 @@ _FINALE_ASSET_ITEMS: list[str] = [
 ]
 
 
-class TestStoryOnly(WorldTestBase):
+class TestTightestPool(WorldTestBase):
     game = "Grand Theft Auto Vice City"
-    options: ClassVar[dict] = dict(_STORY_ONLY_OPTIONS)
+    options: ClassVar[dict] = dict(_TIGHTEST_OPTIONS)
 
-    def test_solvable_with_only_story_missions(self) -> None:
-        # A solo story-only seed is an all-progression pool with a one-location
-        # sphere 0, so the world grants the start-island story strands at the
-        # start to keep it fillable. The default reachability tests already
-        # prove solvability; this asserts the world generated at all and left
-        # the final mission as a real check.
+    def test_solvable_with_the_tightest_pool(self) -> None:
+        # A near-all-progression pool with almost no filler slack. The default
+        # reachability tests already prove solvability; this asserts the world
+        # generated at all and left the final mission as a real check.
         self.assertIn(
             data.FINAL_MISSION,
             {location.name for location in self.multiworld.get_locations(self.player)},
         )
 
-    def test_opening_grant_givers_enlarge_sphere_zero(self) -> None:
-        # The grant exists to enlarge sphere 0, so every granted strand must
-        # be a story giver on the start island (a strand behind an area item
-        # cannot open before that item), with the free sphere-0 giver included.
-        self.assertIn(data.SPHERE_ZERO_GIVER, data.OPENING_GRANT_GIVERS)
-        for giver in data.OPENING_GRANT_GIVERS:
-            self.assertIn(giver, data.STORY_GIVERS, giver)
-            self.assertNotIn(giver, data.MAINLAND_GIVERS, giver)
-            self.assertNotIn(giver, data.STARFISH_GIVERS, giver)
-        # And the grant really landed: the granted unlocks are precollected.
-        precollected = [item.name for item in self.multiworld.precollected_items[self.player]]
-        for giver in data.OPENING_GRANT_GIVERS:
-            self.assertIn(data.progressive_item_name(giver), precollected, giver)
+    def test_nothing_is_granted_at_the_start(self) -> None:
+        # No seed is rescued with starting inventory. This seed sets no
+        # start_inventory_from_pool and no radio shuffle, the two things that
+        # legitimately precollect, so it must start empty-handed.
+        self.assertEqual(self.multiworld.precollected_items[self.player], [])
 
 
 class TestUniversalTracker(WorldTestBase):
@@ -263,12 +259,12 @@ class TestRadioStationsOff(WorldTestBase):
         self.assertEqual(slot_data["config_globals"][str(scm.RADIO_RANDOMIZED_GLOBAL)], 0)
 
 
-class TestRadioStationsStoryOnly(WorldTestBase):
-    # The tightest pool: story-only plus the eight station items must still
-    # leave every progression item a home. The inherited default tests prove
-    # the seed fills and stays reachable.
+class TestRadioStationsTightestPool(WorldTestBase):
+    # The tightest accepted pool plus the eight station items must still leave
+    # every progression item a home. The inherited default tests prove the seed
+    # fills and stays reachable.
     game = "Grand Theft Auto Vice City"
-    options: ClassVar[dict] = dict(_STORY_ONLY_OPTIONS, randomize_radio_stations=True)
+    options: ClassVar[dict] = dict(_TIGHTEST_OPTIONS, randomize_radio_stations=True)
 
 
 class TestMinimapShuffleOn(WorldTestBase):
@@ -321,12 +317,12 @@ class TestMinimapShuffleOff(WorldTestBase):
         )
 
 
-class TestMinimapStoryOnly(WorldTestBase):
-    # Story-only plus the Minimap item: the extra useful item must still leave
-    # every progression item a home. The inherited default tests prove the
-    # seed fills and stays reachable.
+class TestMinimapTightestPool(WorldTestBase):
+    # The tightest accepted pool plus the Minimap item: the extra useful item
+    # must still leave every progression item a home. The inherited default
+    # tests prove the seed fills and stays reachable.
     game = "Grand Theft Auto Vice City"
-    options: ClassVar[dict] = dict(_STORY_ONLY_OPTIONS, shuffle_minimap=True)
+    options: ClassVar[dict] = dict(_TIGHTEST_OPTIONS, shuffle_minimap=True)
 
 
 class TestPickupRandomizerOn(WorldTestBase):
@@ -645,37 +641,6 @@ class TestAbilityLocksWalletOnly(WorldTestBase):
         self.assertTrue(self.can_reach_location("Cap the Collector"))
 
 
-class TestAbilityLocksCollapsedSphereZero(WorldTestBase):
-    # The config where the sphere-zero guard actually bites: one collectible
-    # class, entirely gated by one lock, so every start-region location has a
-    # rule and the free count collapses. The world must fall back on the
-    # opening grant and still fill; the inherited default tests prove it.
-    game = "Grand Theft Auto Vice City"
-    options: ClassVar[dict] = dict(
-        _STORY_ONLY_OPTIONS, enable_robbable_stores=True,
-        ability_locks=["weapon_equip"],
-    )
-
-    def test_locked_class_collapses_the_free_start_count(self) -> None:
-        # Every store needs Weapon Equip, so nothing in the start region is
-        # free but the first mission, and the opening grant must fire.
-        self.assertLess(self.world._free_start_location_count(), MINIMUM_SPHERE_ZERO)
-        precollected = {
-            item.name for item in self.multiworld.precollected_items[self.player]
-        }
-        for giver in data.OPENING_GRANT_GIVERS:
-            self.assertIn(data.progressive_item_name(giver), precollected, giver)
-
-
-class TestAbilityLocksStoryOnly(WorldTestBase):
-    # The tightest locked pool: story-only plus all eight ability items must
-    # still fill, with sphere 0 resting on the opening grant and the free
-    # first mission. The inherited default tests prove it fills and stays
-    # reachable.
-    game = "Grand Theft Auto Vice City"
-    options: ClassVar[dict] = dict(_STORY_ONLY_OPTIONS, ability_locks=_ALL_ABILITY_LOCKS)
-
-
 class TestAbilityLocksHundredPercent(WorldTestBase):
     # Every check class plus every lock: the widest rule surface. The
     # inherited default tests prove the 100 percent completion stays
@@ -978,14 +943,14 @@ class TestFinaleAssetThreshold(WorldTestBase):
         )
 
 
-class TestPropertiesOnly(WorldTestBase):
-    # The tightest properties pool: with every collectible class off, the
-    # class's 31 items (16 venue progressives, 15 ownerships) outnumber its 31
-    # locations once the story pool joins, so the seed leans on the opening
-    # grant for sphere-0 room. The inherited default tests prove it fills and
-    # stays beatable through the finale's asset threshold.
+class TestPropertiesTightestPool(WorldTestBase):
+    # The tightest properties pool: the class's 31 items (16 venue
+    # progressives, 15 ownerships) exactly match its 31 locations, so the story
+    # pool on top needs another class's checks to have homes. The inherited
+    # default tests prove it fills and stays beatable through the finale's
+    # asset threshold.
     game = "Grand Theft Auto Vice City"
-    options: ClassVar[dict] = dict(_STORY_ONLY_OPTIONS, enable_properties=True)
+    options: ClassVar[dict] = dict(_TIGHTEST_OPTIONS, enable_properties=True)
 
 
 class TestFinaleWithoutProperties(WorldTestBase):
@@ -1186,19 +1151,72 @@ class TestRejections(WorldTestBase):
     game = "Grand Theft Auto Vice City"
     auto_construct = False
 
-    def _assert_rejected(self, options: dict) -> None:
+    def _assert_rejected(self, options: dict, because: str) -> None:
+        # `because` pins which guard fired, so a test cannot keep passing on a
+        # different refusal once the item or location math moves.
         self.options = options
-        with self.assertRaises(OptionError):
+        with self.assertRaises(OptionError) as raised:
             self.world_setup()
+        self.assertIn(because, str(raised.exception))
 
     def test_hundred_percent_rejects_with_a_class_off(self) -> None:
         # The 100 percent goal is a solvability contract: every stat
         # contributor must be a check, so generation must refuse the goal
         # unless every check class is enabled.
-        self._assert_rejected({"goal": "hundred_percent", "enable_side_events": False})
+        self._assert_rejected({"goal": "hundred_percent", "enable_side_events": False},
+                              "100 percent goal requires every check class")
 
     def test_hidden_packages_goal_rejects_without_packages(self) -> None:
-        self._assert_rejected({"goal": "hidden_packages", "enable_hidden_packages": False})
+        self._assert_rejected({"goal": "hidden_packages", "enable_hidden_packages": False},
+                              "hidden-packages goal needs the hidden")
+
+    def test_story_only_rejects_on_item_math(self) -> None:
+        # With every collectible class off, the story pool's progressive
+        # unlocks and the two area items outnumber the 44 story checks, so a
+        # solo seed has nowhere to put the surplus.
+        self._assert_rejected(dict(_STORY_ONLY_OPTIONS), "45 progression and useful items")
+
+    def test_story_only_rejects_with_extra_useful_items(self) -> None:
+        # Each world modifier adds pool items without adding checks, so an
+        # already over-full story-only pool only gets worse.
+        for extra in ({"randomize_radio_stations": True}, {"shuffle_minimap": True},
+                      {"ability_locks": _ALL_ABILITY_LOCKS}):
+            with self.subTest(**extra):
+                self._assert_rejected(dict(_STORY_ONLY_OPTIONS, **extra),
+                                      "progression and useful items")
+
+    def test_properties_only_rejects_on_item_math(self) -> None:
+        # The properties class carries 31 items (16 venue progressives, 15
+        # ownerships) against its own 31 locations, so adding it to the
+        # story-only pool leaves the seed one item over its check count.
+        self._assert_rejected(dict(_STORY_ONLY_OPTIONS, enable_properties=True),
+                              "76 progression and useful items")
+
+    def test_locks_can_narrow_the_start_to_a_refusal(self) -> None:
+        # A lock puts its class's checks behind an item, so a seed whose only
+        # collectible class is locked leaves the first mission alone reachable.
+        # The fill would then chain strictly through that one check, which it
+        # survives only by luck of the seed.
+        for locks in (_ALL_ABILITY_LOCKS, ["weapon_equip"]):
+            with self.subTest(ability_locks=locks):
+                self._assert_rejected(dict(_TIGHTEST_OPTIONS, ability_locks=locks),
+                                      "only 1 check is reachable")
+
+    def test_a_mainland_only_class_narrows_the_start_to_a_refusal(self) -> None:
+        # The other way to a narrow start, with no lock involved: every stunt
+        # jump sits on the mainland, so carrying them as the only collectible
+        # class puts nothing in the start region.
+        self._assert_rejected(dict(_STORY_ONLY_OPTIONS, enable_stunt_jumps=True),
+                              "only 1 check is reachable")
+
+    def test_packages_keep_a_locked_seed_wide(self) -> None:
+        # The counterpart to the refusals above: no ability term touches a
+        # hidden package, so with them on every lock key can be selected and
+        # the start stays wide enough.
+        self.options = {"ability_locks": _ALL_ABILITY_LOCKS}
+        self.world_setup()
+        self.assertGreaterEqual(self.world._free_start_location_count(),
+                                MINIMUM_SPHERE_ZERO)
 
 
 class TestTables(WorldTestBase):
