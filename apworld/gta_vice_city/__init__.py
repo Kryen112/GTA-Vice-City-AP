@@ -160,11 +160,17 @@ class GTAViceCityWorld(World):
             if name in slot_data:
                 getattr(options, name).value = int(bool(slot_data[name]))
 
+    def _tracker_passthrough(self) -> dict | None:
+        # The played seed's slot_data while a Universal Tracker regeneration
+        # runs, None during an ordinary generation. Every place that has to
+        # know reads it here, so the tests for it cannot drift apart.
+        return getattr(self.multiworld, "re_gen_passthrough", {}).get(self.game)
+
     def generate_early(self) -> None:
         # A Universal Tracker regeneration runs on its own seed and passes the
         # played seed's slot_data through; replay its options instead of the
         # tracker's defaults.
-        passthrough = getattr(self.multiworld, "re_gen_passthrough", {}).get(self.game)
+        passthrough = self._tracker_passthrough()
         if passthrough is not None:
             self._restore_options(passthrough)
             self._choose_radio_start(passthrough)
@@ -408,11 +414,18 @@ class GTAViceCityWorld(World):
         # Only a solo seed is refused for it. Other worlds lend the fill their
         # locations to place this world's items into and their items to fill
         # this world's one open check with, and refusing there would abort
-        # everyone's generation over one slot's options. A multiworld of narrow
-        # slots alone still gives the fill little room, but it surfaces as a
-        # fill error rather than an unbeatable seed, since the fill enforces
-        # logic either way.
+        # everyone's generation over one slot's options. The residual risk is a
+        # partner too small to lend much, a world of a few locations, which
+        # fails as a fill error rather than an unbeatable seed, since the fill
+        # enforces logic either way.
         if self.multiworld.players > 1:
+            return
+        # A Universal Tracker regeneration replays a played seed's options on
+        # its own solo multiworld, so a slot that generated inside a real
+        # multiworld would meet this guard on the way back. That seed already
+        # exists and its fill already happened, so there is nothing left to
+        # protect and refusing would only break the tracker.
+        if self._tracker_passthrough() is not None:
             return
         free_start_locations = self._free_start_location_count()
         if free_start_locations < MINIMUM_SPHERE_ZERO:

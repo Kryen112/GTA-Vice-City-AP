@@ -15,7 +15,8 @@ from BaseClasses import CollectionState, ItemClassification
 from Fill import distribute_items_restrictive
 from Options import OptionError
 from test.bases import WorldTestBase
-from test.general import setup_multiworld
+from test.general import gen_steps, setup_multiworld
+from worlds.AutoWorld import call_all
 
 from .. import MINIMUM_SPHERE_ZERO, GTAViceCityWorld, data, scm
 from ..items import ITEM_CLASSIFICATIONS, ITEM_NAME_TO_ID
@@ -1218,12 +1219,40 @@ class TestRejections(WorldTestBase):
         # pool would hold every progression item regardless of where it landed
         # and could not tell a good fill from a bad one.
         narrow = dict(_TIGHTEST_OPTIONS, ability_locks=_ALL_ABILITY_LOCKS)
-        multiworld = setup_multiworld([GTAViceCityWorld, GTAViceCityWorld],
-                                      seed=0, options=[narrow, {}])
-        self.assertLess(multiworld.worlds[1]._free_start_location_count(),
+        for seed in range(4):
+            with self.subTest(seed=seed):
+                multiworld = setup_multiworld([GTAViceCityWorld, GTAViceCityWorld],
+                                              seed=seed, options=[narrow, narrow])
+                self.assertLess(multiworld.worlds[1]._free_start_location_count(),
+                                MINIMUM_SPHERE_ZERO)
+                distribute_items_restrictive(multiworld)
+                self.assertTrue(multiworld.can_beat_game())
+
+    def test_a_narrow_slot_regenerates_for_the_tracker(self) -> None:
+        # The Universal Tracker replays a played seed's options on its own solo
+        # multiworld, so a slot that generated inside a real multiworld meets
+        # the solo guard on the way back. It must stand down there, or the
+        # tracker cannot open a seed that generated perfectly well. The
+        # passthrough goes through interpret_slot_data, the hook the tracker
+        # itself calls, so this follows if that hook stops being the identity.
+        narrow = dict(_TIGHTEST_OPTIONS, ability_locks=_ALL_ABILITY_LOCKS)
+        played = setup_multiworld([GTAViceCityWorld, GTAViceCityWorld],
+                                  seed=0, options=[narrow, narrow])
+        slot_data = GTAViceCityWorld.interpret_slot_data(
+            played.worlds[1].fill_slot_data())
+
+        tracker = setup_multiworld(GTAViceCityWorld, steps=())
+        tracker.re_gen_passthrough = {GTAViceCityWorld.game: slot_data}
+        for step in gen_steps:
+            call_all(tracker, step)
+        # The regenerated world is the narrow one, so the test still covers the
+        # guard's path if the options it is built from ever widen.
+        self.assertLess(tracker.worlds[1]._free_start_location_count(),
                         MINIMUM_SPHERE_ZERO)
-        distribute_items_restrictive(multiworld)
-        self.assertTrue(multiworld.can_beat_game())
+        self.assertEqual(
+            {location.name for location in tracker.get_locations(1)},
+            {location.name for location in played.get_locations(1)},
+        )
 
     def test_packages_keep_a_locked_seed_wide(self) -> None:
         # The counterpart to the refusals above: no ability term touches a
