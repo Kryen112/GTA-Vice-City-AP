@@ -33,6 +33,13 @@ MAIN_SCM = "main.scm"
 # a payload that outgrows this list.
 SHIPPED_PAYLOAD_PATHS = ("GtaVcAp.VC.asi", "cleo/apwatchers.cs")
 
+# Places an earlier build put a payload file that it no longer uses. The ASI
+# loader scans both the install root and scripts, so a copy left in scripts is
+# loaded as a second instance beside the current one: two frame hooks, two
+# pickup pool walks, and two writers to one log. Deploy clears these so an
+# install made by an older build heals itself.
+STALE_PAYLOAD_PATHS = ("scripts/GtaVcAp.VC.asi",)
+
 
 def unlisted_payload_paths(staged_relative_paths: list[str]) -> list[str]:
     """The staged payload paths remove() would not clean: not on the shipped
@@ -91,6 +98,37 @@ def _destination(install_dir: Path, relative_path: str) -> Path:
     return destination
 
 
+def _clear_stale_paths(install_dir: Path) -> list[str]:
+    """Delete every place an earlier build left a payload file it no longer
+    uses. Returns log lines. The paths are fixed literals under the install, and
+    the resolve check holds that guarantee rather than trusting the constant.
+    Never raises: a path it cannot take is reported and left alone."""
+    log: list[str] = []
+    root = install_dir.resolve()
+    for stale_path in STALE_PAYLOAD_PATHS:
+        stale = install_dir.joinpath(*stale_path.split("/"))
+        try:
+            inside = root in stale.resolve().parents
+        except OSError:
+            inside = False
+        if not inside:
+            # A junctioned folder puts the path somewhere else on the disk,
+            # which is not ours to delete.
+            log.append(f"Left {stale_path} alone, it resolves outside the install.")
+            continue
+        if not stale.is_file():
+            continue
+        try:
+            stale.unlink()
+        except OSError as error:
+            # The running game holds its loaded plugins open. Reporting beats
+            # raising: mod_is_current stays false, so the next launch retries.
+            log.append(f"Could not remove {stale_path}: {error}.")
+            continue
+        log.append(f"Removed {stale_path}, which an earlier build left behind.")
+    return log
+
+
 def _backup_once(install_dir: Path, path: Path) -> None:
     backup_dir = install_dir / BACKUP_DIR_NAME
     backup_dir.mkdir(exist_ok=True)
@@ -107,6 +145,12 @@ def mod_is_current(install_dir: Path, payload: list[tuple[str, bytes]] | None = 
     if not files:
         return True
     install_dir = Path(install_dir)
+    # A leftover copy from an earlier build is loaded as a second instance, so
+    # an install carrying one is not current however well its own files match:
+    # the client skips deploy on current, which would keep the duplicate.
+    for stale_path in STALE_PAYLOAD_PATHS:
+        if install_dir.joinpath(*stale_path.split("/")).is_file():
+            return False
     for relative_path, data in files:
         destination = _destination(install_dir, relative_path)
         try:
@@ -126,6 +170,7 @@ def deploy(install_dir: Path, payload: list[tuple[str, bytes]] | None = None) ->
             "no mod payload in the apworld; it was packaged without data/mod")
     install_dir = Path(install_dir)
     log: list[str] = []
+    log.extend(_clear_stale_paths(install_dir))
     for relative_path, data in files:
         destination = _destination(install_dir, relative_path)
         if destination.is_file() and destination.read_bytes() == data:
@@ -153,6 +198,7 @@ def remove(install_dir: Path, payload: list[tuple[str, bytes]] | None = None) ->
     install_dir = Path(install_dir)
     log: list[str] = []
 
+    log.extend(_clear_stale_paths(install_dir))
     relative_paths = sorted({relative for relative, _ in files} | set(SHIPPED_PAYLOAD_PATHS))
     for relative_path in relative_paths:
         # main.scm is a stock file: it is restored from its backup below,

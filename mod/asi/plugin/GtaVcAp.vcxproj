@@ -89,11 +89,11 @@
       <Command>
 if defined GTA_VC_DIR ( 
 
-taskkill /IM gta-vc.exe /F /FI "STATUS eq RUNNING" 
+copy /Y "$(TargetPath)" "$(GTA_VC_DIR)\$(TargetFileName)" || echo post-build: install copy skipped, the game is holding the file 
 
-xcopy /Y "$(TargetPath)" "$(GTA_VC_DIR)\scripts" 
+if exist "$(GTA_VC_DIR)\scripts\$(TargetFileName)" del /Q "$(GTA_VC_DIR)\scripts\$(TargetFileName)" 
 
-)</Command>
+) </Command>
     </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug GTA-VC|Win32'">
@@ -122,11 +122,11 @@ xcopy /Y "$(TargetPath)" "$(GTA_VC_DIR)\scripts"
       <Command>
 if defined GTA_VC_DIR ( 
 
-taskkill /IM gta-vc.exe /F /FI "STATUS eq RUNNING" 
+copy /Y "$(TargetPath)" "$(GTA_VC_DIR)\$(TargetFileName)" || echo post-build: install copy skipped, the game is holding the file 
 
-xcopy /Y "$(TargetPath)" "$(GTA_VC_DIR)\scripts" 
+if exist "$(GTA_VC_DIR)\scripts\$(TargetFileName)" del /Q "$(GTA_VC_DIR)\scripts\$(TargetFileName)" 
 
-)</Command>
+) </Command>
     </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemGroup>

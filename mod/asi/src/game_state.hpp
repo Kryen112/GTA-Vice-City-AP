@@ -90,6 +90,12 @@ class GameState {
   // A player-facing message for the in-game toast queue.
   virtual void ShowToast(const std::string& text) = 0;
 
+  // The same, for a message that must survive until a game is running: the
+  // handshake refusal arrives while the player is still in the frontend, where
+  // no message can be displayed, and it is the only thing that explains why
+  // nothing in the game will work.
+  virtual void ShowStickyToast(const std::string& text) = 0;
+
   // Location ids newly completed in game since the last call (drains the
   // queue). Polled by the bridge each loop.
   virtual std::vector<std::int64_t> TakeNewChecks() = 0;

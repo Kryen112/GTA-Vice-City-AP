@@ -59,6 +59,8 @@ class FakeGameState : public GameState {
     toasts_.push_back(text);
   }
 
+  void ShowStickyToast(const std::string& text) override { ShowToast(text); }
+
   std::vector<std::int64_t> TakeNewChecks() override {
     std::lock_guard<std::mutex> lock(mutex_);
     std::vector<std::int64_t> drained;

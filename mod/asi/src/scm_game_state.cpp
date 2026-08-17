@@ -83,6 +83,17 @@ constexpr int kPickupPoolSize = 336;
 // also advances per frame), so slots still being placed at the start are
 // never reported as missing.
 constexpr int kPickupUnmatchedLogFrame = 600;
+// The text storage a posted toast keeps. plugin-sdk's narrow entry point
+// converts through one function-local static buffer that every caller in the
+// process shares, and the game keeps the pointer it was handed for as long as
+// the message is queued, so a later post rewrote the text of a message still on
+// screen. The game holds that pointer in two places at once, its brief-message
+// queue of eight and the five-entry previous-brief history the pause menu reads,
+// so a ring past thirteen keeps every live message's text its own. Each buffer
+// holds a full message.
+constexpr std::size_t kToastBufferChars = 256;
+constexpr std::size_t kToastBufferCount = 16;
+static_assert(kToastMaxChars < kToastBufferChars, "a message must fit a buffer");
 
 // Whether the vehicle plays the police scanner instead of its station byte,
 // mirroring the game's own test: the fixed model set, then the siren flag,
@@ -162,6 +173,50 @@ constexpr const char* kContentNames[kContentCount] = {
 constexpr int kAbilityStatusKey = VK_F6;
 // The kill-frenzy skull's model name in the game's object definitions.
 constexpr const char* kKillFrenzyModelName = "killfrenzy";
+// Diagnostic names for the held pickup classes, HeldPickupClass order.
+constexpr const char* kHeldClassNames[] = {"none", "package", "rampage", "property"};
+static_assert(std::size(kHeldClassNames) == kHeldPickupClassCount,
+              "one diagnostic name per held pickup class");
+
+// Posts one brief message with text the mod owns for as long as the game can
+// hold the pointer. The game reads the pointer it was handed, so the storage
+// outlives the call by a full ring.
+void PostToast(const std::string& text) {
+  static std::array<std::array<wchar_t, kToastBufferChars>, kToastBufferCount>
+      buffers{};
+  static std::size_t next_buffer = 0;
+  wchar_t* buffer = buffers[next_buffer].data();
+  next_buffer = (next_buffer + 1) % kToastBufferCount;
+  const std::size_t length =
+      std::min(text.size(), kToastBufferChars - 1);
+  for (std::size_t index = 0; index < length; ++index) {
+    // The tilde opens the game's own formatting token, which its formatter
+    // expands in place inside a buffer of its own. Toast text carries item and
+    // player names from the server verbatim, so the escape is neutralised here
+    // rather than trusted to stay short.
+    const unsigned char character = static_cast<unsigned char>(text[index]);
+    buffer[index] = character == '~' ? L' ' : static_cast<wchar_t>(character);
+  }
+  buffer[length] = 0;
+  CMessages::AddMessage(buffer, kToastDurationMs, 0);
+}
+
+// Destroys a game entity the way the game does: the deleting destructor at
+// vtable index 2, taking the entity in ecx and the free flag on the stack,
+// which is what CPickups::RemovePickUp calls.
+//
+// NEVER use C++ `delete` on a game entity. plugin-sdk's CEntity model declares
+// one virtual, so `delete` dispatches to vtable index 0, which in the game is
+// CEntity::Add: it frees nothing, leaves the pushed flag on the stack, and the
+// drift corrupts the caller's registers. The slot comes from the entity's own
+// vtable, so no code address is pinned.
+constexpr int kDeletingDestructorSlot = 2;
+
+void DestroyGameEntity(void* entity) {
+  using DeletingDestructor = void*(__thiscall*)(void*, int);
+  void** vtable = *static_cast<void***>(entity);
+  reinterpret_cast<DeletingDestructor>(vtable[kDeletingDestructorSlot])(entity, 1);
+}
 
 // Whether the foreground window belongs to this game, so a key pressed in
 // another application while the player is alt-tabbed is ignored.
@@ -420,23 +475,33 @@ void ScmGameState::ToastAbilityBlocked(int ability) {
   pending_toasts_.push_back(text);
 }
 
-void ScmGameState::ToastAbilityStatus(
-    const AbilityLocks& locked, const std::array<int, kAbilityCount>& lock_flags) {
-  // Only the abilities this seed configured appear; an unselected key is
-  // fully vanilla and listing it would only mislead.
+void ScmGameState::ToastLockStatus(
+    const AbilityLocks& locked, const std::array<int, kAbilityCount>& ability_flags,
+    const ContentLocks& held, const std::array<int, kContentCount>& content_flags) {
+  // One message for the whole status, never one per list: the game renders every
+  // queued message from one shared text buffer, so several at once all show the
+  // last text and hold the screen for a multiple of a message's time.
+  //
+  // Only what this seed configured appears; an unselected key is fully vanilla
+  // and listing it would mislead.
   std::string locked_list;
   std::string unlocked_list;
   for (int index = 0; index < kAbilityCount; ++index) {
-    if (lock_flags[index] == 0) continue;
+    if (ability_flags[index] == 0) continue;
     std::string& list = locked[index] ? locked_list : unlocked_list;
     if (!list.empty()) list += ", ";
     list += kAbilityNames[index];
   }
-  pending_toasts_.push_back(
-      "Locked: " + (locked_list.empty() ? std::string("nothing") : locked_list));
-  if (!unlocked_list.empty()) {
-    pending_toasts_.push_back("Unlocked: " + unlocked_list);
+  std::string held_list;
+  std::string available_list;
+  for (int index = 0; index < kContentCount; ++index) {
+    if (content_flags[index] == 0) continue;
+    std::string& list = held[index] ? held_list : available_list;
+    if (!list.empty()) list += ", ";
+    list += kContentNames[index];
   }
+  pending_toasts_.push_back(
+      ComposeLockStatus(locked_list, unlocked_list, held_list, available_list));
 }
 
 void ScmGameState::EnforceHeldPickups(const AbilityLocks& locked,
@@ -476,25 +541,22 @@ void ScmGameState::EnforceHeldPickups(const AbilityLocks& locked,
         held_class,
         IsVehicleRampagePickup(pickup.vecPos.x, pickup.vecPos.y),
         locked, held);
-    const PickupHoldAction action = PlanPickupHold(should_hold, pickup.vecPos.z);
+    const PickupHoldAction action =
+        PlanPickupHold(should_hold, pickup.vecPos.z, pickup.bRemoved);
     if (action == PickupHoldAction::kLeaveAlone) continue;
+    // One line per held pickup class per direction, so a missing icon in game
+    // says which classes the walk reached and which way it moved them. The pool
+    // is walked every frame, so an unchanged direction stays silent.
+    const int class_index = static_cast<int>(held_class);
+    if (logger_ != nullptr && held_class_logged_[class_index] != action) {
+      held_class_logged_[class_index] = action;
+      logger_(std::string("content locks: ") +
+              (action == PickupHoldAction::kLower ? "holding " : "releasing ") +
+              kHeldClassNames[class_index] + " pickups");
+    }
     pickup.vecPos.z += (action == PickupHoldAction::kLower)
                            ? -kPickupLowerOffset
                            : kPickupLowerOffset;
-    // Drop the visible objects the way the game's own remove does; the
-    // pickup update recreates them at the moved position on the next frame.
-    if (pickup.pObject != nullptr) {
-      CObject* object = static_cast<CObject*>(pickup.pObject);
-      CWorld::Remove(object);
-      delete object;
-      pickup.pObject = nullptr;
-    }
-    if (pickup.pExtraObject != nullptr) {
-      CObject* extra_object = static_cast<CObject*>(pickup.pExtraObject);
-      CWorld::Remove(extra_object);
-      delete extra_object;
-      pickup.pExtraObject = nullptr;
-    }
   }
 }
 
@@ -508,25 +570,6 @@ ContentLocks ScmGameState::ReadContentLocks(
   return PlanContentLocks(lock_flags, unlocks);
 }
 
-void ScmGameState::ToastContentStatus(const ContentLocks& held,
-                                      const std::array<int, kContentCount>& lock_flags) {
-  std::string held_list;
-  std::string released_list;
-  for (int index = 0; index < kContentCount; ++index) {
-    if (lock_flags[index] == 0) continue;
-    std::string& list = held[index] ? held_list : released_list;
-    if (!list.empty()) list += ", ";
-    list += kContentNames[index];
-  }
-  // Nothing to say when the seed selected no content key; the ability lines
-  // stand on their own then.
-  if (held_list.empty() && released_list.empty()) return;
-  pending_toasts_.push_back(
-      "Held: " + (held_list.empty() ? std::string("nothing") : held_list));
-  if (!released_list.empty()) {
-    pending_toasts_.push_back("Available: " + released_list);
-  }
-}
 
 void ScmGameState::ReportReleasedContent(
     const ContentLocks& held, const std::array<int, kContentCount>& lock_flags) {
@@ -638,8 +681,7 @@ void ScmGameState::EnforceLocks() {
   const bool status_key_down = GameWindowHasFocus() &&
       (GetAsyncKeyState(kAbilityStatusKey) & 0x8000) != 0;
   if (status_key_down && !ability_status_key_was_down_) {
-    ToastAbilityStatus(locked, lock_flags);
-    ToastContentStatus(held, content_flags);
+    ToastLockStatus(locked, lock_flags, held, content_flags);
   }
   ability_status_key_was_down_ = status_key_down;
 
@@ -808,7 +850,17 @@ void ScmGameState::MarkChecked(const std::vector<std::int64_t>& locations) {
 
 void ScmGameState::ShowToast(const std::string& text) {
   std::lock_guard<std::mutex> lock(mutex_);
+  // Bounded against a flood of inbound item toasts, by refusing the newest
+  // rather than evicting the head: a release line that did not fit the last post
+  // waits at the head, and it is one-shot, while the client window keeps the
+  // whole item history.
+  if (pending_toasts_.size() >= kToastQueueMax) return;
   pending_toasts_.push_back(text);
+}
+
+void ScmGameState::ShowStickyToast(const std::string& text) {
+  std::lock_guard<std::mutex> lock(mutex_);
+  sticky_toasts_.push_back(text);
 }
 
 std::vector<std::int64_t> ScmGameState::TakeNewChecks() {
@@ -861,15 +913,13 @@ void ScmGameState::EnforcePickupLayout() {
     // collected pickup awaiting respawn has no objects and respawns as the
     // new model on its own timer.
     if (pickup.pObject != nullptr) {
-      CObject* object = static_cast<CObject*>(pickup.pObject);
-      CWorld::Remove(object);
-      delete object;
+      CWorld::Remove(static_cast<CObject*>(pickup.pObject));
+      DestroyGameEntity(pickup.pObject);
       pickup.pObject = nullptr;
     }
     if (pickup.pExtraObject != nullptr) {
-      CObject* extra_object = static_cast<CObject*>(pickup.pExtraObject);
-      CWorld::Remove(extra_object);
-      delete extra_object;
+      CWorld::Remove(static_cast<CObject*>(pickup.pExtraObject));
+      DestroyGameEntity(pickup.pExtraObject);
       pickup.pExtraObject = nullptr;
     }
   }
@@ -941,6 +991,13 @@ void ScmGameState::OnGameFrame() {
     kill_frenzy_model_ = -1;
     kill_frenzy_lookup_logged_ = false;
     content_was_held_ = ContentLocks{};
+    held_class_logged_ = {};
+    // Lines the bridge queued while the frontend was up belong to no game: the
+    // post runs past the not-active return, so they would otherwise land as a
+    // burst on the first frame of the next one. Sticky lines are exempt, since
+    // they exist precisely to wait for a game to display them in.
+    pending_toasts_.clear();
+    next_toast_ms_ = 0;
     content_baseline_ready_ = false;
     world_was_loaded_ = false;
     // The unmatched-slot diagnostic counts frames per game, so a fresh game
@@ -1035,12 +1092,16 @@ void ScmGameState::OnGameFrame() {
   // Keep the ambient pickup pool on the configured layout. Only when the
   // world is loaded, so the pool holds the placed pickups; runs before the
   // package detection, though the two never touch the same pickup types.
-  if (FindPlayerPed() != nullptr) EnforcePickupLayout();
+  if (FindPlayerPed() != nullptr) {
+      EnforcePickupLayout();
+  }
 
   // Set each collected hidden package's completion global from the pickup pool,
   // so the poll below reports every package as its own check. Only when the world
   // is loaded, so the pool reflects the placed packages.
-  if (FindPlayerPed() != nullptr) DetectCollectedPackages();
+  if (FindPlayerPed() != nullptr) {
+      DetectCollectedPackages();
+  }
 
   std::map<int, int> current;
   for (const auto& entry : completion_watch_) {
@@ -1059,10 +1120,29 @@ void ScmGameState::OnGameFrame() {
     outbound_checks_.push_back(location);
   }
 
-  for (const std::string& text : pending_toasts_) {
-    CMessages::AddMessageJumpQ(const_cast<char*>(text.c_str()), 4000, 0);
+  // A game is running, so anything that was waiting for one joins the queue at
+  // the head: a handshake refusal explains why nothing else will work.
+  if (!sticky_toasts_.empty()) {
+    pending_toasts_.insert(pending_toasts_.begin(), sticky_toasts_.begin(),
+                           sticky_toasts_.end());
+    sticky_toasts_.clear();
   }
-  pending_toasts_.clear();
+
+  // Post what is pending, joined so a burst does not hold the screen for a
+  // multiple of a message's time, and paced on a message's own life: the game
+  // displays queued messages in sequence and refuses whatever overflows its own
+  // queue, so a backlog waits here instead, where nothing is dropped. A release
+  // line is one-shot and carries the only explanation the player gets for
+  // content appearing.
+  const unsigned int now = RealTimeMs();
+  if (!pending_toasts_.empty() && static_cast<int>(now - next_toast_ms_) >= 0) {
+    const ToastBatch batch =
+        PlanToastBatch(pending_toasts_, kToastMaxChars, kToastMessagesPerPost);
+    for (const std::string& message : batch.messages) PostToast(message);
+    pending_toasts_.erase(pending_toasts_.begin(),
+                          pending_toasts_.begin() + batch.consumed);
+    if (!batch.messages.empty()) next_toast_ms_ = now + kToastDurationMs;
+  }
 }
 
 }  // namespace gtavc

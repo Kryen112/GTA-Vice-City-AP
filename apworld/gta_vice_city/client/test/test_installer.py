@@ -42,6 +42,37 @@ class TestDeploy(unittest.TestCase):
         self.assertEqual((self.install / "data" / "main.scm").read_bytes(), b"scm-bytes")
         self.assertEqual(len(log), 3)
 
+    def test_clears_a_copy_an_earlier_build_left_in_scripts(self) -> None:
+        # The ASI loader scans the install root and scripts alike, so a copy an
+        # earlier build left in scripts runs as a second instance beside the
+        # current one. Deploy takes it out, and says so.
+        stale = self.install / "scripts" / "GtaVcAp.VC.asi"
+        stale.parent.mkdir(parents=True)
+        stale.write_bytes(b"an-older-build")
+        log = installer.deploy(self.install, payload=PAYLOAD)
+        self.assertFalse(stale.exists())
+        self.assertEqual((self.install / "GtaVcAp.VC.asi").read_bytes(), b"asi-bytes")
+        self.assertTrue(any("scripts/GtaVcAp.VC.asi" in line for line in log))
+
+    def test_leaves_other_files_in_scripts_alone(self) -> None:
+        # Only the paths this mod itself used to occupy are cleared; the folder
+        # belongs to the player and may hold anything else.
+        other = self.install / "scripts" / "SomeOtherMod.asi"
+        other.parent.mkdir(parents=True)
+        other.write_bytes(b"not-ours")
+        installer.deploy(self.install, payload=PAYLOAD)
+        self.assertEqual(other.read_bytes(), b"not-ours")
+
+    def test_a_stale_copy_makes_the_install_not_current(self) -> None:
+        # The client skips deploy while the mod reads as current, so a stale copy
+        # has to make it read stale or the duplicate would never be cleaned.
+        installer.deploy(self.install, payload=PAYLOAD)
+        self.assertTrue(installer.mod_is_current(self.install, payload=PAYLOAD))
+        stale = self.install / "scripts" / "GtaVcAp.VC.asi"
+        stale.parent.mkdir(parents=True)
+        stale.write_bytes(b"an-older-build")
+        self.assertFalse(installer.mod_is_current(self.install, payload=PAYLOAD))
+
     def test_backs_up_a_replaced_stock_file(self) -> None:
         stock = self.install / "data" / "main.scm"
         stock.parent.mkdir(parents=True)
@@ -171,6 +202,17 @@ class TestRemove(unittest.TestCase):
         installer.remove(self.install, payload=[CLEO])
         self.assertFalse((self.install / "CLEO" / "gtavc_ap.cs").exists())
         self.assertTrue(player_script.is_file())
+
+    def test_removes_a_copy_an_earlier_build_left_in_scripts(self) -> None:
+        # Left behind, it would keep running the mod against the restored stock
+        # main.scm and the deleted CLEO scripts, which is worse than a leftover.
+        installer.deploy(self.install, payload=PAYLOAD)
+        stale = self.install / "scripts" / "GtaVcAp.VC.asi"
+        stale.parent.mkdir(parents=True, exist_ok=True)
+        stale.write_bytes(b"an-older-build")
+        log = installer.remove(self.install, payload=PAYLOAD)
+        self.assertFalse(stale.exists())
+        self.assertTrue(any("scripts/GtaVcAp.VC.asi" in line for line in log))
 
     def test_removes_the_cleo_folder_it_created_once_empty(self) -> None:
         installer.deploy(self.install, payload=[CLEO])

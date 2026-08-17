@@ -69,7 +69,7 @@ bool BridgeClient::RunSession() {
           const std::string type = message.value("type", std::string());
           if (type == msg::kRefused) {
             const std::string reason = message.value("reason", std::string());
-            game_->ShowToast("Archipelago refused this game: " + reason);
+            game_->ShowStickyToast("Archipelago refused this game: " + reason);
             logger_("refused by client: " + reason);
             return false;
           }

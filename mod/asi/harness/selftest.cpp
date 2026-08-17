@@ -16,6 +16,7 @@
 #include "../src/scm_packages.hpp"
 #include "../src/scm_pickup_layout.hpp"
 #include "../src/scm_radio.hpp"
+#include "../src/scm_toasts.hpp"
 
 using namespace gtavc;
 
@@ -400,16 +401,23 @@ int main() {
   // Held pickup planning: sinking and raising, and the band that makes a save
   // written while sunk heal itself on load.
   {
-    Expect(PlanPickupHold(true, 11.0f) == PickupHoldAction::kLower,
+    Expect(PlanPickupHold(true, 11.0f, false) == PickupHoldAction::kLower,
            "a held pickup sinks");
-    Expect(PlanPickupHold(true, 11.0f - kPickupLowerOffset) ==
+    Expect(PlanPickupHold(true, 11.0f - kPickupLowerOffset, false) ==
                PickupHoldAction::kLeaveAlone,
            "a sunk pickup stays where it is while held");
-    Expect(PlanPickupHold(false, 11.0f - kPickupLowerOffset) ==
+    Expect(PlanPickupHold(false, 11.0f - kPickupLowerOffset, false) ==
                PickupHoldAction::kRaise,
            "release raises a sunk pickup, a loaded save included");
-    Expect(PlanPickupHold(false, 11.0f) == PickupHoldAction::kLeaveAlone,
+    Expect(PlanPickupHold(false, 11.0f, false) == PickupHoldAction::kLeaveAlone,
            "a released pickup in place never moves");
+    // A pickup the game has taken away is neither visible nor collectable, so
+    // it needs no holding either way.
+    Expect(PlanPickupHold(true, 11.0f, true) == PickupHoldAction::kLeaveAlone,
+           "a removed pickup is not sunk");
+    Expect(PlanPickupHold(false, 11.0f - kPickupLowerOffset, true) ==
+               PickupHoldAction::kLeaveAlone,
+           "and a removed sunk pickup waits for its respawn");
   }
 
   // The package detector reads a sunk package back at its own height. Without
@@ -591,6 +599,104 @@ int main() {
            "a wrap inside the cooldown stays quiet");
     Expect(ShouldShowAbilityToast(20000, true, 0xFFFFFF00u),
            "a wrapped clock still toasts once the cooldown elapses");
+  }
+
+  // Toast batching. The game keeps a pointer to the text of every message it
+  // has queued and plays them in sequence, so lines pending together are joined
+  // into one message. Nothing may be dropped: a release line is one-shot.
+  {
+    // The message cap is a parameter, so the cases below drive it at a value
+    // that shows both the cap and the carry; the shipped value has its own case.
+    constexpr std::size_t kTestMessagesPerPost = 3;
+    const ToastBatch none = PlanToastBatch({}, kToastMaxChars, kTestMessagesPerPost);
+    Expect(none.messages.empty() && none.consumed == 0, "nothing pending posts nothing");
+
+    const ToastBatch one = PlanToastBatch({"Rampages are now available."},
+                                          kToastMaxChars, kTestMessagesPerPost);
+    Expect(one.messages.size() == 1 && one.consumed == 1 &&
+               one.messages[0] == "Rampages are now available.",
+           "a single line posts as itself");
+
+    const ToastBatch joined = PlanToastBatch({"first", "second"}, kToastMaxChars,
+                                             kTestMessagesPerPost);
+    Expect(joined.messages.size() == 1 && joined.consumed == 2 &&
+               joined.messages[0] ==
+                   std::string("first") + std::string(kToastSeparator) + "second",
+           "lines pending together join into one message");
+
+    // An empty line would hold a message slot for its whole duration showing
+    // nothing, so it is consumed without being posted.
+    const ToastBatch empties = PlanToastBatch({"", "text", ""}, kToastMaxChars,
+                                              kTestMessagesPerPost);
+    Expect(empties.messages.size() == 1 && empties.messages[0] == "text" &&
+               empties.consumed == 3,
+           "empty lines are consumed and never posted");
+
+    // The boundary: two lines that exactly fill one message stay in one.
+    const std::string half(kToastMaxChars / 2 - 2, 'a');
+    const ToastBatch exact = PlanToastBatch({half, half}, kToastMaxChars,
+                                            kTestMessagesPerPost);
+    Expect(exact.messages.size() == 1 && exact.consumed == 2 &&
+               exact.messages[0].size() <= kToastMaxChars,
+           "a pair that just fits stays one message");
+
+    // One past it spills into the next message rather than truncating.
+    const std::string most(kToastMaxChars - 2, 'b');
+    const ToastBatch spill = PlanToastBatch({most, most}, kToastMaxChars,
+                                            kTestMessagesPerPost);
+    Expect(spill.messages.size() == 2 && spill.consumed == 2 &&
+               spill.messages[0] == most && spill.messages[1] == most,
+           "a line that does not fit starts the next message");
+
+    // A single line longer than a whole message is truncated, never dropped.
+    const ToastBatch huge = PlanToastBatch({std::string(kToastMaxChars + 50, 'c')},
+                                           kToastMaxChars, kTestMessagesPerPost);
+    Expect(huge.messages.size() == 1 && huge.consumed == 1 &&
+               huge.messages[0].size() == kToastMaxChars,
+           "an over-long line is truncated to one message");
+
+    // Past the per-frame cap the rest stays queued, so the next frame posts it.
+    const std::vector<std::string> flood(6, most);
+    const ToastBatch capped = PlanToastBatch(flood, kToastMaxChars, kTestMessagesPerPost);
+    Expect(capped.messages.size() == kTestMessagesPerPost &&
+               capped.consumed == kTestMessagesPerPost,
+           "the per-frame cap holds and consumes only what it posted");
+    const ToastBatch rest = PlanToastBatch(
+        std::vector<std::string>(flood.begin() + capped.consumed, flood.end()),
+        kToastMaxChars, kTestMessagesPerPost);
+    Expect(rest.messages.size() == 3 && rest.consumed == 3,
+           "and the carried remainder posts on the next frame");
+
+    // What ships: one message a post, so the game's own queue never overflows
+    // and the rest of the queue waits here instead of being refused there.
+    const ToastBatch shipped = PlanToastBatch({"first", most, "third"},
+                                              kToastMaxChars,
+                                              kToastMessagesPerPost);
+    Expect(shipped.messages.size() == 1 && shipped.consumed == 1 &&
+               shipped.messages[0] == "first",
+           "a post hands the game one message and leaves the rest queued");
+
+    // A zero cap would consume nothing, which stalls the queue rather than
+    // losing it.
+    const ToastBatch stalled = PlanToastBatch({"first"}, kToastMaxChars, 0);
+    Expect(stalled.messages.empty() && stalled.consumed == 0,
+           "a zero cap posts nothing and consumes nothing");
+  }
+
+  // The status line the status key shows. Only configured keys reach it, so a
+  // seed that locks nothing must still say something.
+  {
+    Expect(ComposeLockStatus("", "", "", "") == "This seed locks nothing.",
+           "a seed with no lock configured says so");
+    Expect(ComposeLockStatus("Sprint", "", "", "") == "Locked: Sprint",
+           "one list carries its own label alone");
+    const std::string full =
+        ComposeLockStatus("Sprint", "Jump", "Rampages", "Hidden Packages");
+    Expect(full == std::string("Locked: Sprint") + std::string(kToastSeparator) +
+                       "Unlocked: Jump" + std::string(kToastSeparator) +
+                       "Held: Rampages" + std::string(kToastSeparator) +
+                       "Available: Hidden Packages",
+           "every non-empty list appears once, in order, separated");
   }
 
   if (failures == 0) {

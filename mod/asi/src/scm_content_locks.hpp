@@ -15,6 +15,7 @@
 #pragma once
 
 #include <array>
+#include <cstddef>
 
 #include "scm_ability_locks.hpp"
 
@@ -70,6 +71,8 @@ constexpr int kPickupTypePropertyForSale = 18;
 // identified by model rather than type, because the SCM creates them from the
 // kill-frenzy skull; the caller resolves that id by name and passes it here.
 enum class HeldPickupClass { kNone, kPackage, kRampage, kProperty };
+constexpr std::size_t kHeldPickupClassCount =
+    static_cast<std::size_t>(HeldPickupClass::kProperty) + 1;
 
 inline HeldPickupClass ClassifyHeldPickup(int pickup_type, int model,
                                           int kill_frenzy_model) {
@@ -109,9 +112,13 @@ inline bool ShouldHoldPickup(HeldPickupClass held_class, bool vehicle_rampage,
 }
 
 // A held pickup sinks a fixed offset below the world, far outside collection
-// range and out of sight; releasing raises it back. The band makes the state
-// self-describing, so a save made while sunk heals on load: world pickups sit
-// well above the band, sunk ones well below it.
+// range and out of sight; releasing raises it back. Moving the pickup is the
+// whole hold: the game copies the pickup's position into its visible objects
+// every update, before it dispatches on type, and the collection test compares
+// the object's own position, so a sunk pickup takes its icon down with it and
+// cannot be touched. The band makes the state self-describing, so a save made
+// while sunk heals on load: world pickups sit well above the band, sunk ones
+// well below it.
 constexpr float kPickupLowerOffset = 2000.0f;
 constexpr float kPickupLoweredBand = -900.0f;
 
@@ -159,7 +166,12 @@ inline ContentReleasePlan PlanContentReleases(
 
 enum class PickupHoldAction { kLeaveAlone, kLower, kRaise };
 
-inline PickupHoldAction PlanPickupHold(bool should_hold, float z) {
+// `removed` is the game's own flag for a pickup it has taken away, collected
+// and awaiting respawn or retired. Such a pickup is neither visible nor
+// collectable, so it needs no holding, and the walk re-evaluates it once the
+// game puts it back.
+inline PickupHoldAction PlanPickupHold(bool should_hold, float z, bool removed) {
+  if (removed) return PickupHoldAction::kLeaveAlone;
   const bool sunk = IsPickupSunk(z);
   if (should_hold && !sunk) return PickupHoldAction::kLower;
   if (!should_hold && sunk) return PickupHoldAction::kRaise;

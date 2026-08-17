@@ -22,6 +22,7 @@
 #include "scm_minimap.hpp"
 #include "scm_pickup_layout.hpp"
 #include "scm_radio.hpp"
+#include "scm_toasts.hpp"
 
 class CVehicle;
 
@@ -45,6 +46,7 @@ class ScmGameState : public GameState {
   void ApplyItems(const std::vector<std::pair<std::int64_t, std::int64_t>>& items) override;
   void MarkChecked(const std::vector<std::int64_t>& locations) override;
   void ShowToast(const std::string& text) override;
+  void ShowStickyToast(const std::string& text) override;
   std::vector<std::int64_t> TakeNewChecks() override;
   bool TakeGoalReached() override;
 
@@ -112,7 +114,7 @@ class ScmGameState : public GameState {
   // the world has processed: pins the wallet balance to zero, cancels a
   // player-initiated entry into a locked vehicle class, holds the pickups of
   // every held content class, announces a class that has just been released,
-  // and answers the status key with both lists.
+  // and answers the status key with the seed's lock status.
   void EnforceLocks();
   // Masks the locked inputs and holds the current weapon on the fists. Runs
   // from the pre-world-process hook, the one point in the frame where a pad
@@ -140,14 +142,15 @@ class ScmGameState : public GameState {
                              const std::array<int, kContentCount>& lock_flags);
   // Shows the blocked-attempt toast for one ability, rate-limited per ability.
   void ToastAbilityBlocked(int ability);
-  // Shows the locked and unlocked ability lists for the seed's configured
-  // locks, on the status key.
-  void ToastAbilityStatus(const AbilityLocks& locked,
-                          const std::array<int, kAbilityCount>& lock_flags);
-  // Shows the held and available content lists for the seed's configured
-  // content keys, on the same status key.
-  void ToastContentStatus(const ContentLocks& held,
-                          const std::array<int, kContentCount>& lock_flags);
+  // Shows this seed's whole lock status on the status key, as ONE message:
+  // which configured abilities are locked or unlocked and which configured
+  // content classes are held or available. Queued messages play in sequence, so
+  // splitting the status across several would hold the screen for a multiple of
+  // a message's time.
+  void ToastLockStatus(const AbilityLocks& locked,
+                       const std::array<int, kAbilityCount>& ability_flags,
+                       const ContentLocks& held,
+                       const std::array<int, kContentCount>& content_flags);
   // Keeps the ambient pickup pool on the configured layout: matches each
   // layout slot to a pool entry by position and type and rewrites the model
   // and quantity where they differ, dropping the stale visible objects so the
@@ -173,6 +176,13 @@ class ScmGameState : public GameState {
   std::map<int, int> baseline_;
   std::vector<std::int64_t> outbound_checks_;
   std::vector<std::string> pending_toasts_;
+  // Lines that wait for a game rather than for the next post. The frontend
+  // cannot display a message, and the game boundary clears the ordinary queue,
+  // so a handshake refusal would otherwise be lost to the log alone.
+  std::vector<std::string> sticky_toasts_;
+  // When the next post may hand the game a message, so a backlog waits in the
+  // queue above instead of in the game's own few-slot one.
+  unsigned int next_toast_ms_ = 0;
   std::string pending_stamp_;
   std::string cached_seed_hash_;
   bool items_dirty_ = false;
@@ -208,6 +218,10 @@ class ScmGameState : public GameState {
   // once rather than every frame. Reset on the game boundary, so a class
   // released before a reload does not announce itself again.
   ContentLocks content_was_held_{};
+  // The last pool action logged per held pickup class, so the log names which
+  // classes the walk reached and in which direction without repeating itself
+  // every frame. Reset on the game boundary.
+  std::array<PickupHoldAction, kHeldPickupClassCount> held_class_logged_{};
   // Whether the release baseline has been taken. The first frame a game is
   // observed sets the baseline instead of announcing from it, so a save that
   // already holds a content item stays quiet while a class released during play
