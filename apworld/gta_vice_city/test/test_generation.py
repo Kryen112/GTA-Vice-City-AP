@@ -12,10 +12,12 @@ import random
 from typing import ClassVar
 
 from BaseClasses import CollectionState, ItemClassification
+from Fill import distribute_items_restrictive
 from Options import OptionError
 from test.bases import WorldTestBase
+from test.general import setup_multiworld
 
-from .. import MINIMUM_SPHERE_ZERO, data, scm
+from .. import MINIMUM_SPHERE_ZERO, GTAViceCityWorld, data, scm
 from ..items import ITEM_CLASSIFICATIONS, ITEM_NAME_TO_ID
 from ..locations import LOCATION_NAME_TO_ID, PACKAGE_NAMES, STORY_MISSION_NAMES
 from ..options import CHECK_CLASS_OPTIONS
@@ -1208,6 +1210,20 @@ class TestRejections(WorldTestBase):
         # class puts nothing in the start region.
         self._assert_rejected(dict(_STORY_ONLY_OPTIONS, enable_stunt_jumps=True),
                               "only 1 check is reachable")
+
+    def test_a_narrow_seed_generates_in_a_multiworld(self) -> None:
+        # Options a solo seed refuses reach the fill when another world is
+        # present. can_beat_game sweeps from an empty state through the items
+        # as placed, so it reads the placement; a state built from the item
+        # pool would hold every progression item regardless of where it landed
+        # and could not tell a good fill from a bad one.
+        narrow = dict(_TIGHTEST_OPTIONS, ability_locks=_ALL_ABILITY_LOCKS)
+        multiworld = setup_multiworld([GTAViceCityWorld, GTAViceCityWorld],
+                                      seed=0, options=[narrow, {}])
+        self.assertLess(multiworld.worlds[1]._free_start_location_count(),
+                        MINIMUM_SPHERE_ZERO)
+        distribute_items_restrictive(multiworld)
+        self.assertTrue(multiworld.can_beat_game())
 
     def test_packages_keep_a_locked_seed_wide(self) -> None:
         # The counterpart to the refusals above: no ability term touches a

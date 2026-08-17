@@ -28,11 +28,12 @@ from .items import GENERAL_FILLER_NAMES, ITEM_CLASSIFICATIONS, ITEM_GROUPS, ITEM
 from .locations import CLASS_TOGGLE, LOCATION_GROUPS, LOCATION_NAME_TO_ID, LOCATION_REGIONS, LOCATION_TOGGLE
 from .options import CHECK_CLASS_OPTIONS, Goal, GTAViceCityOptions
 
-# How many checks a seed must leave reachable on a new game. Nothing is granted
-# at the start to widen a narrow seed, so a sphere 0 of one check would leave
-# the fill chaining strictly through that check, which it survives only by luck
-# of the seed. Nothing else about the pool predicts which narrow seeds fill, so
-# the count itself is the guard. Measured against scripts/fuzz_fill.py.
+# How many checks a solo seed must leave reachable on a new game. Nothing is
+# granted at the start to widen a narrow seed, so a sphere 0 of one check would
+# leave the fill chaining strictly through that check, which it survives only
+# by luck of the seed. Nothing else about the pool predicts which narrow seeds
+# fill, so the count itself is the guard. Measured against
+# scripts/fuzz_fill.py, which generates solo.
 MINIMUM_SPHERE_ZERO = 2
 
 
@@ -403,6 +404,16 @@ class GTAViceCityWorld(World):
         # the start two ways: a lock puts its checks behind an item, and a class
         # whose checks all sit on the mainland (every stunt jump does) puts none
         # in the start region to begin with.
+        #
+        # Only a solo seed is refused for it. Other worlds lend the fill their
+        # locations to place this world's items into and their items to fill
+        # this world's one open check with, and refusing there would abort
+        # everyone's generation over one slot's options. A multiworld of narrow
+        # slots alone still gives the fill little room, but it surfaces as a
+        # fill error rather than an unbeatable seed, since the fill enforces
+        # logic either way.
+        if self.multiworld.players > 1:
+            return
         free_start_locations = self._free_start_location_count()
         if free_start_locations < MINIMUM_SPHERE_ZERO:
             raise OptionError(
