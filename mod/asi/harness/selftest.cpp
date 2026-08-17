@@ -1,8 +1,10 @@
 // Standalone protocol self-test: round-trips framing (small and chunked) and
 // checks the guards, with no socket and no game. Proves the C++ protocol layer
 // compiles and behaves in the 32-bit MSVC toolchain.
+#include <algorithm>
 #include <array>
 #include <iostream>
+#include <limits>
 #include <map>
 #include <set>
 #include <vector>
@@ -701,146 +703,187 @@ int main() {
   }
 
   // Recovering the stunt jump table from a block of memory. The game builds it
-  // on the heap and writes it nowhere else, so the scan has to pick it out of
-  // whatever else happens to be there.
+  // on the heap and writes it nowhere else, so the search runs on what the table
+  // is: world positions at a constant stride, spread across the city.
   {
     constexpr std::size_t kStride = 0x44;
     constexpr int kJumps = 36;
     constexpr std::size_t kLead = 0x120;
+
+    // One record at a place in the city, laid out the way the manager lays it.
+    const auto plant = [](std::vector<unsigned char>* into, std::size_t offset,
+                          float x, float y, int reward) {
+      const float floats[kStuntJumpFloats] = {
+          x, y, 10.0f, x + 8.0f, y + 8.0f, 16.0f,
+          x + 60.0f, y, 9.0f, x + 90.0f, y + 20.0f, 15.0f,
+          x + 30.0f, y - 40.0f, 25.0f,
+      };
+      std::memcpy(into->data() + offset, floats, sizeof(floats));
+      std::memcpy(into->data() + offset + sizeof(floats), &reward, sizeof(reward));
+    };
+    const auto plant_table = [&](std::vector<unsigned char>* into, std::size_t lead) {
+      for (int index = 0; index < kJumps; ++index) {
+        plant(into, lead + kStride * index, -900.0f + 40.0f * index,
+              300.0f - 20.0f * index, 500 * (index + 1));
+      }
+    };
+
     std::vector<unsigned char> memory(kLead + kStride * (kJumps + 2), 0);
+    plant_table(&memory, kLead);
 
-    const auto write_float = [&memory](std::size_t offset, float value) {
-      std::memcpy(memory.data() + offset, &value, sizeof(value));
-    };
-    const auto write_record = [&](std::size_t offset, float x, float y, int reward) {
-      const float floats[kStuntJumpFloats] = {
-          x, y, 10.0f, x + 8.0f, y + 8.0f, 16.0f,      // start box
-          x + 60.0f, y, 9.0f, x + 90.0f, y + 20.0f, 15.0f,  // landing box
-          x + 30.0f, y - 40.0f, 25.0f,                 // camera
-      };
-      std::memcpy(memory.data() + offset, floats, sizeof(floats));
-      std::memcpy(memory.data() + offset + sizeof(floats), &reward, sizeof(reward));
-    };
-    for (int index = 0; index < kJumps; ++index) {
-      write_record(kLead + kStride * index, -900.0f + 40.0f * index,
-                   300.0f - 20.0f * index, 500 * (index + 1));
-    }
-    // A lone lookalike before the array, at no stride with anything: the run
-    // search must not take it for a table, and must not let it shorten one.
-    write_record(0x40, 120.0f, -400.0f, 1);
-    // Junk that is not a box: corners that coincide, so the extent is zero.
-    for (std::size_t offset = 0; offset < 0x40; offset += 4) {
-      write_float(offset, 1.0f);
-    }
-
-    const std::vector<StuntJumpRecord> records =
-        FindStuntJumpRecords(memory.data(), memory.size());
-    Expect(records.size() >= static_cast<std::size_t>(kJumps),
-           "every planted record is recognised by its shape");
-    const StuntJumpRun run = BestStuntJumpRun(records, kJumps);
-    Expect(run.count == kJumps, "the run is exactly the planted table");
-    Expect(run.stride == kStride, "the stride is recovered from the records");
-    Expect(run.offset == kLead, "the run starts at the array, not partway in");
-    Expect(BestStuntJumpRun(records, 0).count == kJumps,
-           "with no count to aim for the longest run stands in");
-
-    // A longer run of the same shape in the same block, which is what an array
-    // of collision volumes looks like. The wanted count has to pick the table
-    // out from under it; length alone would take the decoy.
-    std::vector<unsigned char> crowded = memory;
-    constexpr std::size_t kDecoyLead = 0;
-    constexpr std::size_t kDecoyStride = 0x50;
-    constexpr int kDecoyCount = 60;
-    crowded.resize(kLead + kStride * (kJumps + 2) +
-                   kDecoyStride * (kDecoyCount + 2), 0);
-    const std::size_t decoy_base = kLead + kStride * (kJumps + 2);
-    for (int index = 0; index < kDecoyCount; ++index) {
-      const std::size_t offset = decoy_base + kDecoyStride * index;
-      const float floats[kStuntJumpFloats] = {
-          -50.0f, -50.0f, 2.0f, -44.0f, -44.0f, 8.0f,
-          -20.0f, -50.0f, 2.0f, -10.0f, -40.0f, 8.0f,
-          -35.0f, -70.0f, 20.0f,
-      };
-      std::memcpy(crowded.data() + offset, floats, sizeof(floats));
-    }
-    const std::vector<StuntJumpRecord> crowded_records =
-        FindStuntJumpRecords(crowded.data(), crowded.size());
-    Expect(BestStuntJumpRun(crowded_records, 0).count == kDecoyCount,
-           "the longer decoy wins on length alone");
-    const StuntJumpRun picked = BestStuntJumpRun(crowded_records, kJumps);
-    Expect(picked.count == kJumps && picked.offset == kLead,
-           "the wanted count picks the table out of the same block as a decoy");
-    Expect(kDecoyLead == 0, "the decoy sits after the table, not before it");
-
-    // The pin takes the middle of the start box, whichever corner came first.
-    const std::array<float, 3> centre = StuntJumpBoxCentre(records.front().values.data());
-    Expect(centre[0] > 100.0f && centre[0] < 140.0f,
-           "the box centre sits between its corners");
-
-    // A buffer of alternating plus and minus one matches the box and camera
-    // shape at every offset and runs long enough to read as a table. Its reward
-    // field holds a float's bits and its values barely vary, so it is rejected.
-    {
-      std::vector<unsigned char> unit_vectors(0x20000, 0);
-      for (std::size_t offset = 0; offset + 4 <= unit_vectors.size(); offset += 4) {
-        const float value = (offset / 4) % 2 == 0 ? 1.0f : -1.0f;
-        std::memcpy(unit_vectors.data() + offset, &value, sizeof(value));
+    const std::vector<StuntJumpPosition> positions =
+        FindStuntJumpPositions(memory.data(), memory.size());
+    Expect(positions.size() >= static_cast<std::size_t>(kJumps),
+           "every planted position is found");
+    const std::vector<StuntJumpRun> runs = FindStuntJumpRuns(positions);
+    // Each record holds five positions, so the array yields a run per alignment
+    // and a run per straddle. What matters is that the true one is among them,
+    // and that ranking picks it: only there do the floats form the manager's
+    // own record.
+    const StuntJumpRun* table = nullptr;
+    for (const StuntJumpRun& run : runs) {
+      if (run.offset == kLead && run.stride == kStride && run.count == kJumps) {
+        table = &run;
       }
-      Expect(FindStuntJumpRecords(unit_vectors.data(), unit_vectors.size()).empty(),
-             "a buffer of unit vectors is not a stunt jump table");
+    }
+    Expect(table != nullptr, "the planted table is among the qualifying runs");
+    if (table != nullptr) {
+      Expect(table->span >= kStuntJumpMinimumSpan, "the planted table spans the city");
+      Expect(table->away_from_origin > 0.99f,
+             "every planted position is away from the origin");
     }
 
-    // The same repeating shape carrying a plausible reward. Only the
-    // distinct-values test separates this from a record.
+    // Ranked as the caller ranks them, the true alignment comes first.
     {
-      const std::size_t span = kStuntJumpFloats * sizeof(float) + sizeof(int);
-      std::vector<unsigned char> repeating(span * 8, 0);
-      for (std::size_t offset = 0; offset + 4 <= repeating.size(); offset += 4) {
-        const float value = (offset / 4) % 2 == 0 ? 40.0f : -40.0f;
-        std::memcpy(repeating.data() + offset, &value, sizeof(value));
+      std::vector<StuntJumpCandidate> ranked;
+      for (const StuntJumpRun& run : runs) {
+        StuntJumpCandidate candidate;
+        candidate.run = run;
+        for (int step = 0; step < run.count; ++step) {
+          candidate.records.push_back(
+              ReadStuntJumpRecord(memory.data(), run.offset + run.stride * step));
+        }
+        candidate.layout_fit = LayoutFit(candidate.records);
+        ranked.push_back(std::move(candidate));
       }
-      const int reward = 500;
-      for (std::size_t record = 0; record * span + span <= repeating.size(); ++record) {
-        std::memcpy(repeating.data() + record * span + kStuntJumpFloats * sizeof(float),
-                    &reward, sizeof(reward));
-      }
-      Expect(FindStuntJumpRecords(repeating.data(), repeating.size()).empty(),
-             "a repeating pattern with a plausible reward is still not a record");
+      std::stable_sort(ranked.begin(), ranked.end(),
+                       [wanted = kJumps](const StuntJumpCandidate& left,
+                                         const StuntJumpCandidate& right) {
+                         return CandidateRanksBefore(left, right, wanted);
+                       });
+      Expect(!ranked.empty() && ranked.front().run.offset == kLead &&
+                 ranked.front().run.stride == kStride,
+             "ranking puts the true alignment first, not a straddling run");
     }
 
-    // A record whose reward is a float's bits is rejected, and accepted again
-    // when the caller turns that test off.
+    // An array of one model's bounding volumes: real positions at a constant
+    // stride, but around that model's own origin and reaching only a few dozen
+    // units, so no run of it qualifies.
     {
-      const std::size_t span = kStuntJumpFloats * sizeof(float) + sizeof(int);
-      std::vector<unsigned char> one_record(span, 0);
-      std::memcpy(one_record.data(), memory.data() + kLead,
-                  kStuntJumpFloats * sizeof(float));
-      const int float_bits = -1082130432;  // -1.0f
-      std::memcpy(one_record.data() + kStuntJumpFloats * sizeof(float), &float_bits,
-                  sizeof(float_bits));
-      Expect(FindStuntJumpRecords(one_record.data(), one_record.size()).empty(),
-             "a reward that is really a float's bits rejects the record");
-      Expect(FindStuntJumpRecords(one_record.data(), one_record.size(), false).size() == 1,
-             "the same record reads once the reward test is off");
-
-      // The reward bounds themselves: the maximum is a reward, one past is not.
-      const int at_limit = static_cast<int>(kStuntJumpMaximumReward);
-      std::memcpy(one_record.data() + kStuntJumpFloats * sizeof(float), &at_limit,
-                  sizeof(at_limit));
-      Expect(FindStuntJumpRecords(one_record.data(), one_record.size()).size() == 1,
-             "the largest allowed reward is still a reward");
-      const int past_limit = at_limit + 1;
-      std::memcpy(one_record.data() + kStuntJumpFloats * sizeof(float), &past_limit,
-                  sizeof(past_limit));
-      Expect(FindStuntJumpRecords(one_record.data(), one_record.size()).empty(),
-             "one past the largest allowed reward is not");
+      std::vector<unsigned char> model_bounds(kStride * 40, 0);
+      for (int index = 0; index < 40; ++index) {
+        plant(&model_bounds, kStride * index, 5.0f + static_cast<float>(index),
+              -5.0f - static_cast<float>(index), 0);
+      }
+      const std::vector<StuntJumpPosition> bound_positions =
+          FindStuntJumpPositions(model_bounds.data(), model_bounds.size());
+      Expect(!bound_positions.empty(), "model bounds do read as positions");
+      Expect(FindStuntJumpRuns(bound_positions).empty(),
+             "an array of one model's bounds never qualifies as the table");
     }
 
-    // Nothing box-shaped at all yields nothing, rather than a short run of noise.
-    std::vector<unsigned char> empty(4096, 0);
-    Expect(BestStuntJumpRun(FindStuntJumpRecords(empty.data(), empty.size()), kJumps)
-               .count == 0,
-           "zeroed memory holds no stunt jump table");
+    // A model-bounds array sharing a block with the table, at the lower address.
+    // Both are 36 long, so a search offering one run per block would hand back
+    // the decoy and the table would never be seen.
+    {
+      const std::size_t decoy_lead = 0x40;
+      const std::size_t table_lead = decoy_lead + kStride * (kJumps + 2);
+      std::vector<unsigned char> shared(table_lead + kStride * (kJumps + 2), 0);
+      for (int index = 0; index < kJumps; ++index) {
+        plant(&shared, decoy_lead + kStride * index, 6.0f + static_cast<float>(index),
+              -6.0f - static_cast<float>(index), 0);
+      }
+      plant_table(&shared, table_lead);
+      const std::vector<StuntJumpRun> shared_runs =
+          FindStuntJumpRuns(FindStuntJumpPositions(shared.data(), shared.size()));
+      bool found_table = false;
+      bool found_decoy = false;
+      for (const StuntJumpRun& run : shared_runs) {
+        if (run.offset == table_lead && run.count == kJumps) found_table = true;
+        if (run.offset == decoy_lead) found_decoy = true;
+      }
+      Expect(found_table, "the table is offered even behind a decoy at a lower address");
+      Expect(!found_decoy, "the decoy sharing the block never qualifies");
+    }
+
+    // One jump beside the world origin does not cost the table its run: the
+    // origin test is a share of the whole run, never a per-record reject.
+    {
+      std::vector<unsigned char> with_central(kLead + kStride * (kJumps + 2), 0);
+      plant_table(&with_central, kLead);
+      plant(&with_central, kLead, 12.0f, -6.0f, 500);
+      const std::vector<StuntJumpRun> central_runs = FindStuntJumpRuns(
+          FindStuntJumpPositions(with_central.data(), with_central.size()));
+      bool intact = false;
+      for (const StuntJumpRun& run : central_runs) {
+        if (run.offset == kLead && run.count == kJumps && run.stride == kStride) {
+          intact = true;
+        }
+      }
+      Expect(intact, "a jump beside the origin leaves the run whole and aligned");
+    }
+
+    // A height nothing occupies, and one that is not a number, are both rejected.
+    {
+      const float in_the_city[3] = {-900.0f, 300.0f, 11.0f};
+      Expect(LooksLikeWorldPosition(in_the_city), "a place in the city reads as one");
+      const float too_high[3] = {-900.0f, 300.0f, 9000.0f};
+      Expect(!LooksLikeWorldPosition(too_high), "nothing sits nine kilometres up");
+      const float not_a_number[3] = {-900.0f, 300.0f,
+                                     std::numeric_limits<float>::quiet_NaN()};
+      Expect(!LooksLikeWorldPosition(not_a_number),
+             "a height that is not a number is not a height");
+    }
+
+    // The known layout ranks a candidate up but never gates it, so it is read as
+    // a share of the run rather than a verdict on it.
+    {
+      std::vector<StuntJumpRecord> records;
+      for (int index = 0; index < kJumps; ++index) {
+        records.push_back(ReadStuntJumpRecord(memory.data(), kLead + kStride * index));
+      }
+      Expect(LayoutFit(records) > 0.99f, "the planted table fits the known layout");
+      records[0].reward = -1082130432;  // -1.0f
+      Expect(LayoutFit(records) < 1.0f && LayoutFit(records) > 0.9f,
+             "one odd record costs a little of the fit, not all of it");
+    }
+
+    // Ranking: the game's own count leads, then how well the layout fits.
+    {
+      StuntJumpCandidate matching;
+      matching.run = StuntJumpRun{0x100, kStride, kJumps, 2000.0f, 1.0f};
+      matching.layout_fit = 0.5f;
+      StuntJumpCandidate longer;
+      longer.run = StuntJumpRun{0x200, kStride, kJumps * 3, 4000.0f, 1.0f};
+      longer.layout_fit = 1.0f;
+      Expect(CandidateRanksBefore(matching, longer, kJumps),
+             "a run of the game's own count leads a longer one");
+      Expect(!CandidateRanksBefore(longer, matching, kJumps),
+             "and the longer one does not lead it back");
+      StuntJumpCandidate poorer_fit = matching;
+      poorer_fit.run.offset = 0x300;
+      poorer_fit.layout_fit = 0.1f;
+      Expect(CandidateRanksBefore(matching, poorer_fit, kJumps),
+             "among equal counts the closer layout fit leads");
+    }
+
+    // Nothing naming a position yields nothing, rather than a short run.
+    {
+      std::vector<unsigned char> empty(4096, 0);
+      Expect(
+          FindStuntJumpRuns(FindStuntJumpPositions(empty.data(), empty.size())).empty(),
+          "zeroed memory holds no stunt jump table");
+    }
   }
 
   if (failures == 0) {
