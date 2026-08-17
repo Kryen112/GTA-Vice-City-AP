@@ -16,6 +16,7 @@
 #include "../src/scm_packages.hpp"
 #include "../src/scm_pickup_layout.hpp"
 #include "../src/scm_radio.hpp"
+#include "../src/scm_stunt_jumps.hpp"
 #include "../src/scm_toasts.hpp"
 
 using namespace gtavc;
@@ -697,6 +698,90 @@ int main() {
                        "Held: Rampages" + std::string(kToastSeparator) +
                        "Available: Hidden Packages",
            "every non-empty list appears once, in order, separated");
+  }
+
+  // Recovering the stunt jump table from a block of memory. The game builds it
+  // on the heap and writes it nowhere else, so the scan has to pick it out of
+  // whatever else happens to be there.
+  {
+    constexpr std::size_t kStride = 0x44;
+    constexpr int kJumps = 36;
+    constexpr std::size_t kLead = 0x120;
+    std::vector<unsigned char> memory(kLead + kStride * (kJumps + 2), 0);
+
+    const auto write_float = [&memory](std::size_t offset, float value) {
+      std::memcpy(memory.data() + offset, &value, sizeof(value));
+    };
+    const auto write_record = [&](std::size_t offset, float x, float y, int reward) {
+      const float floats[kStuntJumpFloats] = {
+          x, y, 10.0f, x + 8.0f, y + 8.0f, 16.0f,      // start box
+          x + 60.0f, y, 9.0f, x + 90.0f, y + 20.0f, 15.0f,  // landing box
+          x + 30.0f, y - 40.0f, 25.0f,                 // camera
+      };
+      std::memcpy(memory.data() + offset, floats, sizeof(floats));
+      std::memcpy(memory.data() + offset + sizeof(floats), &reward, sizeof(reward));
+    };
+    for (int index = 0; index < kJumps; ++index) {
+      write_record(kLead + kStride * index, -900.0f + 40.0f * index,
+                   300.0f - 20.0f * index, 500 * (index + 1));
+    }
+    // A lone lookalike before the array, at no stride with anything: the run
+    // search must not take it for a table, and must not let it shorten one.
+    write_record(0x40, 120.0f, -400.0f, 1);
+    // Junk that is not a box: corners that coincide, so the extent is zero.
+    for (std::size_t offset = 0; offset < 0x40; offset += 4) {
+      write_float(offset, 1.0f);
+    }
+
+    const std::vector<StuntJumpRecord> records =
+        FindStuntJumpRecords(memory.data(), memory.size());
+    Expect(records.size() >= static_cast<std::size_t>(kJumps),
+           "every planted record is recognised by its shape");
+    const StuntJumpRun run = BestStuntJumpRun(records, kJumps);
+    Expect(run.count == kJumps, "the run is exactly the planted table");
+    Expect(run.stride == kStride, "the stride is recovered from the records");
+    Expect(run.offset == kLead, "the run starts at the array, not partway in");
+    Expect(BestStuntJumpRun(records, 0).count == kJumps,
+           "with no count to aim for the longest run stands in");
+
+    // A longer run of the same shape in the same block, which is what an array
+    // of collision volumes looks like. The wanted count has to pick the table
+    // out from under it; length alone would take the decoy.
+    std::vector<unsigned char> crowded = memory;
+    constexpr std::size_t kDecoyLead = 0;
+    constexpr std::size_t kDecoyStride = 0x50;
+    constexpr int kDecoyCount = 60;
+    crowded.resize(kLead + kStride * (kJumps + 2) +
+                   kDecoyStride * (kDecoyCount + 2), 0);
+    const std::size_t decoy_base = kLead + kStride * (kJumps + 2);
+    for (int index = 0; index < kDecoyCount; ++index) {
+      const std::size_t offset = decoy_base + kDecoyStride * index;
+      const float floats[kStuntJumpFloats] = {
+          -50.0f, -50.0f, 2.0f, -44.0f, -44.0f, 8.0f,
+          -20.0f, -50.0f, 2.0f, -10.0f, -40.0f, 8.0f,
+          -35.0f, -70.0f, 20.0f,
+      };
+      std::memcpy(crowded.data() + offset, floats, sizeof(floats));
+    }
+    const std::vector<StuntJumpRecord> crowded_records =
+        FindStuntJumpRecords(crowded.data(), crowded.size());
+    Expect(BestStuntJumpRun(crowded_records, 0).count == kDecoyCount,
+           "the longer decoy wins on length alone");
+    const StuntJumpRun picked = BestStuntJumpRun(crowded_records, kJumps);
+    Expect(picked.count == kJumps && picked.offset == kLead,
+           "the wanted count picks the table out of the same block as a decoy");
+    Expect(kDecoyLead == 0, "the decoy sits after the table, not before it");
+
+    // The pin takes the middle of the start box, whichever corner came first.
+    const std::array<float, 3> centre = StuntJumpBoxCentre(records.front().values.data());
+    Expect(centre[0] > 100.0f && centre[0] < 140.0f,
+           "the box centre sits between its corners");
+
+    // Nothing box-shaped at all yields nothing, rather than a short run of noise.
+    std::vector<unsigned char> empty(4096, 0);
+    Expect(BestStuntJumpRun(FindStuntJumpRecords(empty.data(), empty.size()), kJumps)
+               .count == 0,
+           "zeroed memory holds no stunt jump table");
   }
 
   if (failures == 0) {

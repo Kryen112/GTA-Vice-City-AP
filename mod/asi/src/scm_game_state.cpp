@@ -2,10 +2,13 @@
 
 #include <algorithm>
 #include <array>
+#include <cstdio>
 #include <cstdlib>
+#include <cstring>
 
 #include "game_addresses.hpp"
 #include "scm_packages.hpp"
+#include "scm_stunt_jumps.hpp"
 
 #include <plugin.h>
 #include <CHud.h>
@@ -20,6 +23,7 @@
 #include <ePickupType.h>
 #include <CPad.h>
 #include <CTimer.h>
+#include <CStats.h>
 #include <CWanted.h>
 #include <CPools.h>
 #include <CVehicle.h>
@@ -171,6 +175,9 @@ constexpr const char* kContentNames[kContentCount] = {
 // The key listing every configured ability's locked or unlocked state and
 // every configured content class's held or available state.
 constexpr int kAbilityStatusKey = VK_F6;
+// The key writing the unique stunt jump table beside the executable.
+constexpr int kStuntJumpDumpKey = VK_F7;
+constexpr const char* kStuntJumpDumpFile = "gtavc_ap_stuntjumps.txt";
 // The kill-frenzy skull's model name in the game's object definitions.
 constexpr const char* kKillFrenzyModelName = "killfrenzy";
 // Diagnostic names for the held pickup classes, HeldPickupClass order.
@@ -216,6 +223,44 @@ void DestroyGameEntity(void* entity) {
   using DeletingDestructor = void*(__thiscall*)(void*, int);
   void** vtable = *static_cast<void***>(entity);
   reinterpret_cast<DeletingDestructor>(vtable[kDeletingDestructorSlot])(entity, 1);
+}
+
+// A file beside the executable, where the log already goes.
+std::string PathBesideExecutable(const char* name) {
+  char executable[MAX_PATH] = {0};
+  GetModuleFileNameA(nullptr, executable, MAX_PATH);
+  std::string path(executable);
+  const std::size_t slash = path.find_last_of("\\/");
+  const std::string directory =
+      (slash == std::string::npos) ? "." : path.substr(0, slash);
+  return directory + "\\" + name;
+}
+
+// Every committed, readable, privately allocated block in this process. The
+// stunt jump array is heap, so mapped images and files are skipped: that is
+// most of the address space and none of the answer.
+std::vector<std::pair<const unsigned char*, std::size_t>> ReadableHeapBlocks() {
+  std::vector<std::pair<const unsigned char*, std::size_t>> blocks;
+  SYSTEM_INFO system{};
+  GetSystemInfo(&system);
+  auto* address = static_cast<const unsigned char*>(system.lpMinimumApplicationAddress);
+  const auto* limit = static_cast<const unsigned char*>(system.lpMaximumApplicationAddress);
+  constexpr DWORD readable = PAGE_READONLY | PAGE_READWRITE | PAGE_WRITECOPY |
+                             PAGE_EXECUTE_READ | PAGE_EXECUTE_READWRITE |
+                             PAGE_EXECUTE_WRITECOPY;
+  while (address < limit) {
+    MEMORY_BASIC_INFORMATION region{};
+    if (VirtualQuery(address, &region, sizeof(region)) != sizeof(region)) break;
+    const bool usable = region.State == MEM_COMMIT && region.Type == MEM_PRIVATE &&
+                        (region.Protect & readable) != 0 &&
+                        (region.Protect & PAGE_GUARD) == 0;
+    if (usable) {
+      blocks.emplace_back(static_cast<const unsigned char*>(region.BaseAddress),
+                          region.RegionSize);
+    }
+    address = static_cast<const unsigned char*>(region.BaseAddress) + region.RegionSize;
+  }
+  return blocks;
 }
 
 // Whether the foreground window belongs to this game, so a key pressed in
@@ -729,6 +774,175 @@ void ScmGameState::EnforceLocks() {
 
 void ScmGameState::OnBeforeWorldProcess() { ApplyAbilityInputLocks(); }
 
+namespace {
+// Only a page that went away is this scan's business. Every other exception,
+// a C++ throw and a stack overflow included, belongs to whoever raised it:
+// swallowing those would report the block unscannable and unwind without
+// running a single destructor.
+int MemoryFaultFilter(unsigned int code) {
+  return (code == EXCEPTION_ACCESS_VIOLATION || code == EXCEPTION_IN_PAGE_ERROR ||
+          code == EXCEPTION_GUARD_PAGE)
+             ? EXCEPTION_EXECUTE_HANDLER
+             : EXCEPTION_CONTINUE_SEARCH;
+}
+
+// Scanning live memory races the streamer, which frees blocks on its own
+// thread, so a page can go away between being reported committed and being
+// read. The scan is split in two so the guard sits in a function holding no
+// object of its own, which is what lets a structured handler wrap it.
+void ScanBlockInner(const unsigned char* base, std::size_t size,
+                    std::vector<StuntJumpRecord>* records) {
+  *records = FindStuntJumpRecords(base, size);
+}
+
+bool ScanBlockGuarded(const unsigned char* base, std::size_t size,
+                      std::vector<StuntJumpRecord>* records) {
+  __try {
+    ScanBlockInner(base, size, records);
+    return true;
+  } __except (MemoryFaultFilter(GetExceptionCode())) {
+    return false;
+  }
+}
+
+// How many addresses holding the array are worth writing down. One identifies
+// the pool, so the rest are only corroboration and the file stays short.
+constexpr std::size_t kStuntJumpHolderLimit = 8;
+
+void FindPointersInner(std::uintptr_t value, const unsigned char* base,
+                       std::size_t size, std::vector<std::uintptr_t>* found) {
+  for (std::size_t offset = 0; offset + sizeof(std::uintptr_t) <= size;
+       offset += sizeof(std::uintptr_t)) {
+    std::uintptr_t candidate = 0;
+    std::memcpy(&candidate, base + offset, sizeof(candidate));
+    if (candidate == value) {
+      found->push_back(reinterpret_cast<std::uintptr_t>(base + offset));
+      if (found->size() >= kStuntJumpHolderLimit) return;
+    }
+  }
+}
+
+bool FindPointersGuarded(std::uintptr_t value, const unsigned char* base,
+                         std::size_t size, std::vector<std::uintptr_t>* found) {
+  __try {
+    FindPointersInner(value, base, size, found);
+    return true;
+  } __except (MemoryFaultFilter(GetExceptionCode())) {
+    return false;
+  }
+}
+}  // namespace
+
+void ScmGameState::DumpStuntJumps() {
+  // How many jumps this game built. The manager counts them as it adds them,
+  // so this says what a right answer looks like: a run of exactly this length.
+  // Arrays of collision volumes have the same shape as a stunt jump record, and
+  // a longer one of those would otherwise win on length alone.
+  const int expected = CStats::TotalNumberOfUniqueJumps;
+
+  const std::vector<std::pair<const unsigned char*, std::size_t>> blocks =
+      ReadableHeapBlocks();
+  StuntJumpRun best;
+  const unsigned char* best_base = nullptr;
+  std::vector<StuntJumpRecord> best_records;
+  bool best_matches_expected = false;
+  int truncated_blocks = 0;
+  for (const auto& [base, size] : blocks) {
+    std::vector<StuntJumpRecord> records;
+    if (!ScanBlockGuarded(base, size, &records)) continue;
+    if (records.size() >= kStuntJumpRecordLimit) ++truncated_blocks;
+    if (records.size() < static_cast<std::size_t>(kStuntJumpMinimumRun)) continue;
+    const StuntJumpRun run = BestStuntJumpRun(records, expected);
+    const bool matches_expected = expected > 0 && run.count == expected;
+    // A run of the expected length beats any other, however long; among runs
+    // that all miss it, the longest is the best guess left.
+    const bool better = matches_expected
+                            ? !best_matches_expected
+                            : (!best_matches_expected && run.count > best.count);
+    if (better) {
+      best = run;
+      best_base = base;
+      best_records = std::move(records);
+      best_matches_expected = matches_expected;
+    }
+  }
+  // A block that hit the record cap was searched only as far as the cap, so the
+  // table could have been past it. Say so: otherwise that reads as no table.
+  if (truncated_blocks > 0 && logger_) {
+    logger_("stunt jump dump: " + std::to_string(truncated_blocks) +
+            " block(s) held more matches than the scan collects");
+  }
+  if (best.count < kStuntJumpMinimumRun || best_base == nullptr) {
+    if (logger_) {
+      logger_("stunt jump dump: no table found, longest run " +
+              std::to_string(best.count) + ", game expects " +
+              std::to_string(expected));
+    }
+    PostToast("No stunt jump table found in memory.");
+    return;
+  }
+
+  const std::uintptr_t array_address =
+      reinterpret_cast<std::uintptr_t>(best_base) + best.offset;
+  // The one address the array is reachable from is worth writing down: it is
+  // the pool's own object pointer, so a later build can read the table
+  // directly instead of scanning for it again.
+  std::vector<std::uintptr_t> holders;
+  for (const auto& [base, size] : blocks) {
+    if (holders.size() >= kStuntJumpHolderLimit) break;
+    FindPointersGuarded(array_address, base, size, &holders);
+  }
+
+  const std::string path = PathBesideExecutable(kStuntJumpDumpFile);
+  FILE* file = nullptr;
+  fopen_s(&file, path.c_str(), "w");
+  if (file == nullptr) {
+    if (logger_) logger_("stunt jump dump: cannot write " + path);
+    PostToast("Stunt jump dump failed to write.");
+    return;
+  }
+  std::fprintf(file, "# GTA Vice City unique stunt jumps, dumped by the "
+                     "Archipelago ASI.\n");
+  std::fprintf(file, "# array 0x%08X stride %u records %d, game counts %d\n",
+               static_cast<unsigned int>(array_address),
+               static_cast<unsigned int>(best.stride), best.count, expected);
+  for (std::uintptr_t holder : holders) {
+    std::fprintf(file, "# pointed at from 0x%08X\n",
+                 static_cast<unsigned int>(holder));
+  }
+  std::fprintf(file, "# index then start corners, landing corners, camera, reward\n");
+  int index = 0;
+  for (std::size_t offset = best.offset;
+       index < best.count; offset += best.stride, ++index) {
+    const StuntJumpRecord* record = nullptr;
+    for (const StuntJumpRecord& candidate : best_records) {
+      if (candidate.offset == offset) {
+        record = &candidate;
+        break;
+      }
+    }
+    if (record == nullptr) continue;
+    std::fprintf(file, "%d", index);
+    for (float value : record->values) std::fprintf(file, " %.4f", value);
+    std::fprintf(file, " %d\n", record->reward);
+  }
+  std::fclose(file);
+  if (logger_) {
+    logger_("stunt jump dump: " + std::to_string(best.count) + " records, stride " +
+            std::to_string(best.stride) + ", game counts " + std::to_string(expected) +
+            ", wrote " + path);
+  }
+  // A count short of the game's own is a partial table, so say so here rather
+  // than leave it to whoever reads the file later: the shape filters splitting
+  // one oversized jump off the run looks exactly like success otherwise.
+  if (expected > 0 && best.count != expected) {
+    PostToast("Found " + std::to_string(best.count) + " stunt jumps, the game "
+              "counts " + std::to_string(expected) + ".");
+  } else {
+    PostToast("Wrote " + std::to_string(best.count) + " stunt jumps.");
+  }
+}
+
 void ScmGameState::ApplyOneShot(const ItemEffect& effect) {
   if (effect.type.rfind("trap_", 0) == 0) {
     ApplyTrap(effect);
@@ -958,6 +1172,17 @@ void ScmGameState::DetectCollectedPackages() {
 void ScmGameState::OnGameFrame() {
   std::lock_guard<std::mutex> lock(mutex_);
 
+  // The stunt jump dump reads the world, not the seed, so it runs on any loaded
+  // game rather than waiting for a stamped one. Its key is handled here for the
+  // same reason the ability status key is not: that handler returns early when
+  // no lock is configured.
+  const bool stunt_jump_key_down = GameWindowHasFocus() &&
+      (GetAsyncKeyState(kStuntJumpDumpKey) & 0x8000) != 0;
+  if (stunt_jump_key_down && !stunt_jump_key_was_down_ && FindPlayerPed() != nullptr) {
+    DumpStuntJumps();
+  }
+  stunt_jump_key_was_down_ = stunt_jump_key_down;
+
   cached_seed_hash_ = ReadSeedHash();
   if (stamp_pending_) {
     if (cached_seed_hash_.empty() && !pending_stamp_.empty()) {
@@ -987,6 +1212,9 @@ void ScmGameState::OnGameFrame() {
     ability_toast_shown_.fill(false);
     ability_toast_last_ms_.fill(0);
     ability_status_key_was_down_ = false;
+    // The stunt jump dump key's edge stays where it is. Its handler runs above
+    // this branch and its latch belongs to the keyboard rather than to a game,
+    // so clearing it here would unlatch it on every frame the dump runs in.
     // The model table belongs to the game that loaded it.
     kill_frenzy_model_ = -1;
     kill_frenzy_lookup_logged_ = false;

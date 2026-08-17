@@ -80,6 +80,17 @@ version control.
   pair and the two store robbery handlers read the store pair. The top unlock
   is the highest reserved global, which the foundation's sizing line references
   as `$9446`.
+- Stunt jump dump: F7 in a loaded game writes `gtavc_ap_stuntjumps.txt` beside
+  the executable. Vice City defines its 36 unique stunt jumps nowhere a build
+  step can read, neither in the SCM nor as a static table in the executable;
+  the game builds them on the heap at start. The ASI scans its own heap for
+  the record shape (two bounding boxes then a camera position) and takes the
+  longest run at one stride, preferring a run as long as the game's own
+  `CStats::TotalNumberOfUniqueJumps`, and toasting the shortfall when it
+  finds fewer. Development tool: it runs only on the key, reads no reserved
+  global, and writes nothing into the world beyond its own result toast.
+  `scripts/dump_check_coords.py` takes the file as its third argument and
+  folds the jumps into the tracker pack's coordinate table.
 - Minimap shuffle: `$9415` (the shuffled flag) and `$9416` (the Minimap item
   unlock) are ASI-facing only; no gate reads them. The ASI hides the radar
   disc while the flag is set and the unlock is zero, so the script carries

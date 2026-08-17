@@ -60,6 +60,11 @@ class ScmGameState : public GameState {
  private:
   static int GetGlobal(int index);
   static void SetGlobal(int index, int value);
+  // Writes the game's own unique stunt jump table beside the executable, found
+  // by scanning the heap for it. A development tool: the jump positions are the
+  // one thing the tracker pack cannot read offline, since the game never writes
+  // them down anywhere a build step could reach. Runs only on its key press.
+  void DumpStuntJumps();
   // Sets each collected package's completion global by matching the game's
   // collectable pickups to the configured package coordinates. Only a package
   // seen present this session and then gone counts as collected, so the pool not
@@ -209,6 +214,8 @@ class ScmGameState : public GameState {
   std::array<bool, kAbilityCount> ability_toast_shown_{};
   std::array<unsigned int, kAbilityCount> ability_toast_last_ms_{};
   bool ability_status_key_was_down_ = false;
+  // The stunt jump dump key's edge detector, so one press writes one file.
+  bool stunt_jump_key_was_down_ = false;
   // The kill-frenzy skull model, resolved by name and latched on the first
   // hit; negative while unresolved, when the rampage icons stay vanilla.
   // Reset on the game boundary with the other per-game state.

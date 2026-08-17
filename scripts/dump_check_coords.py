@@ -23,10 +23,18 @@ positions in the same create_collectable1 order, so re-emitting them would make
 two tables to keep in step. They are still extracted, and disagreeing with
 package_data.py fails the run.
 
-Two classes place nothing in the SCM and so get no coordinate: the emergency
-vehicle milestones, which have no position at all (a level completes wherever
-the last fare or fire happens to be), and the stunt jumps, which are exe-native
-(the SCM only registers a jump the engine already found).
+The emergency vehicle milestones place nothing anywhere and so get no
+coordinate: a level completes wherever the last fare or fire happens to be.
+
+The stunt jumps are not in the SCM either, and not in the executable: the game
+builds their table on the heap at game start and writes it down nowhere. The
+mod's ASI recovers it from live memory on its dump key and writes
+gtavc_ap_stuntjumps.txt beside the executable; pass that file as the optional
+third argument and its jumps join the table, each pinned at the middle of its
+start box, which is where the run-up begins. A run without it carries whatever
+table is already there rather than emptying it, since the dump comes from a game
+session and not from the decompile, and the tracker lists the jumps instead of
+pinning them only while no dump has ever been folded in.
 
 Three of the four classes are index-ordered lists whose index IS the check
 order, so a single dropped entry would shift every later pin silently. Nothing
@@ -43,11 +51,13 @@ The decompile is the player's own, generated locally and never committed, so
 run this against the clean.txt produced for the SCM build.
 
 Usage:
-    python scripts/dump_check_coords.py path/to/clean.txt ../GTAVC_AP_Poptracker/data/check_coords.py
+    python scripts/dump_check_coords.py clean.txt ../GTAVC_AP_Poptracker/data/check_coords.py
+    python scripts/dump_check_coords.py clean.txt out.py gtavc_ap_stuntjumps.txt
 """
 
 from __future__ import annotations
 
+import ast
 import pathlib
 import re
 import sys
@@ -506,6 +516,82 @@ def check_against_markers(
     return problems
 
 
+# One dumped stunt jump record: two box corners, two more, the camera, the
+# reward. The pin takes the middle of the start box.
+STUNT_JUMP_FLOATS = 15
+
+
+def carried_stunt_jumps(
+    destination: str,
+) -> tuple[list[tuple[float, float, float]], list[str]]:
+    """The stunt jump table an earlier run already wrote.
+
+    The dump comes from a game session rather than from the decompile, so a run
+    without it must leave the jumps as they were: rewriting the table empty
+    would silently unpin all 36 the next time the pack is generated.
+    """
+    path = pathlib.Path(destination)
+    if not path.is_file():
+        return [], []
+    try:
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+    except (OSError, SyntaxError, ValueError):
+        return [], [f"{destination} exists but does not parse, so the stunt jumps"
+                    " it holds cannot be carried forward; pass a dump or delete it"]
+    for statement in tree.body:
+        target = None
+        if isinstance(statement, ast.AnnAssign) and isinstance(statement.target, ast.Name):
+            target = statement.target.id
+        elif isinstance(statement, ast.Assign) and isinstance(statement.targets[0], ast.Name):
+            target = statement.targets[0].id
+        if target != "STUNT_JUMP_COORDS":
+            continue
+        try:
+            return [tuple(entry) for entry in ast.literal_eval(statement.value)], []
+        except (TypeError, ValueError):
+            return [], [f"{destination} holds a STUNT_JUMP_COORDS that is not a"
+                        " table of positions"]
+    return [], []
+
+
+def stunt_jump_positions(
+    path: str, expected: int,
+) -> tuple[list[tuple[float, float, float]], list[str]]:
+    """The dumped stunt jump table as one position per jump, in the array's own
+    order, which is the engine's jump order and so the check order."""
+    positions: list[tuple[float, float, float]] = []
+    problems: list[str] = []
+    with open(path, encoding="utf-8") as handle:
+        for number, line in enumerate(handle, start=1):
+            stripped = line.strip()
+            if not stripped or stripped.startswith("#"):
+                continue
+            fields = stripped.split()
+            if len(fields) != STUNT_JUMP_FLOATS + 2:
+                problems.append(f"{path} line {number}: {len(fields)} fields, "
+                                f"expected {STUNT_JUMP_FLOATS + 2}")
+                continue
+            try:
+                values = [float(field) for field in fields[1:1 + STUNT_JUMP_FLOATS]]
+            except ValueError:
+                problems.append(f"{path} line {number}: a field is not a number")
+                continue
+            # The dump keeps both corners in the order the game stores them, so
+            # the middle stands in whichever came first.
+            positions.append(tuple(
+                (values[axis] + values[axis + 3]) / 2 for axis in range(3)))
+    problems += check_count("stunt jumps", len(positions), expected)
+    outside = [
+        position for position in positions
+        if not all(abs(value) < 2100.0 for value in position[:2])
+    ]
+    if outside:
+        problems.append(f"stunt jump positions outside the world: {outside}")
+    if len(set(positions)) != len(positions):
+        problems.append("two stunt jumps share a position")
+    return positions, problems
+
+
 def check_names(label: str, found: set[str], expected: set[str]) -> list[str]:
     problems = []
     if missing := sorted(expected - found):
@@ -527,6 +613,7 @@ def render_module(
     properties: dict[str, tuple[float, float, float]],
     stores: list[tuple[float, float, float]],
     side_events: dict[str, tuple[float, float, float]],
+    stunt_jumps: list[tuple[float, float, float]],
 ) -> str:
     def rows(entries: list[tuple[str, tuple[float, float, float]]]) -> str:
         return "\n".join(
@@ -535,16 +622,24 @@ def render_module(
     def points(entries: list[tuple[float, float, float]]) -> str:
         return "\n".join(f"    ({x}, {y}, {z})," for x, y, z in entries)
 
+    stunt_jump_note = (
+        "Stunt jumps carry the middle of each start box, read from the game's own\n"
+        "table by the mod's runtime dump; the game defines them nowhere else."
+        if stunt_jumps else
+        "Stunt jumps are absent: the game builds their table only while it runs, so\n"
+        "they arrive from the mod's runtime dump or not at all."
+    )
+
     return f'''"""Check world positions, generated by scripts/dump_check_coords.py.
 
 Each entry is the game position the PopTracker pack pins a check at. Missions
 carry their launcher's trigger position, rampages their pickup, purchases their
 for-sale icon, stores their robbery trigger, and side events their launcher.
 
-Three classes are absent. Hidden packages have their positions in the world's
-own package_data.py, in the same order, so the generator reads them from there.
-Emergency vehicle milestones have no position at all, and stunt jumps are
-exe-native, so neither is pinned.
+Hidden packages are absent: their positions live in the world's own
+package_data.py, in the same order, so the generator reads them from there.
+Emergency vehicle milestones are absent because they have no position at all.
+{stunt_jump_note}
 
 Indexed classes are lists in check order, the order that fixes location ids and
 names; the rest are keyed by check name. A 2d position test names no height, so
@@ -572,14 +667,19 @@ STORE_COORDS: list[tuple[float, float, float]] = [
 SIDE_EVENT_COORDS: dict[str, tuple[float, float, float]] = {{
 {rows(sorted(side_events.items()))}
 }}
+
+STUNT_JUMP_COORDS: list[tuple[float, float, float]] = [
+{points(stunt_jumps)}
+]
 '''
 
 
 def main() -> int:
-    if len(sys.argv) != 3:
+    if len(sys.argv) not in (3, 4):
         print(__doc__, file=sys.stderr)
         return 2
     source, destination = sys.argv[1], sys.argv[2]
+    stunt_jump_dump = sys.argv[3] if len(sys.argv) == 4 else None
     data = load_world_data()
     with open(source, "rb") as handle:
         text = handle.read().decode("latin-1").replace("\r\n", "\n")
@@ -619,13 +719,27 @@ def main() -> int:
     if repeated:
         problems.append(f"two robbable stores share a position: {repeated}")
 
+    if stunt_jump_dump is not None:
+        stunt_jumps, stunt_jump_problems = stunt_jump_positions(
+            stunt_jump_dump, data.STUNT_JUMP_COUNT)
+    else:
+        stunt_jumps, stunt_jump_problems = carried_stunt_jumps(destination)
+        # A carried table is re-emitted rather than re-read from the game, so it
+        # is held to the same count as a fresh one: a table left short by an
+        # older run would otherwise survive every regeneration.
+        if stunt_jumps:
+            stunt_jump_problems += check_count(
+                "carried stunt jumps", len(stunt_jumps), data.STUNT_JUMP_COUNT)
+    problems += stunt_jump_problems
+
     if problems:
         for problem in problems:
             print(f"FAIL {problem}", file=sys.stderr)
         print(f"{len(problems)} problems; nothing written", file=sys.stderr)
         return 1
 
-    module = render_module(missions, rampages, properties, stores, side_events)
+    module = render_module(missions, rampages, properties, stores, side_events,
+                           stunt_jumps)
     with open(destination, "w", encoding="utf-8", newline="\n") as handle:
         handle.write(module)
 
@@ -635,6 +749,13 @@ def main() -> int:
     print(f"robbable stores    {len(stores):>4}")
     print(f"side events        {len(side_events):>4}")
     print(f"hidden packages    {len(packages):>4} checked against package_data.py")
+    if stunt_jump_dump:
+        print(f"stunt jumps        {len(stunt_jumps):>4}")
+    elif stunt_jumps:
+        print(f"stunt jumps        {len(stunt_jumps):>4} carried from the "
+              "previous table")
+    else:
+        print("stunt jumps           0 (no dump yet; they stay unpinned)")
     print(f"wrote {destination}")
     return 0
 
