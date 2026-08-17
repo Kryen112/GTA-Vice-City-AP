@@ -899,8 +899,8 @@ void ScmGameState::DumpStuntJumps() {
                                 const StuntJumpCandidate& right) {
                        return CandidateRanksBefore(left, right, expected);
                      });
-    if (candidates.size() > kStuntJumpAlternativesWritten + 1) {
-      candidates.resize(kStuntJumpAlternativesWritten + 1);
+    if (candidates.size() > kStuntJumpCandidatesKept) {
+      candidates.resize(kStuntJumpCandidatesKept);
     }
   }
   // A block that hit the position cap was searched only as far as the cap, so
@@ -915,6 +915,7 @@ void ScmGameState::DumpStuntJumps() {
               std::to_string(longest_seen) + ", game expects " +
               std::to_string(expected));
     }
+
     PostToast("No stunt jump table found in memory.");
     return;
   }

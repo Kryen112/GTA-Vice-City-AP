@@ -866,14 +866,27 @@ int main() {
       StuntJumpCandidate longer;
       longer.run = StuntJumpRun{0x200, kStride, kJumps * 3, 4000.0f, 1.0f};
       longer.layout_fit = 1.0f;
-      Expect(CandidateRanksBefore(matching, longer, kJumps),
-             "a run of the game's own count leads a longer one");
-      Expect(!CandidateRanksBefore(longer, matching, kJumps),
-             "and the longer one does not lead it back");
-      StuntJumpCandidate poorer_fit = matching;
-      poorer_fit.run.offset = 0x300;
-      poorer_fit.layout_fit = 0.1f;
-      Expect(CandidateRanksBefore(matching, poorer_fit, kJumps),
+      Expect(CandidateRanksBefore(longer, matching, kJumps),
+             "the closer layout fit leads, whatever the counts");
+      Expect(!CandidateRanksBefore(matching, longer, kJumps),
+             "and the count alone does not lead it back");
+
+      // A spatial grid holding exactly as many entries as the game reports,
+      // reaching right across the map, and forming no jump record at all: the
+      // count and the span both say table, only the fit says otherwise.
+      StuntJumpCandidate grid;
+      grid.run = StuntJumpRun{0x400, 360, kJumps, 3704.0f, 1.0f};
+      grid.layout_fit = 0.0f;
+      StuntJumpCandidate table;
+      table.run = StuntJumpRun{0x500, kStride, kJumps, 2000.0f, 1.0f};
+      table.layout_fit = 1.0f;
+      Expect(CandidateRanksBefore(table, grid, kJumps),
+             "a table of jumps leads a grid of the same length and wider reach");
+
+      StuntJumpCandidate poorer_fit = table;
+      poorer_fit.run.offset = 0x600;
+      poorer_fit.layout_fit = 0.6f;
+      Expect(CandidateRanksBefore(table, poorer_fit, kJumps),
              "among equal counts the closer layout fit leads");
     }
 

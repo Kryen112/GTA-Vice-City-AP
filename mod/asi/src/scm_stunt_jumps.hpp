@@ -81,10 +81,13 @@ constexpr int kStuntJumpMaximumReward = 1000000;
 constexpr std::size_t kStuntJumpMinimumDistinctValues = 8;
 // A jump's trigger and landing volumes are real rooms of space. Ranking only.
 constexpr float kStuntJumpMinimumExtent = 0.5f;
-constexpr float kStuntJumpMaximumExtent = 250.0f;
+constexpr float kStuntJumpMaximumExtent = 500.0f;
 // How many runners-up the dump writes out, and how many rows each one writes.
-constexpr std::size_t kStuntJumpAlternativesWritten = 3;
-constexpr std::size_t kStuntJumpRowsWritten = 200;
+constexpr std::size_t kStuntJumpAlternativesWritten = 6;
+constexpr std::size_t kStuntJumpRowsWritten = 60;
+// How many candidates are carried while scanning, before the file keeps the
+// best few. Ranking can only choose among what survives the trim.
+constexpr std::size_t kStuntJumpCandidatesKept = 40;
 
 // One place in memory holding a world position, kept small because a block can
 // hold hundreds of thousands of them.
@@ -291,16 +294,21 @@ inline std::vector<StuntJumpRun> FindStuntJumpRuns(
   return runs;
 }
 
-// What ranks one candidate above another: being as long as the game's own count
-// first, since that is the only number the game itself supplies; then matching
-// the manager's record layout most closely; then reaching furthest; then the
-// lower address, so two sessions agree on the order.
+// What ranks one candidate above another: how closely its records match the
+// manager's own layout, then being as long as the game's own count, then
+// reaching furthest, then the lower address so two sessions agree.
+//
+// Fit leads because the heap holds a great many arrays of world positions and
+// the count does not tell them apart: a spatial grid and a table of jumps can
+// both hold exactly as many entries as the game reports. Only fit says whether
+// the floats form a jump. It sorts rather than rejects, so a build laying a
+// record out differently still surfaces its best candidate.
 inline bool CandidateRanksBefore(const StuntJumpCandidate& left,
                                  const StuntJumpCandidate& right, int wanted) {
+  if (left.layout_fit != right.layout_fit) return left.layout_fit > right.layout_fit;
   const bool left_matches = wanted > 0 && left.run.count == wanted;
   const bool right_matches = wanted > 0 && right.run.count == wanted;
   if (left_matches != right_matches) return left_matches;
-  if (left.layout_fit != right.layout_fit) return left.layout_fit > right.layout_fit;
   if (left.run.span != right.run.span) return left.run.span > right.run.span;
   return left.base + left.run.offset < right.base + right.run.offset;
 }
