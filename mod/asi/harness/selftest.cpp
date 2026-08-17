@@ -777,6 +777,65 @@ int main() {
     Expect(centre[0] > 100.0f && centre[0] < 140.0f,
            "the box centre sits between its corners");
 
+    // A buffer of alternating plus and minus one matches the box and camera
+    // shape at every offset and runs long enough to read as a table. Its reward
+    // field holds a float's bits and its values barely vary, so it is rejected.
+    {
+      std::vector<unsigned char> unit_vectors(0x20000, 0);
+      for (std::size_t offset = 0; offset + 4 <= unit_vectors.size(); offset += 4) {
+        const float value = (offset / 4) % 2 == 0 ? 1.0f : -1.0f;
+        std::memcpy(unit_vectors.data() + offset, &value, sizeof(value));
+      }
+      Expect(FindStuntJumpRecords(unit_vectors.data(), unit_vectors.size()).empty(),
+             "a buffer of unit vectors is not a stunt jump table");
+    }
+
+    // The same repeating shape carrying a plausible reward. Only the
+    // distinct-values test separates this from a record.
+    {
+      const std::size_t span = kStuntJumpFloats * sizeof(float) + sizeof(int);
+      std::vector<unsigned char> repeating(span * 8, 0);
+      for (std::size_t offset = 0; offset + 4 <= repeating.size(); offset += 4) {
+        const float value = (offset / 4) % 2 == 0 ? 40.0f : -40.0f;
+        std::memcpy(repeating.data() + offset, &value, sizeof(value));
+      }
+      const int reward = 500;
+      for (std::size_t record = 0; record * span + span <= repeating.size(); ++record) {
+        std::memcpy(repeating.data() + record * span + kStuntJumpFloats * sizeof(float),
+                    &reward, sizeof(reward));
+      }
+      Expect(FindStuntJumpRecords(repeating.data(), repeating.size()).empty(),
+             "a repeating pattern with a plausible reward is still not a record");
+    }
+
+    // A record whose reward is a float's bits is rejected, and accepted again
+    // when the caller turns that test off.
+    {
+      const std::size_t span = kStuntJumpFloats * sizeof(float) + sizeof(int);
+      std::vector<unsigned char> one_record(span, 0);
+      std::memcpy(one_record.data(), memory.data() + kLead,
+                  kStuntJumpFloats * sizeof(float));
+      const int float_bits = -1082130432;  // -1.0f
+      std::memcpy(one_record.data() + kStuntJumpFloats * sizeof(float), &float_bits,
+                  sizeof(float_bits));
+      Expect(FindStuntJumpRecords(one_record.data(), one_record.size()).empty(),
+             "a reward that is really a float's bits rejects the record");
+      Expect(FindStuntJumpRecords(one_record.data(), one_record.size(), false).size() == 1,
+             "the same record reads once the reward test is off");
+
+      // The reward bounds themselves: the maximum is a reward, one past is not.
+      const int at_limit = static_cast<int>(kStuntJumpMaximumReward);
+      std::memcpy(one_record.data() + kStuntJumpFloats * sizeof(float), &at_limit,
+                  sizeof(at_limit));
+      Expect(FindStuntJumpRecords(one_record.data(), one_record.size()).size() == 1,
+             "the largest allowed reward is still a reward");
+      const int past_limit = at_limit + 1;
+      std::memcpy(one_record.data() + kStuntJumpFloats * sizeof(float), &past_limit,
+                  sizeof(past_limit));
+      Expect(FindStuntJumpRecords(one_record.data(), one_record.size()).empty(),
+             "one past the largest allowed reward is not");
+    }
+
     // Nothing box-shaped at all yields nothing, rather than a short run of noise.
     std::vector<unsigned char> empty(4096, 0);
     Expect(BestStuntJumpRun(FindStuntJumpRecords(empty.data(), empty.size()), kJumps)

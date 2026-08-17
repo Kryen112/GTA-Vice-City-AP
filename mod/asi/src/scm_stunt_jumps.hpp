@@ -8,6 +8,10 @@
 //
 // What the array looks like is the manager's own record layout, stable across
 // this game lineage: two bounding boxes, the landing camera, then the reward.
+// The positions are matched as a shape rather than at fixed offsets, so a
+// record this build pads differently still reads; only the reward is taken from
+// where the layout says it sits, and the caller can turn that test off when
+// requiring it finds nothing.
 //
 //     0x00  6 floats  start box, two opposite corners
 //     0x18  6 floats  landing box, two opposite corners
@@ -15,15 +19,20 @@
 //     0x3C  int       reward
 //     0x40  2 bytes   done, found
 //
-// Rather than trust that layout, the scan looks for the shape it implies: two
-// boxes whose corners bracket a sane volume somewhere in the world, followed by
-// a position in the world. That matches a handful of unrelated places too, so
-// the table is picked out as the longest run of matches at one constant stride,
-// which nothing else in memory produces.
+// A record is recognised by four tests: two boxes whose corners bracket a sane
+// volume somewhere in the world, a camera position in the world, a reward that
+// reads as a sum of money, and enough distinct values to be real places rather
+// than a repeating pattern. Unrelated things still match, so the table is then
+// picked out as a run of matches at one constant stride.
+//
+// The last two tests earn their place. A buffer of alternating plus and minus
+// one matches the boxes and the camera at every offset, runs long, and carries a
+// reward field holding a float's bits: without them it reads as a table.
 #pragma once
 
 #include <array>
 #include <cstddef>
+#include <cstdint>
 #include <cstring>
 #include <unordered_set>
 #include <vector>
@@ -51,6 +60,14 @@ constexpr std::size_t kStuntJumpMaximumStride = 160;
 // a real find sits far above it; the margin lets a partly built table still
 // report rather than vanish.
 constexpr int kStuntJumpMinimumRun = 12;
+// The reward is a sum of money, so it is a small count rather than a float's
+// bits read as an integer. This is what separates a jump record from a buffer
+// of unit vectors, whose reward field reads as plus or minus one billion.
+constexpr int kStuntJumpMaximumReward = 1000000;
+// A jump names fifteen positions across two volumes and a camera, so almost
+// every one of them differs. A buffer holding a repeating pattern matches the
+// box shape at every offset and carries only a handful of distinct values.
+constexpr std::size_t kStuntJumpMinimumDistinctValues = 8;
 // How many matches one block may yield before the scan gives up on it. A block
 // densely full of the same shape is not the jump table, and collecting it all
 // would be the one place this can exhaust a 32-bit address space.
@@ -69,6 +86,17 @@ struct StuntJumpRun {
   std::size_t stride = 0;
   int count = 0;
 };
+
+// One block's best run with the records it names, kept so the dump can carry
+// the runners-up alongside its first pick.
+struct StuntJumpCandidate {
+  StuntJumpRun run;
+  std::uintptr_t base = 0;
+  std::vector<StuntJumpRecord> records;
+};
+
+// How many runners-up the dump writes out.
+constexpr std::size_t kStuntJumpAlternativesWritten = 3;
 
 inline bool IsWorldCoordinate(float value) {
   // Rejects infinities and not-a-number as well, since both fail every compare.
@@ -97,6 +125,28 @@ inline bool LooksLikeStuntJumpCamera(const float* values) {
          values[2] < kStuntJumpCameraMaximumHeight;
 }
 
+inline bool LooksLikeStuntJumpReward(int reward) {
+  return reward >= 0 && reward <= kStuntJumpMaximumReward;
+}
+
+// Whether a record's positions vary the way real places do. The box test alone
+// passes any repeating pattern whose values sit a unit or two apart, which a
+// buffer of unit vectors does at every single offset.
+inline bool HasEnoughDistinctValues(const float* values, std::size_t count) {
+  std::size_t distinct = 0;
+  for (std::size_t index = 0; index < count; ++index) {
+    bool seen = false;
+    for (std::size_t earlier = 0; earlier < index; ++earlier) {
+      if (values[earlier] == values[index]) {
+        seen = true;
+        break;
+      }
+    }
+    if (!seen) ++distinct;
+  }
+  return distinct >= kStuntJumpMinimumDistinctValues;
+}
+
 // The middle of a box given its two opposite corners.
 inline std::array<float, 3> StuntJumpBoxCentre(const float* values) {
   return {(values[0] + values[3]) * 0.5f, (values[1] + values[4]) * 0.5f,
@@ -110,7 +160,7 @@ inline std::array<float, 3> StuntJumpBoxCentre(const float* values) {
 // is hundreds of megabytes, so the tests are ordered cheapest first: one float,
 // then one box, then the rest. Almost every offset dies on the first compare.
 inline std::vector<StuntJumpRecord> FindStuntJumpRecords(
-    const unsigned char* bytes, std::size_t size) {
+    const unsigned char* bytes, std::size_t size, bool require_reward = true) {
   std::vector<StuntJumpRecord> records;
   constexpr std::size_t kNeeded = kStuntJumpFloats * sizeof(float) + sizeof(int);
   if (size < kNeeded) return records;
@@ -129,6 +179,10 @@ inline std::vector<StuntJumpRecord> FindStuntJumpRecords(
     record.offset = offset;
     record.values = values;
     std::memcpy(&record.reward, bytes + offset + sizeof(values), sizeof(int));
+    // Two compares before the thirty the distinct-values test costs, and the
+    // pathological block is the one where every offset reaches this far.
+    if (require_reward && !LooksLikeStuntJumpReward(record.reward)) continue;
+    if (!HasEnoughDistinctValues(values.data(), values.size())) continue;
     records.push_back(record);
     if (records.size() >= kStuntJumpRecordLimit) break;
   }
@@ -178,6 +232,22 @@ inline StuntJumpRun BestStuntJumpRun(const std::vector<StuntJumpRecord>& records
   // Each run already starts at its first record, since a walk only begins where
   // nothing sits one stride back.
   return matched.count > 0 ? matched : longest;
+}
+
+// The records a run names, in array order. Takes `records` in ascending offset
+// order, which is how FindStuntJumpRecords returns them.
+inline std::vector<StuntJumpRecord> RecordsInRun(
+    const std::vector<StuntJumpRecord>& records, const StuntJumpRun& run) {
+  std::vector<StuntJumpRecord> found;
+  if (run.count <= 0 || run.stride == 0) return found;
+  std::size_t wanted = run.offset;
+  for (const StuntJumpRecord& record : records) {
+    if (record.offset != wanted) continue;
+    found.push_back(record);
+    if (static_cast<int>(found.size()) >= run.count) break;
+    wanted += run.stride;
+  }
+  return found;
 }
 
 }  // namespace gtavc

@@ -791,14 +791,14 @@ int MemoryFaultFilter(unsigned int code) {
 // read. The scan is split in two so the guard sits in a function holding no
 // object of its own, which is what lets a structured handler wrap it.
 void ScanBlockInner(const unsigned char* base, std::size_t size,
-                    std::vector<StuntJumpRecord>* records) {
-  *records = FindStuntJumpRecords(base, size);
+                    std::vector<StuntJumpRecord>* records, bool require_reward) {
+  *records = FindStuntJumpRecords(base, size, require_reward);
 }
 
 bool ScanBlockGuarded(const unsigned char* base, std::size_t size,
-                      std::vector<StuntJumpRecord>* records) {
+                      std::vector<StuntJumpRecord>* records, bool require_reward) {
   __try {
-    ScanBlockInner(base, size, records);
+    ScanBlockInner(base, size, records, require_reward);
     return true;
   } __except (MemoryFaultFilter(GetExceptionCode())) {
     return false;
@@ -842,48 +842,69 @@ void ScmGameState::DumpStuntJumps() {
 
   const std::vector<std::pair<const unsigned char*, std::size_t>> blocks =
       ReadableHeapBlocks();
-  StuntJumpRun best;
-  const unsigned char* best_base = nullptr;
-  std::vector<StuntJumpRecord> best_records;
-  bool best_matches_expected = false;
-  int truncated_blocks = 0;
-  for (const auto& [base, size] : blocks) {
-    std::vector<StuntJumpRecord> records;
-    if (!ScanBlockGuarded(base, size, &records)) continue;
-    if (records.size() >= kStuntJumpRecordLimit) ++truncated_blocks;
-    if (records.size() < static_cast<std::size_t>(kStuntJumpMinimumRun)) continue;
-    const StuntJumpRun run = BestStuntJumpRun(records, expected);
-    const bool matches_expected = expected > 0 && run.count == expected;
-    // A run of the expected length beats any other, however long; among runs
-    // that all miss it, the longest is the best guess left.
-    const bool better = matches_expected
-                            ? !best_matches_expected
-                            : (!best_matches_expected && run.count > best.count);
-    if (better) {
-      best = run;
-      best_base = base;
-      best_records = std::move(records);
-      best_matches_expected = matches_expected;
+  // A run as long as the game's own count first, then the longest, then the
+  // lower address so two sessions rank the same candidates the same way.
+  const auto ranks_before = [expected](const StuntJumpCandidate& left,
+                                       const StuntJumpCandidate& right) {
+    const bool left_matches = expected > 0 && left.run.count == expected;
+    const bool right_matches = expected > 0 && right.run.count == expected;
+    if (left_matches != right_matches) return left_matches;
+    if (left.run.count != right.run.count) return left.run.count > right.run.count;
+    return left.base + left.run.offset < right.base + right.run.offset;
+  };
+
+  // The reward test reads the one field taken from the inferred layout, so a
+  // build that puts it elsewhere would reject every real record. Requiring it
+  // comes first; finding nothing that way, the scan runs again without it and
+  // the file says so.
+  int best_run_seen = 0;
+  std::vector<StuntJumpCandidate> candidates;
+  bool reward_required = true;
+  for (const bool require_reward : {true, false}) {
+    reward_required = require_reward;
+    candidates.clear();
+    int truncated_blocks = 0;
+    for (const auto& [base, size] : blocks) {
+      std::vector<StuntJumpRecord> records;
+      if (!ScanBlockGuarded(base, size, &records, require_reward)) continue;
+      if (records.size() >= kStuntJumpRecordLimit) ++truncated_blocks;
+      if (records.size() < static_cast<std::size_t>(kStuntJumpMinimumRun)) continue;
+      const StuntJumpRun run = BestStuntJumpRun(records, expected);
+      best_run_seen = std::max(best_run_seen, run.count);
+      if (run.count < kStuntJumpMinimumRun) continue;
+      candidates.push_back({run, reinterpret_cast<std::uintptr_t>(base),
+                            RecordsInRun(records, run)});
+      // Only the pick and the alternatives written are ever read, and a
+      // candidate can hold as many records as the scan collects, so the list is
+      // trimmed as it grows rather than after.
+      std::stable_sort(candidates.begin(), candidates.end(), ranks_before);
+      if (candidates.size() > kStuntJumpAlternativesWritten + 1) {
+        candidates.resize(kStuntJumpAlternativesWritten + 1);
+      }
     }
+    // A block that hit the record cap was searched only as far as the cap, so
+    // the table could have been past it. Say so: otherwise that reads as no
+    // table.
+    if (truncated_blocks > 0 && logger_) {
+      logger_("stunt jump dump: " + std::to_string(truncated_blocks) +
+              " block(s) held more matches than the scan collects");
+    }
+    if (!candidates.empty()) break;
   }
-  // A block that hit the record cap was searched only as far as the cap, so the
-  // table could have been past it. Say so: otherwise that reads as no table.
-  if (truncated_blocks > 0 && logger_) {
-    logger_("stunt jump dump: " + std::to_string(truncated_blocks) +
-            " block(s) held more matches than the scan collects");
-  }
-  if (best.count < kStuntJumpMinimumRun || best_base == nullptr) {
+  if (candidates.empty()) {
     if (logger_) {
       logger_("stunt jump dump: no table found, longest run " +
-              std::to_string(best.count) + ", game expects " +
+              std::to_string(best_run_seen) + ", game expects " +
               std::to_string(expected));
     }
     PostToast("No stunt jump table found in memory.");
     return;
   }
 
-  const std::uintptr_t array_address =
-      reinterpret_cast<std::uintptr_t>(best_base) + best.offset;
+  const StuntJumpCandidate& best_candidate = candidates.front();
+  const StuntJumpRun best = best_candidate.run;
+  const std::vector<StuntJumpRecord>& best_records = best_candidate.records;
+  const std::uintptr_t array_address = best_candidate.base + best.offset;
   // The one address the array is reachable from is worth writing down: it is
   // the pool's own object pointer, so a later build can read the table
   // directly instead of scanning for it again.
@@ -903,32 +924,47 @@ void ScmGameState::DumpStuntJumps() {
   }
   std::fprintf(file, "# GTA Vice City unique stunt jumps, dumped by the "
                      "Archipelago ASI.\n");
-  std::fprintf(file, "# array 0x%08X stride %u records %d, game counts %d\n",
+  std::fprintf(file, "# array 0x%08X stride %u records %u, game counts %d\n",
                static_cast<unsigned int>(array_address),
-               static_cast<unsigned int>(best.stride), best.count, expected);
+               static_cast<unsigned int>(best.stride),
+               static_cast<unsigned int>(best_records.size()), expected);
+  if (!reward_required) {
+    std::fprintf(file, "# the reward test found nothing, so it is off here and the\n"
+                       "# reward column may be another field entirely\n");
+  }
   for (std::uintptr_t holder : holders) {
     std::fprintf(file, "# pointed at from 0x%08X\n",
                  static_cast<unsigned int>(holder));
   }
   std::fprintf(file, "# index then start corners, landing corners, camera, reward\n");
   int index = 0;
-  for (std::size_t offset = best.offset;
-       index < best.count; offset += best.stride, ++index) {
-    const StuntJumpRecord* record = nullptr;
-    for (const StuntJumpRecord& candidate : best_records) {
-      if (candidate.offset == offset) {
-        record = &candidate;
-        break;
-      }
+  for (const StuntJumpRecord& record : best_records) {
+    std::fprintf(file, "%d", index++);
+    for (float value : record.values) std::fprintf(file, " %.4f", value);
+    std::fprintf(file, " %d\n", record.reward);
+  }
+  // The runners-up, commented out so the reader ignores them. Promoting one
+  // means deleting its comment marks and deleting the block above, which saves
+  // a session when the first pick turns out to be something else shaped like a
+  // jump table.
+  for (std::size_t rank = 1;
+       rank < candidates.size() && rank <= kStuntJumpAlternativesWritten; ++rank) {
+    const StuntJumpCandidate& other = candidates[rank];
+    std::fprintf(file, "# alternative %u: array 0x%08X stride %u records %d\n",
+                 static_cast<unsigned int>(rank),
+                 static_cast<unsigned int>(other.base + other.run.offset),
+                 static_cast<unsigned int>(other.run.stride), other.run.count);
+    int other_index = 0;
+    for (const StuntJumpRecord& record : other.records) {
+      std::fprintf(file, "#%d", other_index++);
+      for (float value : record.values) std::fprintf(file, " %.4f", value);
+      std::fprintf(file, " %d\n", record.reward);
     }
-    if (record == nullptr) continue;
-    std::fprintf(file, "%d", index);
-    for (float value : record->values) std::fprintf(file, " %.4f", value);
-    std::fprintf(file, " %d\n", record->reward);
   }
   std::fclose(file);
   if (logger_) {
-    logger_("stunt jump dump: " + std::to_string(best.count) + " records, stride " +
+    logger_("stunt jump dump: " + std::to_string(best_records.size()) +
+            " records, stride " +
             std::to_string(best.stride) + ", game counts " + std::to_string(expected) +
             ", wrote " + path);
   }
