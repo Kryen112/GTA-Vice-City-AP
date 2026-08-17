@@ -16,16 +16,20 @@ by the region it sits in; a rule names an area item only when the requirement
 crosses regions (the finale's Mainland Access, and the Starfish Island Access
 inside the property-sale requirements, since Shakedown gives from the mansion).
 
-Ability locks add terms only while their ability_locks key is selected (with
-the key off the item is not in the pool, so no rule may name it). The wallet
-rides the property-sale requirements, covering business purchases, venue
-missions, and the finale's assets in one place; safehouse purchases and the
-collectible classes carry their ability items directly from
-data.LOCATION_ABILITY_REQUIREMENTS. The terms are the minimal day-one set;
-the pre-release manual runthrough adds the rest.
+Two families of lock add terms, each only while its own key is selected (with
+the key off the item is not in the pool, so no rule may name it). Ability locks
+gate on what Tommy can do and content locks on what is in the world; they
+compose by union, since either lock alone still stops the check. The wallet and
+the property content item both ride the property-sale requirements, covering
+business purchases, venue missions, and the finale's assets in one place;
+safehouse purchases and the collectible classes carry their items directly from
+data.LOCATION_ABILITY_REQUIREMENTS and data.LOCATION_CONTENT_REQUIREMENTS. The
+ability terms are the minimal day-one set and the pre-release manual runthrough
+adds the rest; a content term is uniform across its whole class, so it needs no
+audit.
 
-Without ability terms, collectibles, activities, safehouse purchases, and
-stores have no rule (free within their region). The sphere-0 giver's first
+With neither family selected, collectibles, activities, safehouse purchases,
+and stores have no rule (free within their region). The sphere-0 giver's first
 mission has no requirement at all.
 """
 
@@ -78,6 +82,24 @@ def _ability_terms(location_name: str, active_items: frozenset[str]) -> list[Req
     ]
 
 
+def _content_terms(location_name: str, active_items: frozenset[str]) -> list[Requirement]:
+    # The location's content-lock item, on the same terms as an ability item.
+    # A content lock is uniform across its class, so this is one item or none.
+    return [
+        (item, 1)
+        for item in data.LOCATION_CONTENT_REQUIREMENTS.get(location_name, [])
+        if item in active_items
+    ]
+
+
+def _lock_terms(location_name: str, active_items: frozenset[str]) -> list[Requirement]:
+    # Every lock term a location carries. The two families compose by union: a
+    # store behind both the weapon_equip ability key and the robbable_stores
+    # content key needs both items, since either lock alone still stops it.
+    return (_ability_terms(location_name, active_items)
+            + _content_terms(location_name, active_items))
+
+
 def _mission_requirements(mission: str, giver: str,
                           active_items: frozenset[str]) -> list[Requirement]:
     # The launcher-gate view: progressive unlocks, plus any area item the
@@ -101,7 +123,7 @@ def _mission_requirements(mission: str, giver: str,
     requirements.extend(
         (area_item, 1) for area_item in data.MISSION_AREA_REQUIREMENTS.get(mission, [])
     )
-    requirements.extend(_ability_terms(mission, active_items))
+    requirements.extend(_lock_terms(mission, active_items))
     return requirements
 
 
@@ -122,6 +144,12 @@ def _property_sale_requirements(active_items: frozenset[str]) -> list[Requiremen
         requirements = [*requirements, (area_item, 1)]
     if data.WALLET_ITEM in active_items:
         requirements = [*requirements, (data.WALLET_ITEM, 1)]
+    # The property content lock rides here for the same reason the wallet does:
+    # with the icons held, nothing can be bought, so everything behind buying a
+    # property needs the item. This is what carries it onto the finale when the
+    # properties class is off and no purchase location exists to carry it.
+    if data.PROPERTY_PURCHASES_ITEM in active_items:
+        requirements = [*requirements, (data.PROPERTY_PURCHASES_ITEM, 1)]
     return requirements
 
 
@@ -157,7 +185,7 @@ def _asset_completion_requirements(asset: str, progressive_count: int,
     if progressive_count > 0:
         requirements.append((data.progressive_item_name(asset), progressive_count))
     for mission in data.VENUE_STRANDS.get(asset, [])[:progressive_count]:
-        requirements.extend(_ability_terms(mission, active_items))
+        requirements.extend(_lock_terms(mission, active_items))
     requirements.extend(
         (item, 1)
         for item in data.ASSET_ABILITY_REQUIREMENTS.get(asset, [])
@@ -189,9 +217,13 @@ def _finale_asset_terms(
 def build_location_rules(
     properties_enabled: bool = True,
     ability_locks: frozenset[str] = frozenset(),
+    content_locks: frozenset[str] = frozenset(),
 ) -> dict[str, RulePredicate]:
+    # One active set for both lock families: a term binds when its own key is
+    # selected, and every predicate below filters against this.
     active_items = frozenset(
-        item for key in ability_locks for item in data.ABILITY_LOCK_ITEMS[key]
+        [item for key in ability_locks for item in data.ABILITY_LOCK_ITEMS[key]]
+        + [data.CONTENT_LOCK_ITEMS[key] for key in content_locks]
     )
     rules: dict[str, RulePredicate] = {}
     sale_requirements = _property_sale_requirements(active_items)
@@ -226,13 +258,19 @@ def build_location_rules(
             rules[mission] = _requires(requirements)
     for purchase in data.BUSINESS_PURCHASES:
         rules[purchase] = _requires(sale_requirements)
-    # Every remaining location with ability terms: the collectible and
-    # activity classes and the safehouse purchases, which carry no other rule.
+    # Every remaining location with a lock term: the collectible and activity
+    # classes and the safehouse purchases, which carry no other rule. A
+    # business purchase is already ruled above, and its content term rides the
+    # sale requirements, so it is skipped here rather than ruled twice.
     handled = set(locations.MISSION_GIVER) | set(data.BUSINESS_PURCHASES)
-    for location_name in data.LOCATION_ABILITY_REQUIREMENTS:
+    locked_locations = (
+        dict.fromkeys(data.LOCATION_ABILITY_REQUIREMENTS)
+        | dict.fromkeys(data.LOCATION_CONTENT_REQUIREMENTS)
+    )
+    for location_name in locked_locations:
         if location_name in handled:
             continue
-        ability_terms = _ability_terms(location_name, active_items)
-        if ability_terms:
-            rules[location_name] = _requires(ability_terms)
+        lock_terms = _lock_terms(location_name, active_items)
+        if lock_terms:
+            rules[location_name] = _requires(lock_terms)
     return rules

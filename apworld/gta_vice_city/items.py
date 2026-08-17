@@ -1,10 +1,10 @@
 """Item tables. Names, ids, classification, and groups, derived from data.py.
 
 Classification is decided here in one place. Progressive giver unlocks, area
-access, the business property ownerships, and every ability item except
-Crouch are progression; package rewards, emergency-vehicle rewards, radio
-stations, the minimap, the safehouse ownerships, and Crouch are useful; cash
-denominations, the weapon pickup, the health and armor top-ups, and the
+access, the business property ownerships, every content lock, and every ability
+item except Crouch are progression; package rewards, emergency-vehicle rewards,
+radio stations, the minimap, the safehouse ownerships, and Crouch are useful;
+cash denominations, the weapon pickup, the health and armor top-ups, and the
 wanted-level clear are filler; the trap items are traps. Money amounts never
 gate logic, so cash is never progression.
 """
@@ -38,12 +38,13 @@ _ORDERED_ITEM_NAMES: list[str] = (
     + data.EMERGENCY_REWARD_ITEMS
     + data.FILLER_ITEMS
     + VENUE_PROGRESSIVE_NAMES
-    + [data.HIDDEN_PACKAGE_ITEM]
+    + [data.PACKAGE_FRAGMENT_ITEM]
     + data.TRAP_ITEMS
     + data.RADIO_STATION_ITEMS
     + data.PROPERTY_OWNERSHIP_ITEMS
     + [data.MINIMAP_ITEM]
     + data.ABILITY_ITEMS
+    + data.CONTENT_ITEMS
 )
 
 ITEM_NAME_TO_ID: dict[str, int] = {
@@ -63,11 +64,17 @@ def _classify(name: str) -> ItemClassification:
         # A business ownership gates its venue missions or, for Pole Position,
         # counts toward the finale's asset threshold, so logic may require it.
         return ItemClassification.progression
-    if name == data.HIDDEN_PACKAGE_ITEM:
+    if name == data.PACKAGE_FRAGMENT_ITEM:
         # A goal macguffin: progression so the generator guarantees enough are
         # reachable, skip_balancing because there are many and none unlocks
         # anything, so they must not distort progression balancing.
         return ItemClassification.progression_skip_balancing
+    if name in data.CONTENT_ITEMS:
+        # A content lock gates every check in its class, and stays progression
+        # even in a seed whose class toggle is off and the item gates nothing:
+        # the Sprint precedent, so a term found later needs no classification
+        # flip.
+        return ItemClassification.progression
     if name in data.ABILITY_ITEMS:
         # Crouch gates nothing, so it is useful; every other locked ability may
         # appear in a rule. Sprint and Jump hold no term today but stay
@@ -99,6 +106,7 @@ ITEM_GROUPS: dict[str, list[str]] = {
     "Radio Stations": list(data.RADIO_STATION_ITEMS),
     "Property Ownership": list(data.PROPERTY_OWNERSHIP_ITEMS),
     "Abilities": list(data.ABILITY_ITEMS),
+    "Content Locks": list(data.CONTENT_ITEMS),
 }
 
 # The item quantity each name contributes to the pool. Progressive items have

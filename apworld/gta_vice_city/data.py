@@ -146,8 +146,10 @@ HIDDEN_PACKAGE_COUNT = len(package_data.PACKAGE_NAMES)
 # The macguffin item of the hidden-packages goal. Collecting a physical package
 # is a check like any other; the goal is a hunt on how many of these items you
 # receive from the multiworld, one per physical package in the pool. It carries
-# no in-game effect, so it maps to no SCM global.
-HIDDEN_PACKAGE_ITEM = "Hidden Package"
+# no in-game effect, so it maps to no SCM global. Named apart from the packages
+# themselves and from the Hidden Packages content lock, since all three print
+# side by side in hints, spoilers and trackers in a package-goal seed.
+PACKAGE_FRAGMENT_ITEM = "Package Fragment"
 
 
 def hidden_package_name(index: int) -> str:
@@ -245,6 +247,39 @@ ABILITY_ITEM_KEY: dict[str, str] = {
 # Crouch gates nothing (an accuracy comfort, never required); every other
 # ability item may appear in a rule, so it is progression.
 ABILITY_USEFUL_ITEMS: list[str] = [CROUCH_ITEM]
+
+# Content locking. Each content_locks key holds a whole class inert at new game
+# until its item arrives and puts that item in the pool; an unselected key is
+# fully vanilla. A key holds its content even while the class's own toggle is
+# off, so a seed can lock world content without making it checks; that is the
+# one place a disabled class does not behave vanilla, and CLAUDE.md's toggle
+# invariant names the exception. Enforcement splits by whether the content has
+# an icon: holding the pickups belongs to the ASI (packages, rampage icons, and
+# all 15 property icons), while the main.scm gates the two classes with nothing to
+# hold, so a locked stunt jump registers nothing on landing and a locked store
+# never starts its robbery.
+HIDDEN_PACKAGES_ITEM = "Hidden Packages"
+RAMPAGES_ITEM = "Rampages"
+STUNT_JUMPS_ITEM = "Stunt Jumps"
+PROPERTY_PURCHASES_ITEM = "Property Purchases"
+ROBBABLE_STORES_ITEM = "Robbable Stores"
+
+CONTENT_LOCK_ITEMS: dict[str, str] = {
+    "hidden_packages": HIDDEN_PACKAGES_ITEM,
+    "rampages": RAMPAGES_ITEM,
+    "stunt_jumps": STUNT_JUMPS_ITEM,
+    "properties": PROPERTY_PURCHASES_ITEM,
+    "robbable_stores": ROBBABLE_STORES_ITEM,
+}
+
+# The five content items in a stable order; the reserved lock-flag and unlock
+# globals follow this order, so it never reorders.
+CONTENT_ITEMS: list[str] = list(CONTENT_LOCK_ITEMS.values())
+
+# Which content_locks key owns each content item.
+CONTENT_ITEM_KEY: dict[str, str] = {
+    item: key for key, item in CONTENT_LOCK_ITEMS.items()
+}
 
 # Ability requirements per mission, the minimal day-one set: only missions
 # whose script demonstrably forces the vehicle (a race or delivery in a
@@ -761,6 +796,35 @@ def location_ability_requirements() -> dict[str, list[str]]:
 
 
 LOCATION_ABILITY_REQUIREMENTS: dict[str, list[str]] = location_ability_requirements()
+
+
+def location_content_requirements() -> dict[str, list[str]]:
+    """Every location's content-lock item. Unlike an ability term these are
+    uniform across a class, since a key holds its whole class: every location
+    in the class carries the one item. A term binds only while its
+    content_locks key is selected (rules.py filters); with the key off the item
+    is not in the pool and the class plays vanilla.
+
+    Every property purchase is listed, but a business purchase never reads its
+    entry: rules.py already rules those through the property-sale requirements,
+    which the term rides so it reaches venue missions and the finale as well.
+    The entry is what carries a safehouse purchase, which has no other rule.
+    """
+    requirements: dict[str, list[str]] = {}
+    for index in range(1, HIDDEN_PACKAGE_COUNT + 1):
+        requirements[hidden_package_name(index)] = [HIDDEN_PACKAGES_ITEM]
+    for index in range(1, RAMPAGE_COUNT + 1):
+        requirements[rampage_name(index)] = [RAMPAGES_ITEM]
+    for index in range(1, STUNT_JUMP_COUNT + 1):
+        requirements[stunt_jump_name(index)] = [STUNT_JUMPS_ITEM]
+    for index in range(1, ROBBABLE_STORE_COUNT + 1):
+        requirements[robbable_store_name(index)] = [ROBBABLE_STORES_ITEM]
+    for purchase in PROPERTY_PURCHASES:
+        requirements[purchase] = [PROPERTY_PURCHASES_ITEM]
+    return requirements
+
+
+LOCATION_CONTENT_REQUIREMENTS: dict[str, list[str]] = location_content_requirements()
 
 
 # Reward mirror. The mod pays no cash on a mission pass (build_scm.py strips it);

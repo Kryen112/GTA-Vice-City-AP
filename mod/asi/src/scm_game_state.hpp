@@ -17,6 +17,7 @@
 #include "game_state.hpp"
 #include "scm_ability_locks.hpp"
 #include "scm_completion.hpp"
+#include "scm_content_locks.hpp"
 #include "scm_effects.hpp"
 #include "scm_minimap.hpp"
 #include "scm_pickup_layout.hpp"
@@ -107,11 +108,12 @@ class ScmGameState : public GameState {
   // Minimap item has not arrived, through the game's script-facing radar-hide
   // flag; on the item it releases the flag back to the game once.
   void EnforceMinimap();
-  // Enforces the ability locks that belong on the game frame, after the
-  // world has processed: pins the wallet balance to zero, cancels a
-  // player-initiated entry into a locked vehicle class, holds the weapon
-  // rampage icons, and answers the status key with the lock list.
-  void EnforceAbilityLocks();
+  // Enforces the locks of both families that belong on the game frame, after
+  // the world has processed: pins the wallet balance to zero, cancels a
+  // player-initiated entry into a locked vehicle class, holds the pickups of
+  // every held content class, announces a class that has just been released,
+  // and answers the status key with both lists.
+  void EnforceLocks();
   // Masks the locked inputs and holds the current weapon on the fists. Runs
   // from the pre-world-process hook, the one point in the frame where a pad
   // write still reaches the player ped (see kBeforeWorldProcessCallSite10).
@@ -121,16 +123,31 @@ class ScmGameState : public GameState {
   // derive their own state, so neither depends on the other having run (the
   // input hook only exists on the classic executable).
   AbilityLocks ReadAbilityLocks(std::array<int, kAbilityCount>& lock_flags);
-  // Sinks every weapon-rampage kill-frenzy icon out of reach while the weapon
-  // equip is locked and raises them back on the unlock; the two run-them-down
-  // rampage icons stay collectible throughout.
-  void EnforceRampageIcons(bool weapon_locked);
+  // Reads the five content lock flags and unlocks into `lock_flags` and
+  // returns which classes are held right now.
+  ContentLocks ReadContentLocks(std::array<int, kContentCount>& lock_flags);
+  // Sinks the pickups of every held class out of reach and raises them back on
+  // release: the hidden packages, the rampage icons, and the fifteen property
+  // icons. One pool walk covers all three, and the two lock families union, so
+  // a weapon-rampage icon is held by either the weapon equip or the rampages
+  // key while the two run-them-down icons answer only to the latter.
+  void EnforceHeldPickups(const AbilityLocks& locked, const ContentLocks& held);
+  // Announces each class on its held-to-released edge. Every class is silent
+  // while held (a held jump reads as a failed landing, a held store as not
+  // aiming, a held pickup is simply absent), so the release edge is the only
+  // place a player is told why the world just changed.
+  void ReportReleasedContent(const ContentLocks& held,
+                             const std::array<int, kContentCount>& lock_flags);
   // Shows the blocked-attempt toast for one ability, rate-limited per ability.
   void ToastAbilityBlocked(int ability);
   // Shows the locked and unlocked ability lists for the seed's configured
   // locks, on the status key.
   void ToastAbilityStatus(const AbilityLocks& locked,
                           const std::array<int, kAbilityCount>& lock_flags);
+  // Shows the held and available content lists for the seed's configured
+  // content keys, on the same status key.
+  void ToastContentStatus(const ContentLocks& held,
+                          const std::array<int, kContentCount>& lock_flags);
   // Keeps the ambient pickup pool on the configured layout: matches each
   // layout slot to a pool entry by position and type and rewrites the model
   // and quantity where they differ, dropping the stale visible objects so the
@@ -187,6 +204,15 @@ class ScmGameState : public GameState {
   // Reset on the game boundary with the other per-game state.
   int kill_frenzy_model_ = -1;
   bool kill_frenzy_lookup_logged_ = false;
+  // Whether each content class was held last frame, so a release is announced
+  // once rather than every frame. Reset on the game boundary, so a class
+  // released before a reload does not announce itself again.
+  ContentLocks content_was_held_{};
+  // Whether the release baseline has been taken. The first frame a game is
+  // observed sets the baseline instead of announcing from it, so a save that
+  // already holds a content item stays quiet while a class released during play
+  // always announces exactly once.
+  bool content_baseline_ready_ = false;
   // Whether the world was loaded last frame, so a new game or a save load
   // re-derives the unlock globals from the received items instead of
   // trusting whatever the save restored.

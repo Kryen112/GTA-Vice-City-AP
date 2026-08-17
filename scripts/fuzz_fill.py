@@ -129,6 +129,48 @@ CONFIGURATIONS: list[tuple[str, dict]] = [
                           "weapon_equip", "wallet"],
         "enable_hidden_packages": False,
     }),
+    # Content locks put a term on every check of the classes they hold, so the
+    # matrix covers all keys with everything on, the widest 100 percent rule
+    # surface, both lock families at once, and a key on a class the seed does
+    # not otherwise enable.
+    ("content locks, all keys", {
+        "content_locks": ["hidden_packages", "rampages", "stunt_jumps",
+                          "properties", "robbable_stores"],
+    }),
+    ("content locks, all keys, 100 percent", {
+        "goal": "hundred_percent",
+        "content_locks": ["hidden_packages", "rampages", "stunt_jumps",
+                          "properties", "robbable_stores"],
+    }),
+    # With every check class enabled, all five content keys and no ability key
+    # still measure a free count of 35. What refuses a seed is content locks
+    # plus something else that narrows the start: ability_locks here, disabled
+    # check classes in the packages-only row further down. Hidden packages are
+    # the one class no ability term touches, so holding them is what tips a
+    # seed over, and combinations well short of every key are refused; the
+    # matrix carries a minimal one beside the full corner.
+    ("content and ability locks, all keys EXPECT reject", {
+        "content_locks": ["hidden_packages", "rampages", "stunt_jumps",
+                          "properties", "robbable_stores"],
+        "ability_locks": ["sprint", "jump", "crouch", "vehicles",
+                          "weapon_equip", "wallet"],
+    }),
+    ("packages held plus three ability keys EXPECT reject", {
+        "content_locks": ["hidden_packages"],
+        "ability_locks": ["vehicles", "weapon_equip", "wallet"],
+    }),
+    ("content lock on a disabled class", {
+        "enable_properties": False, "content_locks": ["properties"],
+    }),
+    # Holding the packages leaves the first mission alone reachable, since
+    # every other start-island class is off. Same shape as a heavy ability
+    # lock, refused for the same reason.
+    ("content lock, packages only EXPECT reject", {
+        "content_locks": ["hidden_packages"],
+        "enable_rampages": False, "enable_stunt_jumps": False,
+        "enable_emergency_vehicles": False, "enable_properties": False,
+        "enable_robbable_stores": False, "enable_side_events": False,
+    }),
     ("deathlink on", {"death_link": True}),
 ]
 
@@ -153,6 +195,12 @@ REFUSAL_GUARDS: dict[str, str] = {
     "ability locks, all keys, story plus side events EXPECT reject":
         "check is reachable on a new game",
     "ability locks, all keys, packages off EXPECT reject":
+        "check is reachable on a new game",
+    "content lock, packages only EXPECT reject":
+        "check is reachable on a new game",
+    "content and ability locks, all keys EXPECT reject":
+        "check is reachable on a new game",
+    "packages held plus three ability keys EXPECT reject":
         "check is reachable on a new game",
 }
 

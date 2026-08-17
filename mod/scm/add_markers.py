@@ -68,11 +68,11 @@ STRANDS = {
 }
 
 # Fresh scratch globals, all above the ASI-written block (its top is the
-# highest ability unlock, $9436). One handle, one started-flag, one
+# highest content unlock, $9446). One handle, one started-flag, one
 # shown-flag per managed mission.
-HANDLE_BASE = 9437
-STARTED_BASE = 9497
-SHOWN_BASE = 9557
+HANDLE_BASE = 9447
+STARTED_BASE = 9507
+SHOWN_BASE = 9567
 MARKER_SPRITE_DEFAULT = "34"  # generic mission-attempt sprite; overridden per giver
 
 with open(SRC, "rb") as handle:
@@ -294,9 +294,9 @@ boot = next(i for i, ln in enumerate(lines) if ln == "start_new_script @HOT ")
 lines[boot + 1:boot + 1] = ["start_new_script @APMARK "]
 
 # Grow the reserved block to cover the new scratch globals. The anchor is the
-# foundation's sizing line, the highest ASI-written global (the top ability
+# foundation's sizing line, the highest ASI-written global (the top content
 # unlock).
-found = next(i for i, ln in enumerate(lines) if ln == "$9436 = 0")
+found = next(i for i, ln in enumerate(lines) if ln == "$9446 = 0")
 lines[found + 1:found + 1] = [f"${highest_global} = 0"]
 
 with open(DST, "wb") as handle:

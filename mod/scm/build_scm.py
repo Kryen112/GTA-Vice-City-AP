@@ -299,6 +299,69 @@ def gate_sunshine_import_completion():
     edits.append(f"sunshine import completion owned ${OWNERSHIP_SUNSHINE}")
 
 
+def _content_unlocked_guard(lock_flag, unlock, label):
+    # A content class is held while its lock flag is set and its unlock global
+    # is still zero. Passing means either: the seed never selected the key, or
+    # the item has arrived. At zero flags every gate falls through, the toggle
+    # invariant.
+    return ["if or", f"  ${lock_flag} == 0", f"  ${unlock} >= 1",
+            f"goto_if_false @{label}"]
+
+
+def gate_stunt_jumps():
+    # The USJ thread resolves a jump at one point: `if $794 == 1`, reached only
+    # through @USJ_5369, which clears $794 as each attempt begins. Everything
+    # that credits a jump sits behind that test, so one guard in front of it
+    # holds the whole class: no per-jump flag ($795..$830) sets, so the APSTAT
+    # watcher never sees one and no check fires; the 36-counter $791 does not
+    # advance; player_made_progress and register_unique_jump_found do not run,
+    # so the vanilla completion percentage and jump stat do not move either; and
+    # the pass text and cash never print. The jump still flies and the slow-motion camera
+    # still resolves, since the guard sits after set_time_scale and
+    # restore_camera_jumpcut. @USJ_7497 is the thread's own did-not-land path,
+    # straight back to the loop, so a held jump reads exactly as a failed one
+    # and stays re-doable forever.
+    anchor = "  $794 == 1"
+    hits = [i for i, ln in enumerate(lines) if ln == anchor]
+    assert len(hits) == 1, f"stunt jump gate: {anchor!r} matched {len(hits)}"
+    index = hits[0] - 1
+    assert lines[index] == "if ", f"stunt jump gate: expected `if ` at {index}"
+    assert lines[hits[0] + 1] == "goto_if_false @USJ_7497", \
+        f"stunt jump gate: unexpected false target {lines[hits[0] + 1]!r}"
+    lines[index:index] = _content_unlocked_guard(
+        STUNT_JUMPS_LOCK_FLAG, STUNT_JUMPS_UNLOCK, "USJ_7497")
+    edits.append("stunt jump credit gated on the content lock")
+
+
+def gate_store_robberies():
+    # The 15 stores are two thread families sharing two robbery handlers:
+    # @SHOP5_1010 for the 12 street stores (gosub'd from SHOP1..SHOP5) and
+    # @HARD3_2856 for the 3 hardware stores (from HARD1..HARD3). Each handler
+    # opens on `not is_char_dead` and then tests
+    # `is_player_targetting_char` against its shopkeeper, and that aim is the
+    # whole trigger: it freezes the clerk into the hands-up state,
+    # zeroes TIMERA and starts the 50/100/250/600 payout ladder, whose first
+    # tier gosubs the proximity sweep that calls add_stores_knocked_off. One
+    # guard in front of each aim check therefore holds all 15.
+    #
+    # Each guard branches to that check's own false target, the handler's
+    # not-aiming path, so a held store reads exactly as the player not aiming:
+    # the clerk still spawns, still tracks the player, and killing him still
+    # raises the wanted level, all vanilla.
+    targets = [("$1532", "SHOP5_1636"), ("$854", "HARD3_3454")]
+    for actor, label in targets:
+        anchor = f"  is_player_targetting_char $player_char aiming_at_actor {actor}"
+        hits = [i for i, ln in enumerate(lines) if ln == anchor]
+        assert len(hits) == 1, f"store gate {actor}: {anchor!r} matched {len(hits)}"
+        index = hits[0] - 1
+        assert lines[index] == "if ", f"store gate {actor}: expected `if ` at {index}"
+        assert lines[hits[0] + 1] == f"goto_if_false @{label}", \
+            f"store gate {actor}: unexpected false target {lines[hits[0] + 1]!r}"
+        lines[index:index] = _content_unlocked_guard(
+            ROBBABLE_STORES_LOCK_FLAG, ROBBABLE_STORES_UNLOCK, label)
+    edits.append(f"store robbery gated on the content lock at {len(targets)} handlers")
+
+
 def add_store_completions():
     # Each of the 15 store robberies calls add_stores_knocked_off; mark that
     # store's completion right after it. Source order maps to $9317..$9331.
@@ -848,9 +911,26 @@ PROPERTIES_ENABLED = 9420
 # The ability lock block, indices matching scm.py: eight lock flags at
 # $9421..$9428 then eight unlock globals at $9429..$9436, all ASI-facing only
 # (no gate reads them; the ASI enforces the locks per frame and they persist
-# inside saves). The top unlock is the highest reserved global, so the
-# foundation's sizing line references it; add_markers.py anchors on that line.
-ABILITY_TOP = 9436
+# inside saves), so the script names none of them.
+#
+# The content lock block follows it in the same shape: five lock flags at
+# $9437..$9441 then five unlock globals at $9442..$9446, in scm.CONTENT_KEYS
+# order (hidden packages, rampages, stunt jumps, property purchases, robbable
+# stores). The top unlock is the highest reserved global, so the foundation's
+# sizing line references it; add_markers.py anchors on that line.
+CONTENT_LOCK_FLAG_BASE = 9437
+CONTENT_UNLOCK_BASE = 9442
+CONTENT_TOP = 9446
+
+# Three of the five classes are pickups, so holding them belongs to the ASI and
+# the script needs nothing for them. The other two have no icon to hold, so
+# their gates belong to the script, and these are the globals those gates read.
+# The offsets into the block are pinned by a world test, since reordering
+# scm.CONTENT_KEYS would point both gates at another class.
+STUNT_JUMPS_LOCK_FLAG = CONTENT_LOCK_FLAG_BASE + 2
+STUNT_JUMPS_UNLOCK = CONTENT_UNLOCK_BASE + 2
+ROBBABLE_STORES_LOCK_FLAG = CONTENT_LOCK_FLAG_BASE + 4
+ROBBABLE_STORES_UNLOCK = CONTENT_UNLOCK_BASE + 4
 
 # Reward global -> the vanilla weapon flag or car generator it drives, in
 # reward-global order (body armor, chainsaw, .357, flamethrower, sniper, minigun,
@@ -991,14 +1071,14 @@ def add_reward_applier():
 # Foundation: initialize the radio resolve map to identity (vanilla until the
 # ASI overwrites it) and reference the highest reserved global once so Sanny
 # sizes the whole $9000..N block as real zero-initialized globals. The last
-# line must equal scm.highest_reserved_global() (now the top ability unlock
-# $9436: 22 unlocks + 331 completions + 15 reward globals + 3 config flags +
+# line must equal scm.highest_reserved_global() (now the top content unlock
+# $9446: 22 unlocks + 331 completions + 15 reward globals + 3 config flags +
 # 19 radio globals + 15 ownership globals + the minimap flag and unlock + 4
-# class-cash flags + 16 ability globals above $9000). add_markers.py anchors
-# on that line.
+# class-cash flags + 16 ability globals + 10 content globals above $9000).
+# add_markers.py anchors on that line.
 foundation = [f"${RADIO_RESOLVE_BASE + station} = {station}" for station in range(9)]
-foundation += [f"${RADIO_REQUEST} = 0", f"${PROPERTIES_ENABLED} = 0", f"${ABILITY_TOP} = 0"]
-insert_after("script_name 'HOT'", foundation, f"foundation radio identity + ${ABILITY_TOP} = 0")
+foundation += [f"${RADIO_REQUEST} = 0", f"${PROPERTIES_ENABLED} = 0", f"${CONTENT_TOP} = 0"]
+insert_after("script_name 'HOT'", foundation, f"foundation radio identity + ${CONTENT_TOP} = 0")
 for launcher, gate_conditions, completion_global in MISSIONS:
     try:
         wire(launcher, gate_conditions, completion_global)
@@ -1012,6 +1092,9 @@ defer_safehouse_grants()
 gate_pole_position_completion()
 gate_sunshine_import_completion()
 add_store_completions()
+# Content-lock gates.
+gate_stunt_jumps()
+gate_store_robberies()
 add_activity_gates()
 add_activity_watcher()
 suppress_mission_rewards()

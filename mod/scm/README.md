@@ -60,7 +60,7 @@ version control.
   Repeatable earnings (emergency pay, till cash, race winnings, in-mission
   bonuses) are never touched, and a build-time audit pins every remaining
   payout so a new site fails the build instead of leaking. Reserved globals
-  above `$9436` are SCM-internal: `$9437` up are marker handles and
+  above `$9446` are SCM-internal: `$9447` up are marker handles and
   visibility flags. `$9004`, `$9006`, `$9007`, `$9008`, and `$9009` in the
   bookkeeping gap below `$9379` are SCM-internal scratch (the two island-gate
   once-guards, a package counter, and two reward once-guards). The ASI never
@@ -70,8 +70,16 @@ version control.
   the received items) are ASI-facing only; no gate reads them. The ASI
   enforces each lock per frame while its flag is set and its unlock is zero
   (input masks, the wallet pin, the vehicle-entry cancel, and the weapon
-  rampage icon hold), so the script carries nothing beyond the foundation's
-  sizing line, which references `$9436` as the highest reserved global.
+  rampage icon hold), so the script carries nothing for them.
+- Content locks: `$9437..$9441` (one lock flag per content item, ASI-stamped
+  from slot_data) and `$9442..$9446` (one unlock per item), in the order
+  hidden packages, rampages, stunt jumps, property purchases, robbable
+  stores. Three of the classes are pickups, so holding them belongs to the ASI
+  and the script needs nothing for them. The other two have no icon to hold, so their gates
+  belong to the script rather than the ASI: the USJ thread reads the stunt jump
+  pair and the two store robbery handlers read the store pair. The top unlock
+  is the highest reserved global, which the foundation's sizing line references
+  as `$9446`.
 - Minimap shuffle: `$9415` (the shuffled flag) and `$9416` (the Minimap item
   unlock) are ASI-facing only; no gate reads them. The ASI hides the radar
   disc while the flag is set and the unlock is zero, so the script carries

@@ -10,6 +10,7 @@
 #include "../src/protocol.hpp"
 #include "../src/scm_ability_locks.hpp"
 #include "../src/scm_completion.hpp"
+#include "../src/scm_content_locks.hpp"
 #include "../src/scm_effects.hpp"
 #include "../src/scm_minimap.hpp"
 #include "../src/scm_packages.hpp"
@@ -396,28 +397,186 @@ int main() {
            "the sea lock blocks boats");
   }
 
-  // Rampage icon planning: while the weapon equip is locked a weapon
-  // rampage's icon sinks and stays sunk, the two run-them-down icons never
-  // move, and the unlock raises a sunk icon, a save made while sunk
-  // included (the band makes the state self-describing).
+  // Held pickup planning: sinking and raising, and the band that makes a save
+  // written while sunk heal itself on load.
   {
+    Expect(PlanPickupHold(true, 11.0f) == PickupHoldAction::kLower,
+           "a held pickup sinks");
+    Expect(PlanPickupHold(true, 11.0f - kPickupLowerOffset) ==
+               PickupHoldAction::kLeaveAlone,
+           "a sunk pickup stays where it is while held");
+    Expect(PlanPickupHold(false, 11.0f - kPickupLowerOffset) ==
+               PickupHoldAction::kRaise,
+           "release raises a sunk pickup, a loaded save included");
+    Expect(PlanPickupHold(false, 11.0f) == PickupHoldAction::kLeaveAlone,
+           "a released pickup in place never moves");
+  }
+
+  // The package detector reads a sunk package back at its own height. Without
+  // this every held package would match nothing and any package already seen
+  // present would report as collected: a hundred checks at once.
+  {
+    Expect(UnsunkHeight(11.0f) == 11.0f, "a pickup in place reads its own height");
+    Expect(UnsunkHeight(11.0f - kPickupLowerOffset) == 11.0f,
+           "a sunk pickup reads the height it was sunk from");
+    Expect(!IsPickupSunk(11.0f) && IsPickupSunk(11.0f - kPickupLowerOffset),
+           "the band separates placed pickups from sunk ones");
+  }
+
+  // The two halves composed the way the frame handler composes them, which is
+  // the interaction that matters: a package seen present, then held, must not
+  // report as collected. Without the unsink read in the snapshot this is a
+  // hundred false checks at once.
+  {
+    std::vector<PackageLocation> packages = {
+        {9076, 479.6f, -1718.5f, 15.6f}, {9077, 708.4f, -498.2f, 12.3f}};
+    std::vector<WorldPoint> placed;
+    for (const PackageLocation& package : packages) {
+      placed.push_back({package.x, package.y, package.z});
+    }
+    std::set<int> seen;
+    std::set<int> collected;
+    Expect(DetectNewlyCollectedPackages(packages, placed, seen, collected).empty(),
+           "seeing a package present reports nothing");
+    Expect(seen.size() == packages.size(), "and remembers both as present");
+
+    // Now the hold sinks them, and the snapshot reads their height back up.
+    std::vector<WorldPoint> held_snapshot;
+    for (const PackageLocation& package : packages) {
+      held_snapshot.push_back(
+          {package.x, package.y, UnsunkHeight(package.z - kPickupLowerOffset)});
+    }
+    Expect(DetectNewlyCollectedPackages(packages, held_snapshot, seen, collected).empty(),
+           "a held package still reads as present, so nothing false-reports");
+
+    // A genuinely collected package leaves the pool entirely, at any height.
+    std::vector<WorldPoint> one_gone = {held_snapshot[0]};
+    const std::vector<int> newly =
+        DetectNewlyCollectedPackages(packages, one_gone, seen, collected);
+    Expect(newly.size() == 1 && newly[0] == 9077,
+           "a package absent from the pool still reports collected");
+  }
+
+  // Classifying a pool entry: packages and property icons by pickup type,
+  // rampage icons by the kill-frenzy model, everything else left alone. An
+  // unresolved model (negative) must not swallow every entry.
+  {
+    Expect(ClassifyHeldPickup(kPickupTypeCollectable, 42, 7) ==
+               HeldPickupClass::kPackage, "a collectable is a package");
+    Expect(ClassifyHeldPickup(kPickupTypePropertyForSale, 42, 7) ==
+               HeldPickupClass::kProperty, "a for-sale property icon is a property");
+    Expect(ClassifyHeldPickup(kPickupTypePropertyLocked, 42, 7) ==
+               HeldPickupClass::kProperty, "a locked property icon is too");
+    Expect(ClassifyHeldPickup(3, 7, 7) == HeldPickupClass::kRampage,
+           "the kill-frenzy model is a rampage icon");
+    Expect(ClassifyHeldPickup(2, 42, 7) == HeldPickupClass::kNone,
+           "an ambient street pickup is none of them");
+    Expect(ClassifyHeldPickup(2, -1, -1) == HeldPickupClass::kNone,
+           "an unresolved kill-frenzy model matches nothing");
+    // An unresolved model costs only the rampage class: the type-matched
+    // classes keep working, and a real rampage entry falls through to none
+    // rather than being mistaken for something else.
+    Expect(ClassifyHeldPickup(kPickupTypeCollectable, 42, -1) ==
+               HeldPickupClass::kPackage,
+           "packages still classify while the model is unresolved");
+    Expect(ClassifyHeldPickup(kPickupTypePropertyForSale, 42, -1) ==
+               HeldPickupClass::kProperty,
+           "property icons too");
+    Expect(ClassifyHeldPickup(3, 7, -1) == HeldPickupClass::kNone,
+           "and a rampage entry is left alone, retried next frame");
+  }
+
+  // Release reporting. Two opposite failure modes to avoid: announcing from the
+  // first observed frame (every loaded save would re-announce what it already
+  // had) and suppressing the first real edge (a hundred packages would reappear
+  // unexplained). The first observation is the baseline; every edge after it
+  // speaks.
+  {
+    std::array<int, kContentCount> flags{};
+    flags[kContentHiddenPackages] = 1;
+    ContentLocks held{};
+    held[kContentHiddenPackages] = true;
+    ContentLocks none{};
+
+    // First observation on a new game: held, and silent.
+    ContentReleasePlan plan = PlanContentReleases(held, flags, none, false);
+    Expect(!plan.announce[kContentHiddenPackages],
+           "the first observed frame is the baseline, not an announcement");
+    Expect(plan.next_was_held[kContentHiddenPackages],
+           "and it records the class as held");
+
+    // The item lands: the edge speaks, exactly once. This is the case an
+    // earlier guard swallowed when the item was the game's first.
+    plan = PlanContentReleases(none, flags, plan.next_was_held, true);
+    Expect(plan.announce[kContentHiddenPackages],
+           "the release announces on its edge");
+    plan = PlanContentReleases(none, flags, plan.next_was_held, true);
+    Expect(!plan.announce[kContentHiddenPackages],
+           "and never again while it stays released");
+
+    // A save that already holds the item reads released at the first
+    // observation, so it stays quiet.
+    plan = PlanContentReleases(none, flags, held, false);
+    Expect(!plan.announce[kContentHiddenPackages],
+           "a save already carrying the item does not re-announce");
+
+    // An unconfigured class never speaks, whatever the state does.
+    std::array<int, kContentCount> unselected{};
+    plan = PlanContentReleases(none, unselected, held, true);
+    Expect(!plan.announce[kContentHiddenPackages],
+           "an unselected key never announces, the toggle invariant");
+  }
+
+  // The two lock families union on a rampage icon: either alone holds it, and
+  // the two run-them-down icons answer only to the rampages content key, since
+  // they hand no weapon.
+  {
+    AbilityLocks no_ability{};
+    ContentLocks no_content{};
+    AbilityLocks weapon_locked{};
+    weapon_locked[kAbilityWeaponEquip] = true;
+    ContentLocks rampages_held{};
+    rampages_held[kContentRampages] = true;
+
     Expect(IsVehicleRampagePickup(-679.66f, -419.712f) &&
                IsVehicleRampagePickup(468.656f, -1608.79f),
            "both run-them-down rampage icons are recognized");
     Expect(!IsVehicleRampagePickup(218.22f, -1613.76f),
            "a weapon rampage icon is not");
-    Expect(PlanRampageIcon(true, false, 11.0f) == RampageIconAction::kLower,
-           "the weapon lock sinks a weapon rampage icon");
-    Expect(PlanRampageIcon(true, false, 11.0f - kRampageLowerOffset) ==
-               RampageIconAction::kLeaveAlone,
-           "a sunk icon stays where it is while locked");
-    Expect(PlanRampageIcon(false, false, 11.0f - kRampageLowerOffset) ==
-               RampageIconAction::kRaise,
-           "the unlock raises a sunk icon, a loaded save included");
-    Expect(PlanRampageIcon(false, false, 11.0f) == RampageIconAction::kLeaveAlone,
-           "an unlocked icon in place never moves");
-    Expect(PlanRampageIcon(true, true, 11.0f) == RampageIconAction::kLeaveAlone,
+    Expect(ShouldHoldPickup(HeldPickupClass::kRampage, false, weapon_locked, no_content),
+           "the weapon lock alone holds a weapon rampage icon");
+    Expect(ShouldHoldPickup(HeldPickupClass::kRampage, false, no_ability, rampages_held),
+           "the rampages key alone holds it too");
+    Expect(!ShouldHoldPickup(HeldPickupClass::kRampage, true, weapon_locked, no_content),
            "a run-them-down icon stays collectible under the weapon lock");
+    Expect(ShouldHoldPickup(HeldPickupClass::kRampage, true, no_ability, rampages_held),
+           "but the rampages key holds it");
+    Expect(!ShouldHoldPickup(HeldPickupClass::kRampage, false, no_ability, no_content),
+           "neither lock leaves every icon alone");
+  }
+
+  // Each content key holds its own class and nothing else, and a class is held
+  // only while its flag is set and its unlock is still zero.
+  {
+    ContentLocks packages_held{};
+    packages_held[kContentHiddenPackages] = true;
+    AbilityLocks no_ability{};
+    Expect(ShouldHoldPickup(HeldPickupClass::kPackage, false, no_ability, packages_held),
+           "the packages key holds a package");
+    Expect(!ShouldHoldPickup(HeldPickupClass::kProperty, false, no_ability, packages_held),
+           "and leaves the property icons alone");
+
+    std::array<int, kContentCount> flags{};
+    std::array<int, kContentCount> unlocks{};
+    flags[kContentPropertyPurchases] = 1;
+    Expect(PlanContentLocks(flags, unlocks)[kContentPropertyPurchases],
+           "a selected key with no item held");
+    unlocks[kContentPropertyPurchases] = 1;
+    Expect(!PlanContentLocks(flags, unlocks)[kContentPropertyPurchases],
+           "the item releases it");
+    std::array<int, kContentCount> unselected{};
+    Expect(!AnyContentHeld(PlanContentLocks(unselected, unlocks)),
+           "an unselected key never holds, the toggle invariant");
   }
 
   // Ability toast pacing: the first attempt toasts, the cooldown silences the

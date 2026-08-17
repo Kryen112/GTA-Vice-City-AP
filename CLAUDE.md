@@ -59,14 +59,24 @@ gitignore them. Stage explicit paths only; never `git add -A` or `git add .`.
 - `completion_condition` and every N-of-item threshold is a solvability
   contract. Any edit is high-risk and needs a test.
 - Money AMOUNTS never gate logic. All money is free-roam grindable once
-  Tommy can hold it; cash items exist only to reduce grind. The one item
-  that may gate a money-spending check is Wallet, and only while the
-  `ability_locks` wallet key is selected.
+  Tommy can hold it; cash items exist only to reduce grind. Two items may
+  gate a money-spending check, each only while its key is selected: Wallet
+  (`ability_locks` wallet), because Tommy cannot hold money, and Property
+  Purchases (`content_locks` properties), because the purchase icons are not
+  in the world. Both gate on holding or reaching, never on an amount.
 - Toggle semantics: a disabled check class behaves fully vanilla in game.
   The content stays playable, its vanilla rewards reactivate, its locations
   do not exist, its class-specific items leave the pool. Story missions are
   always on. The same holds per `ability_locks` key: an unselected key means
   no lock, no item, and no access rule naming that item.
+  ONE exception, deliberate: a selected `content_locks` key holds its class
+  in game even when that class's own toggle is off, so world content can be
+  locked without being checks. The disabled class still contributes no
+  locations and no class-specific items, and its vanilla rewards are the
+  vanilla ones again, but the content stays held until the item arrives, so
+  those rewards wait with it. `content_locks` therefore belongs to the
+  in-world-modifier family with `randomize_pickups` and `shuffle_minimap`,
+  not to the check-class family.
 - The 100% goal requires every check class enabled; generation rejects it
   otherwise.
 - New game per seed. Received state re-derives from AP server state on

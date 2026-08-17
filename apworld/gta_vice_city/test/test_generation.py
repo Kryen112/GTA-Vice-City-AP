@@ -36,14 +36,14 @@ class TestHiddenPackagesGoal(WorldTestBase):
     def test_pool_holds_one_macguffin_per_package(self) -> None:
         macguffins = [
             item for item in self.multiworld.itempool
-            if item.name == data.HIDDEN_PACKAGE_ITEM and item.player == self.player
+            if item.name == data.PACKAGE_FRAGMENT_ITEM and item.player == self.player
         ]
         self.assertEqual(len(macguffins), data.HIDDEN_PACKAGE_COUNT)
         # Progression, so the generator guarantees enough are reachable.
         self.assertTrue(all(item.advancement for item in macguffins))
 
     def test_goal_counts_received_macguffins_not_own_pickups(self) -> None:
-        # The bug this guards: the goal is how many Hidden Package items are
+        # The bug this guards: the goal is how many Package Fragments are
         # received, not whether the player reaches package locations in their own
         # game. A state with no macguffins does not win; receiving enough does.
         completion = self.multiworld.completion_condition[self.player]
@@ -51,7 +51,7 @@ class TestHiddenPackagesGoal(WorldTestBase):
         self.assertFalse(completion(state))
         for _ in range(50):
             state.collect(
-                self.world.create_item(data.HIDDEN_PACKAGE_ITEM), prevent_sweep=True,
+                self.world.create_item(data.PACKAGE_FRAGMENT_ITEM), prevent_sweep=True,
             )
         self.assertTrue(completion(state))
 
@@ -132,7 +132,7 @@ class TestUniversalTracker(WorldTestBase):
         self.assertEqual(slot_data["hidden_packages_required"], 30)
         # The client counts received copies of this id for the hunt goal.
         self.assertEqual(
-            slot_data["hidden_package_item_id"], ITEM_NAME_TO_ID[data.HIDDEN_PACKAGE_ITEM],
+            slot_data["hidden_package_item_id"], ITEM_NAME_TO_ID[data.PACKAGE_FRAGMENT_ITEM],
         )
         # And watches this location being checked for the final-mission goal.
         self.assertEqual(
@@ -239,9 +239,10 @@ class TestRadioStationsOn(WorldTestBase):
             )
 
     def test_reserved_block_stays_below_the_marker_globals(self) -> None:
-        # $9437 up is SCM-internal (marker handles and visibility flags); the
-        # reserved contract must never grow into it.
-        self.assertLess(scm.highest_reserved_global(), 9437)
+        # $9447 up is SCM-internal (marker handles and visibility flags, whose
+        # bases live in add_markers.py); the reserved contract must never grow
+        # into it.
+        self.assertLess(scm.highest_reserved_global(), 9447)
 
 
 class TestRadioStationsOff(WorldTestBase):
@@ -444,6 +445,11 @@ class TestPickupRandomizerOff(WorldTestBase):
 
 _ALL_ABILITY_LOCKS: list[str] = [
     "sprint", "jump", "crouch", "vehicles", "weapon_equip", "wallet",
+]
+
+_ALL_CONTENT_LOCKS: list[str] = [
+    "hidden_packages", "rampages", "stunt_jumps", "properties",
+    "robbable_stores",
 ]
 
 
@@ -655,6 +661,192 @@ class TestAbilityLocksHundredPercent(WorldTestBase):
     }
 
 
+class TestContentLocksAllKeys(WorldTestBase):
+    # Every class held. The inherited default tests prove the seed fills and
+    # stays reachable with a term on every collectible and activity check.
+    game = "Grand Theft Auto Vice City"
+    options: ClassVar[dict] = {"content_locks": _ALL_CONTENT_LOCKS}
+
+    def test_every_key_puts_its_item_in_the_pool_as_progression(self) -> None:
+        pool_names = {item.name for item in self.multiworld.itempool}
+        for name in data.CONTENT_ITEMS:
+            self.assertIn(name, pool_names, name)
+            self.assertEqual(
+                ITEM_CLASSIFICATIONS[name], ItemClassification.progression, name,
+            )
+
+    def test_each_class_waits_for_its_own_item(self) -> None:
+        # A key holds its whole class and nothing else, so each item releases
+        # exactly its own class. The safehouse purchase carries its term
+        # directly, where a business purchase rides the sale requirements.
+        pairs = [
+            (data.hidden_package_name(1), data.HIDDEN_PACKAGES_ITEM),
+            (data.rampage_name(1), data.RAMPAGES_ITEM),
+            ("Robbable Store 01", data.ROBBABLE_STORES_ITEM),
+            ("El Swanko Casa Purchase", data.PROPERTY_PURCHASES_ITEM),
+        ]
+        for location, _ in pairs:
+            self.assertFalse(self.can_reach_location(location), location)
+        for index, (location, item) in enumerate(pairs):
+            with self.subTest(location=location):
+                self.collect_by_name([item])
+                self.assertTrue(self.can_reach_location(location), location)
+                # The classes still held stay held.
+                for later_location, _ in pairs[index + 1:]:
+                    self.assertFalse(
+                        self.can_reach_location(later_location), later_location,
+                    )
+
+    def test_a_business_purchase_needs_its_item_too(self) -> None:
+        # A business purchase carries the term through the property-sale
+        # requirements rather than its own table entry, so it needs pinning
+        # separately from the safehouse path.
+        self.collect_by_name([
+            "Progressive Vercetti Protection", "Starfish Island Access",
+        ])
+        self.assertFalse(self.can_reach_location("Malibu Club Purchase"))
+        self.collect_by_name([data.PROPERTY_PURCHASES_ITEM])
+        self.assertTrue(self.can_reach_location("Malibu Club Purchase"))
+
+    def test_a_stunt_jump_needs_its_item_beyond_the_mainland(self) -> None:
+        self.collect_by_name(["Mainland Access"])
+        self.assertFalse(self.can_reach_location("Unique Stunt Jump 01"))
+        self.collect_by_name([data.STUNT_JUMPS_ITEM])
+        self.assertTrue(self.can_reach_location("Unique Stunt Jump 01"))
+
+    def test_the_lock_flags_and_unlock_globals_reach_the_mod(self) -> None:
+        slot_data = self.world.fill_slot_data()
+        self.assertEqual(slot_data["content_locks"], sorted(_ALL_CONTENT_LOCKS))
+        config = slot_data["config_globals"]
+        item_globals = slot_data["item_globals"]
+        for name in data.CONTENT_ITEMS:
+            self.assertEqual(config[str(scm.content_lock_flag_global(name))], 1, name)
+            self.assertEqual(
+                item_globals[str(ITEM_NAME_TO_ID[name])],
+                scm.content_unlock_global(name), name,
+            )
+
+
+class TestContentLocksOff(WorldTestBase):
+    game = "Grand Theft Auto Vice City"
+    # Default options: content_locks is empty.
+
+    def test_no_content_items_and_vanilla_flags(self) -> None:
+        pool_names = {item.name for item in self.multiworld.itempool}
+        precollected = {
+            item.name for item in self.multiworld.precollected_items[self.player]
+        }
+        for name in data.CONTENT_ITEMS:
+            self.assertNotIn(name, pool_names, name)
+            self.assertNotIn(name, precollected, name)
+        slot_data = self.world.fill_slot_data()
+        self.assertEqual(slot_data["content_locks"], [])
+        config = slot_data["config_globals"]
+        for name in data.CONTENT_ITEMS:
+            self.assertEqual(config[str(scm.content_lock_flag_global(name))], 0, name)
+
+    def test_no_content_terms_without_the_locks(self) -> None:
+        # No rule may name an item that is not in the pool, so every class is
+        # free within its region.
+        self.assertTrue(self.can_reach_location(data.hidden_package_name(1)))
+        self.assertTrue(self.can_reach_location("Robbable Store 01"))
+        self.assertTrue(self.can_reach_location("El Swanko Casa Purchase"))
+
+
+class TestContentLockOnADisabledClass(WorldTestBase):
+    # The case the toggle invariant is amended for: the properties class is
+    # off, so its purchases are not checks and its items leave the pool, but
+    # the key still holds the icons in game. Vanilla asset completion needs
+    # properties bought, so the finale must carry the term even though no
+    # purchase location exists to carry it.
+    game = "Grand Theft Auto Vice City"
+    options: ClassVar[dict] = {
+        "enable_properties": False, "content_locks": ["properties"],
+    }
+
+    def test_the_item_is_in_the_pool_without_its_class(self) -> None:
+        pool_names = {item.name for item in self.multiworld.itempool}
+        self.assertIn(data.PROPERTY_PURCHASES_ITEM, pool_names)
+        for ownership in data.PROPERTY_OWNERSHIP_ITEMS:
+            self.assertNotIn(ownership, pool_names, ownership)
+        location_names = {
+            location.name for location in self.multiworld.get_locations(self.player)
+        }
+        self.assertNotIn("El Swanko Casa Purchase", location_names)
+
+    def test_the_finale_carries_the_term_through_the_sale_requirements(self) -> None:
+        # Nothing can be bought while the icons are held, so the finale's
+        # vanilla asset prerequisite cannot be met without the item. Without
+        # this the seed generates unbeatable.
+        self.collect_by_name([
+            "Progressive Vercetti Finale", "Progressive Vercetti Protection",
+            "Mainland Access", "Starfish Island Access",
+        ])
+        self.assertFalse(self.can_reach_location("Cap the Collector"))
+        self.collect_by_name([data.PROPERTY_PURCHASES_ITEM])
+        self.assertTrue(self.can_reach_location("Cap the Collector"))
+
+
+class TestContentLockOnADisabledCollectibleClass(WorldTestBase):
+    # The non-properties half of the amended toggle invariant: rampages are not
+    # checks this seed, but the key still holds their icons, so the item is in
+    # the pool with no location to gate. It stays progression regardless, the
+    # Sprint precedent.
+    game = "Grand Theft Auto Vice City"
+    options: ClassVar[dict] = {
+        "enable_rampages": False, "content_locks": ["rampages"],
+    }
+
+    def test_the_item_ships_without_its_locations(self) -> None:
+        pool_names = {item.name for item in self.multiworld.itempool}
+        self.assertIn(data.RAMPAGES_ITEM, pool_names)
+        self.assertEqual(
+            ITEM_CLASSIFICATIONS[data.RAMPAGES_ITEM], ItemClassification.progression,
+        )
+        location_names = {
+            location.name for location in self.multiworld.get_locations(self.player)
+        }
+        self.assertNotIn(data.rampage_name(1), location_names)
+
+    def test_the_lock_flag_is_stamped_for_the_disabled_class(self) -> None:
+        # The ASI has to hold the icons even though nothing is a check, so the
+        # flag rides content_locks alone and never the class toggle.
+        config = self.world.fill_slot_data()["config_globals"]
+        self.assertEqual(
+            config[str(scm.content_lock_flag_global(data.RAMPAGES_ITEM))], 1,
+        )
+
+
+class TestContentAndAbilityLocksCompose(WorldTestBase):
+    # Both families on the same locations. Either lock alone still stops the
+    # content, so the terms union rather than one superseding the other.
+    game = "Grand Theft Auto Vice City"
+    options: ClassVar[dict] = {
+        "content_locks": ["robbable_stores", "rampages"],
+        "ability_locks": ["weapon_equip", "vehicles"],
+    }
+
+    def test_a_store_needs_both_items(self) -> None:
+        self.assertFalse(self.can_reach_location("Robbable Store 01"))
+        self.collect_by_name([data.ROBBABLE_STORES_ITEM])
+        self.assertFalse(self.can_reach_location("Robbable Store 01"))
+        self.collect_by_name([data.WEAPON_EQUIP_ITEM])
+        self.assertTrue(self.can_reach_location("Robbable Store 01"))
+
+    def test_a_vehicle_rampage_keeps_its_own_ability_term(self) -> None:
+        # The two run-them-down rampages take a land vehicle rather than the
+        # weapon, and the content lock stacks on top of that split.
+        vehicle_rampage = data.rampage_name(min(data.VEHICLE_RAMPAGE_INDICES))
+        # Both area items, so the test reads the lock terms and not the island
+        # the rampage happens to sit on.
+        self.collect_by_name([
+            "Mainland Access", "Starfish Island Access", data.RAMPAGES_ITEM,
+        ])
+        self.assertFalse(self.can_reach_location(vehicle_rampage))
+        self.collect_by_name([data.LAND_VEHICLES_ITEM])
+        self.assertTrue(self.can_reach_location(vehicle_rampage))
+
+
 class TestStrandAccess(WorldTestBase):
     game = "Grand Theft Auto Vice City"
 
@@ -794,7 +986,7 @@ class TestHiddenPackagesGoalNeedsMainland(WorldTestBase):
     options: ClassVar[dict] = {"goal": "hidden_packages", "hidden_packages_required": 80}
 
     def test_high_package_goal_pulls_in_the_mainland(self) -> None:
-        # The 100 Hidden Package macguffins are progression, so the fill must make
+        # The 100 Package Fragment macguffins are progression, so the fill must make
         # all of them reachable, which pulls in Mainland Access and the mainland
         # locations. A mainland package location stays gated until Mainland
         # Access; the default solvability tests prove the goal seed still beats.
@@ -1205,6 +1397,42 @@ class TestRejections(WorldTestBase):
                 self._assert_rejected(dict(_TIGHTEST_OPTIONS, ability_locks=locks),
                                       "only 1 check is reachable")
 
+    def test_content_locks_stay_wide_with_every_class_enabled(self) -> None:
+        # Every content key with no ability key and no class disabled still
+        # leaves a wide start, measured at 35. This does NOT generalise: turn
+        # the other start-island classes off and a single locked class refuses
+        # the seed with no ability key involved, which is the "content lock,
+        # packages only" row in scripts/fuzz_fill.py. The claim holds for this
+        # configuration only. The assertion pins the threshold rather than the
+        # 35, so adding a class does not make the test brittle.
+        self.options = {"content_locks": _ALL_CONTENT_LOCKS}
+        self.world_setup()
+        self.assertGreaterEqual(self.world._free_start_location_count(),
+                                MINIMUM_SPHERE_ZERO)
+
+    def test_lock_combinations_that_close_the_start_island_are_refused(self) -> None:
+        # These are measured, not derived. The first row is every key of both
+        # families; the three after it are far smaller, so refusing does not
+        # take every key. Nor does it take both families: content locks plus
+        # disabled classes close the start with no ability key at all. Hidden
+        # packages are the one class no ability term touches, so holding them is
+        # what tips an ability-locked seed over. The neighbouring
+        # content=[hidden_packages, rampages, robbable_stores] with
+        # ability=[vehicles] is ACCEPTED at a free count of 6, so the boundary
+        # is not simply "how many keys".
+        for content, ability in (
+            (_ALL_CONTENT_LOCKS, _ALL_ABILITY_LOCKS),
+            (["hidden_packages"], ["vehicles", "weapon_equip", "wallet"]),
+            (["hidden_packages", "properties"], ["vehicles", "weapon_equip"]),
+            (["hidden_packages", "rampages", "robbable_stores", "properties"],
+             ["vehicles"]),
+        ):
+            with self.subTest(content_locks=content, ability_locks=ability):
+                self._assert_rejected(
+                    {"content_locks": content, "ability_locks": ability},
+                    "only 1 check is reachable",
+                )
+
     def test_a_mainland_only_class_narrows_the_start_to_a_refusal(self) -> None:
         # The other way to a narrow start, with no lock involved: every stunt
         # jump sits on the mainland, so carrying them as the only collectible
@@ -1382,17 +1610,28 @@ class TestReservedGlobals(WorldTestBase):
             self.assertLessEqual(global_index, scm.highest_reserved_global())
         self.assertNotIn(scm.APPLIED_INDEX_GLOBAL, unlocks | completions | rewards | config)
 
-    def test_ability_globals_match_the_hand_written_mirrors(self) -> None:
-        # The ASI hard-codes these two bases (scm_ability_locks.hpp) and the
-        # SCM build scripts hard-code the top and the marker scratch that
-        # follows it, while this module derives them from the block above.
-        # Inserting a reserved global earlier would shift the Python side
-        # alone and silently break every lock, so the contract is pinned
-        # here: update all four places together.
+    def test_lock_globals_match_the_hand_written_mirrors(self) -> None:
+        # The ASI hard-codes the ability bases (scm_ability_locks.hpp) and the
+        # SCM build scripts hard-code both blocks, the top, and the marker
+        # scratch that follows it, while this module derives them. Inserting a
+        # reserved global earlier would shift the Python side alone and
+        # silently break every lock, so the contract is pinned here: update
+        # every place together.
         self.assertEqual(scm.ABILITY_LOCK_FLAG_BASE, 9421)
         self.assertEqual(scm.ABILITY_UNLOCK_BASE, 9429)
-        self.assertEqual(scm.highest_reserved_global(), 9436)
+        self.assertEqual(scm.CONTENT_LOCK_FLAG_BASE, 9437)
+        self.assertEqual(scm.CONTENT_UNLOCK_BASE, 9442)
+        self.assertEqual(scm.highest_reserved_global(), 9446)
         self.assertEqual(scm.ABILITY_KEYS, data.ABILITY_ITEMS)
+        self.assertEqual(scm.CONTENT_KEYS, data.CONTENT_ITEMS)
+
+    def test_the_script_gated_content_items_keep_their_offsets(self) -> None:
+        # build_scm.py derives the two gates it writes into the script from
+        # fixed offsets into this block (stunt jumps at +2, robbable stores at
+        # +4), because those two classes have no icon for the ASI to hold.
+        # Reordering CONTENT_ITEMS would point both gates at another class.
+        self.assertEqual(scm.CONTENT_KEYS.index(data.STUNT_JUMPS_ITEM), 2)
+        self.assertEqual(scm.CONTENT_KEYS.index(data.ROBBABLE_STORES_ITEM), 4)
 
     def test_item_globals_cover_every_progression_item(self) -> None:
         mapping = scm.item_globals()

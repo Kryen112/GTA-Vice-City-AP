@@ -42,6 +42,9 @@ static_assert(kAppearanceBike == VEHICLE_APPEARANCE_BIKE, "bike appearance");
 static_assert(kAppearanceHeli == VEHICLE_APPEARANCE_HELI, "heli appearance");
 static_assert(kAppearanceBoat == VEHICLE_APPEARANCE_BOAT, "boat appearance");
 static_assert(kAppearancePlane == VEHICLE_APPEARANCE_PLANE, "plane appearance");
+static_assert(kPickupTypeCollectable == PICKUP_COLLECTABLE1, "collectable pickup type");
+static_assert(kPickupTypePropertyLocked == PICKUP_PROPERTY_LOCKED, "locked property type");
+static_assert(kPickupTypePropertyForSale == PICKUP_PROPERTY_FORSALE, "for-sale property type");
 
 namespace {
 // Fixed part of the reserved layout, matching apworld scm.py: the seed hash
@@ -148,7 +151,14 @@ constexpr const char* kAbilityBlockedText[kAbilityCount] = {
     "Land vehicles are locked.", "Sea vehicles are locked.",
     "Air vehicles are locked.", "Weapons are locked.", nullptr,
 };
-// The key listing every configured ability's locked or unlocked state.
+// Player-facing names for the content status list, ContentIndex order. Plural
+// so the toast reads as a sentence: "Hidden Packages are now available."
+constexpr const char* kContentNames[kContentCount] = {
+    "Hidden Packages", "Rampages", "Stunt Jumps", "Property Purchases",
+    "Robbable Stores",
+};
+// The key listing every configured ability's locked or unlocked state and
+// every configured content class's held or available state.
 constexpr int kAbilityStatusKey = VK_F6;
 // The kill-frenzy skull's model name in the game's object definitions.
 constexpr const char* kKillFrenzyModelName = "killfrenzy";
@@ -429,36 +439,48 @@ void ScmGameState::ToastAbilityStatus(
   }
 }
 
-void ScmGameState::EnforceRampageIcons(bool weapon_locked) {
+void ScmGameState::EnforceHeldPickups(const AbilityLocks& locked,
+                                      const ContentLocks& held) {
   // Resolve the kill-frenzy skull model by name; the SCM creates every
   // rampage icon from it, so the pool entries carry its id. Only a hit
   // latches: a miss (the model table not populated yet) retries on the next
   // frame rather than disabling the hold for the rest of the session, and
-  // the diagnostic is logged once per game.
+  // the diagnostic is logged once per game. A miss costs only the rampage
+  // class, since packages and property icons are found by pickup type.
+  // The lookup is deliberately NOT gated on the rampage locks being active.
+  // Raising a sunk icon needs the model just as much as sinking one does, and a
+  // save written while the icons were sunk heals precisely when no lock is
+  // active any more: gating on the lock state would leave those icons at their
+  // sunk height for the life of the save, with their checks uncollectable. Only
+  // the diagnostic is gated, so a packages-only seed does not log about a class
+  // it never holds.
   if (kill_frenzy_model_ < 0) {
     int model = -1;
     if (CModelInfo::GetModelInfo(kKillFrenzyModelName, &model) != nullptr) {
       kill_frenzy_model_ = model;
-    } else {
+    } else if (held[kContentRampages] || locked[kAbilityWeaponEquip]) {
       if (!kill_frenzy_lookup_logged_ && logger_) {
-        logger_("ability locks: kill frenzy model not found yet, rampage icons stay vanilla");
+        logger_("content locks: kill frenzy model not found yet, rampage icons stay vanilla");
       }
       kill_frenzy_lookup_logged_ = true;
-      return;
     }
   }
   for (int index = 0; index < kPickupPoolSize; ++index) {
     CPickup& pickup = CPickups::aPickUps[index];
     if (pickup.bPickupType == 0) continue;
-    if (static_cast<int>(pickup.nModelId) != kill_frenzy_model_) continue;
-    const RampageIconAction action = PlanRampageIcon(
-        weapon_locked,
+    const HeldPickupClass held_class = ClassifyHeldPickup(
+        static_cast<int>(pickup.bPickupType), static_cast<int>(pickup.nModelId),
+        kill_frenzy_model_);
+    if (held_class == HeldPickupClass::kNone) continue;
+    const bool should_hold = ShouldHoldPickup(
+        held_class,
         IsVehicleRampagePickup(pickup.vecPos.x, pickup.vecPos.y),
-        pickup.vecPos.z);
-    if (action == RampageIconAction::kLeaveAlone) continue;
-    pickup.vecPos.z += (action == RampageIconAction::kLower)
-                           ? -kRampageLowerOffset
-                           : kRampageLowerOffset;
+        locked, held);
+    const PickupHoldAction action = PlanPickupHold(should_hold, pickup.vecPos.z);
+    if (action == PickupHoldAction::kLeaveAlone) continue;
+    pickup.vecPos.z += (action == PickupHoldAction::kLower)
+                           ? -kPickupLowerOffset
+                           : kPickupLowerOffset;
     // Drop the visible objects the way the game's own remove does; the
     // pickup update recreates them at the moved position on the next frame.
     if (pickup.pObject != nullptr) {
@@ -473,6 +495,49 @@ void ScmGameState::EnforceRampageIcons(bool weapon_locked) {
       delete extra_object;
       pickup.pExtraObject = nullptr;
     }
+  }
+}
+
+ContentLocks ScmGameState::ReadContentLocks(
+    std::array<int, kContentCount>& lock_flags) {
+  std::array<int, kContentCount> unlocks{};
+  for (int index = 0; index < kContentCount; ++index) {
+    lock_flags[index] = GetGlobal(kContentLockFlagBase + index);
+    unlocks[index] = GetGlobal(kContentUnlockBase + index);
+  }
+  return PlanContentLocks(lock_flags, unlocks);
+}
+
+void ScmGameState::ToastContentStatus(const ContentLocks& held,
+                                      const std::array<int, kContentCount>& lock_flags) {
+  std::string held_list;
+  std::string released_list;
+  for (int index = 0; index < kContentCount; ++index) {
+    if (lock_flags[index] == 0) continue;
+    std::string& list = held[index] ? held_list : released_list;
+    if (!list.empty()) list += ", ";
+    list += kContentNames[index];
+  }
+  // Nothing to say when the seed selected no content key; the ability lines
+  // stand on their own then.
+  if (held_list.empty() && released_list.empty()) return;
+  pending_toasts_.push_back(
+      "Held: " + (held_list.empty() ? std::string("nothing") : held_list));
+  if (!released_list.empty()) {
+    pending_toasts_.push_back("Available: " + released_list);
+  }
+}
+
+void ScmGameState::ReportReleasedContent(
+    const ContentLocks& held, const std::array<int, kContentCount>& lock_flags) {
+  const ContentReleasePlan plan = PlanContentReleases(
+      held, lock_flags, content_was_held_, content_baseline_ready_);
+  content_was_held_ = plan.next_was_held;
+  content_baseline_ready_ = true;
+  for (int index = 0; index < kContentCount; ++index) {
+    if (!plan.announce[index]) continue;
+    pending_toasts_.push_back(std::string(kContentNames[index]) +
+                              " are now available.");
   }
 }
 
@@ -547,23 +612,34 @@ void ScmGameState::ApplyAbilityInputLocks() {
   }
 }
 
-void ScmGameState::EnforceAbilityLocks() {
+void ScmGameState::EnforceLocks() {
   std::array<int, kAbilityCount> lock_flags{};
   const AbilityLocks locked = ReadAbilityLocks(lock_flags);
+  std::array<int, kContentCount> content_flags{};
+  const ContentLocks held = ReadContentLocks(content_flags);
   bool any_flag_set = false;
   for (int index = 0; index < kAbilityCount; ++index) {
     any_flag_set = any_flag_set || lock_flags[index] != 0;
   }
-  // No key selected this seed: fully vanilla, nothing to enforce.
+  for (int index = 0; index < kContentCount; ++index) {
+    any_flag_set = any_flag_set || content_flags[index] != 0;
+  }
+  // No key of either family selected this seed: fully vanilla, nothing to
+  // enforce.
   if (!any_flag_set) return;
 
-  // The status key lists every configured ability, locked or unlocked, on
-  // its press edge, and only while this game owns the keyboard, so a press
-  // meant for another application never reaches the queue.
+  // A class released since the last frame repopulates the world silently, so
+  // say so once: three of the five classes have no other feedback.
+  ReportReleasedContent(held, content_flags);
+
+  // The status key lists every configured ability and content class, held or
+  // released, on its press edge, and only while this game owns the keyboard,
+  // so a press meant for another application never reaches the queue.
   const bool status_key_down = GameWindowHasFocus() &&
       (GetAsyncKeyState(kAbilityStatusKey) & 0x8000) != 0;
   if (status_key_down && !ability_status_key_was_down_) {
     ToastAbilityStatus(locked, lock_flags);
+    ToastContentStatus(held, content_flags);
   }
   ability_status_key_was_down_ = status_key_down;
 
@@ -581,7 +657,7 @@ void ScmGameState::EnforceAbilityLocks() {
   // require too.
   if (player == nullptr) return;
 
-  EnforceRampageIcons(locked[kAbilityWeaponEquip]);
+  EnforceHeldPickups(locked, held);
 
   // Cancel a player-initiated entry into a locked vehicle class. The entry
   // runs through the player ped's objective, which only the enter-vehicle
@@ -802,11 +878,17 @@ void ScmGameState::EnforcePickupLayout() {
 void ScmGameState::DetectCollectedPackages() {
   if (package_locations_.empty()) return;
   // World positions of every collectable pickup still present in the pool.
+  // A package held by the hidden_packages content lock sits sunk far below the
+  // world, so its height is read back up to where the package really is.
+  // Without that every held package would match nothing, and any package the
+  // detector had already seen present would read as collected: a hundred
+  // checks reported at once, the moment the hold applied.
   std::vector<WorldPoint> present;
   for (int index = 0; index < kPickupPoolSize; ++index) {
     const CPickup& pickup = CPickups::aPickUps[index];
     if (pickup.bPickupType == PICKUP_COLLECTABLE1 && !pickup.bRemoved) {
-      present.push_back({pickup.vecPos.x, pickup.vecPos.y, pickup.vecPos.z});
+      present.push_back({pickup.vecPos.x, pickup.vecPos.y,
+                         UnsunkHeight(pickup.vecPos.z)});
     }
   }
   // The persistent SCM completion global records a package already collected,
@@ -858,6 +940,8 @@ void ScmGameState::OnGameFrame() {
     // The model table belongs to the game that loaded it.
     kill_frenzy_model_ = -1;
     kill_frenzy_lookup_logged_ = false;
+    content_was_held_ = ContentLocks{};
+    content_baseline_ready_ = false;
     world_was_loaded_ = false;
     // The unmatched-slot diagnostic counts frames per game, so a fresh game
     // gets its own creation window and its own single report.
@@ -885,7 +969,14 @@ void ScmGameState::OnGameFrame() {
   }
   world_was_loaded_ = world_loaded;
 
-  if (items_dirty_ && controllable) {
+  // An empty item list is never authoritative: a reconnect clears the received
+  // items and resyncs, so the empty list can arrive while the world already
+  // holds real state. Re-deriving from it would zero every unlock global and
+  // take back every area, station, ability and content class for the frames
+  // until the resync lands, which the locks make loud (a hundred packages and
+  // fifteen property icons sink and rise again, and each class announces
+  // itself). The same guard ShouldReDeriveUnlocks already applies.
+  if (items_dirty_ && controllable && !items_.empty()) {
     // Re-derive every unlock global from the full item list: zero each distinct
     // unlock global, then tally received copies per global.
     std::map<int, int> counts;
@@ -936,10 +1027,10 @@ void ScmGameState::OnGameFrame() {
   // offline from a save.
   EnforceMinimap();
 
-  // Enforce the ability locks from the lock-flag and unlock globals written
+  // Enforce both lock families from the lock-flag and unlock globals written
   // above. Same global-driven shape, so a save's own persisted state keeps
   // the locks working offline too.
-  EnforceAbilityLocks();
+  EnforceLocks();
 
   // Keep the ambient pickup pool on the configured layout. Only when the
   // world is loaded, so the pool holds the placed pickups; runs before the

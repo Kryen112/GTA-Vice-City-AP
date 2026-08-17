@@ -287,7 +287,7 @@ class GTAViceCityContext(CommonContext):
 
     def _goal_reached(self) -> bool:
         if self.slot_goal == "hidden_packages":
-            # Enough Hidden Package items received, wherever in the multiworld
+            # Enough Package Fragments received, wherever in the multiworld
             # they were found.
             if self.hunt_item_id is None:
                 return False

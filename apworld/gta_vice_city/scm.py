@@ -122,11 +122,23 @@ PROPERTIES_CASH_GLOBAL = RAMPAGES_CASH_GLOBAL + 1
 # selected, stamped from slot_data), then one unlock global per item (one when
 # the item is received, through item_globals like any unlock). The ASI
 # enforces a lock per frame while its flag is set and its unlock is zero.
-# Order is data.ABILITY_ITEMS and never reorders. The SCM-internal marker
-# scratch begins right above this block.
+# Order is data.ABILITY_ITEMS and never reorders. The content lock block sits
+# directly above this one.
 ABILITY_KEYS: list[str] = list(data.ABILITY_ITEMS)
 ABILITY_LOCK_FLAG_BASE = PROPERTIES_CASH_GLOBAL + 1
 ABILITY_UNLOCK_BASE = ABILITY_LOCK_FLAG_BASE + len(ABILITY_KEYS)
+
+# Content lock globals follow the ability block in the same shape: one lock
+# flag per content item (one while its content_locks key is selected, stamped
+# from slot_data), then one unlock global per item (one when the item is
+# received). Unlike the ability block the main.scm DOES read two of these: the
+# stunt jump and store classes have no icon to hold, so their gates live in the
+# script, while holding the other three belongs to the ASI. Order is
+# data.CONTENT_ITEMS and never reorders. The SCM-internal marker scratch begins
+# right above this block.
+CONTENT_KEYS: list[str] = list(data.CONTENT_ITEMS)
+CONTENT_LOCK_FLAG_BASE = ABILITY_UNLOCK_BASE + len(ABILITY_KEYS)
+CONTENT_UNLOCK_BASE = CONTENT_LOCK_FLAG_BASE + len(CONTENT_KEYS)
 
 
 def unlock_global(key: str) -> int:
@@ -153,8 +165,16 @@ def ability_unlock_global(item_name: str) -> int:
     return ABILITY_UNLOCK_BASE + ABILITY_KEYS.index(item_name)
 
 
+def content_lock_flag_global(item_name: str) -> int:
+    return CONTENT_LOCK_FLAG_BASE + CONTENT_KEYS.index(item_name)
+
+
+def content_unlock_global(item_name: str) -> int:
+    return CONTENT_UNLOCK_BASE + CONTENT_KEYS.index(item_name)
+
+
 def highest_reserved_global() -> int:
-    return ABILITY_UNLOCK_BASE + len(ABILITY_KEYS) - 1
+    return CONTENT_UNLOCK_BASE + len(CONTENT_KEYS) - 1
 
 
 def item_globals() -> dict[int, int]:
@@ -174,6 +194,8 @@ def item_globals() -> dict[int, int]:
     mapping[items.ITEM_NAME_TO_ID[data.MINIMAP_ITEM]] = MINIMAP_UNLOCK_GLOBAL
     for ability in data.ABILITY_ITEMS:
         mapping[items.ITEM_NAME_TO_ID[ability]] = ability_unlock_global(ability)
+    for content in data.CONTENT_ITEMS:
+        mapping[items.ITEM_NAME_TO_ID[content]] = content_unlock_global(content)
     return mapping
 
 
@@ -253,6 +275,20 @@ def ability_lock_flags(selected_keys: set[str]) -> dict[int, int]:
     return {
         ability_lock_flag_global(item): int(item in locked_items)
         for item in ABILITY_KEYS
+    }
+
+
+def content_lock_flags(selected_keys: set[str]) -> dict[int, int]:
+    """Content lock-flag global index -> value the ASI stamps once from
+    slot_data. One while the class starts held this seed (its content_locks
+    key is selected, which also puts the item in the pool); zero leaves that
+    class fully vanilla. A key holds its class whether or not the class is
+    also a check class, so this reads content_locks alone. All five flags are
+    always stamped so a stale save state cannot linger."""
+    locked_items = {data.CONTENT_LOCK_ITEMS[key] for key in selected_keys}
+    return {
+        content_lock_flag_global(item): int(item in locked_items)
+        for item in CONTENT_KEYS
     }
 
 

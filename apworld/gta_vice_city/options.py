@@ -27,7 +27,7 @@ class Goal(Choice):
     """Which condition beats the seed.
 
     final_mission (default): complete "Keep Your Friends Close...".
-    hidden_packages: receive the configured number of Hidden Package items, a
+    hidden_packages: receive the configured number of Package Fragment items, a
     hunt across the multiworld. Collecting a package in game is a check, never
     goal progress.
     hundred_percent: reach the game's own 100 percent stat. Generation rejects
@@ -42,7 +42,7 @@ class Goal(Choice):
 
 
 class HiddenPackagesRequired(NamedRange):
-    """Hidden Package items to receive for the hidden-packages goal. The pool
+    """Package Fragment items to receive for the hidden-packages goal. The pool
     holds one per physical package, scattered across the multiworld; receiving
     this many wins. Has no effect under the other goals."""
     display_name = "Hidden packages required"
@@ -154,6 +154,40 @@ class AbilityLocks(OptionSet):
     default = frozenset()
 
 
+class ContentLocks(OptionSet):
+    """Content held inert at new game until its item arrives from the
+    multiworld. Each selected key locks its class and puts its item in the
+    pool; an unselected key is fully vanilla. A key holds its content even when
+    that class's own enable toggle is off, so a seed can lock world content
+    without turning it into checks. Valid keys:
+
+    hidden_packages: the 100 package pickups are absent until Hidden Packages
+    arrives.
+    rampages: the 35 rampage icons are absent until Rampages arrives.
+    stunt_jumps: a unique stunt jump registers nothing and pays nothing until
+    Stunt Jumps arrives. The jump itself always flies and stays re-doable, so
+    nothing is missable.
+    properties: all 15 property purchase icons are absent until Property
+    Purchases arrives, businesses and safehouses alike. The starting hotel and
+    the mansion are story-given, so a save point is never locked away.
+    robbable_stores: aiming at a shopkeeper starts no robbery until Robbable
+    Stores arrives.
+
+    Locking a class removes it from the start of the game, and a solo seed with
+    nothing open at the start is refused at generation. With every check class
+    enabled all five keys together are still fine, but they stop being fine as
+    soon as anything else narrows the start: turning check classes off does, and
+    so does ability_locks. Holding the hidden packages, the one class no ability
+    term touches, is what usually tips a seed over. The error names what to
+    change."""
+    display_name = "Content locks"
+    valid_keys = frozenset({
+        "hidden_packages", "rampages", "stunt_jumps", "properties",
+        "robbable_stores",
+    })
+    default = frozenset()
+
+
 class TrapPercentage(NamedRange):
     """Percentage of filler items replaced by traps (0 disables). The eight
     trap types share the slice equally: raised wanted level, exploding cars,
@@ -195,5 +229,6 @@ class GTAViceCityOptions(PerGameCommonOptions):
     shuffle_minimap: ShuffleMinimap
     randomize_pickups: RandomizePickups
     ability_locks: AbilityLocks
+    content_locks: ContentLocks
     trap_percentage: TrapPercentage
     death_link: DeathLink

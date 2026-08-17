@@ -9,10 +9,10 @@
 //
 // The decisions planned here are the input masks (which never apply while a
 // script owns the player), which vehicle class a locked entry attempt
-// belongs to, whether a rampage icon is held out of reach, when a blocked
-// attempt may toast, and when the unlock globals need re-deriving. The
-// wallet is deliberately absent: money is state rather than input, so the
-// frame handler pins the balance itself.
+// belongs to, which rampages the weapon lock covers, when a blocked attempt
+// may toast, and when the unlock globals need re-deriving. The wallet is
+// deliberately absent: money is state rather than input, so the frame handler
+// pins the balance itself.
 #pragma once
 
 #include <array>
@@ -154,23 +154,9 @@ inline bool IsVehicleRampagePickup(float x, float y) {
   return false;
 }
 
-// A held icon sinks a fixed offset below the world, far outside collection
-// range and out of sight; the unlock raises it back. The band makes the
-// state self-describing, so a save made while lowered heals on load: world
-// pickups sit well above the band, lowered ones well below it.
-constexpr float kRampageLowerOffset = 2000.0f;
-constexpr float kRampageLoweredBand = -900.0f;
-
-enum class RampageIconAction { kLeaveAlone, kLower, kRaise };
-
-inline RampageIconAction PlanRampageIcon(bool weapon_locked,
-                                         bool vehicle_rampage, float z) {
-  if (vehicle_rampage) return RampageIconAction::kLeaveAlone;
-  const bool lowered = z < kRampageLoweredBand;
-  if (weapon_locked && !lowered) return RampageIconAction::kLower;
-  if (!weapon_locked && lowered) return RampageIconAction::kRaise;
-  return RampageIconAction::kLeaveAlone;
-}
+// Holding an icon out of reach lives in scm_content_locks.hpp, which unions
+// this weapon-rampage split with the rampages content key: either lock alone
+// still stops the icon.
 
 // Whether a world that has just come up should re-derive the unlock globals
 // from the received items. A save carries whatever unlock globals it was

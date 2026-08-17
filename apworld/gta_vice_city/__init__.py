@@ -154,6 +154,8 @@ class GTAViceCityWorld(World):
             options.randomize_pickups.value = int(bool(slot_data["randomize_pickups"]))
         if "ability_locks" in slot_data:
             options.ability_locks.value = set(slot_data["ability_locks"])
+        if "content_locks" in slot_data:
+            options.content_locks.value = set(slot_data["content_locks"])
         if "trap_percentage" in slot_data:
             options.trap_percentage.value = int(slot_data["trap_percentage"])
         for name in CHECK_CLASS_OPTIONS:
@@ -262,18 +264,28 @@ class GTAViceCityWorld(World):
             return bool(self.options.enable_properties.value)
         if name in data.ABILITY_ITEM_KEY:
             return data.ABILITY_ITEM_KEY[name] in self.options.ability_locks.value
+        if name in data.CONTENT_ITEM_KEY:
+            # A content lock rides its own key, never the class toggle: a key
+            # selected on a disabled class still holds the content in game, so
+            # the item that releases it still belongs in the pool.
+            return data.CONTENT_ITEM_KEY[name] in self.options.content_locks.value
         return True
 
     def _ability_lock_keys(self) -> frozenset[str]:
         return frozenset(self.options.ability_locks.value)
 
+    def _content_lock_keys(self) -> frozenset[str]:
+        return frozenset(self.options.content_locks.value)
+
     def _location_rules(self) -> dict[str, rules.RulePredicate]:
         # Built per world: the finale missions carry the asset prerequisite
         # only while the properties class is on (its items are in the pool),
-        # and ability terms exist only for the selected ability_locks keys.
+        # and a lock term exists only for the selected ability_locks and
+        # content_locks keys.
         return rules.build_location_rules(
             bool(self.options.enable_properties.value),
             self._ability_lock_keys(),
+            self._content_lock_keys(),
         )
 
     def create_item(self, name: str) -> GTAViceCityItem:
@@ -350,11 +362,19 @@ class GTAViceCityWorld(World):
             # unlocking item(s) into the pool. Sorted so the pool order is
             # deterministic (the option value is a set).
             placeable.extend(data.ABILITY_LOCK_ITEMS[key])
+        # Each selected key holds its class at new game and shuffles the
+        # releasing item into the pool, whether or not that class is also a
+        # check class this seed. Sorted so the pool order is deterministic (the
+        # option value is a set).
+        placeable.extend(
+            data.CONTENT_LOCK_ITEMS[key]
+            for key in sorted(self.options.content_locks.value)
+        )
         if self.options.goal == Goal.option_hidden_packages:
-            # The hunt: one Hidden Package macguffin per physical package,
-            # scattered across the multiworld. The goal counts how many are
-            # received, so a physical package pickup stays an ordinary check.
-            placeable.extend([data.HIDDEN_PACKAGE_ITEM] * data.HIDDEN_PACKAGE_COUNT)
+            # The hunt: one Package Fragment per physical package, scattered
+            # across the multiworld. The goal counts how many are received, so
+            # a physical package pickup stays an ordinary check.
+            placeable.extend([data.PACKAGE_FRAGMENT_ITEM] * data.HIDDEN_PACKAGE_COUNT)
 
         active_locations = sum(
             1 for name in LOCATION_NAME_TO_ID if self._location_enabled(name)
@@ -477,7 +497,7 @@ class GTAViceCityWorld(World):
             "hidden_packages_required": self.options.hidden_packages_required.value,
             # The client counts received copies of this item to detect the
             # hidden-packages hunt goal (the ASI has no part in it).
-            "hidden_package_item_id": ITEM_NAME_TO_ID[data.HIDDEN_PACKAGE_ITEM],
+            "hidden_package_item_id": ITEM_NAME_TO_ID[data.PACKAGE_FRAGMENT_ITEM],
             # The client watches for this location being checked to detect the
             # final-mission goal; the 100 percent goal needs no id (it waits for
             # every location).
@@ -494,6 +514,7 @@ class GTAViceCityWorld(World):
             # tracker regeneration rebuilds the same pool and rules. The lock
             # flags themselves reach the ASI through config_globals.
             "ability_locks": sorted(self.options.ability_locks.value),
+            "content_locks": sorted(self.options.content_locks.value),
             # The permutation itself (None when off), so a tracker regeneration
             # replays the seed's pickup layout instead of rerolling it.
             "pickup_permutation": self.pickup_permutation,
@@ -576,6 +597,7 @@ class GTAViceCityWorld(World):
             bool(self.options.enable_properties.value),
         ))
         flags.update(scm.ability_lock_flags(self._ability_lock_keys()))
+        flags.update(scm.content_lock_flags(self._content_lock_keys()))
         if not self.options.enable_properties.value:
             flags.update(scm.properties_vanilla_globals())
         return flags
@@ -585,10 +607,10 @@ class GTAViceCityWorld(World):
         goal = self.options.goal
         if goal == Goal.option_hidden_packages:
             # A hunt on received macguffins, not on collecting your own packages:
-            # the goal is how many Hidden Package items you receive, from anywhere
+            # the goal is how many Package Fragments you receive, from anywhere
             # in the multiworld.
             need = self.options.hidden_packages_required.value
-            return lambda state: state.has(data.HIDDEN_PACKAGE_ITEM, player, need)
+            return lambda state: state.has(data.PACKAGE_FRAGMENT_ITEM, player, need)
         if goal == Goal.option_hundred_percent:
             # The game's 100 percent requires every stat contributor, and
             # generation only allows this goal when every check class is on, so
