@@ -236,10 +236,13 @@ std::string PathBesideExecutable(const char* name) {
   return directory + "\\" + name;
 }
 
-// Every committed, readable, privately allocated block in this process. The
-// stunt jump array is heap, so mapped images and files are skipped: that is
-// most of the address space and none of the answer.
-std::vector<std::pair<const unsigned char*, std::size_t>> ReadableHeapBlocks() {
+// Every committed, readable block this process privately owns, plus the ones
+// its modules occupy. The modules matter: a pool given a static backing store
+// lives in the executable's own zero-initialised data, which is mapped image
+// rather than heap and would otherwise never be looked at. File mappings stay
+// out, since the game maps hundreds of megabytes of archive it never builds
+// anything in.
+std::vector<std::pair<const unsigned char*, std::size_t>> ReadableBlocks() {
   std::vector<std::pair<const unsigned char*, std::size_t>> blocks;
   SYSTEM_INFO system{};
   GetSystemInfo(&system);
@@ -251,7 +254,8 @@ std::vector<std::pair<const unsigned char*, std::size_t>> ReadableHeapBlocks() {
   while (address < limit) {
     MEMORY_BASIC_INFORMATION region{};
     if (VirtualQuery(address, &region, sizeof(region)) != sizeof(region)) break;
-    const bool usable = region.State == MEM_COMMIT && region.Type == MEM_PRIVATE &&
+    const bool usable = region.State == MEM_COMMIT &&
+                        (region.Type == MEM_PRIVATE || region.Type == MEM_IMAGE) &&
                         (region.Protect & readable) != 0 &&
                         (region.Protect & PAGE_GUARD) == 0;
     if (usable) {
@@ -842,6 +846,11 @@ bool ReadRecordsGuarded(const unsigned char* base, const StuntJumpRun& run,
 // the pool, so the rest are only corroboration and the file stays short.
 constexpr std::size_t kStuntJumpHolderLimit = 8;
 
+// Above this the address belongs to the heap rather than to a loaded module.
+// The executable images sit at the bottom of the address space, so this only
+// labels a dump's provenance and never gates anything.
+constexpr std::uintptr_t kModuleAddressCeiling = 0x00C00000u;
+
 void FindPointersInner(std::uintptr_t value, const unsigned char* base,
                        std::size_t size, std::vector<std::uintptr_t>* found) {
   for (std::size_t offset = 0; offset + sizeof(std::uintptr_t) <= size;
@@ -872,7 +881,7 @@ void ScmGameState::DumpStuntJumps() {
   const int expected = CStats::TotalNumberOfUniqueJumps;
 
   const std::vector<std::pair<const unsigned char*, std::size_t>> blocks =
-      ReadableHeapBlocks();
+      ReadableBlocks();
   int longest_seen = 0;
   int truncated_blocks = 0;
   std::vector<StuntJumpCandidate> candidates;
@@ -952,6 +961,10 @@ void ScmGameState::DumpStuntJumps() {
                static_cast<int>(best.span),
                static_cast<int>(best.away_from_origin * 100.0f),
                static_cast<int>(best_candidate.layout_fit * 100.0f));
+  // Where it came from. An address inside a loaded module means a pool with a
+  // static backing store rather than one built on the heap.
+  std::fprintf(file, "# found in %s memory\n",
+               array_address < kModuleAddressCeiling ? "module" : "heap");
   for (std::uintptr_t holder : holders) {
     std::fprintf(file, "# pointed at from 0x%08X\n",
                  static_cast<unsigned int>(holder));
