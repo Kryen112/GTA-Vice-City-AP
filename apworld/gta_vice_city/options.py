@@ -154,6 +154,16 @@ class AbilityLocks(OptionSet):
     default = frozenset()
 
 
+class StartingAbilityUnlock(Toggle):
+    """Start with one locked ability already unlocked, drawn at random from the
+    ability_locks keys this seed selected. The seed makes the choice, so the
+    ability is not known until the game starts. The item is starting
+    inventory, so it leaves the pool rather than adding to it, and the vehicles
+    key draws one of its three items rather than all of them. Nothing happens
+    when ability_locks is empty."""
+    display_name = "Starting ability unlock"
+
+
 class ContentLocks(OptionSet):
     """Content held inert at new game until its item arrives from the
     multiworld. Each selected key locks its class and puts its item in the
@@ -186,6 +196,19 @@ class ContentLocks(OptionSet):
         "robbable_stores",
     })
     default = frozenset()
+
+
+class StartingContentUnlock(Toggle):
+    """Start with one held content class already released, drawn at random from
+    the content_locks keys this seed selected. The seed makes the choice, so the
+    class is not known until the game starts. The item is starting
+    inventory, so it leaves the pool rather than adding to it. Nothing happens
+    when content_locks is empty.
+
+    A released class widens the start of the game, but generation cannot count
+    on it: the narrow-start refusal measures what is open with no item at all,
+    so a seed refused without this option is refused with it."""
+    display_name = "Starting content unlock"
 
 
 class TrapPercentage(NamedRange):
@@ -229,6 +252,8 @@ class GTAViceCityOptions(PerGameCommonOptions):
     shuffle_minimap: ShuffleMinimap
     randomize_pickups: RandomizePickups
     ability_locks: AbilityLocks
+    starting_ability_unlock: StartingAbilityUnlock
     content_locks: ContentLocks
+    starting_content_unlock: StartingContentUnlock
     trap_percentage: TrapPercentage
     death_link: DeathLink

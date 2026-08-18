@@ -120,6 +120,13 @@ class GTAViceCityWorld(World):
     # in generate_early when the randomize option is on; None when it is off.
     radio_start_station: int | None = None
 
+    # The lock items Tommy starts holding, one drawn at random from the selected
+    # ability keys and one from the selected content keys. Chosen in
+    # generate_early when the matching option is on; None when it is off or when
+    # that family selected no key.
+    starting_ability_item: str | None = None
+    starting_content_item: str | None = None
+
     # The ambient pickup layout as a permutation of data.PICKUP_SLOTS indices:
     # slot i shows the model and ammo of vanilla slot pickup_permutation[i].
     # Rolled in generate_early when randomize_pickups is on; None when off.
@@ -156,6 +163,10 @@ class GTAViceCityWorld(World):
             options.ability_locks.value = set(slot_data["ability_locks"])
         if "content_locks" in slot_data:
             options.content_locks.value = set(slot_data["content_locks"])
+        if "starting_ability_unlock" in slot_data:
+            options.starting_ability_unlock.value = int(bool(slot_data["starting_ability_unlock"]))
+        if "starting_content_unlock" in slot_data:
+            options.starting_content_unlock.value = int(bool(slot_data["starting_content_unlock"]))
         if "trap_percentage" in slot_data:
             options.trap_percentage.value = int(slot_data["trap_percentage"])
         for name in CHECK_CLASS_OPTIONS:
@@ -177,10 +188,12 @@ class GTAViceCityWorld(World):
             self._restore_options(passthrough)
             self._choose_radio_start(passthrough)
             self._choose_pickup_permutation(passthrough)
+            self._choose_starting_unlocks(passthrough)
             return
         options = self.options
         self._choose_radio_start(None)
         self._choose_pickup_permutation(None)
+        self._choose_starting_unlocks(None)
         if options.goal == Goal.option_hundred_percent:
             missing = [name for name in CHECK_CLASS_OPTIONS
                        if not getattr(options, name).value]
@@ -208,6 +221,37 @@ class GTAViceCityWorld(World):
             int(restored) if restored is not None
             else self.random.randrange(len(data.RADIO_STATION_ITEMS))
         )
+
+    def _choose_starting_unlocks(self, passthrough: dict | None) -> None:
+        # The lock items Tommy already holds. Fixed here, before the pool builds,
+        # and carried in slot_data so a tracker regeneration replays the seed's
+        # draw instead of rerolling. A restored name that the restored keys no
+        # longer offer is dropped, so mismatched slot_data cannot ask create_items
+        # for an item that is not in the pool.
+        self.starting_ability_item = self._draw_starting_unlock(
+            bool(self.options.starting_ability_unlock.value),
+            [item for key in sorted(self.options.ability_locks.value)
+             for item in data.ABILITY_LOCK_ITEMS[key]],
+            (passthrough or {}).get("starting_ability_item"),
+        )
+        self.starting_content_item = self._draw_starting_unlock(
+            bool(self.options.starting_content_unlock.value),
+            [data.CONTENT_LOCK_ITEMS[key]
+             for key in sorted(self.options.content_locks.value)],
+            (passthrough or {}).get("starting_content_item"),
+        )
+
+    def _draw_starting_unlock(
+        self, enabled: bool, eligible: list[str], restored: str | None,
+    ) -> str | None:
+        # One item out of those the seed's own lock keys put in the pool. The
+        # draw is over items, not keys, so the vehicles key hands over one of
+        # land, sea, or air rather than all three.
+        if not enabled or not eligible:
+            return None
+        if restored is not None:
+            return restored if restored in eligible else None
+        return self.random.choice(eligible)
 
     def _choose_pickup_permutation(self, passthrough: dict | None) -> None:
         # The ambient pickup layout. Fixed here, before the pool builds, and
@@ -370,6 +414,15 @@ class GTAViceCityWorld(World):
             data.CONTENT_LOCK_ITEMS[key]
             for key in sorted(self.options.content_locks.value)
         )
+        for chosen in (self.starting_ability_item, self.starting_content_item):
+            if chosen is None:
+                continue
+            # Starting inventory, so it leaves the pool rather than adding to it:
+            # one copy of a lock item exists and Tommy already holds it. The
+            # draw only ever names an item the keys above placed, so the removal
+            # cannot miss.
+            placeable.remove(chosen)
+            self.multiworld.push_precollected(self.create_item(chosen))
         if self.options.goal == Goal.option_hidden_packages:
             # The hunt: one Package Fragment per physical package, scattered
             # across the multiworld. The goal counts how many are received, so
@@ -515,6 +568,13 @@ class GTAViceCityWorld(World):
             # flags themselves reach the ASI through config_globals.
             "ability_locks": sorted(self.options.ability_locks.value),
             "content_locks": sorted(self.options.content_locks.value),
+            "starting_ability_unlock": bool(self.options.starting_ability_unlock.value),
+            "starting_content_unlock": bool(self.options.starting_content_unlock.value),
+            # The drawn items themselves (None when the option is off or the
+            # family selected no key), so a tracker regeneration precollects the
+            # same two rather than rerolling them.
+            "starting_ability_item": self.starting_ability_item,
+            "starting_content_item": self.starting_content_item,
             # The permutation itself (None when off), so a tracker regeneration
             # replays the seed's pickup layout instead of rerolling it.
             "pickup_permutation": self.pickup_permutation,

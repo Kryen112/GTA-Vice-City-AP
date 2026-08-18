@@ -20,8 +20,21 @@ from worlds.AutoWorld import call_all
 
 from .. import MINIMUM_SPHERE_ZERO, GTAViceCityWorld, data, scm
 from ..items import ITEM_CLASSIFICATIONS, ITEM_NAME_TO_ID
-from ..locations import LOCATION_NAME_TO_ID, PACKAGE_NAMES, STORY_MISSION_NAMES
+from ..locations import (
+    LOCATION_NAME_TO_ID,
+    LOCATION_REGIONS,
+    PACKAGE_NAMES,
+    STORY_MISSION_NAMES,
+)
 from ..options import CHECK_CLASS_OPTIONS
+
+# The fields _restore_options reads unconditionally, so a passthrough test only
+# has to name what it is actually about.
+_TRACKER_SLOT_DATA: dict = {
+    "goal": "final_mission",
+    "hidden_packages_required": 60,
+    "death_link": False,
+}
 
 
 class TestDefault(WorldTestBase):
@@ -148,6 +161,12 @@ class TestUniversalTracker(WorldTestBase):
         self.assertIn("pickup_permutation", slot_data)
         self.assertIn("pickup_layout", slot_data)
         self.assertIn("ability_locks", slot_data)
+        # The lock draws, like the radio and pickup draws above: chosen at
+        # generation, so a regeneration has to replay them rather than reroll.
+        self.assertIn("starting_ability_unlock", slot_data)
+        self.assertIn("starting_content_unlock", slot_data)
+        self.assertIn("starting_ability_item", slot_data)
+        self.assertIn("starting_content_item", slot_data)
         # Carried so a tracker regeneration rebuilds the same filler/trap split.
         self.assertIn("trap_percentage", slot_data)
         for name in CHECK_CLASS_OPTIONS:
@@ -847,6 +866,218 @@ class TestContentAndAbilityLocksCompose(WorldTestBase):
         self.assertTrue(self.can_reach_location(vehicle_rampage))
 
 
+class TestStartingUnlocksOn(WorldTestBase):
+    # One lock item per family arrives as starting inventory, drawn by the seed.
+    game = "Grand Theft Auto Vice City"
+    options: ClassVar[dict] = {
+        "ability_locks": ["vehicles", "weapon_equip", "wallet"],
+        "content_locks": ["rampages", "stunt_jumps", "robbable_stores"],
+        "starting_ability_unlock": True,
+        "starting_content_unlock": True,
+    }
+
+    def _precollected(self) -> list[str]:
+        return [item.name for item in self.multiworld.precollected_items[self.player]]
+
+    def test_one_ability_and_one_content_item_start_held(self) -> None:
+        precollected = self._precollected()
+        abilities = [name for name in precollected if name in data.ABILITY_ITEMS]
+        contents = [name for name in precollected if name in data.CONTENT_ITEMS]
+        self.assertEqual(len(abilities), 1)
+        self.assertEqual(len(contents), 1)
+        self.assertEqual(abilities[0], self.world.starting_ability_item)
+        self.assertEqual(contents[0], self.world.starting_content_item)
+
+    def test_the_draw_only_names_an_item_a_selected_key_offers(self) -> None:
+        # The vehicles key offers three items, so the ability draw is over items
+        # and may name any one of them; an unselected key can never be drawn.
+        eligible_abilities = {
+            data.LAND_VEHICLES_ITEM, data.SEA_VEHICLES_ITEM, data.AIR_VEHICLES_ITEM,
+            data.WEAPON_EQUIP_ITEM, data.WALLET_ITEM,
+        }
+        self.assertIn(self.world.starting_ability_item, eligible_abilities)
+        self.assertIn(self.world.starting_content_item, {
+            data.RAMPAGES_ITEM, data.STUNT_JUMPS_ITEM, data.ROBBABLE_STORES_ITEM,
+        })
+
+    def test_a_started_item_leaves_the_pool(self) -> None:
+        # Starting inventory instead of a pool item, never both: one copy of a
+        # lock item exists, so the pool holds every other selected item and not
+        # this one.
+        pool = [item.name for item in self.multiworld.itempool]
+        self.assertNotIn(self.world.starting_ability_item, pool)
+        self.assertNotIn(self.world.starting_content_item, pool)
+        for name in (data.RAMPAGES_ITEM, data.STUNT_JUMPS_ITEM,
+                     data.ROBBABLE_STORES_ITEM):
+            if name != self.world.starting_content_item:
+                self.assertIn(name, pool, name)
+        # The vehicles key owns three items and the draw takes one, so the other
+        # two are still pool items: a removal that took the whole key would be
+        # invisible in the precollect count alone.
+        for name in (data.LAND_VEHICLES_ITEM, data.SEA_VEHICLES_ITEM,
+                     data.AIR_VEHICLES_ITEM, data.WEAPON_EQUIP_ITEM,
+                     data.WALLET_ITEM):
+            if name != self.world.starting_ability_item:
+                self.assertIn(name, pool, name)
+
+    def test_both_draws_are_in_the_state_from_the_first_sphere(self) -> None:
+        # Starting inventory is collected state, so every rule naming either
+        # drawn item is satisfied before a single check is sent.
+        self.assertTrue(
+            self.multiworld.state.has(self.world.starting_ability_item, self.player))
+        self.assertTrue(
+            self.multiworld.state.has(self.world.starting_content_item, self.player))
+
+    def test_the_pool_still_fills_every_location(self) -> None:
+        # The draw takes an item out of the pool, and the filler slice has to
+        # grow by exactly that much: the fill's own check only catches a pool
+        # too large, never one item short.
+        placed = [item for item in self.multiworld.itempool if item.player == self.player]
+        self.assertEqual(len(placed), len(self.multiworld.get_locations(self.player)))
+
+    def test_slot_data_carries_both_draws(self) -> None:
+        slot_data = self.world.fill_slot_data()
+        self.assertTrue(slot_data["starting_ability_unlock"])
+        self.assertTrue(slot_data["starting_content_unlock"])
+        self.assertEqual(slot_data["starting_ability_item"],
+                         self.world.starting_ability_item)
+        self.assertEqual(slot_data["starting_content_item"],
+                         self.world.starting_content_item)
+
+
+class TestStartingUnlockReleasesItsClass(WorldTestBase):
+    # A single content key forces the draw, so what the release actually buys is
+    # testable: the class opens with no item from the multiworld at all.
+    game = "Grand Theft Auto Vice City"
+    options: ClassVar[dict] = {
+        "content_locks": ["rampages"],
+        "starting_content_unlock": True,
+    }
+
+    def test_a_start_island_rampage_needs_nothing_further(self) -> None:
+        self.assertEqual(self.world.starting_content_item, data.RAMPAGES_ITEM)
+        start_rampages = [
+            data.rampage_name(index)
+            for index in range(1, data.RAMPAGE_COUNT + 1)
+            if LOCATION_REGIONS[data.rampage_name(index)] == data.REGION_VICE_CITY
+            and index not in data.VEHICLE_RAMPAGE_INDICES
+        ]
+        self.assertTrue(start_rampages)
+        for name in start_rampages:
+            self.assertTrue(self.can_reach_location(name), name)
+
+
+class TestStartingUnlocksWithoutKeys(WorldTestBase):
+    # The option on with no key selected has nothing to draw from, which is a
+    # quiet no-op rather than an error: a player turning locks off leaves it set.
+    game = "Grand Theft Auto Vice City"
+    options: ClassVar[dict] = {
+        "starting_ability_unlock": True,
+        "starting_content_unlock": True,
+    }
+
+    def test_nothing_is_drawn_and_nothing_is_precollected(self) -> None:
+        self.assertIsNone(self.world.starting_ability_item)
+        self.assertIsNone(self.world.starting_content_item)
+        precollected = {
+            item.name for item in self.multiworld.precollected_items[self.player]
+        }
+        for name in data.ABILITY_ITEMS + data.CONTENT_ITEMS:
+            self.assertNotIn(name, precollected, name)
+        slot_data = self.world.fill_slot_data()
+        self.assertIsNone(slot_data["starting_ability_item"])
+        self.assertIsNone(slot_data["starting_content_item"])
+
+
+class TestStartingUnlocksOff(WorldTestBase):
+    # Locks selected, the draw off: every lock item waits in the pool.
+    game = "Grand Theft Auto Vice City"
+    options: ClassVar[dict] = {
+        "ability_locks": ["sprint", "wallet"],
+        "content_locks": ["rampages", "properties"],
+    }
+
+    def test_every_lock_item_is_a_pool_item(self) -> None:
+        self.assertIsNone(self.world.starting_ability_item)
+        self.assertIsNone(self.world.starting_content_item)
+        pool = [item.name for item in self.multiworld.itempool]
+        for name in (data.SPRINT_ITEM, data.WALLET_ITEM, data.RAMPAGES_ITEM,
+                     data.PROPERTY_PURCHASES_ITEM):
+            self.assertIn(name, pool, name)
+        slot_data = self.world.fill_slot_data()
+        self.assertFalse(slot_data["starting_ability_unlock"])
+        self.assertFalse(slot_data["starting_content_unlock"])
+
+
+class TestStartingUnlocksRegeneration(WorldTestBase):
+    game = "Grand Theft Auto Vice City"
+    auto_construct = False
+
+    def _regenerate(self, slot_data: dict):
+        # A whole generation with the passthrough in place, the way the tracker
+        # runs it, so create_items sees the restored draw and not just
+        # generate_early.
+        tracker = setup_multiworld(GTAViceCityWorld, steps=())
+        tracker.re_gen_passthrough = {GTAViceCityWorld.game: slot_data}
+        for step in gen_steps:
+            call_all(tracker, step)
+        return tracker
+
+    def test_a_tracker_regeneration_replays_the_played_draw(self) -> None:
+        played = setup_multiworld(GTAViceCityWorld, seed=0, options={
+            "ability_locks": ["vehicles"],
+            "content_locks": ["rampages", "stunt_jumps"],
+            "starting_ability_unlock": True,
+            "starting_content_unlock": True,
+        })
+        world = played.worlds[1]
+        slot_data = GTAViceCityWorld.interpret_slot_data(world.fill_slot_data())
+
+        tracker = self._regenerate(slot_data)
+        replayed = tracker.worlds[1]
+        self.assertEqual(replayed.starting_ability_item, world.starting_ability_item)
+        self.assertEqual(replayed.starting_content_item, world.starting_content_item)
+        # The replay precollects the same two items, so the tracker reads the
+        # played seed's reachability and not its own. Filler is not compared:
+        # the tracker regenerates on its own seed, so its mirror sample and trap
+        # draw legitimately differ.
+        self.assertEqual(
+            sorted(item.name for item in tracker.precollected_items[1]),
+            sorted(item.name for item in played.precollected_items[1]),
+        )
+        pool = {item.name for item in tracker.itempool}
+        self.assertNotIn(replayed.starting_ability_item, pool)
+        self.assertNotIn(replayed.starting_content_item, pool)
+        for name in (data.RAMPAGES_ITEM, data.STUNT_JUMPS_ITEM):
+            if name != replayed.starting_content_item:
+                self.assertIn(name, pool, name)
+
+    def test_a_draw_the_restored_keys_no_longer_offer_is_dropped(self) -> None:
+        # Mismatched slot_data (hand-edited, or written by an older world) must
+        # not ask create_items to precollect an item no key put in the pool.
+        # Generation has to survive it, not merely report None.
+        slot_data = dict(_TRACKER_SLOT_DATA)
+        slot_data.update({
+            "ability_locks": ["wallet"],
+            "content_locks": ["rampages"],
+            "starting_ability_unlock": True,
+            "starting_content_unlock": True,
+            "starting_ability_item": data.SEA_VEHICLES_ITEM,
+            "starting_content_item": data.STUNT_JUMPS_ITEM,
+        })
+        tracker = self._regenerate(slot_data)
+        replayed = tracker.worlds[1]
+        self.assertIsNone(replayed.starting_ability_item)
+        self.assertIsNone(replayed.starting_content_item)
+        precollected = {item.name for item in tracker.precollected_items[1]}
+        self.assertNotIn(data.SEA_VEHICLES_ITEM, precollected)
+        self.assertNotIn(data.STUNT_JUMPS_ITEM, precollected)
+        # The keys the restore did name still put their own items in the pool.
+        pool = {item.name for item in tracker.itempool}
+        self.assertIn(data.WALLET_ITEM, pool)
+        self.assertIn(data.RAMPAGES_ITEM, pool)
+
+
 class TestStrandAccess(WorldTestBase):
     game = "Grand Theft Auto Vice City"
 
@@ -1353,6 +1584,18 @@ class TestRejections(WorldTestBase):
         with self.assertRaises(OptionError) as raised:
             self.world_setup()
         self.assertIn(because, str(raised.exception))
+
+    def test_a_starting_draw_never_rescues_a_narrow_seed(self) -> None:
+        # The option docs promise that a config refused without the draw is
+        # refused with it: the guard measures what is open with no item at all,
+        # so no seed's solvability rests on a random draw. Nothing but this test
+        # stops a later edit from teaching the guard about the draw.
+        self._assert_rejected({
+            "content_locks": ["hidden_packages"],
+            "ability_locks": ["vehicles", "weapon_equip", "wallet"],
+            "starting_content_unlock": True,
+            "starting_ability_unlock": True,
+        }, "check is reachable on a new game")
 
     def test_hundred_percent_rejects_with_a_class_off(self) -> None:
         # The 100 percent goal is a solvability contract: every stat

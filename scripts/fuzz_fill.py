@@ -120,6 +120,14 @@ CONFIGURATIONS: list[tuple[str, dict]] = [
     ("ability locks, vehicles and wallet", {
         "ability_locks": ["vehicles", "wallet"],
     }),
+    # The starting draws take one item per family out of the pool and into
+    # starting inventory, so they shift the item count against the location
+    # count on every seed.
+    ("ability locks, all keys, starting draw", {
+        "ability_locks": ["sprint", "jump", "crouch", "vehicles",
+                          "weapon_equip", "wallet"],
+        "starting_ability_unlock": True,
+    }),
     # Hidden packages are the only start-region class with no ability term, so
     # turning them off while every other class stays on still leaves the first
     # mission alone reachable. The guard refuses the shape rather than the
@@ -142,6 +150,16 @@ CONFIGURATIONS: list[tuple[str, dict]] = [
         "content_locks": ["hidden_packages", "rampages", "stunt_jumps",
                           "properties", "robbable_stores"],
     }),
+    # Both draws on with only content keys selected, so the content draw fires
+    # and the ability one finds nothing to draw from. Ability keys are left out:
+    # all five content keys plus any ability key is a refused shape, covered by
+    # its own row below.
+    ("content locks, all keys, starting draw", {
+        "content_locks": ["hidden_packages", "rampages", "stunt_jumps",
+                          "properties", "robbable_stores"],
+        "starting_content_unlock": True,
+        "starting_ability_unlock": True,
+    }),
     # With every check class enabled, all five content keys and no ability key
     # still measure a free count of 35. What refuses a seed is content locks
     # plus something else that narrows the start: ability_locks here, disabled
@@ -158,6 +176,15 @@ CONFIGURATIONS: list[tuple[str, dict]] = [
     ("packages held plus three ability keys EXPECT reject", {
         "content_locks": ["hidden_packages"],
         "ability_locks": ["vehicles", "weapon_equip", "wallet"],
+    }),
+    # The narrow-start guard measures what is open with no item at all, so a
+    # starting draw cannot rescue a refused shape. Deliberate: no seed's
+    # solvability may rest on a random draw.
+    ("packages held plus three ability keys, both draws EXPECT reject", {
+        "content_locks": ["hidden_packages"],
+        "ability_locks": ["vehicles", "weapon_equip", "wallet"],
+        "starting_content_unlock": True,
+        "starting_ability_unlock": True,
     }),
     ("content lock on a disabled class", {
         "enable_properties": False, "content_locks": ["properties"],
@@ -191,6 +218,8 @@ REFUSAL_GUARDS: dict[str, str] = {
     "weapon_equip lock, story plus stores EXPECT reject":
         "check is reachable on a new game",
     "ability locks, all keys, story plus stunt jumps EXPECT reject":
+        "check is reachable on a new game",
+    "packages held plus three ability keys, both draws EXPECT reject":
         "check is reachable on a new game",
     "ability locks, all keys, story plus side events EXPECT reject":
         "check is reachable on a new game",
