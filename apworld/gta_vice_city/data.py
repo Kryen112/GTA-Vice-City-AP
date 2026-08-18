@@ -576,6 +576,12 @@ MISSION_PREREQUISITES: dict[str, list[tuple[str, int]]] = {
 # custom FIN1 gate reads the same vanilla globals, and an asset's completion
 # is recognized only while its property is bought and owned, so logic mirrors
 # the prerequisite as the items to complete each asset.
+# The vanilla already-shown flag for the bribe help text, which the pickup
+# randomizer retires by stamping it. The vanilla HELP thread reads it in two
+# places: the guard on its three bribe-text sites, and the all-tutorials-shown
+# condition that ends the thread.
+BRIBE_HELP_SHOWN_FLAG = 105
+
 FINALE_HIT_THE_COURIER_FLAG = 273
 FINALE_COP_LAND_FLAG = 268
 FINALE_ASSET_COUNT_GLOBAL = 1175

@@ -21,7 +21,10 @@ Contract shipped to the client (and on to the ASI) in slot_data:
   from slot_data so the main.scm knows whether each reward group is shuffled.
   With the properties class disabled the map also carries the vanilla-collapse
   writes (properties_vanilla_globals), maxing the venue unlock and ownership
-  globals so every property gate reduces to purchase-only.
+  globals so every property gate reduces to purchase-only. Not every key is a
+  reserved global: with the pickup randomizer on the map also carries a VANILLA
+  script flag below the reserved block (pickups_randomized_globals), so nothing
+  downstream may filter this map to the reserved range.
 - completion_watch: completion global index -> AP location id. The mission or
   collectible sets its completion global to one when done; the ASI polls these
   and reports the location.
@@ -215,6 +218,30 @@ def properties_vanilla_globals() -> dict[int, int]:
         for ownership in data.PROPERTY_OWNERSHIP_ITEMS
     })
     return globals_map
+
+
+def pickups_randomized_globals() -> dict[int, int]:
+    """Global index -> value the client adds to config_globals when the pickup
+    randomizer is on.
+
+    The vanilla script shows a one-time help text the first time any police
+    bribe pickup is collected, explaining that the star lowers the wanted level.
+    It fires on whatever model the shuffle put on a bribe spot, so it describes
+    an item that is no longer there. The text is guarded by the vanilla
+    already-shown flag, so stamping that flag retires the text for the seed.
+
+    Only this one text is model-specific: the other first-collection texts key
+    on the four INFO tutorial icons, which are not ambient pickups and which the
+    shuffle never touches.
+
+    The stamp reaches one step further, which is accepted rather than unnoticed.
+    The same flag is one of six the vanilla HELP thread ANDs to decide it has
+    shown everything and can end, so with it pre-stamped the thread can end
+    without a bribe ever being collected. Two one-time texts sit past that check
+    and are lost in a seed where vanilla would still have shown them: the
+    wanted-level tip and the bridges-reopened help. Both are tutorial text, and
+    the mod drives the bridges from the area item anyway."""
+    return {data.BRIBE_HELP_SHOWN_FLAG: 1}
 
 
 def item_effects() -> dict[int, list]:

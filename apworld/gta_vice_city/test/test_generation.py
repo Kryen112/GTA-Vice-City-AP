@@ -444,6 +444,14 @@ class TestPickupRandomizerOn(WorldTestBase):
         )
         self.assertGreater(non_shop_slots, bribes)
 
+    def test_the_bribe_help_text_is_retired(self) -> None:
+        # The vanilla bribe tutorial fires on whatever model sits on a bribe
+        # spot, so with the shuffle on it describes an item that is not there.
+        # Stamping the vanilla already-shown flag retires it for the seed.
+        config = self.world.fill_slot_data()["config_globals"]
+        self.assertEqual(config[str(data.BRIBE_HELP_SHOWN_FLAG)], 1)
+
+
 
 class TestPickupRandomizerOff(WorldTestBase):
     game = "Grand Theft Auto Vice City"
@@ -457,6 +465,9 @@ class TestPickupRandomizerOff(WorldTestBase):
         self.assertFalse(slot_data["randomize_pickups"])
         self.assertIsNone(slot_data["pickup_permutation"])
         self.assertEqual(slot_data["pickup_layout"], [])
+        # And the bribe help text stays vanilla, since the bribes are where the
+        # text says they are.
+        self.assertNotIn(str(data.BRIBE_HELP_SHOWN_FLAG), slot_data["config_globals"])
         handle = io.StringIO()
         self.world.write_spoiler(handle)
         self.assertEqual(handle.getvalue(), "")
@@ -1860,6 +1871,9 @@ class TestReservedGlobals(WorldTestBase):
         # reserved global earlier would shift the Python side alone and
         # silently break every lock, so the contract is pinned here: update
         # every place together.
+        # The bribe help flag is deliberately a VANILLA index: the mod stamps a
+        # flag the script owns, so it must stay clear of the reserved block.
+        self.assertLess(data.BRIBE_HELP_SHOWN_FLAG, scm.RESERVED_BASE)
         self.assertEqual(scm.ABILITY_LOCK_FLAG_BASE, 9421)
         self.assertEqual(scm.ABILITY_UNLOCK_BASE, 9429)
         self.assertEqual(scm.CONTENT_LOCK_FLAG_BASE, 9437)

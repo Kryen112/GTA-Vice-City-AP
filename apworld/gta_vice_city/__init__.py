@@ -660,6 +660,11 @@ class GTAViceCityWorld(World):
         flags.update(scm.content_lock_flags(self._content_lock_keys()))
         if not self.options.enable_properties.value:
             flags.update(scm.properties_vanilla_globals())
+        if self.options.randomize_pickups.value:
+            # Retires the one vanilla help text that names the item at a spot
+            # rather than the item in hand: it would describe the police bribe
+            # the shuffle moved elsewhere. A vanilla flag, not a reserved one.
+            flags.update(scm.pickups_randomized_globals())
         return flags
 
     def _completion_condition(self) -> Callable[[CollectionState], bool]:
