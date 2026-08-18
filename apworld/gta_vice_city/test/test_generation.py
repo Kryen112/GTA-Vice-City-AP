@@ -1868,6 +1868,32 @@ class TestReservedGlobals(WorldTestBase):
         self.assertEqual(scm.ABILITY_KEYS, data.ABILITY_ITEMS)
         self.assertEqual(scm.CONTENT_KEYS, data.CONTENT_ITEMS)
 
+    def test_side_event_completion_globals_match_the_hand_written_mirrors(self) -> None:
+        # build_scm.py hard-codes these in two tables: SIDE_EVENTS (win flag ->
+        # completion global, for the APACT watcher) and SIDE_EVENT_CASH_SITES
+        # (the payout lines to gate on the same global). A location added or
+        # reordered anywhere earlier in the table shifts every completion global
+        # here, which would silently point each event's payout guard at another
+        # event. Pinned by literal, so that shift fails here instead: update the
+        # script tables in the same change.
+        expected = {
+            "Hotring": 9303, "Bloodring": 9304, "Dirtring": 9305,
+            "Downtown Chopper Checkpoint": 9306,
+            "Ocean Beach Chopper Checkpoint": 9307,
+            "Vice Point Chopper Checkpoint": 9308,
+            "Little Haiti Chopper Checkpoint": 9309,
+            "RC Bandit Race": 9310, "RC Baron Race": 9311,
+            "RC Raider Pickup": 9312,
+            "Trial by Dirt": 9313, "Test Track": 9314,
+            "PCJ Playground": 9315, "Cone Crazy": 9316,
+        }
+        self.assertEqual(sorted(expected), sorted(data.SIDE_EVENTS))
+        for name, global_index in expected.items():
+            self.assertEqual(scm.completion_global(name), global_index, name)
+        # Every payout guard also reads the class-cash flag, so that a seed with
+        # the class off pays vanilla; the same shift argument applies to it.
+        self.assertEqual(scm.SIDE_EVENTS_CASH_GLOBAL, 9417)
+
     def test_the_script_gated_content_items_keep_their_offsets(self) -> None:
         # build_scm.py derives the two gates it writes into the script from
         # fixed offsets into this block (stunt jumps at +2, robbable stores at

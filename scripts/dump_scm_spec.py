@@ -91,7 +91,10 @@ def main() -> int:
         print(f"### {strand}  [{class_key}]  unlock global ${scm.unlock_global(strand)}")
         for position, mission in enumerate(missions, start=1):
             giver = locations.MISSION_GIVER[mission]
-            requirements = rules._mission_requirements(mission, giver)
+            # No lock key is active: a lock term is enforced by the ASI or by its
+            # own gate, never by a mission's unlock gate, so the spec this prints
+            # is the gate table build_scm.py mirrors.
+            requirements = rules._mission_requirements(mission, giver, frozenset())
             parts = [
                 f"${scm.unlock_global(item if item in data.AREA_ITEMS else _strand_of(item))}"
                 f" >= {count}"

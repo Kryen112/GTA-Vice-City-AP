@@ -678,9 +678,15 @@ SIDE_EVENT_CASH_SITES = [
         "print_with_number_big 'M_PASS' number $1612 time 5000 style 1",
         "add_score $player_char money += $1612",
     ]),
+    # Cone Crazy pays from two sites. A completion that sets a record, which the
+    # first one always does, gosubs to the record subroutine and is paid $7926
+    # there (200, doubling per record); a replay that sets no record is paid a
+    # flat literal 200 in the win branch itself, behind an already-completed
+    # test. So the first-win payout is the $7926 pair, and the literal 200 pair
+    # is replay winnings that stay vanilla.
     ("Cone Crazy", 91, 9316, [
-        "print_with_number_big 'M_PASS' number 200 time 5000 style 1",
-        "add_score $player_char money += 200",
+        "print_with_number_big 'M_PASS' number $7926 time 5000 style 1",
+        "add_score $player_char money += $7926",
     ]),
     ("RC Raider Pickup", 93, 9312, [
         "print_with_number_big 'M_PASS' number 100 time 5000 style 1",
@@ -698,7 +704,7 @@ SIDE_EVENT_CASH_SITES = [
 
 
 def suppress_side_event_first_wins():
-    # Cone Crazy's beat-the-record replay prize and Hotring's second and third
+    # Cone Crazy's no-record replay consolation and Hotring's second and third
     # place prizes are repeatable winnings outside these anchors and stay.
     # Events run highest block first, so the wraps inserted in one block never
     # shift a block still waiting in the snapshot spans; the assert pins the
@@ -765,7 +771,7 @@ EXPECTED_VANILLA_CASH = {
     ("M83", "add_score $player_char money += 12"): 8,
     ("M83", "add_score $player_char money += 8"): 8,
     ("M83", "add_score $player_char money += 6"): 8,
-    ("M91", "add_score $player_char money += $7926"): 1,
+    ("M91", "add_score $player_char money += 200"): 1,
     ("M96", "add_score $player_char money += 6000"): 1,
     ("M96", "add_score $player_char money += 7000"): 1,
     ("M96", "add_score $player_char money += 8000"): 1,
@@ -774,7 +780,7 @@ EXPECTED_VANILLA_CASH = {
 }
 EXPECTED_VANILLA_BANNERS = {
     ("M66", "print_with_number_big 'M_PASS' number 500 time 5000 style 1"): 1,
-    ("M91", "print_with_number_big 'M_PASS' number $7926 time 5000 style 1"): 1,
+    ("M91", "print_with_number_big 'M_PASS' number 200 time 5000 style 1"): 1,
     ("M92", "print_with_number_big 'M_PASS' number 5000 time 5000 style 1"): 1,
     ("M96", "print_with_number_big 'M_PASS' number 6000 time 5000 style 1"): 1,
     ("M96", "print_with_number_big 'M_PASS' number 7000 time 5000 style 1"): 1,
