@@ -36,8 +36,8 @@ enum ContentIndex {
 // The content contract, matching apworld scm.py: one lock-flag global per
 // item from the flag base, then one unlock global per item from the unlock
 // base, both in ContentIndex order.
-constexpr int kContentLockFlagBase = 9437;
-constexpr int kContentUnlockBase = 9442;
+constexpr int kContentLockFlagBase = 9446;
+constexpr int kContentUnlockBase = 9451;
 
 // True per class while it is held right now.
 using ContentLocks = std::array<bool, kContentCount>;

@@ -260,10 +260,10 @@ class TestRadioStationsOn(WorldTestBase):
             )
 
     def test_reserved_block_stays_below_the_marker_globals(self) -> None:
-        # $9447 up is SCM-internal (marker handles and visibility flags, whose
+        # $9456 up is SCM-internal (marker handles and visibility flags, whose
         # bases live in add_markers.py); the reserved contract must never grow
         # into it.
-        self.assertLess(scm.highest_reserved_global(), 9447)
+        self.assertLess(scm.highest_reserved_global(), 9456)
 
 
 class TestRadioStationsOff(WorldTestBase):
@@ -556,16 +556,21 @@ class TestAbilityLocksAll(WorldTestBase):
         self.assertTrue(self.can_reach_location(weapon_rampage))
 
     def test_sunshine_asset_keeps_its_driving_term(self) -> None:
-        # The finale threshold is a solvability contract, and Sunshine Autos
-        # is the one asset whose strand slices away entirely (it completes on
-        # the import lists, not its race, so it needs zero progressives). Its
-        # driving requirement must survive that slice through the asset's own
-        # entry, or the threshold would count an asset the player cannot
-        # actually finish.
-        self.assertEqual(data.FINALE_OPTIONAL_ASSETS["Sunshine Autos"], 0)
+        # The finale threshold is a solvability contract, and Sunshine Autos is
+        # the one asset that completes partway along its strand: $1175 rises in
+        # IMPORT1's recognition block, so the first import garage list finishes
+        # the asset and the other three only raise its daily take. Its driving
+        # requirement must survive that slice, through the asset's own entry and
+        # through the sliced mission, or the threshold would count an asset the
+        # player cannot actually finish.
+        self.assertEqual(data.FINALE_OPTIONAL_ASSETS["Sunshine Autos"], 1)
         self.assertIn(
             data.LAND_VEHICLES_ITEM,
             data.ASSET_ABILITY_REQUIREMENTS["Sunshine Autos"],
+        )
+        self.assertIn(
+            data.LAND_VEHICLES_ITEM,
+            data.MISSION_ABILITY_REQUIREMENTS["Sunshine Autos Import List 1"],
         )
         # And in the built rule, with Sunshine Autos as the deciding asset
         # rather than a passenger: hold the mandatory Printworks plus exactly
@@ -582,7 +587,7 @@ class TestAbilityLocksAll(WorldTestBase):
             "Cherry Popper Ownership", "Progressive Cherry Popper",
             "Pole Position Ownership",
             "Boatyard Ownership", "Progressive Boatyard",
-            "Sunshine Autos Ownership",
+            "Sunshine Autos Ownership", "Progressive Sunshine Autos",
         ])
         self.assertFalse(self.can_reach_location("Cap the Collector"))
         self.collect_by_name([data.LAND_VEHICLES_ITEM])
@@ -666,6 +671,22 @@ class TestAbilityLocksAll(WorldTestBase):
         self.collect_by_name([data.LAND_VEHICLES_ITEM])
         self.assertTrue(self.can_reach_location("The Driver"))
         self.assertTrue(self.can_reach_location("The Job"))
+
+    def test_venue_activity_needs_its_vehicle(self) -> None:
+        # A Sunshine Autos race is driven in the player's own car, and a venue
+        # activity's rule is the only thing carrying that term (the races are
+        # ruled by venue, not by the lock-term fallback), so it is pinned
+        # through the rule rather than through the table alone. Without it the
+        # fill could put Land Vehicles behind a race that needs it.
+        self.collect_by_name([
+            "Sunshine Autos Ownership", "Progressive Vercetti Protection",
+            "Starfish Island Access", "Mainland Access", data.WALLET_ITEM,
+        ])
+        for race in data.SUNSHINE_RACES:
+            self.assertFalse(self.can_reach_location(race), race)
+        self.collect_by_name([data.LAND_VEHICLES_ITEM])
+        for race in data.SUNSHINE_RACES:
+            self.assertTrue(self.can_reach_location(race), race)
 
     def test_slot_data_carries_the_ability_contract(self) -> None:
         slot_data = self.world.fill_slot_data()
@@ -1357,6 +1378,41 @@ class TestPropertyAccess(WorldTestBase):
         self.collect_by_name(["Malibu Club Ownership"])
         self.assertTrue(self.can_reach_location("No Escape?"))
 
+    def _collect_sunshine_base(self) -> None:
+        # Everything the Sunshine Autos lot needs except its own progressive:
+        # the showroom bought (the Shakedown items plus Starfish Island Access,
+        # since Shakedown gives from the mansion), owned, and on the mainland.
+        self.collect_by_name([
+            "Progressive Vercetti Protection", "Starfish Island Access",
+            "Mainland Access", "Sunshine Autos Ownership",
+        ])
+
+    def test_sunshine_races_are_flat_behind_the_showroom(self) -> None:
+        # The showroom menu wraps all six races freely from the first visit, so
+        # they carry no progressive: buying and owning the lot opens every one
+        # of them at once, and the entry fees are money.
+        for race in data.SUNSHINE_RACES:
+            self.assertFalse(self.can_reach_location(race), race)
+        self._collect_sunshine_base()
+        for race in data.SUNSHINE_RACES:
+            self.assertTrue(self.can_reach_location(race), race)
+
+    def test_import_lists_are_a_progressive_ladder(self) -> None:
+        # The four lists are the venue's strand, in the order vanilla already
+        # chains them (each list's recognition thread starts the next), so list
+        # n needs the first n unlocks. The races share the lot and need none.
+        lists = data.VENUE_STRANDS["Sunshine Autos"]
+        self.assertEqual(len(lists), 4)
+        progressives = self.get_items_by_name("Progressive Sunshine Autos")
+        self.assertEqual(len(progressives), 4)
+        self._collect_sunshine_base()
+        for step, name in enumerate(lists):
+            self.assertFalse(self.can_reach_location(name), name)
+            self.collect(progressives[step])
+            self.assertTrue(self.can_reach_location(name), name)
+        for race in data.SUNSHINE_RACES:
+            self.assertTrue(self.can_reach_location(race), race)
+
     def test_ownership_items_are_in_the_pool(self) -> None:
         item_names = {item.name for item in self.multiworld.itempool}
         for ownership in data.PROPERTY_OWNERSHIP_ITEMS:
@@ -1443,13 +1499,16 @@ class TestFinaleAssetThreshold(WorldTestBase):
     def test_optional_asset_table_matches_the_strands(self) -> None:
         # Each optional asset that completes through its venue strand needs
         # every progressive of that strand (the asset completes on the last
-        # mission). Sunshine Autos completes through the import garage lists
-        # instead of its race strand, and Pole Position has no missions, so
-        # both are deliberately ownership-only.
+        # mission). Two are deliberately different: Pole Position has no
+        # missions at all, so it is ownership-only, and Sunshine Autos completes
+        # on the FIRST of its four import garage lists, so it takes one.
         for asset, progressive_count in data.FINALE_OPTIONAL_ASSETS.items():
             self.assertIn(data.ownership_item_name(asset), data.BUSINESS_OWNERSHIP_ITEMS)
-            if asset in ("Sunshine Autos", "Pole Position"):
+            if asset == "Pole Position":
                 self.assertEqual(progressive_count, 0, asset)
+            elif asset == "Sunshine Autos":
+                self.assertEqual(progressive_count, 1, asset)
+                self.assertEqual(len(data.VENUE_STRANDS[asset]), 4, asset)
             else:
                 self.assertEqual(progressive_count, len(data.VENUE_STRANDS[asset]), asset)
         self.assertNotIn("Printworks", data.FINALE_OPTIONAL_ASSETS)
@@ -1459,11 +1518,10 @@ class TestFinaleAssetThreshold(WorldTestBase):
 
 
 class TestPropertiesTightestPool(WorldTestBase):
-    # The tightest properties pool: the class's 31 items (16 venue
-    # progressives, 15 ownerships) exactly match its 31 locations, so the story
-    # pool on top needs another class's checks to have homes. The inherited
-    # default tests prove it fills and stays beatable through the finale's
-    # asset threshold.
+    # The tightest properties pool: the class brings 34 items (19 venue
+    # progressives, 15 ownerships) against 40 locations, so it carries six spare
+    # homes for another class's items. The inherited default tests prove it
+    # fills and stays beatable through the finale's asset threshold.
     game = "Grand Theft Auto Vice City"
     options: ClassVar[dict] = dict(_TIGHTEST_OPTIONS, enable_properties=True)
 
@@ -1712,12 +1770,21 @@ class TestRejections(WorldTestBase):
                 self._assert_rejected(dict(_STORY_ONLY_OPTIONS, **extra),
                                       "progression and useful items")
 
-    def test_properties_only_rejects_on_item_math(self) -> None:
-        # The properties class carries 31 items (16 venue progressives, 15
-        # ownerships) against its own 31 locations, so adding it to the
-        # story-only pool leaves the seed one item over its check count.
-        self._assert_rejected(dict(_STORY_ONLY_OPTIONS, enable_properties=True),
-                              "76 progression and useful items")
+    def test_properties_absorbs_the_story_only_surplus(self) -> None:
+        # Story-only is refused because its 45 progression and useful items
+        # outnumber its 44 checks. The properties class takes that surplus: it
+        # brings 34 items (19 venue progressives, 15 ownerships) against 40
+        # locations, because the six Sunshine Autos races carry no item at all
+        # and the four import garage lists share one progressive. The margin is
+        # what makes the pair generate, so it is pinned here rather than left to
+        # the absence of a rejection test.
+        self.options = dict(_STORY_ONLY_OPTIONS, enable_properties=True)
+        self.world_setup()
+        checks = [location
+                  for location in self.multiworld.get_locations(self.player)
+                  if location.address is not None]
+        self.assertEqual(len(checks), 84)
+        self.assertEqual(len(self.multiworld.itempool), len(checks))
 
     def test_locks_can_narrow_the_start_to_a_refusal(self) -> None:
         # A lock puts its class's checks behind an item, so a seed whose only
@@ -1853,8 +1920,9 @@ class TestTables(WorldTestBase):
         self.assertEqual(len(classes["emergency_vehicles"][1]), 56)
         self.assertEqual(len(classes["side_events"][1]), 14)
         self.assertEqual(len(classes["robbable_stores"][1]), 15)
-        # 15 property purchases plus the venue mission strands.
-        self.assertEqual(len(classes["properties"][1]), 31)
+        # 15 property purchases, the venue mission strands, and the six
+        # Sunshine Autos races, which are venue activities rather than a strand.
+        self.assertEqual(len(classes["properties"][1]), 40)
 
     def test_venue_strands_are_not_story_missions(self) -> None:
         # The venue strands moved to the Properties class, so their missions
@@ -1962,12 +2030,12 @@ class TestReservedGlobals(WorldTestBase):
         # The ASI hard-codes the packages-shuffled index too
         # (scm_game_state.cpp): it gates taking back the package cash the
         # executable pays, which no script gate can reach.
-        self.assertEqual(scm.PACKAGES_SHUFFLED_GLOBAL, 9378)
-        self.assertEqual(scm.ABILITY_LOCK_FLAG_BASE, 9421)
-        self.assertEqual(scm.ABILITY_UNLOCK_BASE, 9429)
-        self.assertEqual(scm.CONTENT_LOCK_FLAG_BASE, 9437)
-        self.assertEqual(scm.CONTENT_UNLOCK_BASE, 9442)
-        self.assertEqual(scm.highest_reserved_global(), 9446)
+        self.assertEqual(scm.PACKAGES_SHUFFLED_GLOBAL, 9387)
+        self.assertEqual(scm.ABILITY_LOCK_FLAG_BASE, 9430)
+        self.assertEqual(scm.ABILITY_UNLOCK_BASE, 9438)
+        self.assertEqual(scm.CONTENT_LOCK_FLAG_BASE, 9446)
+        self.assertEqual(scm.CONTENT_UNLOCK_BASE, 9451)
+        self.assertEqual(scm.highest_reserved_global(), 9455)
         self.assertEqual(scm.ABILITY_KEYS, data.ABILITY_ITEMS)
         self.assertEqual(scm.CONTENT_KEYS, data.CONTENT_ITEMS)
 
@@ -2007,7 +2075,38 @@ class TestReservedGlobals(WorldTestBase):
             self.assertEqual(scm.completion_global(name), global_index, name)
         # Every payout guard also reads the class-cash flag, so that a seed with
         # the class off pays vanilla; the same shift argument applies to it.
-        self.assertEqual(scm.SIDE_EVENTS_CASH_GLOBAL, 9417)
+        self.assertEqual(scm.SIDE_EVENTS_CASH_GLOBAL, 9426)
+
+    def test_sunshine_completion_globals_match_the_hand_written_mirrors(self) -> None:
+        # build_scm.py hard-codes these in three tables: SUNSHINE_IMPORT_LISTS
+        # (the gate and completion write at each :IMPORTn_87 recognition block),
+        # SUNSHINE_RACE_WINS (win flag -> completion global, for the APACT
+        # watcher, mirrored again in add_markers.py's CLEO copy), and
+        # SUNSHINE_RACE_PRIZES (the payout line to gate on the same global). A
+        # location added or reordered anywhere earlier shifts every global here,
+        # which would point each race's payout guard at another race. Pinned by
+        # literal, so that shift fails here: update the script tables with it.
+        expected = {
+            "Sunshine Autos Import List 1": 9362,
+            "Sunshine Autos Import List 2": 9363,
+            "Sunshine Autos Import List 3": 9364,
+            "Sunshine Autos Import List 4": 9365,
+            "Sunshine Autos Race: Terminal Velocity": 9366,
+            "Sunshine Autos Race: Ocean Drive": 9367,
+            "Sunshine Autos Race: Border Run": 9368,
+            "Sunshine Autos Race: Capital Cruise": 9369,
+            "Sunshine Autos Race: Tour!": 9370,
+            "Sunshine Autos Race: V.C. Endurance": 9371,
+        }
+        self.assertEqual(
+            sorted(expected),
+            sorted(data.VENUE_STRANDS["Sunshine Autos"] + data.SUNSHINE_RACES),
+        )
+        for name, global_index in expected.items():
+            self.assertEqual(scm.completion_global(name), global_index, name)
+        # The race payout guards read the properties class-cash flag, so a seed
+        # with the class off pays vanilla; the same shift argument applies to it.
+        self.assertEqual(scm.PROPERTIES_CASH_GLOBAL, 9429)
 
     def test_the_script_gated_content_items_keep_their_offsets(self) -> None:
         # build_scm.py derives the two gates it writes into the script from
@@ -2237,9 +2336,26 @@ class TestRewardData(WorldTestBase):
     def test_mission_rewards_cover_every_mission(self) -> None:
         missions = [m for missions in data.STORY_GIVERS.values() for m in missions]
         missions += [m for missions in data.VENUE_STRANDS.values() for m in missions]
+        missions += [a for activities in data.VENUE_ACTIVITIES.values()
+                     for a in activities]
         self.assertEqual(set(data.MISSION_REWARDS), set(missions))
         self.assertTrue(all(isinstance(amount, int) and amount >= 0
                             for amount in data.MISSION_REWARDS.values()))
+
+    def test_sunshine_activities_mirror_their_vanilla_cash(self) -> None:
+        # A race pays its prize on every win and the mod suppresses the first
+        # win only, so the prize is exactly what the check eats and the mirror
+        # returns it. An import list pays no cash of its own (it raises the
+        # asset's daily take), so it draws generic filler. The amounts are the
+        # showroom's own, in menu order.
+        prizes = dict(zip(data.SUNSHINE_RACES,
+                          (400, 2000, 4000, 8000, 20000, 40000), strict=True))
+        for race, prize in prizes.items():
+            self.assertEqual(data.LOCATION_REWARD[race], prize, race)
+            self.assertEqual(data.mirror_item(race), data.cash_item_name(prize), race)
+        for import_list in data.VENUE_STRANDS["Sunshine Autos"]:
+            self.assertEqual(data.LOCATION_REWARD[import_list], 0, import_list)
+            self.assertIsNone(data.mirror_item(import_list), import_list)
 
     def test_mirror_item_is_cash_when_paid_and_none_when_free(self) -> None:
         # A paying check mirrors to a cash item; a no-reward check mirrors to

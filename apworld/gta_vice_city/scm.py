@@ -110,9 +110,9 @@ MINIMAP_UNLOCK_GLOBAL = MINIMAP_SHUFFLED_GLOBAL + 1
 # one-time completion cash the main.scm suppresses while the class is enabled
 # (the AP check is the reward; the suppressed amounts return as the filler
 # mirror). At zero everything pays vanilla, the toggle invariant. Side events
-# suppress the first completion only, so replay prizes stay grindable;
-# repeatable earnings (emergency pay, till cash, race winnings) are never
-# touched.
+# and the Sunshine Autos races suppress the first completion only, so replay
+# prizes stay grindable; repeatable earnings (emergency pay, till cash,
+# in-mission bonuses) are never touched.
 SIDE_EVENTS_CASH_GLOBAL = MINIMAP_UNLOCK_GLOBAL + 1
 STUNT_JUMPS_CASH_GLOBAL = SIDE_EVENTS_CASH_GLOBAL + 1
 RAMPAGES_CASH_GLOBAL = STUNT_JUMPS_CASH_GLOBAL + 1

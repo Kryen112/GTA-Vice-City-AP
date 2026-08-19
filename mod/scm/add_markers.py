@@ -52,27 +52,27 @@ STRANDS = {
     # completion global) and owned (the ownership global its AP item drives),
     # so the beam and blip stay hidden and the launcher stays unstarted until
     # the progressive, the purchase, and the ownership item all exist.
-    "Malibu": [("BANK1", [(9023, 1), (9337, 1), (9405, 1)]),
-               ("BANK2", [(9023, 2), (9337, 1), (9405, 1)]),
-               ("BANK3", [(9023, 3), (9337, 1), (9405, 1)]),
-               ("BANK4", [(9023, 4), (9337, 1), (9405, 1)])],
-    "FilmStudio": [("PORN1", [(9024, 1), (9334, 1), (9402, 1)]),
-                   ("PORN2", [(9024, 2), (9334, 1), (9402, 1)]),
-                   ("PORN3", [(9024, 3), (9334, 1), (9402, 1)]),
-                   ("PORN4", [(9024, 4), (9334, 1), (9402, 1)])],
-    "Printworks": [("COU1", [(9025, 1), (9332, 1), (9400, 1)]),
-                   ("COU2", [(9025, 2), (9332, 1), (9400, 1)])],
-    "KaufmanCabs": [("TWAR1", [(9026, 1), (9336, 1), (9404, 1)]),
-                    ("TWAR2", [(9026, 2), (9336, 1), (9404, 1)]),
-                    ("TWAR3", [(9026, 3), (9336, 1), (9404, 1)])],
+    "Malibu": [("BANK1", [(9023, 1), (9337, 1), (9414, 1)]),
+               ("BANK2", [(9023, 2), (9337, 1), (9414, 1)]),
+               ("BANK3", [(9023, 3), (9337, 1), (9414, 1)]),
+               ("BANK4", [(9023, 4), (9337, 1), (9414, 1)])],
+    "FilmStudio": [("PORN1", [(9024, 1), (9334, 1), (9411, 1)]),
+                   ("PORN2", [(9024, 2), (9334, 1), (9411, 1)]),
+                   ("PORN3", [(9024, 3), (9334, 1), (9411, 1)]),
+                   ("PORN4", [(9024, 4), (9334, 1), (9411, 1)])],
+    "Printworks": [("COU1", [(9025, 1), (9332, 1), (9409, 1)]),
+                   ("COU2", [(9025, 2), (9332, 1), (9409, 1)])],
+    "KaufmanCabs": [("TWAR1", [(9026, 1), (9336, 1), (9413, 1)]),
+                    ("TWAR2", [(9026, 2), (9336, 1), (9413, 1)]),
+                    ("TWAR3", [(9026, 3), (9336, 1), (9413, 1)])],
 }
 
 # Fresh scratch globals, all above the ASI-written block (its top is the
-# highest content unlock, $9446). One handle, one started-flag, one
+# highest content unlock, $9455). One handle, one started-flag, one
 # shown-flag per managed mission.
-HANDLE_BASE = 9447
-STARTED_BASE = 9507
-SHOWN_BASE = 9567
+HANDLE_BASE = 9456
+STARTED_BASE = 9516
+SHOWN_BASE = 9576
 MARKER_SPRITE_DEFAULT = "34"  # generic mission-attempt sprite; overridden per giver
 
 with open(SRC, "rb") as handle:
@@ -239,16 +239,17 @@ stat_checks = ([(f"${1439 + n} == 1", 9176 + n) for n in range(35)]
                + [(f"$369 >= {10 * n}", 9282 + n) for n in range(1, 11)])
 for idx, (cond, comp) in enumerate(stat_checks):
     cleo += ["if ", f"  {cond}", f"goto_if_false @AW_S{idx}", f"${comp} = 1", f":AW_S{idx}"]
-# Activity + side events (APACT). Checkpoint Charlie ($607), the six Sunshine
-# races (all of $1588..$1593), and 14 independent side-event win flags.
-cleo += ["if ", "  $607 == 1", "goto_if_false @AW_RACES", "$9361 = 1", ":AW_RACES"]
-for race_flag in range(1588, 1594):
-    cleo += ["if ", f"  ${race_flag} == 1", "goto_if_false @AW_SIDE"]
-cleo += ["$9362 = 1", ":AW_SIDE"]
-side_events = [(1597, 9303), (1598, 9304), (55, 9305), (1584, 9306), (1585, 9307),
-               (1586, 9308), (1587, 9309), (8241, 9310), (8485, 9311), (8156, 9312),
-               (363, 9313), (364, 9314), (339, 9315), (351, 9316)]
-for idx, (flag, comp) in enumerate(side_events):
+# Activity + side events (APACT), mirroring build_scm.add_activity_watcher:
+# Checkpoint Charlie ($607), the six Sunshine Autos races ($1588..$1593, one
+# check each in showroom menu order), and 14 side-event win flags. Every flag is
+# an independent set-once signal, so each writes its own completion global.
+activity_flags = ([(607, 9361)]
+                  + [(1587 + race, 9365 + race) for race in range(1, 7)]
+                  + [(1597, 9303), (1598, 9304), (55, 9305), (1584, 9306),
+                     (1585, 9307), (1586, 9308), (1587, 9309), (8241, 9310),
+                     (8485, 9311), (8156, 9312), (363, 9313), (364, 9314),
+                     (339, 9315), (351, 9316)])
+for idx, (flag, comp) in enumerate(activity_flags):
     cleo += ["if ", f"  ${flag} == 1", f"goto_if_false @AW_E{idx}", f"${comp} = 1", f":AW_E{idx}"]
 cleo += ["goto @AW_LOOP", ""]
 if CLEO_OUT:
@@ -328,7 +329,7 @@ lines[boot + 1:boot + 1] = ["start_new_script @APMARK "]
 # Grow the reserved block to cover the new scratch globals. The anchor is the
 # foundation's sizing line, the highest ASI-written global (the top content
 # unlock).
-found = next(i for i, ln in enumerate(lines) if ln == "$9446 = 0")
+found = next(i for i, ln in enumerate(lines) if ln == "$9455 = 0")
 lines[found + 1:found + 1] = [f"${highest_global} = 0"]
 
 with open(DST, "wb") as handle:

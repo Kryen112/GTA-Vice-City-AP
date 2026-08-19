@@ -67,6 +67,9 @@ STORY_GIVERS: dict[str, list[str]] = {
 # bought in game and the businesses go on sale only when Shakedown passes, so
 # venue missions carry the items to pass Shakedown as a requirement (see
 # PROPERTY_UNLOCK_MISSION). Progressive unlocks work the same as story givers.
+# Sunshine Autos' strand is its four import garage lists, which vanilla chains:
+# each list's completion thread starts the next and terminates itself, so the
+# play order the progressives impose is the order the game already forces.
 VENUE_STRANDS: dict[str, list[str]] = {
     "Malibu Club": ["No Escape?", "The Shootist", "The Driver", "The Job"],
     "Film Studio": [
@@ -76,7 +79,32 @@ VENUE_STRANDS: dict[str, list[str]] = {
     "Kaufman Cabs": ["V.I.P.", "Friendly Rivalry", "Cabmaggedon"],
     "Cherry Popper": ["Distribution"],
     "Boatyard": ["Checkpoint Charlie"],
-    "Sunshine Autos": ["Sunshine Autos Races"],
+    "Sunshine Autos": [
+        "Sunshine Autos Import List 1", "Sunshine Autos Import List 2",
+        "Sunshine Autos Import List 3", "Sunshine Autos Import List 4",
+    ],
+}
+
+# Sunshine Autos' six street races, in the showroom menu's own order: menu arm n
+# displays GXT 'RACES0n' and sets vanilla flag $1587+n on its first win. The menu
+# wraps 1 through 6 freely with no completion gate, so vanilla opens all six the
+# moment the showroom is bought and the only cost is the entry fee, which is
+# money. They are flat locations sharing one rule, not a strand.
+SUNSHINE_RACES: list[str] = [
+    "Sunshine Autos Race: Terminal Velocity",
+    "Sunshine Autos Race: Ocean Drive",
+    "Sunshine Autos Race: Border Run",
+    "Sunshine Autos Race: Capital Cruise",
+    "Sunshine Autos Race: Tour!",
+    "Sunshine Autos Race: V.C. Endurance",
+]
+
+# Venue locations that are not strand missions: a venue's own activities, gated
+# alike on the venue being bought and owned and on nothing else. They take their
+# island and their ownership term from their venue and carry no progressive
+# unlock, so a venue's strand length still names its unlock count.
+VENUE_ACTIVITIES: dict[str, list[str]] = {
+    "Sunshine Autos": list(SUNSHINE_RACES),
 }
 
 # Property purchase checks. The businesses front the venue strands above (plus
@@ -290,7 +318,10 @@ MISSION_ABILITY_REQUIREMENTS: dict[str, list[str]] = {
     "The Driver": [LAND_VEHICLES_ITEM],
     "Demolition Man": [LAND_VEHICLES_ITEM],
     "G-spotlight": [LAND_VEHICLES_ITEM],
-    "Sunshine Autos Races": [LAND_VEHICLES_ITEM],
+    "Sunshine Autos Import List 1": [LAND_VEHICLES_ITEM],
+    "Sunshine Autos Import List 2": [LAND_VEHICLES_ITEM],
+    "Sunshine Autos Import List 3": [LAND_VEHICLES_ITEM],
+    "Sunshine Autos Import List 4": [LAND_VEHICLES_ITEM],
     "The Fastest Boat": [SEA_VEHICLES_ITEM],
     "Supply & Demand": [SEA_VEHICLES_ITEM],
     "Stunt Boat Challenge": [SEA_VEHICLES_ITEM],
@@ -325,8 +356,7 @@ AIR_SIDE_EVENTS: frozenset[str] = frozenset({
 # because its script sets the player down beside a created Sanchez and the
 # player mounts it, a real entry. Every other side event's launcher requires
 # the player to already be in a specific vehicle: the RC trio in a Top Fun
-# van, the four trials in their own model, and the Sunshine races stopped in
-# a car at the start line.
+# van and the four trials in their own model.
 SEATED_SIDE_EVENTS: frozenset[str] = frozenset({"Hotring", "Bloodring"})
 
 
@@ -520,7 +550,12 @@ def optional_check_classes() -> dict[str, tuple[str, list[str]]]:
         "properties": (
             "enable_properties",
             list(PROPERTY_PURCHASES)
-            + [mission for missions in VENUE_STRANDS.values() for mission in missions],
+            + [mission for missions in VENUE_STRANDS.values() for mission in missions]
+            + [
+                activity
+                for activities in VENUE_ACTIVITIES.values()
+                for activity in activities
+            ],
         ),
     }
 
@@ -572,7 +607,7 @@ MISSION_PREREQUISITES: dict[str, list[tuple[str, int]]] = {
 # controller starts Cap the Collector's launcher once Hit the Courier ($273)
 # and Cop Land ($268) have passed and the owned-asset count $1175 exceeds six:
 # seven of the nine income assets complete. Each asset completes differently:
-# a venue strand's last mission, the Sunshine Autos import garage lists, the
+# a venue strand's last mission, the first Sunshine Autos import garage list, the
 # Pole Position back-room spend, or Cop Land for the Vercetti Estate. The
 # custom FIN1 gate reads the same vanilla globals, and an asset's completion
 # is recognized only while its property is bought and owned, so logic mirrors
@@ -596,7 +631,7 @@ FINALE_ASSET_THRESHOLD = 7
 # toward the threshold, leaving this many to pick from the seven below.
 FINALE_OPTIONAL_ASSETS: dict[str, int] = {
     "Malibu Club": 4, "Film Studio": 4, "Kaufman Cabs": 3, "Cherry Popper": 1,
-    "Boatyard": 1, "Sunshine Autos": 0, "Pole Position": 0,
+    "Boatyard": 1, "Sunshine Autos": 1, "Pole Position": 0,
 }
 FINALE_OPTIONAL_ASSETS_REQUIRED = FINALE_ASSET_THRESHOLD - 2
 
@@ -774,7 +809,9 @@ def location_ability_requirements() -> dict[str, list[str]]:
     (bare fists cannot); a weapon rampage wields its handed weapon while the
     two run-them-down rampages take a land vehicle; a safehouse purchase
     takes holdable money (a business purchase carries the wallet through the
-    property-sale requirements instead).
+    property-sale requirements instead); and each Sunshine Autos race is driven
+    in the player's own car, since the launcher takes them on foot and the
+    mission creates only the opponents.
     """
     requirements: dict[str, list[str]] = {}
     for mission, items in MISSION_ABILITY_REQUIREMENTS.items():
@@ -799,6 +836,8 @@ def location_ability_requirements() -> dict[str, list[str]]:
     for purchase in PROPERTY_PURCHASES:
         if purchase not in BUSINESS_PURCHASES:
             requirements[purchase] = [WALLET_ITEM]
+    for name in SUNSHINE_RACES:
+        requirements[name] = [LAND_VEHICLES_ITEM]
     return requirements
 
 
@@ -927,8 +966,17 @@ MISSION_REWARDS: dict[str, int] = {
     "Distribution": 0,
     # Boatyard
     "Checkpoint Charlie": 5000,
-    # Sunshine Autos
-    "Sunshine Autos Races": 0,
+    # Sunshine Autos. An import list pays no cash of its own: it raises the
+    # asset's daily take instead. A race pays its prize on every win, and the
+    # check eats the first win only, so the prize is what the mirror returns.
+    "Sunshine Autos Import List 1": 0, "Sunshine Autos Import List 2": 0,
+    "Sunshine Autos Import List 3": 0, "Sunshine Autos Import List 4": 0,
+    "Sunshine Autos Race: Terminal Velocity": 400,
+    "Sunshine Autos Race: Ocean Drive": 2000,
+    "Sunshine Autos Race: Border Run": 4000,
+    "Sunshine Autos Race: Capital Cruise": 8000,
+    "Sunshine Autos Race: Tour!": 20000,
+    "Sunshine Autos Race: V.C. Endurance": 40000,
 }
 
 
@@ -943,6 +991,9 @@ def _build_location_reward() -> dict[str, int]:
     for missions in VENUE_STRANDS.values():
         for mission in missions:
             reward[mission] = MISSION_REWARDS[mission]
+    for activities in VENUE_ACTIVITIES.values():
+        for activity in activities:
+            reward[activity] = MISSION_REWARDS[activity]
     for index, name in enumerate(package_data.PACKAGE_NAMES, start=1):
         reward[name] = package_cash_reward(index)
     for name in SIDE_EVENTS:

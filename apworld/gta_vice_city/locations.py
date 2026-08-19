@@ -79,14 +79,18 @@ for _strand, (_class_key, _missions) in data.progressive_strands().items():
         MISSION_INDEX[_mission] = _index
 
 # Location name to region (island). Missions (story and venue) follow their
-# giver or venue island, with per-mission overrides; rampages, hidden packages,
-# and robbable stores follow their world position; property purchases follow their
+# giver or venue island, and a venue's activities follow their venue, with
+# per-mission overrides; rampages, hidden packages, and robbable stores follow
+# their world position; property purchases follow their
 # business or safehouse island; the upper half of each emergency activity gates on
 # the mainland for logic pacing; the mainland side events and (provisionally) all
 # stunt jumps gate on the mainland. Anything left over is the start island.
 LOCATION_REGIONS: dict[str, str] = {}
 for _mission, _strand in MISSION_GIVER.items():
     LOCATION_REGIONS[_mission] = data.mission_region(_strand, _mission)
+for _venue, _activities in data.VENUE_ACTIVITIES.items():
+    for _activity in _activities:
+        LOCATION_REGIONS[_activity] = data.mission_region(_venue, _activity)
 for _name in data.MAINLAND_RAMPAGES:
     LOCATION_REGIONS[_name] = data.REGION_MAINLAND
 for _name in data.STARFISH_RAMPAGES:

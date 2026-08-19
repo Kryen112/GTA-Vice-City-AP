@@ -36,8 +36,8 @@ enum AbilityIndex {
 // The ability contract, matching apworld scm.py: one lock-flag global per
 // item from the flag base, then one unlock global per item from the unlock
 // base, both in AbilityIndex order.
-constexpr int kAbilityLockFlagBase = 9421;
-constexpr int kAbilityUnlockBase = 9429;
+constexpr int kAbilityLockFlagBase = 9430;
+constexpr int kAbilityUnlockBase = 9438;
 
 // True per ability while it is locked right now.
 using AbilityLocks = std::array<bool, kAbilityCount>;

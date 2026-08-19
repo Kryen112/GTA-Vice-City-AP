@@ -66,29 +66,29 @@ MISSIONS = [
     # Venue strands also require their property bought, read from the venue
     # purchase's completion global (set at the buy cutscene, save-persisted),
     # and owned, read from the ownership global its AP item drives.
-    # Malibu Club (9023, bought $9337, owned $9405)
-    ("BANK1", [(9023, 1), (9337, 1), (9405, 1)], 9347),
-    ("BANK2", [(9023, 2), (9337, 1), (9405, 1)], 9348),
-    ("BANK3", [(9023, 3), (9337, 1), (9405, 1)], 9349),
-    ("BANK4", [(9023, 4), (9337, 1), (9405, 1)], 9350),
-    # Film Studio (9024, bought $9334, owned $9402)
-    ("PORN1", [(9024, 1), (9334, 1), (9402, 1)], 9351),
-    ("PORN2", [(9024, 2), (9334, 1), (9402, 1)], 9352),
-    ("PORN3", [(9024, 3), (9334, 1), (9402, 1)], 9353),
-    ("PORN4", [(9024, 4), (9334, 1), (9402, 1)], 9354),
-    # Printworks (9025, bought $9332, owned $9400)
-    ("COU1", [(9025, 1), (9332, 1), (9400, 1)], 9355),
-    ("COU2", [(9025, 2), (9332, 1), (9400, 1)], 9356),
-    # Kaufman Cabs (9026, bought $9336, owned $9404)
-    ("TWAR1", [(9026, 1), (9336, 1), (9404, 1)], 9357),
-    ("TWAR2", [(9026, 2), (9336, 1), (9404, 1)], 9358),
-    ("TWAR3", [(9026, 3), (9336, 1), (9404, 1)], 9359),
-    # Cherry Popper (9027, bought $9335, owned $9403; the buy cutscene is also
+    # Malibu Club (9023, bought $9337, owned $9414)
+    ("BANK1", [(9023, 1), (9337, 1), (9414, 1)], 9347),
+    ("BANK2", [(9023, 2), (9337, 1), (9414, 1)], 9348),
+    ("BANK3", [(9023, 3), (9337, 1), (9414, 1)], 9349),
+    ("BANK4", [(9023, 4), (9337, 1), (9414, 1)], 9350),
+    # Film Studio (9024, bought $9334, owned $9411)
+    ("PORN1", [(9024, 1), (9334, 1), (9411, 1)], 9351),
+    ("PORN2", [(9024, 2), (9334, 1), (9411, 1)], 9352),
+    ("PORN3", [(9024, 3), (9334, 1), (9411, 1)], 9353),
+    ("PORN4", [(9024, 4), (9334, 1), (9411, 1)], 9354),
+    # Printworks (9025, bought $9332, owned $9409)
+    ("COU1", [(9025, 1), (9332, 1), (9409, 1)], 9355),
+    ("COU2", [(9025, 2), (9332, 1), (9409, 1)], 9356),
+    # Kaufman Cabs (9026, bought $9336, owned $9413)
+    ("TWAR1", [(9026, 1), (9336, 1), (9413, 1)], 9357),
+    ("TWAR2", [(9026, 2), (9336, 1), (9413, 1)], 9358),
+    ("TWAR3", [(9026, 3), (9336, 1), (9413, 1)], 9359),
+    # Cherry Popper (9027, bought $9335, owned $9412; the buy cutscene is also
     # what starts its launcher). Boatyard (9028) and Sunshine Autos (9029) are
     # activity launchers with no passed-flag guard, wired bespoke in
     # ACTIVITIES; their threads too start only at the buy cutscene, which
     # carries the purchase condition.
-    ("ICE1", [(9027, 1), (9335, 1), (9403, 1)], 9360),
+    ("ICE1", [(9027, 1), (9335, 1), (9412, 1)], 9360),
 ]
 
 with open(SRC, "rb") as handle:
@@ -237,12 +237,12 @@ def add_purchase_completions():
 
 
 # Property ownership globals, indices matching scm.py: one per purchasable
-# property in purchase order ($9400 Printworks .. $9414 Skumole Shack), written
+# property in purchase order ($9409 Printworks .. $9423 Skumole Shack), written
 # by the ASI when the ownership item arrives (or all stamped to 1 when the
 # properties class is off, the vanilla collapse). Every property grant reads
 # bought AND owned.
-OWNERSHIP_SUNSHINE = 9401
-OWNERSHIP_POLE_POSITION = 9407
+OWNERSHIP_SUNSHINE = 9410
+OWNERSHIP_POLE_POSITION = 9416
 
 # Safehouse save threads: (save thread, ownership global, garage grant lines
 # moved out of the buy cutscene). Each SAVEn thread is started only by its buy
@@ -251,15 +251,15 @@ OWNERSHIP_POLE_POSITION = 9407
 # either order, and the garage changes ride the same gate. The buy cutscene
 # keeps its camera work, money, blip swap, and owned-property stat.
 SAFEHOUSES = [
-    ("SAVE1", 9408, ["change_garage_type $663 change_to_type 16"]),   # El Swanko Casa
-    ("SAVE2", 9409, ["change_garage_type $655 change_to_type 26"]),   # Links View Apartment
-    ("SAVE3", 9410, ["change_garage_type $667 change_to_type 17",     # Hyman Condo
+    ("SAVE1", 9417, ["change_garage_type $663 change_to_type 16"]),   # El Swanko Casa
+    ("SAVE2", 9418, ["change_garage_type $655 change_to_type 26"]),   # Links View Apartment
+    ("SAVE3", 9419, ["change_garage_type $667 change_to_type 17",     # Hyman Condo
                      "change_garage_type $668 change_to_type 18",
                      "change_garage_type $669 change_to_type 24"]),
-    ("SAVE4", 9412, []),                                              # 1102 Washington Street
-    ("SAVE5", 9411, ["change_garage_type $659 change_to_type 25"]),   # Ocean Heights Apartment
-    ("SAVE6", 9413, []),                                              # Vice Point
-    ("SAVE7", 9414, []),                                              # Skumole Shack
+    ("SAVE4", 9421, []),                                              # 1102 Washington Street
+    ("SAVE5", 9420, ["change_garage_type $659 change_to_type 25"]),   # Ocean Heights Apartment
+    ("SAVE6", 9422, []),                                              # Vice Point
+    ("SAVE7", 9423, []),                                              # Skumole Shack
 ]
 
 
@@ -288,19 +288,49 @@ def gate_pole_position_completion():
     edits.append(f"pole position completion owned ${OWNERSHIP_POLE_POSITION}")
 
 
-def gate_sunshine_import_completion():
-    # The Sunshine Autos asset completes when the import garage's last list
-    # fills. The recognition branch re-polls every loop, so lists filled
-    # before ownership complete once the item arrives.
-    anchor = [i for i, ln in enumerate(lines) if ln == ":IMPORT1_87"]
-    assert len(anchor) == 1, f"sunshine import: :IMPORT1_87 matched {len(anchor)}"
-    i = anchor[0]
-    assert lines[i + 1] == "if " and lines[i + 2] == "  $1107 == 0" \
-        and lines[i + 3] == "goto_if_false @IMPORT1_822", \
-        f"sunshine import: branch shape looks wrong ({lines[i + 1:i + 4]})"
-    lines[i + 4:i + 4] = ["if ", f"  ${OWNERSHIP_SUNSHINE} >= 1",
-                          "goto_if_false @IMPORT1_822"]
-    edits.append(f"sunshine import completion owned ${OWNERSHIP_SUNSHINE}")
+# The four import garage lists, Sunshine Autos' mission strand. Each list
+# wants six vehicles ($1105 counts them) and its own thread recognizes the
+# fill, then starts the next list's thread and terminates itself, so vanilla
+# already forces the order the progressives impose. The Sunshine Autos asset
+# is the FIRST list: $1175 += 1 and $628 = 1 sit in IMPORT1's recognition
+# block, and lists two through four only raise the daily take by 2500 each.
+# (thread name, unlock count, completion global.)
+SUNSHINE_IMPORT_LISTS = [
+    ("IMPORT1", 1, 9362), ("IMPORT2", 2, 9363),
+    ("IMPORT3", 3, 9364), ("IMPORT4", 4, 9365),
+]
+SUNSHINE_UNLOCK = 9029
+
+
+def gate_sunshine_import_lists():
+    # Gate and complete each list at its own recognition block. The gate holds
+    # the whole block, which is also what advances the garage to the next list,
+    # so a held list cannot be filled ahead of its item; the thread re-polls
+    # every loop, so a list filled before the item completes once it arrives.
+    for position, (thread, count, completion) in enumerate(SUNSHINE_IMPORT_LISTS):
+        anchor = [i for i, ln in enumerate(lines) if ln == f":{thread}_87"]
+        assert len(anchor) == 1, f"sunshine import: :{thread}_87 matched {len(anchor)}"
+        i = anchor[0]
+        shape = lines[i + 1:i + 4]
+        assert (shape[0] == "if " and shape[1] == "  $1107 == 0"
+                and shape[2].startswith("goto_if_false @")), (
+            f"sunshine import: {thread} branch shape looks wrong ({shape})")
+        loopback = shape[2][len("goto_if_false @"):]
+        if position + 1 < len(SUNSHINE_IMPORT_LISTS):
+            successor = SUNSHINE_IMPORT_LISTS[position + 1][0]
+            starts = [j for j, ln in enumerate(lines)
+                      if ln == f"start_new_script @{successor} "]
+            successor_label = lines.index(f":{successor}")
+            assert len(starts) == 1 and i < starts[0] < successor_label, (
+                f"sunshine import: {thread} does not chain to {successor} "
+                f"from inside its own thread")
+        lines[i + 4:i + 4] = [
+            "if and", f"  ${SUNSHINE_UNLOCK} >= {count}",
+            f"  ${OWNERSHIP_SUNSHINE} >= 1", f"goto_if_false @{loopback}",
+            f"${completion} = 1",
+        ]
+    edits.append(f"sunshine import: {len(SUNSHINE_IMPORT_LISTS)} lists gated "
+                 f"on ${SUNSHINE_UNLOCK} and owned ${OWNERSHIP_SUNSHINE}")
 
 
 def _content_unlocked_guard(lock_flag, unlock, label):
@@ -422,15 +452,25 @@ def add_area_watcher(mainland_block, east_gate, west_gate):
     insert_after("start_new_script @HOT ", ["start_new_script @APAREA "], "boot start @APAREA")
 
 
-# Activity launchers (Boatyard's Checkpoint Charlie, Sunshine Autos Races) are
-# repeatable and have no passed-flag guard, so they are wired bespoke: a gate at
-# the launcher top and completion from the vanilla win flags via the APACT
-# watcher. Each also requires its property's ownership global; the purchase
-# condition is implicit, since these threads start only at the buy cutscene.
+# Activity launchers (Boatyard's Checkpoint Charlie, the Sunshine Autos race
+# showroom) are repeatable and have no passed-flag guard, so they are wired
+# bespoke: a gate at the launcher top and completion from the vanilla win flags
+# via the APACT watcher. Each requires its property's ownership global; the
+# purchase condition is implicit, since these threads start only at the buy
+# cutscene. The showroom carries no unlock count: its menu wraps all six races
+# freely from the first visit, so they are flat checks and Sunshine's
+# progressive gates the import lists instead.
 # (launcher-10 label, [(global, count), ...], loop-back label.)
 ACTIVITIES = [
-    ("COKRUN_10", [(9028, 1), (9406, 1)], "COKRUN_345"),
-    ("RACES_10", [(9029, 1), (9401, 1)], "RACES_121"),
+    ("COKRUN_10", [(9028, 1), (9415, 1)], "COKRUN_345"),
+    ("RACES_10", [(9410, 1)], "RACES_121"),
+]
+
+# The six races' vanilla win flags in showroom menu order (menu arm n sets
+# $1587+n once on its first win), paired with their completion globals.
+SUNSHINE_RACE_WINS = [
+    (1588, 9366), (1589, 9367), (1590, 9368),
+    (1591, 9369), (1592, 9370), (1593, 9371),
 ]
 
 
@@ -460,21 +500,16 @@ SIDE_EVENTS = [
 
 def add_activity_watcher():
     # Boot-started watcher that polls vanilla win flags and marks completions:
-    # Checkpoint Charlie ($607 -> $9361), the six Sunshine Autos races (all of
-    # $1588..$1593 -> $9362), and the 14 side events (each flag -> its global).
-    # Each check is independent except the races, which require all six.
+    # Checkpoint Charlie ($607 -> $9361), the six Sunshine Autos races
+    # ($1588..$1593, one check each), and the 14 side events. Every flag is an
+    # independent set-once signal, so each writes its own completion global.
+    watched = [(607, 9361), *SUNSHINE_RACE_WINS, *SIDE_EVENTS]
     body = ["", ":APACT", "script_name 'APACT'", "",
-            ":APACT_LOOP", "wait 1000",
-            "if ", "  $607 == 1", "goto_if_false @APACT_RACES",
-            "$9361 = 1",
-            "", ":APACT_RACES"]
-    for race_flag in range(1588, 1594):
-        body += ["if ", f"  ${race_flag} == 1", "goto_if_false @APACT_SIDE"]
-    body += ["$9362 = 1", "", ":APACT_SIDE"]
-    for index, (win_flag, completion_global) in enumerate(SIDE_EVENTS):
-        skip = "@APACT_LOOP" if index == len(SIDE_EVENTS) - 1 else f"@APACT_EVENT_{index}"
+            ":APACT_LOOP", "wait 1000"]
+    for index, (win_flag, completion_global) in enumerate(watched):
+        skip = "@APACT_LOOP" if index == len(watched) - 1 else f"@APACT_EVENT_{index}"
         body += ["if ", f"  ${win_flag} == 1", f"goto_if_false {skip}", f"${completion_global} = 1"]
-        if index != len(SIDE_EVENTS) - 1:
+        if index != len(watched) - 1:
             body += [f":APACT_EVENT_{index}"]
     body += ["goto @APACT_LOOP"]
     insert_before(":GEN1", body, "APACT activity + side-event watcher")
@@ -483,7 +518,7 @@ def add_activity_watcher():
 
 # Vanilla cash suppression. The AP check replaces each check's one-time
 # completion cash; repeatable earnings (fares, per-action pay, replay prizes,
-# race winnings, till cash) stay vanilla. Story mission pass cash is deleted
+# race replay prizes, till cash) stay vanilla. Story mission pass cash is deleted
 # outright (story missions are always on); every toggleable class gates its
 # cash on a class-cash config flag instead, so a disabled class pays fully
 # vanilla. Side events suppress the first completion only: the payout skips
@@ -513,16 +548,16 @@ def guard_flag(index, span, flag):
     guard_span(index, span, flag, next_apcash_label())
 
 
-def guard_replay(index, span, completion):
-    # Wrap `span` lines so they run when the side-events class is off OR the
-    # event's completion global is already set (a replay). Only the first
-    # completion while the class is on skips the payout: the payout and the
-    # win-flag write share one script frame, and the APACT watcher marks the
-    # completion global at least a frame later, so the global is still zero
-    # exactly on the run the AP check eats.
+def guard_replay(index, span, completion, flag):
+    # Wrap `span` lines so they run when the check's class is off OR the event's
+    # completion global is already set (a replay). Only the first completion
+    # while the class is on skips the payout: the payout and the win-flag write
+    # share one script frame, and the APACT watcher marks the completion global
+    # at least a frame later, so the global is still zero exactly on the run the
+    # AP check eats.
     label = next_apcash_label()
     lines[index + span:index + span] = [f":{label}"]
-    lines[index:index] = ["if or", f"  ${SIDE_EVENTS_ENABLED} == 0",
+    lines[index:index] = ["if or", f"  ${flag} == 0",
                           f"  ${completion} == 1", f"goto_if_false @{label}"]
 
 
@@ -601,12 +636,39 @@ def suppress_mission_rewards():
                  f"{wrapped} venue lines gated")
 
 
+# The six race prizes, paid on every win in showroom menu order. The first win
+# is the check, so the payout gates like a side event's: the properties class
+# flag plus that race's completion global, which the APACT watcher has not yet
+# marked on the run the check eats (no wait separates the prize from the win
+# flag). Entry fees are money and stay vanilla, as do second and third place.
+SUNSHINE_RACE_PRIZES = [
+    (9366, "add_score $player_char money += 400"),
+    (9367, "add_score $player_char money += 2000"),
+    (9368, "add_score $player_char money += 4000"),
+    (9369, "add_score $player_char money += 8000"),
+    (9370, "add_score $player_char money += 20000"),
+    (9371, "add_score $player_char money += 40000"),
+]
+SUNSHINE_RACE_MISSION = 82
+
+
+def suppress_sunshine_race_first_wins():
+    start, end = mission_blocks()[SUNSHINE_RACE_MISSION]
+    targets = []
+    for completion, anchor in SUNSHINE_RACE_PRIZES:
+        hits = [i for i in range(start, end) if lines[i] == anchor]
+        assert len(hits) == 1, f"sunshine race prize: {anchor!r} matched {len(hits)}"
+        targets.append((hits[0], completion))
+    for index, completion in sorted(targets, reverse=True):
+        guard_replay(index, 1, completion, PROPERTIES_ENABLED)
+    edits.append(f"sunshine race first-win prizes gated: {len(targets)} lines")
+
+
 def suppress_boatyard_first_run_reward():
     # Checkpoint Charlie is replayable with escalating prizes ($8582 counts
     # runs); only the first run is the check, paying 5000 and setting $607.
     # That banner and cash gate on the properties flag; the replay tiers
-    # (6000 and up) stay vanilla winnings. Sunshine's per-race prize money
-    # also stays, as activity winnings.
+    # (6000 and up) stay vanilla winnings.
     anchors = [i for i, ln in enumerate(lines) if ln == "$607 = 1"]
     assert len(anchors) == 1, f"boatyard reward: $607 = 1 matched {len(anchors)}"
     a = anchors[0]
@@ -753,7 +815,7 @@ def suppress_side_event_first_wins():
             assert len(hits) == 1, f"{name}: {anchor!r} matched {len(hits)}"
             targets.append(hits[0])
         for index in sorted(targets, reverse=True):
-            guard_replay(index, 1, completion)
+            guard_replay(index, 1, completion, SIDE_EVENTS_ENABLED)
         total += len(targets)
     edits.append(f"side event first-win payouts gated: {total} lines")
 
@@ -789,12 +851,6 @@ EXPECTED_VANILLA_CASH = {
     ("M79", "add_score $player_char money += 1500"): 1,
     ("M79", "add_score $player_char money += 500"): 1,
     ("M80", "add_score $player_char money += 100"): 16,
-    ("M82", "add_score $player_char money += 400"): 1,
-    ("M82", "add_score $player_char money += 2000"): 1,
-    ("M82", "add_score $player_char money += 4000"): 1,
-    ("M82", "add_score $player_char money += 8000"): 1,
-    ("M82", "add_score $player_char money += 20000"): 1,
-    ("M82", "add_score $player_char money += 40000"): 1,
     ("M83", "add_score $player_char money += 10"): 4,
     ("M83", "add_score $player_char money += 15"): 4,
     ("M83", "add_score $player_char money += 12"): 8,
@@ -913,10 +969,10 @@ def add_emergency_instrumentation():
 # Persistent-reward re-gating (Phase 3). When a reward group is shuffled (the
 # ASI stamps its config flag from slot_data), the vanilla grant is suppressed and
 # the APREWD applier drives it from the AP reward global instead. Indices match
-# scm.py: rewards $9363..$9377, packages_shuffled $9378, emergency_shuffled $9379.
+# scm.py: rewards $9372..$9386, packages_shuffled $9387, emergency_shuffled $9388.
 # $9008/$9009 are reserved once-guards for the two additive stat rewards.
-PACKAGES_SHUFFLED = 9378
-EMERGENCY_SHUFFLED = 9379
+PACKAGES_SHUFFLED = 9387
+EMERGENCY_SHUFFLED = 9388
 
 # Radio randomization, indices matching scm.py. The ASI writes the nine resolve
 # globals (station -> itself when its item is owned, else the next unlocked
@@ -925,37 +981,37 @@ EMERGENCY_SHUFFLED = 9379
 # which is vanilla until the ASI overwrites it. The request global carries an
 # ASI-posted retune to the APRADIO watcher, encoded station id plus one so the
 # zero-initialized global idles.
-RADIO_RESOLVE_BASE = 9390
-RADIO_REQUEST = 9399
+RADIO_RESOLVE_BASE = 9399
+RADIO_REQUEST = 9408
 
 # The minimap unlock global, index matching scm.py. ASI-facing only (its
-# shuffled flag sits at $9415 and this unlock at $9416; no gate reads either):
+# shuffled flag sits at $9424 and this unlock at $9425; no gate reads either):
 # the ASI hides the radar disc while the flag is set and this global is zero.
-MINIMAP_UNLOCK = 9416
+MINIMAP_UNLOCK = 9425
 
 # Class-cash config flags, indices matching scm.py. The ASI stamps each to one
 # when its check class is enabled, so the class's one-time completion cash is
 # suppressed (the AP check is the reward); at zero everything pays vanilla.
 # The properties flag gates the venue mission pass cash and Checkpoint
 # Charlie's first run.
-SIDE_EVENTS_ENABLED = 9417
-STUNT_JUMPS_ENABLED = 9418
-RAMPAGES_ENABLED = 9419
-PROPERTIES_ENABLED = 9420
+SIDE_EVENTS_ENABLED = 9426
+STUNT_JUMPS_ENABLED = 9427
+RAMPAGES_ENABLED = 9428
+PROPERTIES_ENABLED = 9429
 
 # The ability lock block, indices matching scm.py: eight lock flags at
-# $9421..$9428 then eight unlock globals at $9429..$9436, all ASI-facing only
+# $9430..$9437 then eight unlock globals at $9438..$9445, all ASI-facing only
 # (no gate reads them; the ASI enforces the locks per frame and they persist
 # inside saves), so the script names none of them.
 #
 # The content lock block follows it in the same shape: five lock flags at
-# $9437..$9441 then five unlock globals at $9442..$9446, in scm.CONTENT_KEYS
+# $9446..$9450 then five unlock globals at $9451..$9455, in scm.CONTENT_KEYS
 # order (hidden packages, rampages, stunt jumps, property purchases, robbable
 # stores). The top unlock is the highest reserved global, so the foundation's
 # sizing line references it; add_markers.py anchors on that line.
-CONTENT_LOCK_FLAG_BASE = 9437
-CONTENT_UNLOCK_BASE = 9442
-CONTENT_TOP = 9446
+CONTENT_LOCK_FLAG_BASE = 9446
+CONTENT_UNLOCK_BASE = 9451
+CONTENT_TOP = 9455
 
 # Three of the five classes are pickups, so holding them belongs to the ASI and
 # the script needs nothing for them. The other two have no icon to hold, so
@@ -971,12 +1027,12 @@ ROBBABLE_STORES_UNLOCK = CONTENT_UNLOCK_BASE + 4
 # reward-global order (body armor, chainsaw, .357, flamethrower, sniper, minigun,
 # rocket launcher, sea sparrow, rhino, hunter).
 PACKAGE_REWARD_APPLY = [
-    (9363, "$1309 = 1"), (9364, "$1310 = 1"), (9365, "$1308 = 1"),
-    (9366, "$1311 = 1"), (9367, "$1312 = 1"), (9368, "$1313 = 1"),
-    (9369, "$1314 = 1"),
-    (9370, "switch_car_generator $1977 cars_to_generate_to 101"),
-    (9371, "switch_car_generator $1978 cars_to_generate_to 101"),
-    (9372, "switch_car_generator $1979 cars_to_generate_to 101"),
+    (9372, "$1309 = 1"), (9373, "$1310 = 1"), (9374, "$1308 = 1"),
+    (9375, "$1311 = 1"), (9376, "$1312 = 1"), (9377, "$1313 = 1"),
+    (9378, "$1314 = 1"),
+    (9379, "switch_car_generator $1977 cars_to_generate_to 101"),
+    (9380, "switch_car_generator $1978 cars_to_generate_to 101"),
+    (9381, "switch_car_generator $1979 cars_to_generate_to 101"),
 ]
 
 # The vanilla :PACKAGE grant blocks: label -> lines after it (progress + help +
@@ -1082,19 +1138,19 @@ def add_reward_applier():
     body += ["", ":APREWD_EMERGENCY",
              "if ", f"  ${EMERGENCY_SHUFFLED} == 1", "goto_if_false @APREWD_LOOP"]
     booleans = [
-        (9373, "set_player_never_gets_tired $player_char infinite_run_to True"),
-        (9374, "make_player_fire_proof $player_char fireproof 1"),
-        (9376, "set_all_taxis_have_nitro 1"),
+        (9382, "set_player_never_gets_tired $player_char infinite_run_to True"),
+        (9383, "make_player_fire_proof $player_char fireproof 1"),
+        (9385, "set_all_taxis_have_nitro 1"),
     ]
     for index, (reward, grant) in enumerate(booleans):
         body += ["if ", f"  ${reward} >= 1", f"goto_if_false @APREWD_ABIL_{index}",
                  grant, f":APREWD_ABIL_{index}"]
-    body += ["if ", "  $9375 >= 1", "goto_if_false @APREWD_ARMOUR",
+    body += ["if ", "  $9384 >= 1", "goto_if_false @APREWD_ARMOUR",
              "if ", "  $9008 == 0", "goto_if_false @APREWD_ARMOUR",
              "increase_player_max_armour $player_char max_armour += 50",
              "add_armour_to_char $player_actor armour_to 150",
              "$9008 = 1", ":APREWD_ARMOUR"]
-    body += ["if ", "  $9377 >= 1", "goto_if_false @APREWD_HEALTH",
+    body += ["if ", "  $9386 >= 1", "goto_if_false @APREWD_HEALTH",
              "if ", "  $9009 == 0", "goto_if_false @APREWD_HEALTH",
              "increase_player_max_health $player_char max_health += 50",
              "$9009 = 1", ":APREWD_HEALTH"]
@@ -1107,7 +1163,7 @@ def add_reward_applier():
 # ASI overwrites it) and reference the highest reserved global once so Sanny
 # sizes the whole $9000..N block as real zero-initialized globals. The last
 # line must equal scm.highest_reserved_global() (now the top content unlock
-# $9446: 22 unlocks + 331 completions + 15 reward globals + 3 config flags +
+# $9455: 22 unlocks + 340 completions + 15 reward globals + 3 config flags +
 # 19 radio globals + 15 ownership globals + the minimap flag and unlock + 4
 # class-cash flags + 16 ability globals + 10 content globals above $9000).
 # add_markers.py anchors on that line.
@@ -1126,7 +1182,7 @@ add_package_watcher()
 add_purchase_completions()
 defer_safehouse_grants()
 gate_pole_position_completion()
-gate_sunshine_import_completion()
+gate_sunshine_import_lists()
 add_store_completions()
 # Content-lock gates.
 gate_stunt_jumps()
@@ -1136,6 +1192,7 @@ add_activity_watcher()
 suppress_mission_rewards()
 suppress_boatyard_first_run_reward()
 suppress_side_event_first_wins()
+suppress_sunshine_race_first_wins()
 suppress_stunt_jump_rewards()
 suppress_rampage_rewards()
 add_stat_watcher()

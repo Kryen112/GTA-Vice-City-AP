@@ -291,11 +291,26 @@ def build_location_rules(
             rules[mission] = _requires(requirements)
     for purchase in data.BUSINESS_PURCHASES:
         rules[purchase] = _requires(sale_requirements)
+    # A venue's own activities carry no progressive unlock: vanilla opens them
+    # all the moment the venue is bought, so they need the venue bought and
+    # owned and nothing more, plus their own lock terms.
+    venue_activities: set[str] = set()
+    for venue, activities in data.VENUE_ACTIVITIES.items():
+        for activity in activities:
+            venue_activities.add(activity)
+            rules[activity] = _requires([
+                (data.ownership_item_name(venue), 1),
+                *sale_requirements,
+                *_lock_terms(activity, active_items),
+            ])
     # Every remaining location with a lock term: the collectible and activity
     # classes and the safehouse purchases, which carry no other rule. A
-    # business purchase is already ruled above, and its content term rides the
-    # sale requirements, so it is skipped here rather than ruled twice.
-    handled = set(locations.MISSION_GIVER) | set(data.BUSINESS_PURCHASES)
+    # business purchase and a venue activity are already ruled above, and a
+    # business purchase's content term rides the sale requirements, so both are
+    # skipped here rather than ruled twice.
+    handled = (
+        set(locations.MISSION_GIVER) | set(data.BUSINESS_PURCHASES) | venue_activities
+    )
     locked_locations = (
         dict.fromkeys(data.LOCATION_ABILITY_REQUIREMENTS)
         | dict.fromkeys(data.LOCATION_CONTENT_REQUIREMENTS)

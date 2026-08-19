@@ -8,7 +8,11 @@ Where each class's position comes from:
 
 - story and venue missions: the launcher thread's own locate call, the same
   coordinate mod/scm/add_markers.py hands the mission's marker, keyed to the
-  mission name by the launch line's comment.
+  mission name by the launch line's comment. Two Sunshine Autos groups are
+  bespoke: the showroom launches one mission for all six street races, so each
+  race takes the showroom launcher's own locate, and the four import garage
+  lists have no launcher at all, so they take the garage door the import
+  opcodes name.
 - rampages: the 35 #KILLFRENZY pickup creations in the RAMPAGE controller,
   whose order is the flag order and so the check order.
 - property purchases: the 15 for-sale asset pickups, keyed by their GXT label.
@@ -98,6 +102,10 @@ COLLECTABLE = re.compile(rf"^create_collectable1 ({NUMBER}) ({NUMBER}) ({NUMBER}
 KILL_FRENZY = re.compile(
     rf"^create_pickup \$(\d+) = create_pickup #KILLFRENZY type 3"
     rf" at ({NUMBER}) ({NUMBER}) ({NUMBER})$")
+IMPORT_GARAGE_SLOT = re.compile(
+    r"^\s*has_import_garage_slot_been_filled (\$\d+) contains_neededcar \d+$")
+GARAGE_DOOR = re.compile(
+    r"^set_garage (\$\d+) = create_garage_type \d+ door (\S+) (\S+) (\S+) to ")
 FOR_SALE = re.compile(
     rf"^create_forsale_property_pickup \$\w+ = create_available_asset_pickup '(\w+)'"
     rf" at ({OPERAND}) ({OPERAND}) ({OPERAND}) price")
@@ -162,17 +170,31 @@ NON_MISSION_LAUNCH_COMMENTS = frozenset({
 
 # The property buy cutscenes share this comment suffix, and all take their
 # position from the for-sale icon rather than a launcher locate. "Sunshine
-# Autos" is the one buy launch the decompile spells without it; the venue
-# strand's own check is "Sunshine Autos Races", so the two never collide.
+# Autos" is the one buy launch the decompile spells without it, and the race
+# showroom's launch comment carries "Races", so the two never collide.
 BUY_LAUNCH_COMMENT_SUFFIX = " Buy"
 BUY_LAUNCH_COMMENTS = frozenset({"Sunshine Autos"})
 
+# The one launch comment standing for more than one check: the showroom launches
+# a single mission for all six street races and its menu picks which one runs,
+# so every race takes the showroom launcher's own position.
+RACE_LAUNCH_COMMENT = "Sunshine Autos Races"
+
 # Missions the game gives no map marker, so their position cannot be checked
 # against a marker creation. The first Rosenberg mission starts on a new game
-# with no marker at all; the three venue activities start at their property's
-# buy cutscene, which is the for-sale icon rather than a marker.
+# with no marker at all; the venue activities start at their property's buy
+# cutscene, which is the for-sale icon rather than a marker; and the import
+# garage lists are entered by driving a car through the garage door.
 MISSIONS_WITHOUT_A_MARKER = frozenset({
-    "An Old Friend", "Distribution", "Checkpoint Charlie", "Sunshine Autos Races",
+    "An Old Friend", "Distribution", "Checkpoint Charlie",
+    "Sunshine Autos Import List 1", "Sunshine Autos Import List 2",
+    "Sunshine Autos Import List 3", "Sunshine Autos Import List 4",
+    "Sunshine Autos Race: Terminal Velocity",
+    "Sunshine Autos Race: Ocean Drive",
+    "Sunshine Autos Race: Border Run",
+    "Sunshine Autos Race: Capital Cruise",
+    "Sunshine Autos Race: Tour!",
+    "Sunshine Autos Race: V.C. Endurance",
 })
 
 # The rampage controller's 35 pickup handles, in flag order.
@@ -478,19 +500,51 @@ def mission_positions(
     decompile: Decompile,
     launch_positions: dict[int, tuple[float, float, float]],
     launch_names: dict[int, str],
+    race_names: list[str],
 ) -> tuple[dict[str, tuple[float, float, float]], list[str]]:
     positions: dict[str, tuple[float, float, float]] = {}
     problems: list[str] = []
     for number, comment in sorted(launch_names.items()):
         if not is_mission_check(comment):
             continue
-        name = MISSION_NAME_BY_COMMENT.get(comment, comment)
+        names = ([MISSION_NAME_BY_COMMENT.get(comment, comment)]
+                 if comment != RACE_LAUNCH_COMMENT else list(race_names))
         position = launch_positions.get(number)
         if position is None:
-            problems.append(f"{name} (mission {number}): its launcher has no position")
+            problems.append(
+                f"{names[0]} (mission {number}): its launcher has no position")
             continue
-        positions[name] = position
+        for name in names:
+            positions[name] = position
     return positions, problems
+
+
+def import_list_positions(
+    decompile: Decompile,
+    list_names: list[str],
+) -> tuple[dict[str, tuple[float, float, float]], list[str]]:
+    """The import garage lists, all at the garage door the deliveries go through.
+
+    The garage is derived rather than named: the slot opcode says which garage
+    takes the import deliveries, and that garage's own creation says where its
+    door is. Every list is the same garage, so the four share one position and
+    the tracker merges them into one marker.
+    """
+    problems: list[str] = []
+    handles = {match.group(1) for match in
+               (IMPORT_GARAGE_SLOT.match(line) for line in decompile.lines) if match}
+    if len(handles) != 1:
+        return {}, [f"import garage: the slot opcode names {sorted(handles)}"]
+    handle = handles.pop()
+    doors = [match.groups()[1:] for match in
+             (GARAGE_DOOR.match(line) for line in decompile.lines)
+             if match and match.group(1) == handle]
+    if len(doors) != 1:
+        return {}, [f"import garage: {handle} has {len(doors)} door creations"]
+    position = decompile.resolve_all(doors[0])
+    if position is None:
+        return {}, [f"import garage: {handle}'s door is not a literal position"]
+    return dict.fromkeys(list_names, position), problems
 
 
 def check_against_markers(
@@ -686,8 +740,13 @@ def main() -> int:
     decompile = Decompile(text)
 
     launch_positions, launch_names, problems = launch_positions_by_number(decompile)
+    race_names = data.VENUE_ACTIVITIES["Sunshine Autos"]
     missions, mission_problems = mission_positions(
-        decompile, launch_positions, launch_names)
+        decompile, launch_positions, launch_names, race_names)
+    import_lists, import_list_problems = import_list_positions(
+        decompile, data.VENUE_STRANDS["Sunshine Autos"])
+    missions.update(import_lists)
+    mission_problems += import_list_problems
     packages = package_positions(decompile)
     rampages, rampage_problems = rampage_positions(decompile, data.RAMPAGE_COUNT)
     properties, property_problems = property_positions(decompile)
@@ -698,11 +757,13 @@ def main() -> int:
 
     expected_missions = {
         mission
-        for strand in (data.STORY_GIVERS, data.VENUE_STRANDS)
+        for strand in (data.STORY_GIVERS, data.VENUE_STRANDS, data.VENUE_ACTIVITIES)
         for missions_in_strand in strand.values()
         for mission in missions_in_strand
     }
-    problems += check_names("story and venue missions", set(missions), expected_missions)
+    problems += check_names(
+        "story and venue missions and venue activities",
+        set(missions), expected_missions)
     problems += check_against_markers(missions, decompile.marker_positions())
     problems += check_names(
         "property purchases", set(properties), set(data.PROPERTY_PURCHASES))

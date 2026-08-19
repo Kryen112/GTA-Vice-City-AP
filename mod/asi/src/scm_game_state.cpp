@@ -62,16 +62,16 @@ constexpr int kAppliedIndexGlobal = 9005;
 // The hidden-packages shuffled flag, matching apworld scm.py: one while the
 // hidden-packages class is on, which is when its rewards are AP items and the
 // executable's own package cash has to go. A world test pins the index.
-constexpr int kPackagesShuffledGlobal = 9378;
+constexpr int kPackagesShuffledGlobal = 9387;
 // The radio contract, matching apworld scm.py: the randomized flag, nine
 // station unlock globals (engine station id order), nine resolve globals the
 // ASI recomputes each frame, and the retune request global the APRADIO
 // watcher consumes (encoded station id plus one, so the zero-initialized
 // global idles).
-constexpr int kRadioRandomizedGlobal = 9380;
-constexpr int kRadioUnlockBase = 9381;
-constexpr int kRadioResolveBase = 9390;
-constexpr int kRadioRequestGlobal = 9399;
+constexpr int kRadioRandomizedGlobal = 9389;
+constexpr int kRadioUnlockBase = 9390;
+constexpr int kRadioResolveBase = 9399;
+constexpr int kRadioRequestGlobal = 9408;
 // A script-channel request for station 9 selects the MP3 player, which the
 // game remaps to the city ambience: the radio-off soundscape. The ambience
 // track id equals the off position (10), so the commit's writeback leaves the
@@ -82,8 +82,8 @@ constexpr int kRadioAmbientRequest = 9;
 // Minimap item's unlock global. Both are ASI-facing only; the main.scm never
 // reads them, but as reserved globals they persist inside saves, so the
 // enforcement keeps working offline from a save.
-constexpr int kMinimapShuffledGlobal = 9415;
-constexpr int kMinimapUnlockGlobal = 9416;
+constexpr int kMinimapShuffledGlobal = 9424;
+constexpr int kMinimapUnlockGlobal = 9425;
 // The game's pickup pool size, matching plugin-sdk's CPickup (&aPickUps)[336].
 constexpr int kPickupPoolSize = 336;
 // The enforcement frame on which a still-unmatched layout slot is logged:
