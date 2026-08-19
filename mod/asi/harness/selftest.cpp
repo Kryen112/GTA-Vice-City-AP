@@ -264,6 +264,38 @@ int main() {
     auto burst = PlanRetunePresses(7, 0, 0, 2, two);
     Expect(burst.logical_presses == 7 && burst.written_presses == 5 && burst.write_needed,
            "an MP3-key burst reduces modulo the cycle and lands on an unlocked stop");
+
+    // With no MP3 folder installed the game skips the MP3 slot for the player:
+    // while a retune is pending it steps the press count itself once the
+    // pending position lands there. That step is no player press, and
+    // discounting it is what keeps the off position, the stop right after the
+    // slot on the wheel, reachable from Wave.
+    std::array<bool, kRadioStationCount> with_wave{};
+    with_wave[2] = true;
+    with_wave[8] = true;
+    Expect(UserTrackSkippedPresses(8, 0, 2) == 1, "a count stepped past the slot is the game's");
+    Expect(UserTrackSkippedPresses(8, 0, 1) == 0, "a count resting on the slot is the player's");
+    Expect(UserTrackSkippedPresses(8, 0, 13) == 2, "the slot recurs once per lap of the wheel");
+    auto off_from_wave = PlanRetunePresses(2, 0, 0, 8, with_wave);
+    Expect(off_from_wave.logical_presses == 1 && off_from_wave.written_presses == 2 &&
+               !off_from_wave.write_needed,
+           "one press from Wave reaches off once the game's own step is discounted");
+    auto off_with_mp3_folder = PlanRetunePresses(1, 0, 0, 8, with_wave);
+    Expect(off_with_mp3_folder.logical_presses == 1 &&
+               off_with_mp3_folder.written_presses == 2 && off_with_mp3_folder.write_needed,
+           "and reaches off in one press when an MP3 folder makes the game step nothing");
+    auto off_mid_scroll = PlanRetunePresses(8, 1, 6, 2, with_wave);
+    Expect(off_mid_scroll.logical_presses == 2 && off_mid_scroll.written_presses == 8 &&
+               !off_mid_scroll.write_needed,
+           "a press stepping a pending scroll off Wave reaches off too");
+    auto off_after_commit = PlanRetunePresses(2, 1, 6, 8, with_wave);
+    Expect(off_after_commit.logical_presses == 1 && off_after_commit.written_presses == 2 &&
+               !off_after_commit.write_needed,
+           "a commit onto Wave plus a stepped press restarts and still reaches off");
+    auto stepped_burst = PlanRetunePresses(8, 0, 0, 2, two);
+    Expect(stepped_burst.logical_presses == 7 && stepped_burst.written_presses == 5 &&
+               stepped_burst.write_needed,
+           "an MP3-key burst lands on the same stop with the game's step discounted");
   }
 
   // Minimap planning: while shuffled and locked the radar-hide flag is
