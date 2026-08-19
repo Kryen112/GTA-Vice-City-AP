@@ -14,7 +14,10 @@ import sys
 SRC, DST = sys.argv[1], sys.argv[2]
 
 # (launcher, [(unlock_global, count), ...], completion_global). Gate list empty
-# = free mission. Order mirrors the strands in the spec.
+# = free mission. Order mirrors the strands in the spec. The first gate of a
+# gated mission is always its own strand's progressive unlock, and those unlocks
+# occupy this block, which check_play_order uses to group the table by strand.
+UNLOCK_FIRST, UNLOCK_LAST = 9010, 9029
 MISSIONS = [
     # Rosenberg (9010)
     ("HOT", [], 9032), ("LAW1", [(9010, 1)], 9033), ("LAW2", [(9010, 2)], 9034),
@@ -29,8 +32,9 @@ MISSIONS = [
     ("BAR5", [(9012, 5), (9013, 1)], 9046),
     # Death Row (9013)
     ("KEN1", [(9013, 1)], 9047),
-    # Avery (9014): Four Iron, Two Bit Hit, Demolition Man
-    ("SER1", [(9014, 1)], 9048), ("SER3", [(9014, 2)], 9049), ("SER2", [(9014, 3)], 9050),
+    # Avery (9014): Four Iron, Demolition Man, Two Bit Hit. The mission threads
+    # are named out of order (SERG1, SERG3, SERG2), the launchers are not.
+    ("SER1", [(9014, 1)], 9048), ("SER2", [(9014, 2)], 9049), ("SER3", [(9014, 3)], 9050),
     # Phil Cassidy (9015)
     ("PHI1", [(9015, 1)], 9051), ("PHI2", [(9015, 2)], 9052),
     # Vercetti Protection (9016)
@@ -540,6 +544,31 @@ def launcher_mission_number(launcher):
                     if lines[j].startswith("load_and_launch_mission_internal "))
     assert launch is not None, f"mission number: {launcher} has no launch opcode"
     return int(lines[launch].split()[1])
+
+
+def check_play_order():
+    # Vice City numbers each strand's missions in play order, so a strand whose
+    # gate counts do not ascend by mission number has a launcher on the wrong
+    # count, and the progressive would open its giver's missions out of order.
+    # Avery is the trap: its mission threads are named SERG1, SERG3, SERG2, so
+    # pairing launchers by thread name puts Two Bit Hit before Demolition Man.
+    strands = {}
+    for launcher, gate_conditions, _ in MISSIONS:
+        if not gate_conditions:
+            continue
+        unlock, count = gate_conditions[0]
+        if UNLOCK_FIRST <= unlock <= UNLOCK_LAST:
+            strands.setdefault(unlock, []).append((count, launcher))
+    for unlock, entries in sorted(strands.items()):
+        ordered = sorted(entries)
+        counts = [count for count, _ in ordered]
+        assert counts == list(range(1, len(counts) + 1)), (
+            f"play order: strand ${unlock} gates {ordered} are not counts 1..N")
+        missions = [launcher_mission_number(launcher) for _, launcher in ordered]
+        assert missions == sorted(missions), (
+            f"play order: strand ${unlock} gates {ordered} launch missions "
+            f"{missions}, which is not the vanilla order")
+    print(f"verified play order across {len(strands)} strands")
 
 
 def suppress_mission_rewards():
@@ -1085,6 +1114,7 @@ def add_reward_applier():
 foundation = [f"${RADIO_RESOLVE_BASE + station} = {station}" for station in range(9)]
 foundation += [f"${RADIO_REQUEST} = 0", f"${PROPERTIES_ENABLED} = 0", f"${CONTENT_TOP} = 0"]
 insert_after("script_name 'HOT'", foundation, f"foundation radio identity + ${CONTENT_TOP} = 0")
+check_play_order()
 for launcher, gate_conditions, completion_global in MISSIONS:
     try:
         wire(launcher, gate_conditions, completion_global)

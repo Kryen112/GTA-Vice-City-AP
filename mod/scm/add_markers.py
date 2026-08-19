@@ -31,7 +31,7 @@ STRANDS = {
              ("BAR3", [(9012, 3)]), ("BAR4", [(9012, 4)]),
              ("BAR5", [(9012, 5), (9013, 1)])],
     "DeathRow": [("KEN1", [(9013, 1)])],
-    "Avery": [("SER1", [(9014, 1)]), ("SER3", [(9014, 2)]), ("SER2", [(9014, 3)])],
+    "Avery": [("SER1", [(9014, 1)]), ("SER2", [(9014, 2)]), ("SER3", [(9014, 3)])],
     "Phil": [("PHI1", [(9015, 1)]), ("PHI2", [(9015, 2)])],
     "VercettiProtection": [("PRO1", [(9016, 1)]),
                            ("PRO2", [(9016, 2)]),
@@ -129,6 +129,38 @@ def passed_flag(label: str):
             return m.group(1)
     return None
 
+
+def launched_mission(label: str):
+    # The mission number a launcher starts, read from the source: its first
+    # load_and_launch_mission_internal. Every launcher in STRANDS launches a
+    # mission, so a missing label or launch is a table error, not a variant.
+    start = label_at.get(label)
+    assert start is not None, f"play order: launcher {label} has no label"
+    launch = next((j for j in range(start, len(lines))
+                   if lines[j].startswith("load_and_launch_mission_internal")), None)
+    assert launch is not None, f"play order: launcher {label} launches no mission"
+    return int(lines[launch].split()[1])
+
+
+def check_play_order():
+    # Same guard as build_scm.py, over this table: Vice City numbers each
+    # strand's missions in play order, so a strand whose gate counts do not
+    # ascend by mission number has a launcher on the wrong count, and APMARK
+    # would reveal the strand's markers out of order. The list position drives
+    # APMARK's in-strand ordinal while the gate count drives the unlock, so both
+    # orderings are checked and each must agree with the other.
+    for strand, missions in STRANDS.items():
+        counts = [gate[0][1] for _, gate in missions]
+        assert counts == list(range(1, len(counts) + 1)), (
+            f"play order: strand {strand} gate counts {counts} are not 1..N in "
+            f"list order")
+        numbers = [launched_mission(launcher) for launcher, _ in missions]
+        assert numbers == sorted(numbers), (
+            f"play order: strand {strand} launches missions {numbers}, which is "
+            f"not the vanilla order")
+
+
+check_play_order()
 
 # Resolve every managed mission to a marker spec. Missions with no locate marker
 # (none found) are dropped from marker management and reported.

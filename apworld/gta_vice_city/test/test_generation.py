@@ -1101,6 +1101,25 @@ class TestStrandAccess(WorldTestBase):
         self.collect_by_name(["Starfish Island Access"])
         self.assertTrue(self.can_reach_location("The Chase"))
 
+    def test_avery_unlocks_in_vanilla_play_order(self) -> None:
+        # Avery's vanilla chain is Four Iron, Demolition Man, Two Bit Hit: his
+        # launchers start missions 18, 19 and 20 in that order, and Four Iron's
+        # pass is what starts Demolition Man's launcher. His mission threads are
+        # named SERG1, SERG3, SERG2, so pairing launchers by thread name puts
+        # Two Bit Hit second.
+        self.assertEqual(
+            data.STORY_GIVERS["Avery"], ["Four Iron", "Demolition Man", "Two Bit Hit"])
+        progressives = self.get_items_by_name("Progressive Avery")
+        self.assertFalse(self.can_reach_location("Four Iron"))
+        self.collect(progressives[0])
+        self.assertTrue(self.can_reach_location("Four Iron"))
+        self.assertFalse(self.can_reach_location("Demolition Man"))
+        self.collect(progressives[1])
+        self.assertTrue(self.can_reach_location("Demolition Man"))
+        self.assertFalse(self.can_reach_location("Two Bit Hit"))
+        self.collect(progressives[2])
+        self.assertTrue(self.can_reach_location("Two Bit Hit"))
+
     def test_rub_out_requires_death_row(self) -> None:
         # Rub Out, Diaz's last mission, keeps the one mission-level cross-giver
         # edge: Lance must be rescued in Death Row first.
@@ -1874,6 +1893,13 @@ class TestReservedGlobals(WorldTestBase):
         # The bribe help flag is deliberately a VANILLA index: the mod stamps a
         # flag the script owns, so it must stay clear of the reserved block.
         self.assertLess(data.BRIBE_HELP_SHOWN_FLAG, scm.RESERVED_BASE)
+        # build_scm.py mirrors this block as UNLOCK_FIRST, UNLOCK_LAST, the
+        # window its play-order guard groups the mission table by. A strand
+        # whose unlock fell outside it would leave that strand unchecked.
+        self.assertEqual(scm.UNLOCK_BASE, 9010)
+        strand_unlocks = [scm.unlock_global(strand) for strand in data.progressive_strands()]
+        self.assertGreaterEqual(min(strand_unlocks), 9010)
+        self.assertLessEqual(max(strand_unlocks), 9029)
         self.assertEqual(scm.ABILITY_LOCK_FLAG_BASE, 9421)
         self.assertEqual(scm.ABILITY_UNLOCK_BASE, 9429)
         self.assertEqual(scm.CONTENT_LOCK_FLAG_BASE, 9437)
@@ -1881,6 +1907,18 @@ class TestReservedGlobals(WorldTestBase):
         self.assertEqual(scm.highest_reserved_global(), 9446)
         self.assertEqual(scm.ABILITY_KEYS, data.ABILITY_ITEMS)
         self.assertEqual(scm.CONTENT_KEYS, data.CONTENT_ITEMS)
+
+    def test_story_completion_globals_match_the_hand_written_mirror(self) -> None:
+        # build_scm.py and add_markers.py pair each story launcher with its gate
+        # count and completion global by literal. The Avery strand is the one
+        # whose thread names do not follow its play order (SERG1, SERG3, SERG2),
+        # so a reordered strand there repoints a launcher's completion write at
+        # another mission's check. Pinned by literal, so that shift fails here:
+        # update the script tables in the same change.
+        self.assertEqual(scm.completion_global("An Old Friend"), 9032)
+        self.assertEqual(scm.completion_global("Four Iron"), 9048)
+        self.assertEqual(scm.completion_global("Demolition Man"), 9049)
+        self.assertEqual(scm.completion_global("Two Bit Hit"), 9050)
 
     def test_side_event_completion_globals_match_the_hand_written_mirrors(self) -> None:
         # build_scm.py hard-codes these in two tables: SIDE_EVENTS (win flag ->

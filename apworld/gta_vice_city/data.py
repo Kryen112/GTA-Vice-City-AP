@@ -31,7 +31,7 @@ STORY_GIVERS: dict[str, list[str]] = {
         "Death Row",
     ],
     "Avery": [
-        "Four Iron", "Two Bit Hit", "Demolition Man",
+        "Four Iron", "Demolition Man", "Two Bit Hit",
     ],
     "Phil Cassidy": [
         "Gun Runner", "Boomshine Saigon",
@@ -890,7 +890,7 @@ MISSION_REWARDS: dict[str, int] = {
     # Death Row
     "Death Row": 0,
     # Avery
-    "Four Iron": 500, "Two Bit Hit": 2500, "Demolition Man": 1000,
+    "Four Iron": 500, "Demolition Man": 1000, "Two Bit Hit": 2500,
     # Phil Cassidy
     "Gun Runner": 2000, "Boomshine Saigon": 4000,
     # Vercetti Protection
