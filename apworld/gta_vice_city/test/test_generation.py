@@ -23,8 +23,10 @@ from ..items import ITEM_CLASSIFICATIONS, ITEM_NAME_TO_ID
 from ..locations import (
     LOCATION_NAME_TO_ID,
     LOCATION_REGIONS,
+    MISSION_GIVER,
     PACKAGE_NAMES,
     STORY_MISSION_NAMES,
+    STRAND_MISSIONS,
 )
 from ..options import CHECK_CLASS_OPTIONS
 
@@ -599,6 +601,56 @@ class TestAbilityLocksAll(WorldTestBase):
         self.assertTrue(self.can_reach_location("El Swanko Casa Purchase"))
         self.assertTrue(self.can_reach_location("Malibu Club Purchase"))
 
+    def test_a_mission_inherits_its_strand_predecessor_terms(self) -> None:
+        # A strand runs in order: APMARK reveals only its first unpassed
+        # mission, so Two Bit Hit cannot start until Demolition Man passes, and
+        # Demolition Man carries the Land Vehicles term. Without the inherited
+        # term the fill could put Land Vehicles at Two Bit Hit, which no player
+        # could then reach.
+        self.collect_by_name(["Progressive Avery"])
+        self.assertFalse(self.can_reach_location("Demolition Man"))
+        self.assertFalse(self.can_reach_location("Two Bit Hit"))
+        self.collect_by_name([data.LAND_VEHICLES_ITEM])
+        self.assertTrue(self.can_reach_location("Demolition Man"))
+        self.assertTrue(self.can_reach_location("Two Bit Hit"))
+
+    def test_a_first_mission_term_reaches_the_whole_strand(self) -> None:
+        # Umberto's first mission is the one carrying the term, so every later
+        # mission of his strand inherits it.
+        self.collect_by_name(["Progressive Umberto Robina", "Mainland Access"])
+        self.assertFalse(self.can_reach_location("Stunt Boat Challenge"))
+        self.assertFalse(self.can_reach_location("Trojan Voodoo"))
+        self.collect_by_name([data.SEA_VEHICLES_ITEM])
+        self.assertTrue(self.can_reach_location("Stunt Boat Challenge"))
+        self.assertTrue(self.can_reach_location("Trojan Voodoo"))
+
+    def test_a_strand_first_mission_inherits_nothing(self) -> None:
+        # Propagation runs forward only: Four Iron opens on its unlock alone
+        # even though Demolition Man behind it carries a term.
+        self.collect_by_name(["Progressive Avery"])
+        self.assertTrue(self.can_reach_location("Four Iron"))
+
+    def test_cross_giver_edges_point_at_termless_missions(self) -> None:
+        # Propagation stops at the strand boundary, so a cross-giver edge names
+        # the target strand's progressive count alone. That is sound only while
+        # the missions the count implies carry no lock or area requirement of
+        # their own; an edge onto a locked mission would put that lock's item
+        # behind the lock again, which is what propagation exists to prevent.
+        for mission, giver in MISSION_GIVER.items():
+            edges = (list(data.MISSION_PREREQUISITES.get(mission, []))
+                     + list(data.STRAND_PREREQUISITES.get(giver, [])))
+            for target_strand, count in edges:
+                for implied in STRAND_MISSIONS[target_strand][:count]:
+                    self.assertEqual(
+                        data.LOCATION_ABILITY_REQUIREMENTS.get(implied, []), [],
+                        f"{mission} implies {implied}")
+                    self.assertEqual(
+                        data.LOCATION_CONTENT_REQUIREMENTS.get(implied, []), [],
+                        f"{mission} implies {implied}")
+                    self.assertEqual(
+                        data.MISSION_AREA_REQUIREMENTS.get(implied, []), [],
+                        f"{mission} implies {implied}")
+
     def test_venue_race_mission_needs_its_vehicle(self) -> None:
         # The Driver is a forced car race, so it needs Land Vehicles on top of
         # the venue's own requirements.
@@ -609,8 +661,11 @@ class TestAbilityLocksAll(WorldTestBase):
         ])
         self.assertTrue(self.can_reach_location("No Escape?"))
         self.assertFalse(self.can_reach_location("The Driver"))
+        # The Job follows The Driver in the strand, so it inherits the term.
+        self.assertFalse(self.can_reach_location("The Job"))
         self.collect_by_name([data.LAND_VEHICLES_ITEM])
         self.assertTrue(self.can_reach_location("The Driver"))
+        self.assertTrue(self.can_reach_location("The Job"))
 
     def test_slot_data_carries_the_ability_contract(self) -> None:
         slot_data = self.world.fill_slot_data()
@@ -649,6 +704,10 @@ class TestAbilityLocksOff(WorldTestBase):
         self.assertTrue(self.can_reach_location("Robbable Store 01"))
         self.collect_by_name(["Mainland Access"])
         self.assertTrue(self.can_reach_location("Unique Stunt Jump 01"))
+        # Nothing propagates through a strand either, for the same reason: the
+        # predecessor's term is filtered out with its key.
+        self.collect_by_name(["Progressive Avery"])
+        self.assertTrue(self.can_reach_location("Two Bit Hit"))
 
 
 class TestAbilityLocksWalletOnly(WorldTestBase):

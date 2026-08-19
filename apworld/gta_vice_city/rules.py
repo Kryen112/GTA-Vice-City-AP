@@ -2,8 +2,10 @@
 
 Every mission location (story giver or venue strand) has a rule that is the
 conjunction of: its strand's progressive-unlock count, any cross-giver
-prerequisite gating the whole strand (only the finale has one), and any
-mission-specific cross-giver edge. A venue mission additionally requires its
+prerequisite gating the whole strand (only the finale has one), any
+mission-specific cross-giver edge, and everything the earlier missions of its
+own strand require, since a strand runs in order and a mission cannot start
+until its predecessors have passed. A venue mission additionally requires its
 property's ownership item (the building arrives as an item, not with the
 purchase) and the items to pass Shakedown: the property must also be bought in
 game, and the businesses go on sale only when Shakedown passes. The same sale
@@ -26,7 +28,14 @@ safehouse purchases and the collectible classes carry their items directly from
 data.LOCATION_ABILITY_REQUIREMENTS and data.LOCATION_CONTENT_REQUIREMENTS. The
 ability terms are the minimal day-one set and the pre-release manual runthrough
 adds the rest; a content term is uniform across its whole class, so it needs no
-audit.
+audit. Both families propagate forward through a strand along with everything
+else, so a mission behind an ability-locked mission carries that lock too: Two
+Bit Hit needs the land vehicle Demolition Man needs, and within a strand no fill
+can strand a lock item behind the mission its own lock holds. Propagation stops
+at the strand boundary, where the in-game ordering constraint stops: a
+cross-giver edge names the target strand's progressive count alone, which holds
+only while the missions that count implies carry no lock terms of their own, and
+a test pins that.
 
 With neither family selected, collectibles, activities, safehouse purchases,
 and stores have no rule (free within their region). The sphere-0 giver's first
@@ -100,12 +109,51 @@ def _lock_terms(location_name: str, active_items: frozenset[str]) -> list[Requir
             + _content_terms(location_name, active_items))
 
 
+def _deduplicated(requirements: list[Requirement]) -> list[Requirement]:
+    # Same item twice is the same requirement; keep the higher count and the
+    # first position, so a gathered list stays one entry per item.
+    highest: dict[str, int] = {}
+    for item, count in requirements:
+        highest[item] = max(highest.get(item, 0), count)
+    seen: set[str] = set()
+    ordered: list[Requirement] = []
+    for item, _count in requirements:
+        if item in seen:
+            continue
+        seen.add(item)
+        ordered.append((item, highest[item]))
+    return ordered
+
+
+def _predecessor_requirements(giver: str, index: int,
+                              active_items: frozenset[str]) -> list[Requirement]:
+    # What the earlier missions of this strand demand. A strand runs in order:
+    # APMARK reveals only the strand's first unpassed mission and the vanilla
+    # launcher starts are severed, so a mission cannot start until every earlier
+    # mission of its strand has PASSED. Whatever passing those takes is
+    # therefore part of reaching this one, which is the same reasoning
+    # _asset_completion_requirements applies to the slice of a venue strand an
+    # asset completes through. The progressive counts need no propagation, since
+    # this mission's own count is already the highest in the strand.
+    requirements: list[Requirement] = []
+    for earlier in locations.STRAND_MISSIONS[giver][:index]:
+        for prerequisite_giver, count in data.MISSION_PREREQUISITES.get(earlier, []):
+            requirements.append((data.progressive_item_name(prerequisite_giver), count))
+        requirements.extend(
+            (area_item, 1)
+            for area_item in data.MISSION_AREA_REQUIREMENTS.get(earlier, [])
+        )
+        requirements.extend(_lock_terms(earlier, active_items))
+    return requirements
+
+
 def _mission_requirements(mission: str, giver: str,
                           active_items: frozenset[str]) -> list[Requirement]:
     # The launcher-gate view: progressive unlocks, plus any area item the
     # mission needs beyond its own region (the finale's Mainland Access), plus
-    # the mission's ability terms. The SCM mission gates mirror the unlock
-    # counts; a venue's ownership and purchase requirements are added on top in
+    # the mission's ability terms and those of the earlier missions of its
+    # strand. The SCM mission gates mirror the unlock counts; a venue's
+    # ownership and purchase requirements are added on top in
     # build_location_rules (in game the gate reads the ownership global and the
     # purchase's completion global), and an ability lock is ASI-enforced, not
     # gated in the SCM.
@@ -124,7 +172,8 @@ def _mission_requirements(mission: str, giver: str,
         (area_item, 1) for area_item in data.MISSION_AREA_REQUIREMENTS.get(mission, [])
     )
     requirements.extend(_lock_terms(mission, active_items))
-    return requirements
+    requirements.extend(_predecessor_requirements(giver, index, active_items))
+    return _deduplicated(requirements)
 
 
 def _property_sale_requirements(active_items: frozenset[str]) -> list[Requirement]:
@@ -151,22 +200,6 @@ def _property_sale_requirements(active_items: frozenset[str]) -> list[Requiremen
     if data.PROPERTY_PURCHASES_ITEM in active_items:
         requirements = [*requirements, (data.PROPERTY_PURCHASES_ITEM, 1)]
     return requirements
-
-
-def _deduplicated(requirements: list[Requirement]) -> list[Requirement]:
-    # Same item twice is the same requirement; keep the higher count and the
-    # first position, so a gathered list stays one entry per item.
-    highest: dict[str, int] = {}
-    for item, count in requirements:
-        highest[item] = max(highest.get(item, 0), count)
-    seen: set[str] = set()
-    ordered: list[Requirement] = []
-    for item, _count in requirements:
-        if item in seen:
-            continue
-        seen.add(item)
-        ordered.append((item, highest[item]))
-    return ordered
 
 
 def _asset_completion_requirements(asset: str, progressive_count: int,

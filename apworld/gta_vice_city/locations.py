@@ -66,11 +66,14 @@ LOCATION_GROUPS: dict[str, list[str]] = {
     "Robbable Stores": list(OPTIONAL_CLASSES["robbable_stores"][1]),
 }
 
-# Which strand and 0-based index each mission has, for the access rules. Covers
-# story givers and venue strands, since both are progressive.
+# Which strand and 0-based index each mission has, and each strand's missions in
+# play order, for the access rules. Covers story givers and venue strands, since
+# both are progressive.
 MISSION_GIVER: dict[str, str] = {}
 MISSION_INDEX: dict[str, int] = {}
+STRAND_MISSIONS: dict[str, list[str]] = {}
 for _strand, (_class_key, _missions) in data.progressive_strands().items():
+    STRAND_MISSIONS[_strand] = list(_missions)
     for _index, _mission in enumerate(_missions):
         MISSION_GIVER[_mission] = _strand
         MISSION_INDEX[_mission] = _index
