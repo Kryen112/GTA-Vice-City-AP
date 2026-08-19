@@ -129,6 +129,17 @@ class RandomizePickups(Toggle):
     display_name = "Randomize pickups"
 
 
+class SplitMainlandAccess(Toggle):
+    """If on, Mainland Access is replaced by one item per vanilla crossing:
+    Prawn Island Bridge, Leaf Links Bridge, Ocean Beach Bridge, and Starfish
+    Island Causeway. Each opens only its own barrier, so any single one reaches
+    the whole mainland and which one you hold decides where you cross. The
+    causeway also needs Starfish Island Access, since the gate is on the island.
+    If off, one Mainland Access item opens every crossing at once, the vanilla
+    flip."""
+    display_name = "Split mainland access"
+
+
 class AbilityLocks(OptionSet):
     """Abilities locked at new game until their item arrives from the
     multiworld. Each selected key locks its ability and puts its item in the
@@ -250,6 +261,7 @@ class GTAViceCityOptions(PerGameCommonOptions):
     shuffle_emergency_rewards: ShuffleEmergencyRewards
     randomize_radio_stations: RandomizeRadioStations
     shuffle_minimap: ShuffleMinimap
+    split_mainland_access: SplitMainlandAccess
     randomize_pickups: RandomizePickups
     ability_locks: AbilityLocks
     starting_ability_unlock: StartingAbilityUnlock

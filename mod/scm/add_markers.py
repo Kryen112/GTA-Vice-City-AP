@@ -17,6 +17,12 @@ import sys
 SRC, DST = sys.argv[1], sys.argv[2]
 CLEO_OUT = sys.argv[3] if len(sys.argv) > 3 else None
 
+# A gate term meaning "any mainland crossing", mirroring build_scm.MAINLAND_ANY.
+# Mainland Access and the four crossing items are alternatives, so a gate naming
+# one of them alone would hold forever under the setting that never writes it.
+MAINLAND_ANY = "any mainland crossing"
+MAINLAND_UNLOCKS = [9030, 9032, 9033, 9034, 9035]
+
 # Strand -> ordered launchers, and each launcher's unlock gate (global, count).
 # Mirrors build_scm.py MISSIONS. HOT (free, sphere-0) keeps its vanilla marker.
 # ICE1 (Cherry Popper, no locate marker) and the venue selectors are handled by
@@ -46,33 +52,36 @@ STRANDS = {
     # Cap the Collector keeps its vanilla asset prerequisite: Hit the Courier
     # passed ($273), Cop Land passed ($268), and the owned-asset count $1175
     # at seven or more, so the finale marker and launcher wait for the assets.
+    # The last mission's mainland term is MAINLAND_ANY, since Mainland Access and
+    # the crossing items are alternatives and this gate guards both the marker
+    # and the launcher start.
     "VercettiFinale": [("FIN1", [(9022, 1), (9016, 3), (268, 1), (273, 1), (1175, 7)]),
-                       ("FIN2", [(9022, 2), (9016, 3), (9030, 1)])],
+                       ("FIN2", [(9022, 2), (9016, 3), MAINLAND_ANY])],
     # Venue strand gates also require the property bought (the venue purchase's
     # completion global) and owned (the ownership global its AP item drives),
     # so the beam and blip stay hidden and the launcher stays unstarted until
     # the progressive, the purchase, and the ownership item all exist.
-    "Malibu": [("BANK1", [(9023, 1), (9337, 1), (9414, 1)]),
-               ("BANK2", [(9023, 2), (9337, 1), (9414, 1)]),
-               ("BANK3", [(9023, 3), (9337, 1), (9414, 1)]),
-               ("BANK4", [(9023, 4), (9337, 1), (9414, 1)])],
-    "FilmStudio": [("PORN1", [(9024, 1), (9334, 1), (9411, 1)]),
-                   ("PORN2", [(9024, 2), (9334, 1), (9411, 1)]),
-                   ("PORN3", [(9024, 3), (9334, 1), (9411, 1)]),
-                   ("PORN4", [(9024, 4), (9334, 1), (9411, 1)])],
-    "Printworks": [("COU1", [(9025, 1), (9332, 1), (9409, 1)]),
-                   ("COU2", [(9025, 2), (9332, 1), (9409, 1)])],
-    "KaufmanCabs": [("TWAR1", [(9026, 1), (9336, 1), (9413, 1)]),
-                    ("TWAR2", [(9026, 2), (9336, 1), (9413, 1)]),
-                    ("TWAR3", [(9026, 3), (9336, 1), (9413, 1)])],
+    "Malibu": [("BANK1", [(9023, 1), (9341, 1), (9418, 1)]),
+               ("BANK2", [(9023, 2), (9341, 1), (9418, 1)]),
+               ("BANK3", [(9023, 3), (9341, 1), (9418, 1)]),
+               ("BANK4", [(9023, 4), (9341, 1), (9418, 1)])],
+    "FilmStudio": [("PORN1", [(9024, 1), (9338, 1), (9415, 1)]),
+                   ("PORN2", [(9024, 2), (9338, 1), (9415, 1)]),
+                   ("PORN3", [(9024, 3), (9338, 1), (9415, 1)]),
+                   ("PORN4", [(9024, 4), (9338, 1), (9415, 1)])],
+    "Printworks": [("COU1", [(9025, 1), (9336, 1), (9413, 1)]),
+                   ("COU2", [(9025, 2), (9336, 1), (9413, 1)])],
+    "KaufmanCabs": [("TWAR1", [(9026, 1), (9340, 1), (9417, 1)]),
+                    ("TWAR2", [(9026, 2), (9340, 1), (9417, 1)]),
+                    ("TWAR3", [(9026, 3), (9340, 1), (9417, 1)])],
 }
 
 # Fresh scratch globals, all above the ASI-written block (its top is the
-# highest content unlock, $9455). One handle, one started-flag, one
+# highest content unlock, $9459). One handle, one started-flag, one
 # shown-flag per managed mission.
-HANDLE_BASE = 9456
-STARTED_BASE = 9516
-SHOWN_BASE = 9576
+HANDLE_BASE = 9460
+STARTED_BASE = 9520
+SHOWN_BASE = 9580
 MARKER_SPRITE_DEFAULT = "34"  # generic mission-attempt sprite; overridden per giver
 
 with open(SRC, "rb") as handle:
@@ -215,7 +224,7 @@ lines = kept
 # heaviest MAIN-section threads and poll only numeric globals, so they port to a
 # CLEO script unchanged. Moving them out of the MAIN script buffer makes room for
 # APMARK without overflowing VC's fixed main-script buffer. The completion globals
-# they set ($9076.. and $9176..) are unchanged, so the ASI polls them identically.
+# they set ($9080.. and $9180..) are unchanged, so the ASI polls them identically.
 def remove_thread(label, loop_goto):
     start = next((i for i, ln in enumerate(lines) if ln == f":{label}"), None)
     assert start is not None, f"relocate: :{label} not found"
@@ -234,21 +243,21 @@ lines = [ln for ln in lines
 # collectable pickup to its coordinate), so the CLEO watcher no longer counts
 # them; it polls the stat and activity/side-event flags only.
 cleo = ["{$CLEO .cs}", "", "0000:", "", ":AW_LOOP", "wait 500"]
-stat_checks = ([(f"${1439 + n} == 1", 9176 + n) for n in range(35)]
-               + [(f"${795 + n} == 1", 9211 + n) for n in range(36)]
-               + [(f"$369 >= {10 * n}", 9282 + n) for n in range(1, 11)])
+stat_checks = ([(f"${1439 + n} == 1", 9180 + n) for n in range(35)]
+               + [(f"${795 + n} == 1", 9215 + n) for n in range(36)]
+               + [(f"$369 >= {10 * n}", 9286 + n) for n in range(1, 11)])
 for idx, (cond, comp) in enumerate(stat_checks):
     cleo += ["if ", f"  {cond}", f"goto_if_false @AW_S{idx}", f"${comp} = 1", f":AW_S{idx}"]
 # Activity + side events (APACT), mirroring build_scm.add_activity_watcher:
 # Checkpoint Charlie ($607), the six Sunshine Autos races ($1588..$1593, one
 # check each in showroom menu order), and 14 side-event win flags. Every flag is
 # an independent set-once signal, so each writes its own completion global.
-activity_flags = ([(607, 9361)]
-                  + [(1587 + race, 9365 + race) for race in range(1, 7)]
-                  + [(1597, 9303), (1598, 9304), (55, 9305), (1584, 9306),
-                     (1585, 9307), (1586, 9308), (1587, 9309), (8241, 9310),
-                     (8485, 9311), (8156, 9312), (363, 9313), (364, 9314),
-                     (339, 9315), (351, 9316)])
+activity_flags = ([(607, 9365)]
+                  + [(1587 + race, 9369 + race) for race in range(1, 7)]
+                  + [(1597, 9307), (1598, 9308), (55, 9309), (1584, 9310),
+                     (1585, 9311), (1586, 9312), (1587, 9313), (8241, 9314),
+                     (8485, 9315), (8156, 9316), (363, 9317), (364, 9318),
+                     (339, 9319), (351, 9320)])
 for idx, (flag, comp) in enumerate(activity_flags):
     cleo += ["if ", f"  ${flag} == 1", f"goto_if_false @AW_E{idx}", f"${comp} = 1", f":AW_E{idx}"]
 cleo += ["goto @AW_LOOP", ""]
@@ -276,8 +285,14 @@ def strand_block(strand, missions):
                 f":{active}"]
         # First unpassed mission: decide show/hide on its gate.
         gate_true = f"APMARK_{launcher}_SHOW"
-        for global_index, count in m["gate"]:
-            out += ["if ", f"  ${global_index} >= {count}", f"goto_if_false @APMARK_{launcher}_HIDE"]
+        for term in m["gate"]:
+            hide = f"@APMARK_{launcher}_HIDE"
+            if term == MAINLAND_ANY:
+                out += ["if or", *[f"  ${unlock} >= 1" for unlock in MAINLAND_UNLOCKS],
+                        f"goto_if_false {hide}"]
+            else:
+                global_index, count = term
+                out += ["if ", f"  ${global_index} >= {count}", f"goto_if_false {hide}"]
         # Gate holds: show marker (once) and start launcher (once), then done strand.
         # No remove_blip before create: the handle is either fresh (0, never
         # created) or was just removed by HIDE / the passed path, so there is no
@@ -329,7 +344,7 @@ lines[boot + 1:boot + 1] = ["start_new_script @APMARK "]
 # Grow the reserved block to cover the new scratch globals. The anchor is the
 # foundation's sizing line, the highest ASI-written global (the top content
 # unlock).
-found = next(i for i, ln in enumerate(lines) if ln == "$9455 = 0")
+found = next(i for i, ln in enumerate(lines) if ln == "$9459 = 0")
 lines[found + 1:found + 1] = [f"${highest_global} = 0"]
 
 with open(DST, "wb") as handle:

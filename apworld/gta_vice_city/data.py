@@ -197,7 +197,31 @@ PACKAGE_REWARD_ITEMS: list[str] = [
     "Sea Sparrow Spawn", "Rhino Spawn", "Hunter Spawn", "$100,000",
 ]
 
-AREA_ITEMS: list[str] = ["Mainland Access", "Starfish Island Access"]
+# The four vanilla crossings from the start island to the mainland: three bridge
+# roadblocks and the Starfish Island causeway gate, which the mainland flip
+# removes together. With split_mainland_access on, each becomes its own item that
+# opens only its own barrier, so crossing means travelling to a crossing the
+# multiworld has opened; any one is enough, since the west island is roamable
+# once the player is on it. Every roadblock stands on the start-island side, in
+# the district that names it (the game's own navig.zon), so the item name says
+# where to go: Prawn Island crosses to Downtown, Leaf Links to Downtown and
+# Little Haiti, Ocean Beach to Viceport. The causeway needs the island as well,
+# which is the one crossing behind two items.
+MAINLAND_CROSSINGS: dict[str, list[str]] = {
+    "Prawn Island Bridge": [],
+    "Leaf Links Bridge": [],
+    "Ocean Beach Bridge": [],
+    "Starfish Island Causeway": ["Starfish Island Access"],
+}
+MAINLAND_CROSSING_ITEMS: list[str] = list(MAINLAND_CROSSINGS)
+
+# Area items, in unlock-global order. Mainland Access and the crossings are
+# alternatives, never both: the option picks which enters the pool, and the
+# other's unlock global is simply never written. Both stay in the id table and
+# the reserved layout, which are static across seeds.
+AREA_ITEMS: list[str] = [
+    "Mainland Access", "Starfish Island Access", *MAINLAND_CROSSING_ITEMS,
+]
 
 # The five emergency-vehicle completion rewards. When the shuffle option is on
 # they enter the pool as useful items and the vanilla full-completion grant is
@@ -656,8 +680,12 @@ REGION_VICE_CITY = "Vice City"
 REGION_MAINLAND = "Mainland"
 REGION_STARFISH = "Starfish Island"
 
-# The area item that opens each gated region, for requirements that must name
-# the item itself (the region carries it for the locations inside it).
+# The area item that opens each gated region when the crossings are not split,
+# for requirements that must name the item itself (the region carries it for the
+# locations inside it). Anything deciding what a region DEMANDS reads
+# region_access_groups instead, so the split reaches it; this table is for the
+# three callers that want the unsplit item by name: the pool when the option is
+# off, the generated spec, and the tracker's soft-requirement match.
 AREA_ITEM_BY_REGION: dict[str, str] = {
     REGION_MAINLAND: "Mainland Access",
     REGION_STARFISH: "Starfish Island Access",
@@ -700,13 +728,28 @@ STARFISH_MISSIONS: frozenset[str] = frozenset({
     "Keep Your Friends Close...",
 })
 
-# Area items a mission needs beyond its own region. Keep Your Friends Close...
-# sits on Starfish, but its launcher only activates once Cap the Collector
-# passes, and that mission is on the mainland, so the finale also needs
-# Mainland Access.
-MISSION_AREA_REQUIREMENTS: dict[str, list[str]] = {
-    "Keep Your Friends Close...": ["Mainland Access"],
+# Regions a mission needs beyond its own. Keep Your Friends Close... sits on
+# Starfish, but its launcher only activates once Cap the Collector passes, and
+# that mission is on the mainland, so the finale also needs the mainland. Named
+# by region rather than by item, so the crossing split reaches it too.
+MISSION_REGION_REQUIREMENTS: dict[str, list[str]] = {
+    "Keep Your Friends Close...": [REGION_MAINLAND],
 }
+
+
+def region_access_groups(region: str,
+                         split_mainland_access: bool) -> list[list[str]]:
+    """The alternative item sets that reach a region, any one of them enough.
+
+    Every region but the mainland has one way in, so its area item is the only
+    group. With the crossings split, the mainland has one group per crossing
+    instead of the single Mainland Access group. A region needing nothing (the
+    start island) has no groups at all.
+    """
+    if region == REGION_MAINLAND and split_mainland_access:
+        return [[crossing, *also] for crossing, also in MAINLAND_CROSSINGS.items()]
+    area_item = AREA_ITEM_BY_REGION.get(region)
+    return [] if area_item is None else [[area_item]]
 
 
 def mission_region(giver: str, mission: str) -> str:

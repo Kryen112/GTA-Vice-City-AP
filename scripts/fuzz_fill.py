@@ -65,6 +65,25 @@ CONFIGURATIONS: list[tuple[str, dict]] = [
         "enable_stunt_jumps": False, "enable_emergency_vehicles": False,
         "enable_properties": False, "enable_side_events": False,
     }),
+    # Splitting the mainland access into one item per crossing turns the single
+    # mainland edge into a one-of-four choice, which loosens reachability while
+    # adding three progression items to place. Covered on its own, on the
+    # tightest accepted pool, and with the collectible classes that put the most
+    # checks behind the mainland.
+    ("mainland crossings split", {"split_mainland_access": True}),
+    ("mainland crossings split, tightest pool", {
+        "split_mainland_access": True,
+        "enable_hidden_packages": True, "enable_rampages": False,
+        "enable_stunt_jumps": False, "enable_emergency_vehicles": False,
+        "enable_properties": False, "enable_side_events": False,
+        "enable_robbable_stores": False,
+    }),
+    ("mainland crossings split, all classes on", {
+        "split_mainland_access": True, "enable_hidden_packages": True,
+        "enable_rampages": True, "enable_stunt_jumps": True,
+        "enable_emergency_vehicles": True, "enable_properties": True,
+        "enable_robbable_stores": True, "enable_side_events": True,
+    }),
     ("100 percent, all classes on", {
         "goal": "hundred_percent", "enable_hidden_packages": True,
         "enable_rampages": True, "enable_stunt_jumps": True,

@@ -159,6 +159,9 @@ class GTAViceCityWorld(World):
             options.shuffle_minimap.value = int(bool(slot_data["shuffle_minimap"]))
         if "randomize_pickups" in slot_data:
             options.randomize_pickups.value = int(bool(slot_data["randomize_pickups"]))
+        if "split_mainland_access" in slot_data:
+            options.split_mainland_access.value = int(
+                bool(slot_data["split_mainland_access"]))
         if "ability_locks" in slot_data:
             options.ability_locks.value = set(slot_data["ability_locks"])
         if "content_locks" in slot_data:
@@ -324,12 +327,14 @@ class GTAViceCityWorld(World):
     def _location_rules(self) -> dict[str, rules.RulePredicate]:
         # Built per world: the finale missions carry the asset prerequisite
         # only while the properties class is on (its items are in the pool),
-        # and a lock term exists only for the selected ability_locks and
-        # content_locks keys.
+        # a lock term exists only for the selected ability_locks and
+        # content_locks keys, and the mainland is reached by one item or by any
+        # one crossing depending on split_mainland_access.
         return rules.build_location_rules(
             bool(self.options.enable_properties.value),
             self._ability_lock_keys(),
             self._content_lock_keys(),
+            bool(self.options.split_mainland_access.value),
         )
 
     def create_item(self, name: str) -> GTAViceCityItem:
@@ -354,10 +359,12 @@ class GTAViceCityWorld(World):
 
         start = by_name[regions.START_REGION]
         menu.connect(start)
+        entry_rules = regions.build_region_entry_rules(
+            bool(self.options.split_mainland_access.value))
         for region_name, region in by_name.items():
             if region_name == regions.START_REGION:
                 continue
-            rule = regions.REGION_ENTRY_RULES.get(region_name)
+            rule = entry_rules.get(region_name)
             if rule is None:
                 start.connect(region)
             else:
@@ -378,7 +385,16 @@ class GTAViceCityWorld(World):
                 continue
             name = data.progressive_item_name(strand)
             placeable.extend([name] * ITEM_QUANTITIES[name])
-        placeable.extend(data.AREA_ITEMS)
+        # Mainland Access and the four crossings are alternatives: the option
+        # picks which reaches the mainland, and the other never enters the pool.
+        # Kept in AREA_ITEMS order so the pool reads the same as the id table.
+        mainland_items = (
+            data.MAINLAND_CROSSING_ITEMS if self.options.split_mainland_access
+            else [data.AREA_ITEM_BY_REGION[data.REGION_MAINLAND]]
+        )
+        placeable.extend(name for name in data.AREA_ITEMS
+                         if name in {*mainland_items,
+                                     data.AREA_ITEM_BY_REGION[data.REGION_STARFISH]})
         placeable.extend(
             reward for reward in data.PACKAGE_REWARD_ITEMS if self._item_enabled(reward)
         )
@@ -562,6 +578,7 @@ class GTAViceCityWorld(World):
             # tracker regeneration precollects the same station.
             "radio_start_station": self.radio_start_station,
             "shuffle_minimap": bool(self.options.shuffle_minimap.value),
+            "split_mainland_access": bool(self.options.split_mainland_access.value),
             "randomize_pickups": bool(self.options.randomize_pickups.value),
             # The selected ability lock keys (sorted; JSON has no sets), so a
             # tracker regeneration rebuilds the same pool and rules. The lock

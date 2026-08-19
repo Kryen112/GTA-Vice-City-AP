@@ -260,10 +260,10 @@ class TestRadioStationsOn(WorldTestBase):
             )
 
     def test_reserved_block_stays_below_the_marker_globals(self) -> None:
-        # $9456 up is SCM-internal (marker handles and visibility flags, whose
+        # $9460 up is SCM-internal (marker handles and visibility flags, whose
         # bases live in add_markers.py); the reserved contract must never grow
         # into it.
-        self.assertLess(scm.highest_reserved_global(), 9456)
+        self.assertLess(scm.highest_reserved_global(), 9460)
 
 
 class TestRadioStationsOff(WorldTestBase):
@@ -653,7 +653,7 @@ class TestAbilityLocksAll(WorldTestBase):
                         data.LOCATION_CONTENT_REQUIREMENTS.get(implied, []), [],
                         f"{mission} implies {implied}")
                     self.assertEqual(
-                        data.MISSION_AREA_REQUIREMENTS.get(implied, []), [],
+                        data.MISSION_REGION_REQUIREMENTS.get(implied, []), [],
                         f"{mission} implies {implied}")
 
     def test_venue_race_mission_needs_its_vehicle(self) -> None:
@@ -1219,6 +1219,114 @@ class TestStrandAccess(WorldTestBase):
         self.assertFalse(self.can_reach_location(data.FINAL_MISSION))
         self.collect_by_name(["Progressive Vercetti Protection"])
         self.assertTrue(self.can_reach_location(data.FINAL_MISSION))
+
+
+class TestSplitMainlandAccessOff(WorldTestBase):
+    game = "Grand Theft Auto Vice City"
+    # Default options: split_mainland_access is off.
+
+    def test_one_item_opens_the_mainland_and_no_crossing_exists(self) -> None:
+        pool_names = {item.name for item in self.multiworld.itempool}
+        self.assertIn("Mainland Access", pool_names)
+        for crossing in data.MAINLAND_CROSSING_ITEMS:
+            self.assertNotIn(crossing, pool_names, crossing)
+        self.assertFalse(self.multiworld.get_region("Mainland", self.player).can_reach(
+            self.multiworld.state))
+        self.collect_by_name(["Mainland Access"])
+        self.assertTrue(self.multiworld.get_region("Mainland", self.player).can_reach(
+            self.multiworld.state))
+
+    def test_slot_data_says_the_crossings_are_whole(self) -> None:
+        self.assertFalse(self.world.fill_slot_data()["split_mainland_access"])
+
+
+class TestSplitMainlandAccessOn(WorldTestBase):
+    game = "Grand Theft Auto Vice City"
+    options: ClassVar[dict] = {
+        "split_mainland_access": True,
+        "enable_hidden_packages": True, "enable_rampages": True,
+    }
+
+    def _mainland_reachable(self) -> bool:
+        return self.multiworld.get_region("Mainland", self.player).can_reach(
+            self.multiworld.state)
+
+    def test_the_crossings_replace_mainland_access_in_the_pool(self) -> None:
+        pool_names = {item.name for item in self.multiworld.itempool}
+        self.assertNotIn("Mainland Access", pool_names)
+        for crossing in data.MAINLAND_CROSSING_ITEMS:
+            self.assertIn(crossing, pool_names, crossing)
+            self.assertEqual(
+                ITEM_CLASSIFICATIONS[crossing],
+                ItemClassification.progression, crossing,
+            )
+
+    def test_any_one_bridge_opens_the_whole_mainland(self) -> None:
+        # One crossing is enough: the west island is roamable once the player is
+        # on it, so the split decides where they cross, not whether they can.
+        self.assertFalse(self._mainland_reachable())
+        self.collect_by_name(["Leaf Links Bridge"])
+        self.assertTrue(self._mainland_reachable())
+        self.assertTrue(self.can_reach_location("Hidden Package - Viceport - 1"))
+        self.assertTrue(self.can_reach_location(
+            "Rocket Launcher Rampage - Escobar International"))
+
+    def test_each_bridge_opens_it_on_its_own(self) -> None:
+        # Every crossing is a whole answer by itself, so the fill may place the
+        # mainland behind any one of them.
+        for crossing in ["Prawn Island Bridge", "Leaf Links Bridge",
+                         "Ocean Beach Bridge"]:
+            with self.subTest(crossing=crossing):
+                self.remove_by_name(data.MAINLAND_CROSSING_ITEMS)
+                self.assertFalse(self._mainland_reachable())
+                self.collect_by_name([crossing])
+                self.assertTrue(self._mainland_reachable())
+        self.remove_by_name(data.MAINLAND_CROSSING_ITEMS)
+
+    def test_the_causeway_needs_the_island_it_stands_on(self) -> None:
+        # The west gate is on Starfish Island, so that crossing is the one
+        # behind two items; holding it alone reaches nothing.
+        self.collect_by_name(["Starfish Island Causeway"])
+        self.assertFalse(self._mainland_reachable())
+        self.collect_by_name(["Starfish Island Access"])
+        self.assertTrue(self._mainland_reachable())
+
+    def test_starfish_access_alone_still_opens_no_crossing(self) -> None:
+        # The island and the mainland stay independent: reaching Starfish must
+        # not imply reaching the west island, which is what the vanilla west
+        # gate being a separate barrier means.
+        self.collect_by_name(["Starfish Island Access"])
+        self.assertFalse(self._mainland_reachable())
+
+    def test_the_last_mission_needs_a_crossing(self) -> None:
+        # Keep Your Friends Close... sits on Starfish but its launcher waits on
+        # Cap the Collector, which is on the mainland, so its own rule carries
+        # the crossing choice as a threshold rather than a single item.
+        self.collect_by_name([
+            "Progressive Vercetti Finale", "Progressive Vercetti Protection",
+            "Starfish Island Access",
+        ])
+        self.collect_by_name(_FINALE_ASSET_ITEMS)
+        self.assertFalse(self.can_reach_location(data.FINAL_MISSION))
+        self.collect_by_name(["Ocean Beach Bridge"])
+        self.assertTrue(self.can_reach_location(data.FINAL_MISSION))
+
+    def test_slot_data_says_the_crossings_are_split(self) -> None:
+        self.assertTrue(self.world.fill_slot_data()["split_mainland_access"])
+
+    def test_a_regeneration_reads_back_the_split(self) -> None:
+        # The passthrough decides whether a Universal Tracker regeneration builds
+        # the crossings or Mainland Access, so a missing read-back would have the
+        # tracker gate the mainland on an item the played seed never handed out.
+        slot_data = GTAViceCityWorld.interpret_slot_data(self.world.fill_slot_data())
+        tracker = setup_multiworld(GTAViceCityWorld, steps=())
+        tracker.re_gen_passthrough = {GTAViceCityWorld.game: slot_data}
+        for step in gen_steps:
+            call_all(tracker, step)
+        pool_names = {item.name for item in tracker.itempool}
+        self.assertNotIn("Mainland Access", pool_names)
+        for crossing in data.MAINLAND_CROSSING_ITEMS:
+            self.assertIn(crossing, pool_names, crossing)
 
 
 class TestMainlandGating(WorldTestBase):
@@ -2027,15 +2135,44 @@ class TestReservedGlobals(WorldTestBase):
         strand_unlocks = [scm.unlock_global(strand) for strand in data.progressive_strands()]
         self.assertGreaterEqual(min(strand_unlocks), 9010)
         self.assertLessEqual(max(strand_unlocks), 9029)
+        # build_scm.py's area watcher hard-codes these five: the mainland flip
+        # reads Mainland Access OR the crossing whose barrier each branch opens,
+        # which is how one static script serves both split_mainland_access
+        # settings. An area item inserted earlier would repoint every branch at
+        # another crossing, so they are pinned by literal here.
+        self.assertEqual(scm.unlock_global("Mainland Access"), 9030)
+        self.assertEqual(scm.unlock_global("Starfish Island Access"), 9031)
+        self.assertEqual(scm.unlock_global("Prawn Island Bridge"), 9032)
+        self.assertEqual(scm.unlock_global("Leaf Links Bridge"), 9033)
+        self.assertEqual(scm.unlock_global("Ocean Beach Bridge"), 9034)
+        self.assertEqual(scm.unlock_global("Starfish Island Causeway"), 9035)
+
+    def test_the_mainland_alternatives_are_what_a_gate_must_accept(self) -> None:
+        # build_scm.py and add_markers.py hold these five as MAINLAND_UNLOCKS, the
+        # globals a mainland gate expands to with if-or, and build_scm.py asserts
+        # at build time that no gate names one of them directly. That matters
+        # because Mainland Access and the crossings are alternatives: a gate
+        # naming one alone holds forever under the setting that never writes it,
+        # which is how the finale's launcher gate came to be unsatisfiable with
+        # the split on. Pinned by literal, so adding a crossing fails here.
+        alternatives = ["Mainland Access", *data.MAINLAND_CROSSING_ITEMS]
+        self.assertEqual([scm.unlock_global(name) for name in alternatives],
+                         [9030, 9032, 9033, 9034, 9035])
+        # And under either setting, every way into the mainland is one of them.
+        for split in (False, True):
+            groups = data.region_access_groups(data.REGION_MAINLAND, split)
+            self.assertTrue(groups, split)
+            for group in groups:
+                self.assertIn(group[0], alternatives, group)
         # The ASI hard-codes the packages-shuffled index too
         # (scm_game_state.cpp): it gates taking back the package cash the
         # executable pays, which no script gate can reach.
-        self.assertEqual(scm.PACKAGES_SHUFFLED_GLOBAL, 9387)
-        self.assertEqual(scm.ABILITY_LOCK_FLAG_BASE, 9430)
-        self.assertEqual(scm.ABILITY_UNLOCK_BASE, 9438)
-        self.assertEqual(scm.CONTENT_LOCK_FLAG_BASE, 9446)
-        self.assertEqual(scm.CONTENT_UNLOCK_BASE, 9451)
-        self.assertEqual(scm.highest_reserved_global(), 9455)
+        self.assertEqual(scm.PACKAGES_SHUFFLED_GLOBAL, 9391)
+        self.assertEqual(scm.ABILITY_LOCK_FLAG_BASE, 9434)
+        self.assertEqual(scm.ABILITY_UNLOCK_BASE, 9442)
+        self.assertEqual(scm.CONTENT_LOCK_FLAG_BASE, 9450)
+        self.assertEqual(scm.CONTENT_UNLOCK_BASE, 9455)
+        self.assertEqual(scm.highest_reserved_global(), 9459)
         self.assertEqual(scm.ABILITY_KEYS, data.ABILITY_ITEMS)
         self.assertEqual(scm.CONTENT_KEYS, data.CONTENT_ITEMS)
 
@@ -2046,10 +2183,10 @@ class TestReservedGlobals(WorldTestBase):
         # so a reordered strand there repoints a launcher's completion write at
         # another mission's check. Pinned by literal, so that shift fails here:
         # update the script tables in the same change.
-        self.assertEqual(scm.completion_global("An Old Friend"), 9032)
-        self.assertEqual(scm.completion_global("Four Iron"), 9048)
-        self.assertEqual(scm.completion_global("Demolition Man"), 9049)
-        self.assertEqual(scm.completion_global("Two Bit Hit"), 9050)
+        self.assertEqual(scm.completion_global("An Old Friend"), 9036)
+        self.assertEqual(scm.completion_global("Four Iron"), 9052)
+        self.assertEqual(scm.completion_global("Demolition Man"), 9053)
+        self.assertEqual(scm.completion_global("Two Bit Hit"), 9054)
 
     def test_side_event_completion_globals_match_the_hand_written_mirrors(self) -> None:
         # build_scm.py hard-codes these in two tables: SIDE_EVENTS (win flag ->
@@ -2060,22 +2197,22 @@ class TestReservedGlobals(WorldTestBase):
         # event. Pinned by literal, so that shift fails here instead: update the
         # script tables in the same change.
         expected = {
-            "Hotring": 9303, "Bloodring": 9304, "Dirtring": 9305,
-            "Downtown Chopper Checkpoint": 9306,
-            "Ocean Beach Chopper Checkpoint": 9307,
-            "Vice Point Chopper Checkpoint": 9308,
-            "Little Haiti Chopper Checkpoint": 9309,
-            "RC Bandit Race": 9310, "RC Baron Race": 9311,
-            "RC Raider Pickup": 9312,
-            "Trial by Dirt": 9313, "Test Track": 9314,
-            "PCJ Playground": 9315, "Cone Crazy": 9316,
+            "Hotring": 9307, "Bloodring": 9308, "Dirtring": 9309,
+            "Downtown Chopper Checkpoint": 9310,
+            "Ocean Beach Chopper Checkpoint": 9311,
+            "Vice Point Chopper Checkpoint": 9312,
+            "Little Haiti Chopper Checkpoint": 9313,
+            "RC Bandit Race": 9314, "RC Baron Race": 9315,
+            "RC Raider Pickup": 9316,
+            "Trial by Dirt": 9317, "Test Track": 9318,
+            "PCJ Playground": 9319, "Cone Crazy": 9320,
         }
         self.assertEqual(sorted(expected), sorted(data.SIDE_EVENTS))
         for name, global_index in expected.items():
             self.assertEqual(scm.completion_global(name), global_index, name)
         # Every payout guard also reads the class-cash flag, so that a seed with
         # the class off pays vanilla; the same shift argument applies to it.
-        self.assertEqual(scm.SIDE_EVENTS_CASH_GLOBAL, 9426)
+        self.assertEqual(scm.SIDE_EVENTS_CASH_GLOBAL, 9430)
 
     def test_sunshine_completion_globals_match_the_hand_written_mirrors(self) -> None:
         # build_scm.py hard-codes these in three tables: SUNSHINE_IMPORT_LISTS
@@ -2087,16 +2224,16 @@ class TestReservedGlobals(WorldTestBase):
         # which would point each race's payout guard at another race. Pinned by
         # literal, so that shift fails here: update the script tables with it.
         expected = {
-            "Sunshine Autos Import List 1": 9362,
-            "Sunshine Autos Import List 2": 9363,
-            "Sunshine Autos Import List 3": 9364,
-            "Sunshine Autos Import List 4": 9365,
-            "Sunshine Autos Race: Terminal Velocity": 9366,
-            "Sunshine Autos Race: Ocean Drive": 9367,
-            "Sunshine Autos Race: Border Run": 9368,
-            "Sunshine Autos Race: Capital Cruise": 9369,
-            "Sunshine Autos Race: Tour!": 9370,
-            "Sunshine Autos Race: V.C. Endurance": 9371,
+            "Sunshine Autos Import List 1": 9366,
+            "Sunshine Autos Import List 2": 9367,
+            "Sunshine Autos Import List 3": 9368,
+            "Sunshine Autos Import List 4": 9369,
+            "Sunshine Autos Race: Terminal Velocity": 9370,
+            "Sunshine Autos Race: Ocean Drive": 9371,
+            "Sunshine Autos Race: Border Run": 9372,
+            "Sunshine Autos Race: Capital Cruise": 9373,
+            "Sunshine Autos Race: Tour!": 9374,
+            "Sunshine Autos Race: V.C. Endurance": 9375,
         }
         self.assertEqual(
             sorted(expected),
@@ -2106,7 +2243,7 @@ class TestReservedGlobals(WorldTestBase):
             self.assertEqual(scm.completion_global(name), global_index, name)
         # The race payout guards read the properties class-cash flag, so a seed
         # with the class off pays vanilla; the same shift argument applies to it.
-        self.assertEqual(scm.PROPERTIES_CASH_GLOBAL, 9429)
+        self.assertEqual(scm.PROPERTIES_CASH_GLOBAL, 9433)
 
     def test_the_script_gated_content_items_keep_their_offsets(self) -> None:
         # build_scm.py derives the two gates it writes into the script from

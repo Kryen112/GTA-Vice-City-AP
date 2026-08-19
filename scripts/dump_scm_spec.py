@@ -94,7 +94,12 @@ def main() -> int:
             # No lock key is active: a lock term is enforced by the ASI or by its
             # own gate, never by a mission's unlock gate, so the spec this prints
             # is the gate table build_scm.py mirrors.
-            requirements = rules._mission_requirements(mission, giver, frozenset())
+            # Printed for the unsplit setting, which is the one that names a
+            # single mainland item. build_scm.py writes a mainland term as an
+            # if-or over Mainland Access and all four crossing globals, since
+            # they are alternatives and one static script serves both settings.
+            requirements = rules._mission_requirements(
+                mission, giver, frozenset(), split_mainland_access=False)
             parts = [
                 f"${scm.unlock_global(item if item in data.AREA_ITEMS else _strand_of(item))}"
                 f" >= {count}"
@@ -120,12 +125,24 @@ def main() -> int:
     mainland = scm.unlock_global(data.AREA_ITEM_BY_REGION[data.REGION_MAINLAND])
     starfish = scm.unlock_global(data.AREA_ITEM_BY_REGION[data.REGION_STARFISH])
     print(f"- Mainland Access: unlock global ${mainland}. When it is >= 1, open "
-          "the mainland (delete the bridge roadblocks and set $847 = 1, "
-          "mirroring the Phnom Penh '86 flip, without the Starfish west gate).")
+          "every crossing at once (delete the three bridge roadblocks and set "
+          "$847 = 1, mirroring the Phnom Penh '86 flip) plus the Starfish west "
+          "gate if that island is held. This is the only mainland item while "
+          "split_mainland_access is off, and is never written while it is on.")
     print(f"- Starfish Island Access: unlock global ${starfish}. When it is >= 1, "
-          "open the island's east gate ($1780); when Mainland Access is also "
-          ">= 1, open the west gate ($1779) too, the sole barrier on the "
-          "island's mainland crossing.")
+          "open the island's east gate ($1780); the west gate ($1779), the sole "
+          "barrier on the island's mainland crossing, also needs its own "
+          "crossing item or Mainland Access.")
+    print("- Mainland crossings, one item each, opening only their own barrier "
+          "so any single one reaches the whole mainland. Each opens on its own "
+          "global OR on Mainland Access, which is what makes one static script "
+          "serve both settings, and the shared part of the flip ($847, the "
+          "mainland restarts, the hurricane stop, the Washington pier door and "
+          "the announcement) fires once on the first crossing opened, guarded "
+          "by $847 == 0:")
+    for crossing, also in data.MAINLAND_CROSSINGS.items():
+        needs = f", and in logic {' plus '.join(also)}" if also else ""
+        print(f"  ${scm.unlock_global(crossing)}  {crossing}{needs}")
 
     print()
     print("## Persistent-reward globals (re-gate the vanilla grant on these when "

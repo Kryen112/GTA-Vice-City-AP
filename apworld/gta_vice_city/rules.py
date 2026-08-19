@@ -14,9 +14,14 @@ grindable and never a gate by amount. The two finale missions carry the vanilla
 asset prerequisite when the properties class is on: Hit the Courier completable
 plus enough of the optional income assets completable, each through its
 ownership item and progressives. A location's own area requirement is carried
-by the region it sits in; a rule names an area item only when the requirement
-crosses regions (the finale's Mainland Access, and the Starfish Island Access
-inside the property-sale requirements, since Shakedown gives from the mansion).
+by the region it sits in; a rule names a region requirement only when it crosses
+regions (the finale's last mission, which sits on Starfish but waits on a
+mainland one, and the Starfish Island Access inside the property-sale
+requirements, since Shakedown gives from the mansion). A region with one way in
+contributes flat terms, so an unsplit seed's rules keep the shape they always
+had; the mainland with split_mainland_access on contributes a one-of threshold
+over its crossings instead, and the finale's last mission is the one rule
+carrying two thresholds at once.
 
 Two families of lock add terms, each only while its own key is selected (with
 the key off the item is not in the pool, so no rule may name it). Ability locks
@@ -55,6 +60,9 @@ RulePredicate = Callable[[CollectionState, int], bool]
 # A requirement is (progressive-item name, count). A mission is reachable when
 # the state has at least `count` of each listed item.
 Requirement = tuple[str, int]
+# One counted threshold: the alternative requirement sets and how many of them
+# must hold.
+Threshold = tuple[list[list[Requirement]], int]
 
 
 def _requires(requirements: list[Requirement]) -> RulePredicate:
@@ -63,21 +71,45 @@ def _requires(requirements: list[Requirement]) -> RulePredicate:
     )
 
 
-def _requires_with_asset_threshold(
+def _satisfied(state: CollectionState, player: int,
+               requirements: list[Requirement]) -> bool:
+    return all(state.has(item, player, count) for item, count in requirements)
+
+
+def _requires_with_thresholds(
     requirements: list[Requirement],
-    optional_assets: list[list[Requirement]],
-    needed: int,
+    thresholds: list[Threshold],
 ) -> RulePredicate:
-    # The conjunction of `requirements` plus a threshold: at least `needed` of
-    # the optional asset requirement sets fully satisfiable. Mirrors the FIN1
-    # gate's owned-asset count, which any large enough subset satisfies.
+    # The conjunction of `requirements` plus one count per threshold: at least
+    # `needed` of that threshold's alternatives fully satisfiable. Two are in
+    # use. The finale's mirrors the FIN1 gate's owned-asset count, which any
+    # large enough subset satisfies. A region's counts the ways in, which is one
+    # group unless the mainland crossings are split, and the finale's last
+    # mission carries both at once.
     return lambda state, player: (
-        all(state.has(item, player, count) for item, count in requirements)
-        and sum(
-            1 for asset_requirements in optional_assets
-            if all(state.has(item, player, count) for item, count in asset_requirements)
-        ) >= needed
+        _satisfied(state, player, requirements)
+        and all(
+            sum(1 for group in alternatives if _satisfied(state, player, group)) >= needed
+            for alternatives, needed in thresholds
+        )
     )
+
+
+def _region_terms(regions_needed: list[str],
+                  split_mainland_access: bool) -> tuple[list[Requirement],
+                                                        list[Threshold]]:
+    # What reaching these regions demands. A region with one way in contributes
+    # flat terms, so nothing about a rule's shape changes while the crossings are
+    # whole; a region with several contributes a one-of threshold.
+    flat: list[Requirement] = []
+    thresholds: list[Threshold] = []
+    for region in regions_needed:
+        groups = data.region_access_groups(region, split_mainland_access)
+        if len(groups) == 1:
+            flat.extend((item, 1) for item in groups[0])
+        elif groups:
+            thresholds.append(([[(item, 1) for item in group] for group in groups], 1))
+    return flat, thresholds
 
 
 def _ability_terms(location_name: str, active_items: frozenset[str]) -> list[Requirement]:
@@ -125,8 +157,8 @@ def _deduplicated(requirements: list[Requirement]) -> list[Requirement]:
     return ordered
 
 
-def _predecessor_requirements(giver: str, index: int,
-                              active_items: frozenset[str]) -> list[Requirement]:
+def _predecessor_requirements(giver: str, index: int, active_items: frozenset[str],
+                              split_mainland_access: bool) -> list[Requirement]:
     # What the earlier missions of this strand demand. A strand runs in order:
     # APMARK reveals only the strand's first unpassed mission and the vanilla
     # launcher starts are severed, so a mission cannot start until every earlier
@@ -139,16 +171,23 @@ def _predecessor_requirements(giver: str, index: int,
     for earlier in locations.STRAND_MISSIONS[giver][:index]:
         for prerequisite_giver, count in data.MISSION_PREREQUISITES.get(earlier, []):
             requirements.append((data.progressive_item_name(prerequisite_giver), count))
-        requirements.extend(
-            (area_item, 1)
-            for area_item in data.MISSION_AREA_REQUIREMENTS.get(earlier, [])
-        )
+        # A predecessor's own region requirement propagates as flat terms. A
+        # multi-way region would need a threshold this flat list cannot hold, so
+        # it is refused rather than dropped: silently losing it would under-gate
+        # this mission and let the fill strand a crossing item behind it.
+        earlier_regions, earlier_thresholds = _region_terms(
+            data.MISSION_REGION_REQUIREMENTS.get(earlier, []), split_mainland_access)
+        if earlier_thresholds:
+            raise ValueError(
+                f"{earlier} precedes a mission in its own strand and needs a "
+                f"region with several ways in; propagate it as a threshold")
+        requirements.extend(earlier_regions)
         requirements.extend(_lock_terms(earlier, active_items))
     return requirements
 
 
-def _mission_requirements(mission: str, giver: str,
-                          active_items: frozenset[str]) -> list[Requirement]:
+def _mission_requirements(mission: str, giver: str, active_items: frozenset[str],
+                          split_mainland_access: bool) -> list[Requirement]:
     # The launcher-gate view: progressive unlocks, plus any area item the
     # mission needs beyond its own region (the finale's Mainland Access), plus
     # the mission's ability terms and those of the earlier missions of its
@@ -168,15 +207,26 @@ def _mission_requirements(mission: str, giver: str,
         requirements.append((data.progressive_item_name(prerequisite_giver), count))
     for prerequisite_giver, count in data.MISSION_PREREQUISITES.get(mission, []):
         requirements.append((data.progressive_item_name(prerequisite_giver), count))
-    requirements.extend(
-        (area_item, 1) for area_item in data.MISSION_AREA_REQUIREMENTS.get(mission, [])
-    )
+    region_requirements, _ = _region_terms(
+        data.MISSION_REGION_REQUIREMENTS.get(mission, []), split_mainland_access)
+    requirements.extend(region_requirements)
     requirements.extend(_lock_terms(mission, active_items))
-    requirements.extend(_predecessor_requirements(giver, index, active_items))
+    requirements.extend(_predecessor_requirements(
+        giver, index, active_items, split_mainland_access))
     return _deduplicated(requirements)
 
 
-def _property_sale_requirements(active_items: frozenset[str]) -> list[Requirement]:
+def _mission_region_thresholds(mission: str,
+                               split_mainland_access: bool) -> list[Threshold]:
+    # The threshold part of the same regions, which only the mainland has and
+    # only while the crossings are split.
+    _flat, thresholds = _region_terms(
+        data.MISSION_REGION_REQUIREMENTS.get(mission, []), split_mainland_access)
+    return thresholds
+
+
+def _property_sale_requirements(active_items: frozenset[str],
+                                split_mainland_access: bool) -> list[Requirement]:
     # A business is for sale only once Shakedown passes, so anything behind
     # buying one requires everything logic needs to pass Shakedown: its items
     # and the area item of the region its marker sits in (the mansion on
@@ -186,11 +236,12 @@ def _property_sale_requirements(active_items: frozenset[str]) -> list[Requiremen
     # and the finale's assets in one place.
     mission = data.PROPERTY_UNLOCK_MISSION
     requirements = _mission_requirements(
-        mission, locations.MISSION_GIVER[mission], active_items)
+        mission, locations.MISSION_GIVER[mission], active_items, split_mainland_access)
     region = locations.LOCATION_REGIONS[mission]
-    area_item = data.AREA_ITEM_BY_REGION.get(region)
-    if area_item is not None:
-        requirements = [*requirements, (area_item, 1)]
+    # Shakedown is on Starfish Island, which has one way in however the mainland
+    # crossings are set, so this is always flat.
+    region_requirements, _ = _region_terms([region], split_mainland_access)
+    requirements = [*requirements, *region_requirements]
     if data.WALLET_ITEM in active_items:
         requirements = [*requirements, (data.WALLET_ITEM, 1)]
     # The property content lock rides here for the same reason the wallet does:
@@ -229,6 +280,7 @@ def _asset_completion_requirements(asset: str, progressive_count: int,
 
 def _finale_asset_terms(
     active_items: frozenset[str],
+    split_mainland_access: bool,
 ) -> tuple[list[Requirement], list[list[Requirement]]]:
     # The finale's vanilla asset prerequisite as items. Hit the Courier
     # (Printworks' last mission) is individually mandatory, Cop Land arrives
@@ -238,7 +290,7 @@ def _finale_asset_terms(
     mandatory = (
         _asset_completion_requirements(
             "Printworks", len(data.VENUE_STRANDS["Printworks"]), active_items)
-        + _property_sale_requirements(active_items)
+        + _property_sale_requirements(active_items, split_mainland_access)
     )
     optional = [
         _asset_completion_requirements(asset, progressive_count, active_items)
@@ -251,6 +303,7 @@ def build_location_rules(
     properties_enabled: bool = True,
     ability_locks: frozenset[str] = frozenset(),
     content_locks: frozenset[str] = frozenset(),
+    split_mainland_access: bool = False,
 ) -> dict[str, RulePredicate]:
     # One active set for both lock families: a term binds when its own key is
     # selected, and every predicate below filters against this.
@@ -259,10 +312,13 @@ def build_location_rules(
         + [data.CONTENT_LOCK_ITEMS[key] for key in content_locks]
     )
     rules: dict[str, RulePredicate] = {}
-    sale_requirements = _property_sale_requirements(active_items)
-    finale_mandatory, finale_optional = _finale_asset_terms(active_items)
+    sale_requirements = _property_sale_requirements(active_items, split_mainland_access)
+    finale_mandatory, finale_optional = _finale_asset_terms(
+        active_items, split_mainland_access)
     for mission, giver in locations.MISSION_GIVER.items():
-        requirements = _mission_requirements(mission, giver, active_items)
+        requirements = _mission_requirements(
+            mission, giver, active_items, split_mainland_access)
+        region_thresholds = _mission_region_thresholds(mission, split_mainland_access)
         if giver in data.VENUE_STRANDS:
             requirements = [
                 *requirements,
@@ -271,10 +327,10 @@ def build_location_rules(
             ]
         if giver == "Vercetti Finale":
             if properties_enabled:
-                rules[mission] = _requires_with_asset_threshold(
+                rules[mission] = _requires_with_thresholds(
                     requirements + finale_mandatory,
-                    finale_optional,
-                    data.FINALE_OPTIONAL_ASSETS_REQUIRED,
+                    [*region_thresholds,
+                     (finale_optional, data.FINALE_OPTIONAL_ASSETS_REQUIRED)],
                 )
             else:
                 # With the properties class off the asset items leave the pool
@@ -285,9 +341,15 @@ def build_location_rules(
                 # included, and the wallet term while its lock is selected,
                 # since vanilla asset completion still spends money) so the
                 # fill cannot strand those items behind it.
-                rules[mission] = _requires(requirements + sale_requirements)
+                off_requirements = requirements + sale_requirements
+                rules[mission] = (
+                    _requires_with_thresholds(off_requirements, region_thresholds)
+                    if region_thresholds else _requires(off_requirements)
+                )
             continue
-        if requirements:
+        if region_thresholds:
+            rules[mission] = _requires_with_thresholds(requirements, region_thresholds)
+        elif requirements:
             rules[mission] = _requires(requirements)
     for purchase in data.BUSINESS_PURCHASES:
         rules[purchase] = _requires(sale_requirements)
