@@ -59,8 +59,9 @@ Type these in the client console:
 
 ## In-game keys
 
-- **F6**: with ability locks enabled in your YAML, shows which abilities are
-  still locked and which have arrived.
+- **F6**: shows which way to the mainland is open, and, with ability or content
+  locks enabled in your YAML, which of those are still locked or held and which
+  have arrived.
 
 ## Saves are kept separate
 

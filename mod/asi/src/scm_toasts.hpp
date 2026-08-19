@@ -12,6 +12,7 @@
 #include <cstddef>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 namespace gtavc {
@@ -77,23 +78,38 @@ inline ToastBatch PlanToastBatch(const std::vector<std::string>& pending,
 // and a plain sentence when this seed configured no lock at all. Only what the
 // seed configured reaches the lists, since an unselected key is fully vanilla
 // and listing it would mislead.
+inline std::string ComposeStatusSegments(
+    const std::vector<std::pair<std::string_view, std::string>>& segments) {
+  std::string status;
+  for (const auto& [label, list] : segments) {
+    if (list.empty()) continue;
+    if (!status.empty()) status += kToastSeparator;
+    status += label;
+    status += list;
+  }
+  return status;
+}
+
 inline std::string ComposeLockStatus(const std::string& locked,
                                      const std::string& unlocked,
                                      const std::string& held,
                                      const std::string& available) {
-  std::string status;
-  const auto append = [&status](std::string_view label, const std::string& list) {
-    if (list.empty()) return;
-    if (!status.empty()) status += kToastSeparator;
-    status += label;
-    status += list;
-  };
-  append("Locked: ", locked);
-  append("Unlocked: ", unlocked);
-  append("Held: ", held);
-  append("Available: ", available);
+  const std::string status = ComposeStatusSegments({{"Locked: ", locked},
+                                                    {"Unlocked: ", unlocked},
+                                                    {"Held: ", held},
+                                                    {"Available: ", available}});
   if (status.empty()) return "This seed locks nothing.";
   return status;
+}
+
+// The mainland routes as their own status line, whether the seed split them into
+// one per crossing or left them as the single Mainland Access item: a route is
+// the one piece of state with no other way to ask about it in game. Its own line
+// rather than a segment of the lock status, which a fully locked seed already
+// fills to the message cap.
+inline std::string ComposeRouteStatusLine(const std::string& open,
+                                          const std::string& shut) {
+  return ComposeStatusSegments({{"Open: ", open}, {"Shut: ", shut}});
 }
 
 }  // namespace gtavc

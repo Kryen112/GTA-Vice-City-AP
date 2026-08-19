@@ -193,6 +193,7 @@ class GTAViceCityContext(CommonContext):
                 "completion_watch": slot_data.get("completion_watch", {}),
                 "package_coords": slot_data.get("package_coords", {}),
                 "pickup_layout": slot_data.get("pickup_layout", []),
+                "mainland_routes": slot_data.get("mainland_routes", []),
             }
             self.slot_goal = slot_data.get("goal")
             self.final_location_id = slot_data.get("final_location_id")
@@ -263,6 +264,7 @@ class GTAViceCityContext(CommonContext):
                 self.asi_config.get("config_globals", {}),
                 self.asi_config.get("package_coords", {}),
                 self.asi_config.get("pickup_layout", []),
+                self.asi_config.get("mainland_routes", []),
             )
         await self._resync_bridge()
 

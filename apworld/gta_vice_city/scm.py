@@ -180,6 +180,38 @@ def highest_reserved_global() -> int:
     return CONTENT_UNLOCK_BASE + len(CONTENT_KEYS) - 1
 
 
+def mainland_routes(split_mainland_access: bool) -> list[dict]:
+    """The ways to the mainland, for the ASI to announce and to list on demand.
+
+    The ASI needs three things it cannot work out for itself: which globals are
+    mainland routes, what to call them, and whether the seed split them, since
+    item_globals maps every area item whatever the setting. It gets them here
+    rather than mirroring the layout or the names, so this stays the only place a
+    route is named. One entry means the routes are whole and Mainland Access
+    opens them together; four means they are split. A route needing a second item
+    carries it, which is the causeway and the island its gate stands on.
+    """
+    starfish = "Starfish Island Access"
+    if not split_mainland_access:
+        return [{"global": unlock_global(data.AREA_ITEM_BY_REGION[data.REGION_MAINLAND]),
+                 "label": "The mainland", "needs_global": 0, "needs_label": ""}]
+    routes: list[dict] = []
+    for crossing, also in data.MAINLAND_CROSSINGS.items():
+        # One extra requirement is all a route can carry over the wire, and all
+        # any crossing has. A second would be dropped here and the route would
+        # then announce itself open with that item still missing.
+        assert len(also) <= 1, crossing
+        needs = also[0] if also else None
+        routes.append({
+            "global": unlock_global(crossing),
+            "label": crossing,
+            "needs_global": unlock_global(needs) if needs else 0,
+            "needs_label": needs or "",
+        })
+    assert all(route["needs_label"] in ("", starfish) for route in routes)
+    return routes
+
+
 def item_globals() -> dict[int, int]:
     """AP item id -> the count global it contributes one to (unlock or reward)."""
     mapping: dict[int, int] = {}

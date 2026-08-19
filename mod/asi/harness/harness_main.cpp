@@ -77,6 +77,11 @@ int main(int argc, char** argv) {
     summary["pickup_layout"].push_back(json::array(
         {target.x, target.y, target.z, target.pickup_type, target.model, target.quantity}));
   }
+  summary["mainland_routes"] = json::array();
+  for (const auto& route : game.MainlandRoutes()) {
+    summary["mainland_routes"].push_back(json::array(
+        {route.unlock_global, route.label, route.needs_global, route.needs_label}));
+  }
   std::cout << summary.dump() << "\n";
   return 0;
 }

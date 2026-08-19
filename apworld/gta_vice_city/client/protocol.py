@@ -40,11 +40,18 @@ Client to ASI:
               config_globals,   one-shot effect applied once past the applied
               completion_watch, index; config-flag global index -> value to
               package_coords,   stamp; completion global index -> location id
-              pickup_layout}    to poll and report; package coordinates for
-                              per-package detection; and the ambient pickup
+              pickup_layout,    to poll and report; package coordinates for
+              mainland_routes}  per-package detection; the ambient pickup
                               layout to enforce (empty when pickups are
-                              vanilla). Sent once per connection, before the
-                              resync.
+                              vanilla); and the ways to the mainland, one entry
+                              when Mainland Access opens them all and one per
+                              crossing when the seed split them, each carrying
+                              the global its item writes, the name to show, and
+                              the second item its route needs. Sent once per
+                              connection, before the resync. Every field past
+                              item_globals and completion_watch is optional, so
+                              a client and an ASI one field apart still talk and
+                              the version stays put.
     items    {items}          the full cumulative received-items list, as
                               [index, item_id] pairs. The ASI re-derives all
                               unlock globals from this every time and re-applies
@@ -117,7 +124,7 @@ def refused_message(reason: str) -> dict:
 
 def config_message(
     item_globals: dict, completion_watch: dict, item_effects: dict, config_globals: dict,
-    package_coords: dict, pickup_layout: list,
+    package_coords: dict, pickup_layout: list, mainland_routes: list,
 ) -> dict:
     return {
         "type": CONFIG,
@@ -127,6 +134,7 @@ def config_message(
         "completion_watch": completion_watch,
         "package_coords": package_coords,
         "pickup_layout": pickup_layout,
+        "mainland_routes": mainland_routes,
     }
 
 

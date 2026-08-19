@@ -19,6 +19,7 @@
 #include "scm_completion.hpp"
 #include "scm_content_locks.hpp"
 #include "scm_effects.hpp"
+#include "scm_crossings.hpp"
 #include "scm_minimap.hpp"
 #include "scm_pickup_layout.hpp"
 #include "scm_radio.hpp"
@@ -40,7 +41,8 @@ class ScmGameState : public GameState {
                    const std::map<std::int64_t, ItemEffect>& item_effects,
                    const std::map<int, int>& config_globals,
                    const std::vector<PackageLocation>& package_locations,
-                   const std::vector<PickupTarget>& pickup_targets) override;
+                   const std::vector<PickupTarget>& pickup_targets,
+                   const std::vector<MainlandRoute>& routes) override;
   std::string SeedHash() override;
   void StampSeedHash(const std::string& expected) override;
   void ApplyItems(const std::vector<std::pair<std::int64_t, std::int64_t>>& items) override;
@@ -153,6 +155,15 @@ class ScmGameState : public GameState {
   // place a player is told why the world just changed.
   void ReportReleasedContent(const ContentLocks& held,
                              const std::array<int, kContentCount>& lock_flags);
+  // The globals every configured route reads, one vector each: the item that
+  // opens the route, and the second item its route needs. Both read ScriptSpace,
+  // so both run on the game frame under the frame's lock.
+  std::vector<int> RouteUnlockValues();
+  std::vector<int> RouteNeedsValues();
+  // Announces a route that just opened, or one whose item arrived while the
+  // second item its route needs is still missing. Every seed has a way to the
+  // mainland, so this runs whatever the seed locks.
+  void ReportOpenedRoutes();
   // Shows the blocked-attempt toast for one ability, rate-limited per ability.
   void ToastAbilityBlocked(int ability);
   // Shows this seed's whole lock status on the status key, as ONE message:
@@ -233,6 +244,10 @@ class ScmGameState : public GameState {
   // once rather than every frame. Reset on the game boundary, so a class
   // released before a reload does not announce itself again.
   ContentLocks content_was_held_{};
+  // The mainland routes this seed made, and what each was doing when last seen,
+  // so an opened route is announced once and the status key can list them.
+  std::vector<MainlandRoute> mainland_routes_;
+  std::vector<RouteState> route_was_;
   // The last pool action logged per held pickup class, so the log names which
   // classes the walk reached and in which direction without repeating itself
   // every frame. Reset on the game boundary.
@@ -242,6 +257,7 @@ class ScmGameState : public GameState {
   // already holds a content item stays quiet while a class released during play
   // always announces exactly once.
   bool content_baseline_ready_ = false;
+  bool route_baseline_ready_ = false;
   // Whether the world was loaded last frame, so a new game or a save load
   // re-derives the unlock globals from the received items instead of
   // trusting whatever the save restored.

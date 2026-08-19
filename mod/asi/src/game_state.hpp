@@ -11,6 +11,10 @@
 #include <utility>
 #include <vector>
 
+// MainlandRoute is part of the configuration this interface carries, and the
+// header holding it is game-free like this one.
+#include "scm_crossings.hpp"
+
 namespace gtavc {
 
 // A one-shot effect applied once past the saved applied-index.
@@ -64,12 +68,15 @@ class GameState {
   // effect. config_globals: config-flag global index -> value to stamp.
   // completion_watch: completion global index -> AP location id to poll.
   // pickup_targets: the ambient pickup layout to enforce, empty when vanilla.
+  // routes carries the ways to the mainland: one entry when Mainland Access
+  // opens them all, one per crossing when the seed split them.
   virtual void ApplyConfig(const std::map<std::int64_t, int>& item_globals,
                            const std::map<int, std::int64_t>& completion_watch,
                            const std::map<std::int64_t, ItemEffect>& item_effects,
                            const std::map<int, int>& config_globals,
                            const std::vector<PackageLocation>& package_locations,
-                           const std::vector<PickupTarget>& pickup_targets) = 0;
+                           const std::vector<PickupTarget>& pickup_targets,
+                           const std::vector<MainlandRoute>& routes) = 0;
 
   // The seed hash to present on hello, read from the reserved SCM global.
   // Empty when no game has been started for this seed.

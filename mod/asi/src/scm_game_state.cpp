@@ -320,7 +320,8 @@ void ScmGameState::ApplyConfig(const std::map<std::int64_t, int>& item_globals,
                                const std::map<std::int64_t, ItemEffect>& item_effects,
                                const std::map<int, int>& config_globals,
                                const std::vector<PackageLocation>& package_locations,
-                               const std::vector<PickupTarget>& pickup_targets) {
+                               const std::vector<PickupTarget>& pickup_targets,
+                               const std::vector<MainlandRoute>& routes) {
   std::lock_guard<std::mutex> lock(mutex_);
   item_globals_ = item_globals;
   item_effects_ = item_effects;
@@ -328,6 +329,11 @@ void ScmGameState::ApplyConfig(const std::map<std::int64_t, int>& item_globals,
   completion_watch_ = completion_watch;
   package_locations_ = package_locations;
   pickup_targets_ = pickup_targets;
+  // A fresh route set is a fresh baseline: the next observation records what
+  // this seed already holds instead of announcing it.
+  mainland_routes_ = routes;
+  route_was_.clear();
+  route_baseline_ready_ = false;
   pickup_enforce_frames_ = 0;
   location_to_global_.clear();
   for (const auto& [global_index, location] : completion_watch_) {
@@ -555,6 +561,15 @@ void ScmGameState::ToastLockStatus(
   }
   pending_toasts_.push_back(
       ComposeLockStatus(locked_list, unlocked_list, held_list, available_list));
+  // The routes are listed whether or not this seed split them: which way over
+  // the water is open has no other in-game answer. They queue as their own line
+  // rather than joining the one above, which a fully locked seed fills to the
+  // message cap: appended there they would be the part truncated away.
+  const RouteStatusLists routes =
+      ComposeRouteStatus(mainland_routes_, RouteUnlockValues(), RouteNeedsValues());
+  const std::string route_status =
+      ComposeRouteStatusLine(routes.open, routes.shut);
+  if (!route_status.empty()) pending_toasts_.push_back(route_status);
 }
 
 void ScmGameState::EnforceHeldPickups(const AbilityLocks& locked,
@@ -623,6 +638,40 @@ ContentLocks ScmGameState::ReadContentLocks(
   return PlanContentLocks(lock_flags, unlocks);
 }
 
+
+// The globals a route reads. Read together so a route's state is judged from one
+// frame: the item that opens it, and the second item its route needs, which only
+// the causeway has and which reads zero for the rest.
+std::vector<int> ScmGameState::RouteUnlockValues() {
+  std::vector<int> values;
+  values.reserve(mainland_routes_.size());
+  for (const MainlandRoute& route : mainland_routes_) {
+    values.push_back(GetGlobal(route.unlock_global));
+  }
+  return values;
+}
+
+std::vector<int> ScmGameState::RouteNeedsValues() {
+  std::vector<int> values;
+  values.reserve(mainland_routes_.size());
+  for (const MainlandRoute& route : mainland_routes_) {
+    values.push_back(route.needs_global == 0 ? 0 : GetGlobal(route.needs_global));
+  }
+  return values;
+}
+
+void ScmGameState::ReportOpenedRoutes() {
+  if (mainland_routes_.empty()) return;
+  const RouteReportPlan plan =
+      PlanRouteReports(mainland_routes_, RouteUnlockValues(), RouteNeedsValues(),
+                       route_was_, route_baseline_ready_);
+  // A refused plan carries no state, so it is not a baseline either: claiming
+  // one would make the next frame's first real reading an edge.
+  if (plan.next_was.size() != mainland_routes_.size()) return;
+  route_was_ = plan.next_was;
+  route_baseline_ready_ = true;
+  for (const std::string& line : plan.announce) pending_toasts_.push_back(line);
+}
 
 void ScmGameState::ReportReleasedContent(
     const ContentLocks& held, const std::array<int, kContentCount>& lock_flags) {
@@ -720,6 +769,22 @@ void ScmGameState::EnforceLocks() {
   for (int index = 0; index < kContentCount; ++index) {
     any_flag_set = any_flag_set || content_flags[index] != 0;
   }
+  // The routes are not a lock family: every seed has a way to the mainland, so
+  // both halves of reporting one sit above the early return. A seed selecting no
+  // lock key at all is the default, and its routes still open and still list.
+  ReportOpenedRoutes();
+
+  // The status key lists every configured ability and content class, held or
+  // released, and every route, on its press edge, and only while this game owns
+  // the keyboard, so a press meant for another application never reaches the
+  // queue.
+  const bool status_key_down = GameWindowHasFocus() &&
+      (GetAsyncKeyState(kAbilityStatusKey) & 0x8000) != 0;
+  if (status_key_down && !ability_status_key_was_down_) {
+    ToastLockStatus(locked, lock_flags, held, content_flags);
+  }
+  ability_status_key_was_down_ = status_key_down;
+
   // No key of either family selected this seed: fully vanilla, nothing to
   // enforce.
   if (!any_flag_set) return;
@@ -727,16 +792,6 @@ void ScmGameState::EnforceLocks() {
   // A class released since the last frame repopulates the world silently, so
   // say so once: three of the five classes have no other feedback.
   ReportReleasedContent(held, content_flags);
-
-  // The status key lists every configured ability and content class, held or
-  // released, on its press edge, and only while this game owns the keyboard,
-  // so a press meant for another application never reaches the queue.
-  const bool status_key_down = GameWindowHasFocus() &&
-      (GetAsyncKeyState(kAbilityStatusKey) & 0x8000) != 0;
-  if (status_key_down && !ability_status_key_was_down_) {
-    ToastLockStatus(locked, lock_flags, held, content_flags);
-  }
-  ability_status_key_was_down_ = status_key_down;
 
   if (locked[kAbilityWallet]) {
     // Tommy cannot hold money: everything earned or received while the
@@ -1323,6 +1378,11 @@ void ScmGameState::OnGameFrame() {
     pending_toasts_.clear();
     next_toast_ms_ = 0;
     content_baseline_ready_ = false;
+    // The routes belong to the game that observed them, exactly as the content
+    // classes do: kept across the boundary, a fresh game would read them absent
+    // for a frame and then re-announce every route already held.
+    route_was_.clear();
+    route_baseline_ready_ = false;
     world_was_loaded_ = false;
     // The unmatched-slot diagnostic counts frames per game, so a fresh game
     // gets its own creation window and its own single report.

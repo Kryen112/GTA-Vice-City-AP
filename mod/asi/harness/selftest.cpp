@@ -13,6 +13,7 @@
 #include "../src/scm_ability_locks.hpp"
 #include "../src/scm_completion.hpp"
 #include "../src/scm_content_locks.hpp"
+#include "../src/scm_crossings.hpp"
 #include "../src/scm_effects.hpp"
 #include "../src/scm_minimap.hpp"
 #include "../src/scm_packages.hpp"
@@ -762,6 +763,91 @@ int main() {
                        "Held: Rampages" + std::string(kToastSeparator) +
                        "Available: Hidden Packages",
            "every non-empty list appears once, in order, separated");
+  }
+
+  // The mainland routes. One item opening every crossing and one item per
+  // crossing are the same reporting problem, so the world sends whichever it
+  // made and this only renders it. A route with a second requirement is the
+  // Starfish causeway, whose gate stands on the island: the item alone opens
+  // nothing, and saying it did would send the player to a shut gate.
+  {
+    std::vector<MainlandRoute> routes = {
+        MainlandRoute{9032, "Prawn Island Bridge", 0, ""},
+        MainlandRoute{9035, "Starfish Island Causeway", 9031,
+                      "Starfish Island Access"},
+    };
+    const std::vector<int> nothing = {0, 0};
+    std::vector<RouteState> was;
+
+    // First observation on a new game: silent, and the baseline recorded.
+    RouteReportPlan plan =
+        PlanRouteReports(routes, nothing, nothing, was, false);
+    Expect(plan.announce.empty(),
+           "the first observed frame is the baseline, not an announcement");
+    Expect(plan.next_was.size() == 2 &&
+               plan.next_was[0] == RouteState::kAbsent,
+           "and it records both routes as absent");
+
+    // A bridge item lands: its edge speaks once, and only for that bridge.
+    plan = PlanRouteReports(routes, {1, 0}, nothing, plan.next_was, true);
+    Expect(plan.announce.size() == 1 &&
+               plan.announce[0] == "Prawn Island Bridge is open.",
+           "an opened bridge announces itself on its edge");
+    plan = PlanRouteReports(routes, {1, 0}, nothing, plan.next_was, true);
+    Expect(plan.announce.empty(), "and never again while it stays open");
+
+    // The causeway item lands without the island: it is not open, and the
+    // announcement says what is still missing rather than claiming a route.
+    plan = PlanRouteReports(routes, {1, 1}, {0, 0}, plan.next_was, true);
+    Expect(plan.announce.size() == 1 &&
+               plan.announce[0] ==
+                   "Starfish Island Causeway needs Starfish Island Access.",
+           "a route waiting on a second item says so");
+    Expect(plan.next_was[1] == RouteState::kWaiting,
+           "and records it as waiting, not open");
+
+    // The island arrives: now it really is a route.
+    plan = PlanRouteReports(routes, {1, 1}, {0, 1}, plan.next_was, true);
+    Expect(plan.announce.size() == 1 &&
+               plan.announce[0] == "Starfish Island Causeway is open.",
+           "the waiting route opens once its second item lands");
+
+    // A save already holding both reads open at its first observation, so it
+    // stays quiet, the same rule the content classes follow.
+    plan = PlanRouteReports(routes, {1, 1}, {0, 1}, was, false);
+    Expect(plan.announce.empty(),
+           "a save already carrying the routes does not re-announce");
+
+    // The status key lists every route by state, waiting counted as shut.
+    RouteStatusLists lists = ComposeRouteStatus(routes, {1, 1}, {0, 0});
+    Expect(lists.open == "Prawn Island Bridge" &&
+               lists.shut == "Starfish Island Causeway",
+           "the status lists a waiting route as shut");
+    lists = ComposeRouteStatus(routes, {0, 0}, {0, 0});
+    Expect(lists.open.empty() && lists.shut.find("Prawn Island Bridge") == 0,
+           "and lists both as shut before anything arrives");
+
+    // Mismatched inputs are a caller error, not a crash: nothing is announced
+    // and nothing is recorded, so a half-applied config cannot speak.
+    plan = PlanRouteReports(routes, {1}, nothing, was, true);
+    Expect(plan.announce.empty() && plan.next_was.empty(),
+           "a route list out of step with its values reports nothing");
+
+    // The status line is the routes' own message, so a seed that locks nothing
+    // still answers the status key with them, and a seed with no routes at all
+    // produces no line to post rather than an empty one.
+    Expect(ComposeRouteStatusLine("Prawn Island Bridge",
+                                  "Leaf Links Bridge, Ocean Beach Bridge") ==
+               std::string("Open: Prawn Island Bridge") +
+                   std::string(kToastSeparator) +
+                   "Shut: Leaf Links Bridge, Ocean Beach Bridge",
+           "the route status labels both lists, separated");
+    Expect(ComposeRouteStatusLine("The mainland", "") == "Open: The mainland",
+           "and labels one alone when the crossings are whole");
+    Expect(ComposeRouteStatusLine("", "").empty(),
+           "with no routes there is no line to post");
+    Expect(ComposeLockStatus("", "", "", "") == "This seed locks nothing.",
+           "and the lock status is unchanged by the routes having their own line");
   }
 
   // Recovering the stunt jump table from a block of memory. The game builds it

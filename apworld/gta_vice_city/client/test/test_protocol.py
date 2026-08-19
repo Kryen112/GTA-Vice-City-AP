@@ -39,6 +39,10 @@ class TestFraming(unittest.TestCase):
             {"9377": 1, "9378": 0},
             {"9075": [479.6, -1718.5, 15.6], "9076": [708.4, -498.2, 12.3]},
             [[393.9, -60.2, 11.5, 15, 366, 0], [-228.4, -1318.2, 9.1, 15, 274, 34]],
+            [{"global": 9032, "label": "Prawn Island Bridge",
+              "needs_global": 0, "needs_label": ""},
+             {"global": 9035, "label": "Starfish Island Causeway",
+              "needs_global": 9031, "needs_label": "Starfish Island Access"}],
         )
         self.assertEqual(_round_trip(message), [message])
 

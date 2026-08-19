@@ -1239,6 +1239,16 @@ class TestSplitMainlandAccessOff(WorldTestBase):
     def test_slot_data_says_the_crossings_are_whole(self) -> None:
         self.assertFalse(self.world.fill_slot_data()["split_mainland_access"])
 
+    def test_one_route_is_shipped_for_the_asi_to_announce(self) -> None:
+        # The ASI cannot tell the setting from item_globals, which maps every
+        # area item either way, so it reads the routes from here. One entry means
+        # the crossings are whole.
+        routes = self.world.fill_slot_data()["mainland_routes"]
+        self.assertEqual(routes, [{
+            "global": scm.unlock_global("Mainland Access"),
+            "label": "The mainland", "needs_global": 0, "needs_label": "",
+        }])
+
 
 class TestSplitMainlandAccessOn(WorldTestBase):
     game = "Grand Theft Auto Vice City"
@@ -1313,6 +1323,25 @@ class TestSplitMainlandAccessOn(WorldTestBase):
 
     def test_slot_data_says_the_crossings_are_split(self) -> None:
         self.assertTrue(self.world.fill_slot_data()["split_mainland_access"])
+
+    def test_every_route_is_shipped_with_what_it_needs(self) -> None:
+        # One entry per crossing, each naming the global its item writes and the
+        # name to show. Only the causeway carries a second requirement, and the
+        # ASI reads it to know the difference between a route that opened and an
+        # item that opened nothing yet.
+        routes = self.world.fill_slot_data()["mainland_routes"]
+        self.assertEqual([route["label"] for route in routes],
+                         data.MAINLAND_CROSSING_ITEMS)
+        for route in routes:
+            self.assertEqual(route["global"], scm.unlock_global(route["label"]))
+        needs = {route["label"]: (route["needs_global"], route["needs_label"])
+                 for route in routes}
+        self.assertEqual(needs["Prawn Island Bridge"], (0, ""))
+        self.assertEqual(needs["Leaf Links Bridge"], (0, ""))
+        self.assertEqual(needs["Ocean Beach Bridge"], (0, ""))
+        self.assertEqual(
+            needs["Starfish Island Causeway"],
+            (scm.unlock_global("Starfish Island Access"), "Starfish Island Access"))
 
     def test_a_regeneration_reads_back_the_split(self) -> None:
         # The passthrough decides whether a Universal Tracker regeneration builds

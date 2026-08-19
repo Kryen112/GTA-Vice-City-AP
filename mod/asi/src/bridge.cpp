@@ -165,8 +165,28 @@ void BridgeClient::HandleMessage(const json& message) {
           pickup_targets.push_back(target);
         }
       }
+      std::vector<MainlandRoute> mainland_routes;
+      if (message.contains("mainland_routes")) {
+        for (const json& entry : message.at("mainland_routes")) {
+          MainlandRoute route;
+          route.unlock_global = entry.value("global", 0);
+          route.label = entry.value("label", std::string());
+          route.needs_global = entry.value("needs_global", 0);
+          route.needs_label = entry.value("needs_label", std::string());
+          // A route with no global to read announces nothing and would list a
+          // name against a state it never has; a route claiming a second
+          // requirement it cannot name would announce "needs ." Both are dropped
+          // rather than kept.
+          const bool names_its_requirement =
+              route.needs_global == 0 || !route.needs_label.empty();
+          if (route.unlock_global != 0 && !route.label.empty() &&
+              names_its_requirement) {
+            mainland_routes.push_back(route);
+          }
+        }
+      }
       game_->ApplyConfig(item_globals, completion_watch, item_effects, config_globals,
-                         package_locations, pickup_targets);
+                         package_locations, pickup_targets, mainland_routes);
     } else if (type == msg::kItems) {
       std::vector<std::pair<std::int64_t, std::int64_t>> items;
       for (const json& entry : message.at("items")) {

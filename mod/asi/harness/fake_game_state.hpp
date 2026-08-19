@@ -23,7 +23,8 @@ class FakeGameState : public GameState {
                    const std::map<std::int64_t, ItemEffect>& item_effects,
                    const std::map<int, int>& config_globals,
                    const std::vector<PackageLocation>& package_locations,
-                   const std::vector<PickupTarget>& pickup_targets) override {
+                   const std::vector<PickupTarget>& pickup_targets,
+                   const std::vector<MainlandRoute>& routes) override {
     std::lock_guard<std::mutex> lock(mutex_);
     item_globals_ = item_globals;
     completion_watch_ = completion_watch;
@@ -31,6 +32,7 @@ class FakeGameState : public GameState {
     config_globals_ = config_globals;
     package_locations_ = package_locations;
     pickup_targets_ = pickup_targets;
+    mainland_routes_ = routes;
   }
 
   std::string SeedHash() override {
@@ -126,6 +128,11 @@ class FakeGameState : public GameState {
     return pickup_targets_;
   }
 
+  std::vector<MainlandRoute> MainlandRoutes() {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return mainland_routes_;
+  }
+
  private:
   std::mutex mutex_;
   std::string presented_seed_hash_;
@@ -136,6 +143,7 @@ class FakeGameState : public GameState {
   std::map<int, std::int64_t> completion_watch_;
   std::vector<PackageLocation> package_locations_;
   std::vector<PickupTarget> pickup_targets_;
+  std::vector<MainlandRoute> mainland_routes_;
   std::vector<std::pair<std::int64_t, std::int64_t>> applied_items_;
   std::vector<std::int64_t> checked_;
   std::vector<std::string> toasts_;

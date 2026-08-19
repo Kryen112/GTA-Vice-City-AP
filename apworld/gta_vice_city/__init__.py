@@ -579,6 +579,8 @@ class GTAViceCityWorld(World):
             "radio_start_station": self.radio_start_station,
             "shuffle_minimap": bool(self.options.shuffle_minimap.value),
             "split_mainland_access": bool(self.options.split_mainland_access.value),
+            "mainland_routes": scm.mainland_routes(
+                bool(self.options.split_mainland_access.value)),
             "randomize_pickups": bool(self.options.randomize_pickups.value),
             # The selected ability lock keys (sorted; JSON has no sets), so a
             # tracker regeneration rebuilds the same pool and rules. The lock

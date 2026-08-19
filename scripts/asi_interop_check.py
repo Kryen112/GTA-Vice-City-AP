@@ -41,7 +41,26 @@ CONFIG = {
     # Two ambient pickup rows, one weapon with ammo and one consumable, so the
     # round trip proves the layout decode end to end.
     "pickup_layout": [[393.9, -60.2, 11.5, 15, 274, 34], [-37.7, -938.3, 10.5, 15, 375, 0]],
+    # Two mainland routes, one plain and one carrying the second item its route
+    # needs, so the round trip proves both shapes decode.
+    "mainland_routes": [
+        {"global": 9032, "label": "Prawn Island Bridge",
+         "needs_global": 0, "needs_label": ""},
+        {"global": 9035, "label": "Starfish Island Causeway",
+         "needs_global": 9031, "needs_label": "Starfish Island Access"},
+    ],
 }
+
+# Rows the ASI must drop rather than keep: one with no global to read, one with
+# no name to show, and one claiming a second requirement it cannot name, which
+# would otherwise render as "... needs ." Sent with the good rows, absent from
+# what comes back.
+DROPPED_ROUTES = [
+    {"global": 0, "label": "Nowhere", "needs_global": 0, "needs_label": ""},
+    {"global": 9033, "label": "", "needs_global": 0, "needs_label": ""},
+    {"global": 9034, "label": "Ocean Beach Bridge",
+     "needs_global": 9031, "needs_label": ""},
+]
 
 
 class Recorder:
@@ -65,7 +84,7 @@ class Recorder:
         await bridge.send_config(
             CONFIG["item_globals"], CONFIG["completion_watch"],
             CONFIG["item_effects"], CONFIG["config_globals"], {},
-            CONFIG["pickup_layout"],
+            CONFIG["pickup_layout"], CONFIG["mainland_routes"] + DROPPED_ROUTES,
         )
         await bridge.send_items(RESYNC_ITEMS)
         await bridge.send_checked(RESYNC_CHECKED)
@@ -118,6 +137,16 @@ async def run(harness: str) -> int:
         failures.append(f"config_globals {summary.get('config_globals')} != {CONFIG['config_globals']}")
     if summary.get("pickup_layout") != CONFIG["pickup_layout"]:
         failures.append(f"pickup_layout {summary.get('pickup_layout')} != {CONFIG['pickup_layout']}")
+    # The routes echo as rows rather than objects, so compare them that way: the
+    # point of the assertion is that the C++ side read every field, including the
+    # second requirement only one route carries.
+    expected_routes = [
+        [route["global"], route["label"], route["needs_global"], route["needs_label"]]
+        for route in CONFIG["mainland_routes"]
+    ]
+    if summary.get("mainland_routes") != expected_routes:
+        failures.append(
+            f"mainland_routes {summary.get('mainland_routes')} != {expected_routes}")
 
     if failures:
         print("FAIL: C++ ASI interop check")
