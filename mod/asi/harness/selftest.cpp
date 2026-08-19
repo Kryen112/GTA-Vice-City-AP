@@ -298,6 +298,36 @@ int main() {
            "an MP3-key burst lands on the same stop with the game's step discounted");
   }
 
+  // Package cash suppression: the executable pays a hundred per package and a
+  // hundred thousand as the count reaches the total, so with the class on both
+  // go back in the frame they land. The plan reads only live counters and the
+  // count the detection reported, so nothing a save restores can look like a
+  // payment.
+  {
+    Expect(PackageCashClawBack(1, 1, 100, 5000) == kPackageCash,
+           "one package pays a hundred, taken straight back");
+    Expect(PackageCashClawBack(2, 3, 100, 5000) == 2 * kPackageCash,
+           "two reported in one frame take back both hundreds");
+    Expect(PackageCashClawBack(0, 100, 100, 500000) == 0,
+           "no package reported, nothing paid, nothing taken");
+    Expect(PackageCashClawBack(1, 100, 100, 500000) == kPackageCash + kAllPackagesCash,
+           "the last package pays the bonus on top of its own hundred");
+    Expect(PackageCashClawBack(1, 99, 100, 500000) == kPackageCash,
+           "a package short of the total pays no bonus");
+    Expect(PackageCashClawBack(2, 100, 100, 500000) == 2 * kPackageCash + kAllPackagesCash,
+           "the bonus rides the frame the count reaches the total, however many land");
+    Expect(PackageCashClawBack(1, 101, 100, 500000) == kPackageCash,
+           "a count already past the total means the bonus was paid before, not now");
+    Expect(PackageCashClawBack(1, 1, 0, 5000) == kPackageCash,
+           "an unknown total pays no bonus");
+    Expect(PackageCashClawBack(1, 100, 100, 40) == 40,
+           "the claw-back never takes more money than there is");
+    Expect(PackageCashClawBack(1, 5, 100, 0) == 0,
+           "a wallet pinned at nothing cannot go negative");
+    Expect(PackageCashClawBack(1, 5, 100, -50) == 0,
+           "nor can one already below nothing");
+  }
+
   // Minimap planning: while shuffled and locked the radar-hide flag is
   // asserted every frame; the unlock releases it exactly once and then leaves
   // it to the game, so a vanilla script hiding the radar is never stomped.

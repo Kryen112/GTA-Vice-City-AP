@@ -1959,6 +1959,10 @@ class TestReservedGlobals(WorldTestBase):
         strand_unlocks = [scm.unlock_global(strand) for strand in data.progressive_strands()]
         self.assertGreaterEqual(min(strand_unlocks), 9010)
         self.assertLessEqual(max(strand_unlocks), 9029)
+        # The ASI hard-codes the packages-shuffled index too
+        # (scm_game_state.cpp): it gates taking back the package cash the
+        # executable pays, which no script gate can reach.
+        self.assertEqual(scm.PACKAGES_SHUFFLED_GLOBAL, 9378)
         self.assertEqual(scm.ABILITY_LOCK_FLAG_BASE, 9421)
         self.assertEqual(scm.ABILITY_UNLOCK_BASE, 9429)
         self.assertEqual(scm.CONTENT_LOCK_FLAG_BASE, 9437)
@@ -2097,6 +2101,14 @@ class TestHiddenPackagesOffSendsNoCoords(WorldTestBase):
         self.assertEqual(self.world.fill_slot_data()["package_coords"], {})
         names = {loc.name for loc in self.multiworld.get_locations(self.player)}
         self.assertNotIn(data.hidden_package_name(1), names)
+
+    def test_the_shuffled_flag_is_zero_so_the_package_cash_pays_vanilla(self) -> None:
+        # The ASI reads this flag to decide whether to take back the package cash
+        # the executable pays (a hundred each, a hundred thousand at the last
+        # one). At zero it never fires, which is the toggle invariant: with the
+        # class off the packages are vanilla, payouts included.
+        config = self.world.fill_slot_data()["config_globals"]
+        self.assertEqual(config[str(scm.PACKAGES_SHUFFLED_GLOBAL)], 0)
 
 
 class TestRampagesStuntsSplit(WorldTestBase):

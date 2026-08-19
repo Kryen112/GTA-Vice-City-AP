@@ -69,7 +69,15 @@ class ScmGameState : public GameState {
   // collectable pickups to the configured package coordinates. Only a package
   // seen present this session and then gone counts as collected, so the pool not
   // yet being placed on a new game cannot false-report.
-  void DetectCollectedPackages();
+  // Returns how many packages it reported this frame, which is what the
+  // executable just paid for.
+  int DetectCollectedPackages();
+  // Takes back the package cash the executable pays (a hundred per package, a
+  // hundred thousand as the count reaches the total) while the hidden-packages
+  // class is on, in the frame it lands. With the class off it never fires and
+  // the payout is vanilla. Driven by the detection's count, so a save load can
+  // never look like a collection.
+  void SuppressPackageCash(int newly_collected);
   static std::string ReadSeedHash();
   static void WriteSeedHash(const std::string& hash);
   // Applies one consumable effect to the live player through plugin-sdk.

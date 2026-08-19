@@ -59,6 +59,10 @@ constexpr int kSeedHashBase = 9000;
 constexpr int kSeedHashGlobalCount = 4;
 constexpr int kSeedHashLength = kSeedHashGlobalCount * 4;
 constexpr int kAppliedIndexGlobal = 9005;
+// The hidden-packages shuffled flag, matching apworld scm.py: one while the
+// hidden-packages class is on, which is when its rewards are AP items and the
+// executable's own package cash has to go. A world test pins the index.
+constexpr int kPackagesShuffledGlobal = 9378;
 // The radio contract, matching apworld scm.py: the randomized flag, nine
 // station unlock globals (engine station id order), nine resolve globals the
 // ASI recomputes each frame, and the retune request global the APRADIO
@@ -1215,8 +1219,8 @@ void ScmGameState::EnforcePickupLayout() {
   }
 }
 
-void ScmGameState::DetectCollectedPackages() {
-  if (package_locations_.empty()) return;
+int ScmGameState::DetectCollectedPackages() {
+  if (package_locations_.empty()) return 0;
   // World positions of every collectable pickup still present in the pool.
   // A package held by the hidden_packages content lock sits sunk far below the
   // world, so its height is read back up to where the package really is.
@@ -1239,9 +1243,25 @@ void ScmGameState::DetectCollectedPackages() {
       already_collected.insert(package.completion_global);
     }
   }
-  for (int completion_global : DetectNewlyCollectedPackages(
-           package_locations_, present, package_seen_present_, already_collected)) {
+  const std::vector<int> newly_collected = DetectNewlyCollectedPackages(
+      package_locations_, present, package_seen_present_, already_collected);
+  for (int completion_global : newly_collected) {
     SetGlobal(completion_global, 1);
+  }
+  return static_cast<int>(newly_collected.size());
+}
+
+void ScmGameState::SuppressPackageCash(int newly_collected) {
+  if (newly_collected <= 0 || GetGlobal(kPackagesShuffledGlobal) == 0) return;
+  CPlayerInfo& player = CWorld::Players[0];
+  const int claw_back =
+      PackageCashClawBack(newly_collected, player.m_nCollectablesCollected,
+                          player.m_nCollectablesTotal, player.m_nMoney);
+  if (claw_back > 0) {
+    player.m_nMoney -= claw_back;
+    if (logger_) {
+      logger_("took back vanilla package cash: " + std::to_string(claw_back));
+    }
   }
 }
 
@@ -1404,7 +1424,9 @@ void ScmGameState::OnGameFrame() {
   // so the poll below reports every package as its own check. Only when the world
   // is loaded, so the pool reflects the placed packages.
   if (FindPlayerPed() != nullptr) {
-      DetectCollectedPackages();
+      // The cash the executable paid for the packages the detection just
+      // reported goes back in the same frame, so the two run together.
+      SuppressPackageCash(DetectCollectedPackages());
   }
 
   std::map<int, int> current;

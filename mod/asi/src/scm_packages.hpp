@@ -25,6 +25,35 @@ struct WorldPoint {
   float z = 0.0f;
 };
 
+// The game pays for hidden packages in the EXECUTABLE, not the script: the
+// pickup code hands the player $100 for every package and another $100,000 as
+// the count reaches the total, alongside the CO_ALL message. With the
+// hidden-packages class on the AP check is the reward and its cash is mirrored
+// back into the pool as filler, so the vanilla payout is taken back in the same
+// frame it lands, before anything draws.
+constexpr int kPackageCash = 100;
+constexpr int kAllPackagesCash = 100000;
+
+// What to take back, given how many packages the detection above just reported
+// and the game's own live counters. Reads no remembered state, so a save loaded
+// mid-session cannot look like a payment: the detection is what says a package
+// was collected here and now, and it already refuses one whose completion global
+// a save restored. The count before this frame is `collected` less what was just
+// reported, and the bonus rides on the game's own condition, so a count already
+// at the total pays nothing again. The claw-back never exceeds the money on hand,
+// so a wallet the ability lock pins at nothing cannot go negative.
+inline int PackageCashClawBack(int newly_collected, int collected, int total,
+                               int money) {
+  if (newly_collected <= 0) return 0;
+  int amount = newly_collected * kPackageCash;
+  const int before = collected - newly_collected;
+  if (total > 0 && before < total && collected >= total) {
+    amount += kAllPackagesCash;
+  }
+  const int available = money > 0 ? money : 0;
+  return amount < available ? amount : available;
+}
+
 inline std::vector<int> DetectNewlyCollectedPackages(
     const std::vector<PackageLocation>& packages,
     const std::vector<WorldPoint>& present_positions,

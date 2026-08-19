@@ -343,9 +343,10 @@ GENERAL_FILLER: list[str] = [
     "Weapon Pickup", "Health Top-up", "Armor Top-up", "Remove Wanted Level",
 ]
 
-# The package cash reward has no vanilla package grant (the VC package system
-# gives no money), so it is a one-shot cash item like the filler denominations,
-# not a re-gated pickup.
+# The bonus the game pays as the hundredth package lands, alongside the Hunter.
+# Vanilla pays it from the executable's pickup code, not the script, so unlike
+# the ten threshold rewards there is no vanilla trigger to re-gate: the ASI takes
+# the payout back and this is a one-shot cash item like the filler denominations.
 PACKAGE_CASH_REWARD = "$100,000"
 
 # Persistent rewards re-gate a vanilla respawning grant (safehouse weapon pickup,
@@ -837,13 +838,17 @@ LOCATION_CONTENT_REQUIREMENTS: dict[str, list[str]] = location_content_requireme
 # the AP check is the reward. To keep money principled instead of arbitrary, each
 # enabled check contributes one filler item mirroring the cash it would have paid
 # in vanilla: cash for the checks that paid, generic filler for the ones that did
-# not. Money never gates logic, so every mirror item is filler.
+# not. Money never gates logic, so every mirror item is filler. Hidden packages
+# are the one deliberate departure: vanilla pays each a flat $100 that the ASI
+# takes back, and the pool returns a graded spread instead (PACKAGE_CASH_TIERS).
 
 # Side events each paid a flat $100 pickup in vanilla.
 SIDE_EVENT_CASH = 100
 
-# Hidden packages pay no per-package cash in vanilla; this graded spread is a
-# deliberate variance choice for the pool. The counts sum to HIDDEN_PACKAGE_COUNT.
+# Vanilla pays a flat $100 per package, from the executable's pickup code rather
+# than the script (the ASI takes that payout back while this class is on). This
+# graded spread is a deliberate variance choice for the pool, not a mirror of the
+# flat hundred. The counts sum to HIDDEN_PACKAGE_COUNT.
 PACKAGE_CASH_TIERS: list[tuple[int, int]] = [(100, 40), (250, 30), (500, 20), (1000, 10)]
 
 
