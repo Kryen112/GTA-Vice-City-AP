@@ -481,7 +481,8 @@ MISSION_ABILITY_REQUIREMENTS: dict[str, list[str]] = {
     "Publicity Tour": [LAND_VEHICLES_ITEM],
     "Recruitment Drive": [WEAPON_EQUIP_ITEM, LAND_VEHICLES_ITEM],
     # A foot chase, which the audit runs down with an infinite sprint or a car.
-    # The game has no infinite sprint, so the car is what is left.
+    # Infinite Sprint is the Paramedic reward and a useful item, which no access
+    # rule may name, so the car is what is left.
     "The Chase": [LAND_VEHICLES_ITEM],
     "Rub Out": [WEAPON_EQUIP_ITEM],
     "Shakedown": [WEAPON_EQUIP_ITEM],
@@ -1014,19 +1015,94 @@ MISSION_REGION_REQUIREMENTS: dict[str, list[str]] = {
 }
 
 
-def region_access_groups(region: str,
-                         split_mainland_access: bool) -> list[list[str]]:
+# Missions whose passing is a way onto an island, as event items. Passing a
+# mission is not an item a seed can place, so each of these gets an event
+# location on the mission's own rule, and the routes below name the event.
+ROUTE_MISSIONS: list[str] = [
+    "All Hands On Deck!",
+]
+
+
+def mission_passed_item_name(mission: str) -> str:
+    return f"{mission} Passed"
+
+
+# Ways onto Starfish Island besides its barrier, from the audit. A roadblock
+# stops a car and nothing else, so the island's gates are not the only way in:
+#
+#   fly a helicopter over, which the audit gets from the mainland
+#   sail a boat, which the audit gets from Cortez's last mission
+#
+# The mainland has no route and gets none. The audit's mainland rows carry a
+# plain Mainland Access and no alternative to it, and the mod enforces that
+# barrier where it matters: the last mission's launcher gate reads a mainland
+# unlock global, so a seed logic called beatable without one could not be played.
+#
+# Two of the audit's helicopters are left out. The Vice Point Sparrow that
+# passing Rub Out spawns cannot open this island, since Rub Out needs the island
+# already. The Sea Sparrow at the mansion arrives as the eighty-package reward,
+# which is a useful item, and no access rule may name one. The audit's boat out
+# of Phnom Penh '86 is left out for the first reason too: that mission is played
+# here.
+#
+# Each route's vehicle term binds only while the vehicles key is selected. With
+# the key off the vehicle is free and the route reduces to the way to the
+# mainland or the mission behind it, which is the truth about the game: nothing
+# in the mod stops a boat.
+def region_route_groups(region: str,
+                        split_mainland_access: bool) -> list[list[str]]:
+    if region != REGION_STARFISH:
+        return []
+    crossings = region_access_groups(REGION_MAINLAND, split_mainland_access,
+                                     routes_allowed=False)
+    return [
+        *([AIR_VEHICLES_ITEM, *crossing] for crossing in crossings),
+        [SEA_VEHICLES_ITEM, mission_passed_item_name("All Hands On Deck!")],
+    ]
+
+
+def region_access_groups(region: str, split_mainland_access: bool,
+                         routes_allowed: bool = True) -> list[list[str]]:
     """The alternative item sets that reach a region, any one of them enough.
 
-    Every region but the mainland has one way in, so its area item is the only
-    group. With the crossings split, the mainland has one group per crossing
-    instead of the single Mainland Access group. A region needing nothing (the
-    start island) has no groups at all.
+    An island's barrier item is the first group. With the crossings split, the
+    mainland has one group per crossing instead of the single Mainland Access
+    group. The audit's other ways in follow, unless routes_allowed says to leave
+    them out, which is how the Starfish air route asks for the mainland's own
+    barriers without recursing. A region needing nothing (the start island) has
+    no groups at all.
     """
     if region == REGION_MAINLAND and split_mainland_access:
-        return [[crossing, *also] for crossing, also in MAINLAND_CROSSINGS.items()]
-    area_item = AREA_ITEM_BY_REGION.get(region)
-    return [] if area_item is None else [[area_item]]
+        groups = [[crossing, *also] for crossing, also in MAINLAND_CROSSINGS.items()]
+    else:
+        area_item = AREA_ITEM_BY_REGION.get(region)
+        groups = [] if area_item is None else [[area_item]]
+    if groups and routes_allowed:
+        # A route naming the barrier it is an alternative to reaches nothing new,
+        # which the Starfish air route does for the causeway crossing.
+        barrier = AREA_ITEM_BY_REGION.get(region)
+        groups += [route for route in region_route_groups(region, split_mainland_access)
+                   if barrier not in route]
+    return groups
+
+
+def active_route_groups(groups: list[list[str]],
+                        active_items: frozenset[str]) -> list[list[str]]:
+    """The same groups with every unselected lock item dropped.
+
+    A route names a vehicle, and that term binds only while the vehicles key is
+    selected; with the key off the vehicle is free and the route reduces to the
+    mission that hands it over. Dropping the term rather than the route is what
+    keeps a rule from naming an item no seed has.
+    """
+    active = [[item for item in group
+               if item not in ABILITY_ITEMS or item in active_items]
+              for group in groups]
+    # An empty group reads as satisfied, so it would make the region free. Every
+    # route carries an event item or a barrier and cannot empty, and this says so
+    # rather than leaving the hole silent.
+    assert all(active), f"a route emptied to nothing: {groups}"
+    return active
 
 
 def mission_region(giver: str, mission: str) -> str:

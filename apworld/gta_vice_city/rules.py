@@ -108,16 +108,17 @@ def _requires_with_thresholds(
     )
 
 
-def _region_terms(regions_needed: list[str],
-                  split_mainland_access: bool) -> tuple[list[Requirement],
-                                                        list[Threshold]]:
+def _region_terms(regions_needed: list[str], split_mainland_access: bool,
+                  active_items: frozenset[str]) -> tuple[list[Requirement],
+                                                         list[Threshold]]:
     # What reaching these regions demands. A region with one way in contributes
     # flat terms, so nothing about a rule's shape changes while the crossings are
     # whole; a region with several contributes a one-of threshold.
     flat: list[Requirement] = []
     thresholds: list[Threshold] = []
     for region in regions_needed:
-        groups = data.region_access_groups(region, split_mainland_access)
+        groups = data.active_route_groups(
+            data.region_access_groups(region, split_mainland_access), active_items)
         if len(groups) == 1:
             flat.extend((item, 1) for item in groups[0])
         elif groups:
@@ -336,7 +337,8 @@ def _mission_requirements(mission: str, giver: str, active_items: frozenset[str]
     # flat half here and the threshold half in _mission_thresholds always
     # describe the same set.
     region_requirements, _ = _region_terms(
-        _inherited_regions(mission, giver, properties_enabled), split_mainland_access)
+        _inherited_regions(mission, giver, properties_enabled), split_mainland_access,
+        active_items)
     requirements.extend(region_requirements)
     requirements.extend(_lock_terms(mission, active_items, split_content_locks))
     requirements.extend(_predecessor_requirements(
@@ -386,7 +388,8 @@ def _mission_thresholds(mission: str, giver: str, active_items: frozenset[str],
     # the terms do, so a mission behind Death Row needs a car or a helicopter
     # too, and no fill can strand both behind it.
     _flat, thresholds = _region_terms(
-        _inherited_regions(mission, giver, properties_enabled), split_mainland_access)
+        _inherited_regions(mission, giver, properties_enabled), split_mainland_access,
+        active_items)
     thresholds.extend(_ability_alternative_thresholds(mission, active_items))
     for earlier in _inherited_missions(mission, giver, properties_enabled):
         thresholds.extend(_ability_alternative_thresholds(earlier, active_items))
@@ -412,9 +415,10 @@ def _property_sale_requirements(
         mission, giver, active_items, split_content_locks, split_mainland_access,
         properties_enabled)
     region = locations.LOCATION_REGIONS[mission]
-    # Shakedown's own island has one way in however the mainland crossings are
-    # set, so this half is always flat.
-    region_requirements, _ = _region_terms([region], split_mainland_access)
+    # Shakedown's island has a barrier and two audited routes, so this half is
+    # flat only when the routes leave it with one group.
+    region_requirements, region_route_thresholds = _region_terms(
+        [region], split_mainland_access, active_items)
     requirements = [*requirements, *region_requirements]
     # The threshold half is not. The mission chain puts Rub Out and Death Row
     # behind Shakedown, Death Row is played on the mainland, and with the
@@ -422,8 +426,11 @@ def _property_sale_requirements(
     # inherits the several-routes requirements of everything behind it. Every
     # caller carries both halves, since dropping this one would leave a crossing
     # item free to sit behind a purchase that cannot happen without it.
-    thresholds = _mission_thresholds(mission, giver, active_items,
-                                     split_mainland_access, properties_enabled)
+    thresholds = _deduplicated_thresholds([
+        *region_route_thresholds,
+        *_mission_thresholds(mission, giver, active_items, split_mainland_access,
+                             properties_enabled),
+    ])
     if data.WALLET_ITEM in active_items:
         requirements = [*requirements, (data.WALLET_ITEM, 1)]
     # The property content lock does NOT ride here, because split by district it

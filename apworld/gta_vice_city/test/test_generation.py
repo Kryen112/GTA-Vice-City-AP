@@ -124,6 +124,13 @@ _MANSION_CHAIN_COST: list[str] = [
     data.LAND_VEHICLES_ITEM,
 ]
 
+def _check_count(multiworld, player: int) -> int:
+    # Locations with an address. The event locations carrying the audited island
+    # routes have none, since passing a mission is not a check.
+    return sum(1 for location in multiworld.get_locations(player)
+               if location.address is not None)
+
+
 _FINALE_ASSET_ITEMS: list[str] = [
     "Printworks Ownership", "Progressive Printworks",
     "Malibu Club Ownership", "Progressive Malibu Club",
@@ -857,7 +864,7 @@ class TestAbilityLocksAll(WorldTestBase):
         # the car outright, so the car is required either way and the route
         # decides nothing. Measured rather than assumed, because a route that
         # cannot fail is worth knowing about: fifteen mission locations carry a
-        # route, three of them live and the rest covered like this one.
+        # route, own or inherited, and three of them are live.
         active_items = frozenset(
             item for items in data.ABILITY_LOCK_ITEMS.values() for item in items)
         flat = {item for item, _count in rules._mission_requirements(
@@ -869,8 +876,20 @@ class TestAbilityLocksAll(WorldTestBase):
         # The car is a flat term besides, inherited from Mall Shootout, so one
         # side of the route is required whatever the other says.
         self.assertIn(data.LAND_VEHICLES_ITEM, flat)
-        carriers = [mission for mission, giver in MISSION_GIVER.items()
-                    if rules._mission_thresholds(mission, giver, active_items, False)]
+        # Counted through the built thresholds rather than off the table, so a
+        # route lost between the two fails here.
+        carriers = [
+            mission for mission, giver in MISSION_GIVER.items()
+            if any(group in alternatives
+                   for alternatives, _needed in rules._mission_thresholds(
+                       mission, giver, active_items, False)
+                   for group in [[(item, 1) for item in route]
+                                 for routes in [
+                                     data.LOCATION_ABILITY_ALTERNATIVES.get(name, [])
+                                     for name in [mission, *rules._inherited_missions(
+                                         mission, giver)]]
+                                 for route in routes])
+        ]
         self.assertEqual(len(carriers), 15)
 
     def test_a_predecessor_island_is_inherited(self) -> None:
@@ -886,10 +905,15 @@ class TestAbilityLocksAll(WorldTestBase):
             self.assertEqual(LOCATION_REGIONS[predecessor], data.REGION_STARFISH)
         active_items = frozenset(
             item for items in data.ABILITY_LOCK_ITEMS.values() for item in items)
-        requirements = dict(rules._mission_requirements(
+        # The island has a barrier and an audited route, so its requirement is a
+        # one-of and not a flat term; either half of the rule may hold it.
+        named = {item for item, _count in rules._mission_requirements(
             "Cap the Collector", "Vercetti Finale", active_items,
-            data.CONTENT_SPLIT_OFF, False))
-        self.assertIn("Starfish Island Access", requirements)
+            data.CONTENT_SPLIT_OFF, False)}
+        for groups, _needed in rules._mission_thresholds(
+                "Cap the Collector", "Vercetti Finale", active_items, False):
+            named.update(item for group in groups for item, _count in group)
+        self.assertIn("Starfish Island Access", named)
         # Many missions inherit a predecessor from another island, and for most
         # of them that island is the start island, which costs nothing. Three are
         # left, and the finale names the mainland in its own right, so Death Row
@@ -900,7 +924,8 @@ class TestAbilityLocksAll(WorldTestBase):
                           in rules._inherited_missions(name, strand)
                           if LOCATION_REGIONS[predecessor] != LOCATION_REGIONS[name]
                           and data.region_access_groups(
-                              LOCATION_REGIONS[predecessor], False)})
+                              LOCATION_REGIONS[predecessor], False,
+                              routes_allowed=False)})
             for name, strand in MISSION_GIVER.items()}
         self.assertEqual({name: regions for name, regions in elsewhere.items()
                           if regions},
@@ -955,6 +980,101 @@ class TestAbilityLocksAll(WorldTestBase):
             data.CONTENT_SPLIT_OFF, False, properties_enabled=False))
         self.assertEqual(with_class["Progressive Printworks"], 2)
         self.assertNotIn("Progressive Printworks", without)
+
+    def test_a_region_route_can_actually_open_that_region(self) -> None:
+        # A route is worth nothing if reaching the mission it names already needs
+        # the region the route opens. That is the mistake this whole stage nearly
+        # shipped: All Hands On Deck! is played on the start island and still
+        # needs the mainland, since Sir, Yes Sir! before it does, so a mainland
+        # route out of it would have been satisfiable only by a player already
+        # there. Asserted over every route rather than recorded per mission,
+        # because a record of a belief is not a guard on it.
+        for region in (data.REGION_VICE_CITY, data.REGION_MAINLAND,
+                       data.REGION_STARFISH):
+            for split in (False, True):
+                for group in data.region_route_groups(region, split):
+                    for item in group:
+                        if not item.endswith(" Passed"):
+                            continue
+                        mission = item[:-len(" Passed")]
+                        with self.subTest(region=region, mission=mission):
+                            needed = set(rules._inherited_regions(
+                                mission, MISSION_GIVER[mission]))
+                            needed.add(LOCATION_REGIONS[mission])
+                            self.assertNotIn(region, needed)
+
+    def test_the_route_events_are_events_and_nothing_else(self) -> None:
+        # Each route mission gets one event location: no address, so it is not a
+        # check and no id table, reward mirror or filler count sees it, holding a
+        # locked progression item nothing else can place.
+        events = [location for location in self.multiworld.get_locations(self.player)
+                  if location.address is None]
+        self.assertEqual(len(events), len(data.ROUTE_MISSIONS))
+        for location in events:
+            with self.subTest(event=location.name):
+                mission = location.name.removesuffix(" (event)")
+                self.assertIn(mission, data.ROUTE_MISSIONS)
+                self.assertEqual(location.parent_region.name,
+                                 LOCATION_REGIONS[mission])
+                self.assertNotIn(location.name, LOCATION_NAME_TO_ID)
+                self.assertNotIn(location.name, self.world._reward_mirror())
+                item = location.item
+                self.assertEqual(item.name, data.mission_passed_item_name(mission))
+                self.assertTrue(item.advancement)
+                self.assertIsNone(item.code)
+                self.assertNotIn(item.name, ITEM_NAME_TO_ID)
+                self.assertNotIn(item.name, [pool.name for pool
+                                             in self.multiworld.itempool])
+        # And the event is only reachable where its mission is.
+        self.assertFalse(self.multiworld.state.has(
+            data.mission_passed_item_name(data.ROUTE_MISSIONS[0]), self.player))
+
+    def test_a_route_mission_costs_what_reaching_it_costs(self) -> None:
+        # A route names a mission, and what that route is worth is everything
+        # reaching the mission takes, not the island it happens to sit on. This
+        # is recorded per route mission because reading the island alone is the
+        # easy mistake: All Hands On Deck! is played on the start island and
+        # still needs the mainland, since Sir, Yes Sir! before it in Cortez's
+        # strand does. So its boat reaches Starfish Island for a player who has
+        # crossed to the mainland, the same much the helicopter route asks for,
+        # and the invariant above is what keeps a route from claiming more.
+        for mission in data.ROUTE_MISSIONS:
+            giver = MISSION_GIVER[mission]
+            with self.subTest(mission=mission):
+                needed = set(rules._inherited_regions(mission, giver))
+                needed.add(LOCATION_REGIONS[mission])
+                needed.discard(data.REGION_VICE_CITY)
+                self.assertEqual(needed, {
+                    "All Hands On Deck!": {data.REGION_MAINLAND},
+                }[mission])
+
+    def test_neither_island_opens_without_an_area_item(self) -> None:
+        # The routes reach Starfish Island from the mainland, never the mainland
+        # from anywhere, so holding every progressive and no area item reaches
+        # neither island.
+        pool = {item.name for item in self.multiworld.itempool
+                if item.player == self.player and item.name not in data.AREA_ITEMS}
+        self.collect_by_name(sorted(pool))
+        for name in ("Rub Out", "Shakedown", "Cap the Collector",
+                     data.FINAL_MISSION, data.hidden_package_name(51)):
+            self.assertFalse(self.can_reach_location(name), name)
+        # Starfish Island Access opens its own island and stops there: the
+        # mainland has a barrier and no route, so anything wanting the mainland
+        # still waits. A package on the island is the check that does not, since
+        # the missions there inherit the mainland through Death Row.
+        self.collect_by_name(["Starfish Island Access"])
+        self.assertTrue(self.can_reach_location(data.hidden_package_name(51)))
+        for name in ("Rub Out", "Cap the Collector", data.FINAL_MISSION):
+            self.assertFalse(self.can_reach_location(name), name)
+        self.collect_by_name(["Mainland Access"])
+        for name in ("Rub Out", "Cap the Collector", data.FINAL_MISSION):
+            self.assertTrue(self.can_reach_location(name), name)
+        # And the mainland reaches Starfish the other way, by helicopter, which
+        # is the one route there is.
+        self.assertEqual(
+            data.region_route_groups(data.REGION_MAINLAND, False), [])
+        self.assertIn([data.AIR_VEHICLES_ITEM, "Mainland Access"],
+                      data.region_route_groups(data.REGION_STARFISH, False))
 
     def test_an_asset_slice_carries_nothing_a_threshold_cannot_hold(self) -> None:
         # The finale's asset groups carry lock terms and nothing else, because
@@ -1532,7 +1652,7 @@ class TestStartingUnlocksOn(WorldTestBase):
         # grow by exactly that much: the fill's own check only catches a pool
         # too large, never one item short.
         placed = [item for item in self.multiworld.itempool if item.player == self.player]
-        self.assertEqual(len(placed), len(self.multiworld.get_locations(self.player)))
+        self.assertEqual(len(placed), _check_count(self.multiworld, self.player))
 
     def test_slot_data_carries_both_draws(self) -> None:
         slot_data = self.world.fill_slot_data()
@@ -1863,10 +1983,12 @@ class TestSplitMainlandAccessOn(WorldTestBase):
         self.collect_by_name(["Starfish Island Access"])
         self.assertFalse(self._mainland_reachable())
 
-    def test_the_last_mission_needs_a_crossing(self) -> None:
+    def test_the_last_mission_needs_a_way_across(self) -> None:
         # Keep Your Friends Close... sits on Starfish but its launcher waits on
         # Cap the Collector, which is on the mainland, so its own rule carries
-        # the crossing choice as a threshold rather than a single item.
+        # the crossing choice as a threshold rather than a single item. A crossing
+        # is the only way to the mainland there is: the island has audited routes
+        # and the mainland has none, so nothing stands in for a bridge.
         self.collect_by_name(_MANSION_CHAIN)
         self.collect_by_name([
             "Progressive Vercetti Finale", "Progressive Vercetti Protection",
@@ -1969,16 +2091,24 @@ class TestStarfishGating(WorldTestBase):
         "enable_hidden_packages": True, "enable_rampages": True,
     }
 
-    def test_starfish_checks_need_starfish_access(self) -> None:
-        # Starfish Island is its own region behind Starfish Island Access:
-        # a package and a rampage on the island (both coordinate-verified)
-        # wait for the item, and Mainland Access does not stand in for it,
-        # because with Mainland Access alone both island gates stay shut.
+    def test_starfish_checks_need_a_way_onto_the_island(self) -> None:
+        # Starfish Island is its own region, and the island's gates open on
+        # Starfish Island Access. That is the barrier, not the only way in: the
+        # audit flies a helicopter over from the mainland and sails a boat from
+        # Cortez's last mission, so a check on the island waits for one of those
+        # and not for the item alone.
         starfish = [data.hidden_package_name(51), data.rampage_name(14)]
-        self.collect_by_name(["Mainland Access"])
         for name in starfish:
             self.assertFalse(self.can_reach_location(name), name)
         self.collect_by_name(["Starfish Island Access"])
+        for name in starfish:
+            self.assertTrue(self.can_reach_location(name), name)
+        self.remove_by_name(["Starfish Island Access"])
+        for name in starfish:
+            self.assertFalse(self.can_reach_location(name), name)
+        # The helicopter route, which with no vehicles key selected is the
+        # mainland and nothing else.
+        self.collect_by_name(["Mainland Access"])
         for name in starfish:
             self.assertTrue(self.can_reach_location(name), name)
 
@@ -1993,20 +2123,25 @@ class TestStarfishGating(WorldTestBase):
     def test_mansion_giver_missions_sit_on_the_island(self) -> None:
         # Diaz and Vercetti Protection give from the mansion, so their first
         # missions need Starfish Island Access besides their own unlock.
+        # Neither area item to begin with: the mainland one reaches the island
+        # too, by the audit's helicopter route.
         self.collect_by_name(_MANSION_CHAIN)
-        self.collect_by_name(["Progressive Diaz", "Progressive Vercetti Protection",
-                              "Mainland Access"])
+        self.collect_by_name(["Progressive Diaz", "Progressive Vercetti Protection"])
         for name in ["The Chase", "Shakedown"]:
             self.assertFalse(self.can_reach_location(name), name)
-        self.collect_by_name(["Starfish Island Access"])
+        # The mainland comes with them: Shakedown inherits it through Death Row,
+        # and The Chase is the first mission of the strand Death Row waits on.
+        self.collect_by_name(["Starfish Island Access", "Mainland Access"])
         for name in ["The Chase", "Shakedown"]:
             self.assertTrue(self.can_reach_location(name), name)
 
-    def test_finale_needs_both_area_items(self) -> None:
+    def test_finale_needs_a_way_onto_both_islands(self) -> None:
         # Keep Your Friends Close... starts at the mansion but only activates
-        # once Cap the Collector (mainland) passes, so it needs both islands.
-        # The asset items are collected up front so the area edge is the only
-        # thing under test.
+        # once Cap the Collector (mainland) passes, so it needs both islands. The
+        # asset items are collected up front so the area edge is the only thing
+        # under test. It needs both, and neither item stands in for the other:
+        # the island's barrier is not the only way onto the island, but the
+        # mainland's is the only way onto the mainland.
         self.collect_by_name(_MANSION_CHAIN)
         self.collect_by_name([
             "Progressive Vercetti Finale", "Progressive Vercetti Protection",
@@ -2016,9 +2151,6 @@ class TestStarfishGating(WorldTestBase):
         self.assertFalse(self.can_reach_location(data.FINAL_MISSION))
         self.collect_by_name(["Mainland Access"])
         self.assertTrue(self.can_reach_location(data.FINAL_MISSION))
-        # And Cap the Collector itself is a mainland check, startable without
-        # the island... except its property-sale requirements name Starfish
-        # Island Access, which this test has already collected.
         self.assertTrue(self.can_reach_location("Cap the Collector"))
 
 
@@ -2046,26 +2178,31 @@ class TestPropertyAccess(WorldTestBase):
         # and Starfish Island Access, since Shakedown gives from the mansion,
         # and the mainland, since the chain that opens the mansion crosses it.
         # The price itself is grindable money and needs no item.
-        self.collect_by_name([*_MANSION_CHAIN, "Mainland Access"])
+        # Neither area item is held to begin with, since either one reaches the
+        # mansion: the island's barrier directly, or the mainland and then the
+        # audit's helicopter route across.
+        self.collect_by_name(_MANSION_CHAIN)
         self.assertFalse(self.can_reach_location("Malibu Club Purchase"))
         self.collect_by_name(["Progressive Vercetti Protection"])
         self.assertFalse(self.can_reach_location("Malibu Club Purchase"))
-        self.collect_by_name(["Starfish Island Access"])
+        self.collect_by_name(["Starfish Island Access", "Mainland Access"])
         self.assertTrue(self.can_reach_location("Malibu Club Purchase"))
 
-    def test_every_purchase_gates_on_mainland_access(self) -> None:
-        # Every business purchase gates on Mainland Access, wherever the business
-        # stands, so the fill cannot strand that item behind one: a business goes
-        # on sale when Shakedown passes, and the chain that opens the mansion
-        # runs through Death Row on the mainland. A purchase still says which
-        # island it is on through its region, which is what gates the location
-        # itself.
+    def test_every_purchase_gates_on_a_way_to_both_islands(self) -> None:
+        # Every business purchase gates on reaching the mainland as well as the
+        # mansion, wherever the business stands, so the fill cannot strand a
+        # crossing behind one: a business goes on sale when Shakedown passes, and
+        # the chain that opens the mansion runs through Death Row on the mainland.
+        # Either area item is a way to both islands, its own barrier directly and
+        # the other island by helicopter, so this withholds both and then hands
+        # over one. A purchase still says which island it is on through its
+        # region, which is what gates the location itself.
         self.assertEqual(LOCATION_REGIONS["Kaufman Cabs Purchase"],
                          data.REGION_MAINLAND)
         self.assertEqual(LOCATION_REGIONS["Malibu Club Purchase"],
                          data.REGION_VICE_CITY)
         self.collect_by_name(_MANSION_CHAIN)
-        self.collect_by_name(["Progressive Vercetti Protection", "Starfish Island Access"])
+        self.collect_by_name(["Progressive Vercetti Protection"])
         for purchase in ("Malibu Club Purchase", "Kaufman Cabs Purchase"):
             self.assertFalse(self.can_reach_location(purchase), purchase)
         self.collect_by_name(["Mainland Access"])
@@ -2259,13 +2396,14 @@ class TestFinaleWithoutProperties(WorldTestBase):
         # mansion, so the finale must keep Starfish Island Access or the fill
         # could strand that item behind Cap the Collector, an in-game
         # deadlock.
+        # The mansion is reachable from the mainland too, by the audit's
+        # helicopter route, so neither area item is held to begin with.
         self.collect_by_name(_MANSION_CHAIN)
         self.collect_by_name([
             "Progressive Vercetti Finale", "Progressive Vercetti Protection",
-            "Mainland Access",
         ])
         self.assertFalse(self.can_reach_location("Cap the Collector"))
-        self.collect_by_name(["Starfish Island Access"])
+        self.collect_by_name(["Starfish Island Access", "Mainland Access"])
         self.assertTrue(self.can_reach_location("Cap the Collector"))
         self.assertTrue(self.can_reach_location(data.FINAL_MISSION))
 
@@ -2829,9 +2967,13 @@ class TestReservedGlobals(WorldTestBase):
         alternatives = ["Mainland Access", *data.MAINLAND_CROSSING_ITEMS]
         self.assertEqual([scm.unlock_global(name) for name in alternatives],
                          [9030, 9032, 9033, 9034, 9035])
-        # And under either setting, every way into the mainland is one of them.
+        # And under either setting, every BARRIER into the mainland is one of
+        # them. The audit's helicopter and boat routes are not barriers and no
+        # gate implements them: they are things a player does in a world the gate
+        # has already opened or not, so routes_allowed is off here.
         for split in (False, True):
-            groups = data.region_access_groups(data.REGION_MAINLAND, split)
+            groups = data.region_access_groups(data.REGION_MAINLAND, split,
+                                               routes_allowed=False)
             self.assertTrue(groups, split)
             for group in groups:
                 self.assertIn(group[0], alternatives, group)
@@ -3468,11 +3610,11 @@ class TestRewardMirror(WorldTestBase):
 
     def test_mirror_has_one_entry_per_enabled_location(self) -> None:
         self.assertEqual(len(self.world._reward_mirror()),
-                         len(self.multiworld.get_locations(self.player)))
+                         _check_count(self.multiworld, self.player))
 
     def test_itempool_fills_every_location(self) -> None:
         placed = [item for item in self.multiworld.itempool if item.player == self.player]
-        self.assertEqual(len(placed), len(self.multiworld.get_locations(self.player)))
+        self.assertEqual(len(placed), _check_count(self.multiworld, self.player))
 
     def test_a_cash_item_is_named_for_its_amount(self) -> None:
         # The amount alone, thousands separators kept, no prefix. The

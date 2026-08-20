@@ -17,7 +17,7 @@ import typing
 from collections.abc import Callable
 
 import settings
-from BaseClasses import CollectionState, Item, Location, Region
+from BaseClasses import CollectionState, Item, ItemClassification, Location, Region
 from Options import OptionError
 from worlds.AutoWorld import WebWorld, World
 from worlds.LauncherComponents import Component, Type, components
@@ -347,6 +347,15 @@ class GTAViceCityWorld(World):
     def _content_lock_keys(self) -> frozenset[str]:
         return frozenset(self.options.content_locks.value)
 
+    def _active_lock_items(self) -> frozenset[str]:
+        # The lock items a seed actually has, which is what decides whether a
+        # term binds. Region routes name a vehicle, and that term only exists
+        # while the vehicles key is selected.
+        return frozenset(
+            item for key in self._ability_lock_keys()
+            for item in data.ABILITY_LOCK_ITEMS[key]
+        )
+
     def _location_rules(self) -> dict[str, rules.RulePredicate]:
         # Built per world: the finale missions carry the asset prerequisite
         # only while the properties class is on (its items are in the pool),
@@ -384,7 +393,8 @@ class GTAViceCityWorld(World):
         start = by_name[regions.START_REGION]
         menu.connect(start)
         entry_rules = regions.build_region_entry_rules(
-            bool(self.options.split_mainland_access.value))
+            bool(self.options.split_mainland_access.value),
+            self._active_lock_items())
         for region_name, region in by_name.items():
             if region_name == regions.START_REGION:
                 continue
@@ -393,6 +403,24 @@ class GTAViceCityWorld(World):
                 start.connect(region)
             else:
                 start.connect(region, rule=self._bind(rule))
+
+        # One event per mission the audit uses as a way onto an island. Passing
+        # a mission is not something a seed can place, so it arrives as an event
+        # item on an event location that sits in the mission's own region and
+        # carries the mission's own rule. The region graph then reads the event
+        # like any other item, and the sweep can only collect it once the mission
+        # is genuinely reachable, so a route through an island's own missions
+        # cannot open that island for itself.
+        for mission in data.ROUTE_MISSIONS:
+            event = GTAViceCityLocation(
+                self.player, f"{mission} (event)", None,
+                by_name[LOCATION_REGIONS[mission]],
+            )
+            event.place_locked_item(GTAViceCityItem(
+                data.mission_passed_item_name(mission),
+                ItemClassification.progression, None, self.player,
+            ))
+            by_name[LOCATION_REGIONS[mission]].locations.append(event)
 
         for location_name, region_name in LOCATION_REGIONS.items():
             if not self._location_enabled(location_name):
@@ -593,6 +621,19 @@ class GTAViceCityWorld(World):
             if not self._location_enabled(location_name):
                 continue
             set_rule(self.multiworld.get_location(location_name, self.player), self._bind(rule))
+        # An event carries the rule of the mission it stands for, so holding the
+        # event means that mission was reachable.
+        for mission in data.ROUTE_MISSIONS:
+            rule = location_rules.get(mission)
+            if rule is None:
+                # An unruled event would be free, and it opens an island, so this
+                # fails rather than quietly handing the island over.
+                raise OptionError(
+                    f"{mission} opens an island and has no rule to stand on")
+            set_rule(
+                self.multiworld.get_location(f"{mission} (event)", self.player),
+                self._bind(rule),
+            )
         self.multiworld.completion_condition[self.player] = self._completion_condition()
 
     def _bind(self, rule: Callable[[CollectionState, int], bool]) -> Callable[[CollectionState], bool]:

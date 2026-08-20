@@ -112,6 +112,23 @@ def main() -> int:
                 f" >= {count}"
                 for item, count in requirements
             ]
+            # And the one-of half. An island with more than one way in puts its
+            # area item here rather than in the flat list, so reading only the
+            # flat half hid a mainland requirement from this spec once, which is
+            # the drift the file exists to show. An event term names a mission
+            # rather than a global and has no gate to compare against.
+            for groups, needed in rules._mission_thresholds(
+                    mission, giver, frozenset(), split_mainland_access=False,
+                    properties_enabled=True):
+                alternatives = " OR ".join(
+                    " AND ".join(
+                        item if item.endswith(" Passed") else
+                        f"${scm.unlock_global(item if item in data.AREA_ITEMS else _strand_of(item))}"
+                        f" >= {count}"
+                        for item, count in group)
+                    for group in groups
+                )
+                parts.append(f"{needed} of ({alternatives})")
             if strand in data.VENUE_STRANDS:
                 purchase = f"{strand} Purchase"
                 parts.append(f"${scm.completion_global(purchase)} >= 1 (property bought)")
