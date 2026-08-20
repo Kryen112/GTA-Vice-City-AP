@@ -16,8 +16,10 @@ plus enough of the optional income assets completable, each through its
 ownership item and progressives. A location's own area requirement is carried
 by the region it sits in; a rule names a region requirement only when it needs a
 region its own does not give it, which is the eight missions in
-data.MISSION_REGION_REQUIREMENTS plus the Starfish Island Access inside the
-property-sale requirements, since Shakedown gives from the mansion. A region with one way in
+data.MISSION_REGION_REQUIREMENTS, the one mission whose predecessors are played
+on another island (Cap the Collector, behind the three mansion missions), and the
+Starfish Island Access inside the property-sale requirements, since Shakedown
+gives from the mansion. A region with one way in
 contributes flat terms, so an unsplit seed's rules keep the shape they always
 had; the mainland with split_mainland_access on contributes a one-of threshold
 over its crossings instead, and the finale's last mission is the one rule
@@ -257,8 +259,8 @@ def _predecessor_requirements(mission: str, giver: str,
 def _mission_requirements(mission: str, giver: str, active_items: frozenset[str],
                           split_content_locks: int,
                           split_mainland_access: bool) -> list[Requirement]:
-    # The launcher-gate view: progressive unlocks, plus any area item the
-    # mission needs beyond its own region (the finale's Mainland Access), plus
+    # The launcher-gate view: progressive unlocks, plus any area item the mission
+    # needs that its own region does not give it, its own or a predecessor's, plus
     # the mission's ability terms and those of the earlier missions of its
     # strand. The SCM mission gates mirror the unlock counts; a venue's
     # ownership and purchase requirements are added on top in
@@ -291,13 +293,30 @@ def _mission_requirements(mission: str, giver: str, active_items: frozenset[str]
 def _inherited_regions(mission: str, giver: str) -> list[str]:
     """Every region this mission needs, its own and the ones it inherits.
 
+    A predecessor contributes two regions, and both are part of passing it: the
+    island it is played on, which is the region its own location sits in, and any
+    region beyond that in MISSION_REGION_REQUIREMENTS. The island matters even
+    though the region graph gates the predecessor's own location, because holding
+    a strand's progressives is what stands in for having passed its missions, and
+    the items can be anywhere: Cap the Collector is played on the mainland and
+    opens on three Progressive Vercetti Protection, and those three are played
+    from the mansion on Starfish Island, which nothing else about it names.
+
+    A predecessor on this mission's own island adds nothing, since the region
+    graph gates this location there already, so it is left out; the rule then
+    names an area item only where the graph does not supply it, and the SCM gate
+    dump stays a list of the gates the mod actually implements.
+
     Gathered in one place because the flat half and the threshold half of a
     region requirement must come from the same list: with the crossings split the
     mainland has four ways in and can only be expressed as a threshold, and the
     two halves disagreeing is how a requirement gets silently dropped.
     """
+    own_region = locations.LOCATION_REGIONS[mission]
     regions = list(data.MISSION_REGION_REQUIREMENTS.get(mission, []))
     for earlier in _inherited_missions(mission, giver):
+        if locations.LOCATION_REGIONS[earlier] != own_region:
+            regions.append(locations.LOCATION_REGIONS[earlier])
         regions.extend(data.MISSION_REGION_REQUIREMENTS.get(earlier, []))
     return list(dict.fromkeys(regions))
 

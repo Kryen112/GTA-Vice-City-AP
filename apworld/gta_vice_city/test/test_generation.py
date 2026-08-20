@@ -730,6 +730,67 @@ class TestAbilityLocksAll(WorldTestBase):
             name = data.hidden_package_name(index)
             self.assertTrue(self.can_reach_location(name), name)
 
+    def test_a_predecessor_island_is_inherited(self) -> None:
+        # Cap the Collector is played on the mainland and opens on three
+        # Progressive Vercetti Protection, and those three missions are played
+        # from the mansion, so it needs Starfish Island Access as well even
+        # though its own location is not on the island. Without this the fill
+        # could put that item behind it: the progressives can sit anywhere, so a
+        # sweep could hold all three while the mansion is still shut, and the
+        # strand could never be passed.
+        for predecessor in ("Shakedown", "Bar Brawl", "Cop Land"):
+            self.assertEqual(LOCATION_REGIONS[predecessor], data.REGION_STARFISH)
+        active_items = frozenset(
+            item for items in data.ABILITY_LOCK_ITEMS.values() for item in items)
+        requirements = dict(rules._mission_requirements(
+            "Cap the Collector", "Vercetti Finale", active_items,
+            data.CONTENT_SPLIT_OFF, False))
+        self.assertIn("Starfish Island Access", requirements)
+        # Five missions inherit a predecessor from another island, and on three of
+        # them that island is the start island, which costs nothing. Of the two
+        # left, the finale names the mainland in its own right, so Cap the
+        # Collector is the one mission where inheritance is the only source of an
+        # area item, and this is the whole list rather than a spot check.
+        elsewhere = {
+            name: sorted({LOCATION_REGIONS[predecessor] for predecessor
+                          in rules._inherited_missions(name, strand)
+                          if LOCATION_REGIONS[predecessor] != LOCATION_REGIONS[name]
+                          and data.region_access_groups(
+                              LOCATION_REGIONS[predecessor], False)})
+            for name, strand in MISSION_GIVER.items()}
+        self.assertEqual({name: regions for name, regions in elsewhere.items()
+                          if regions},
+                         {"Cap the Collector": [data.REGION_STARFISH],
+                          "Keep Your Friends Close...": [data.REGION_MAINLAND]})
+        self.assertIn(data.REGION_MAINLAND,
+                      data.MISSION_REGION_REQUIREMENTS["Keep Your Friends Close..."])
+
+    def test_a_mission_requires_every_inherited_island(self) -> None:
+        # The invariant behind that case, over every mission and through the
+        # built rule rather than through the gatherer: a mission cannot be
+        # reachable while an island one of its predecessors is played on is still
+        # shut, whichever direction the strands run. Read off the requirement
+        # list and the thresholds together, so a term dropped anywhere between
+        # the gatherer and the rule fails this too.
+        active_items = frozenset(
+            item for items in data.ABILITY_LOCK_ITEMS.values() for item in items)
+        for split in (False, True):
+            for mission, giver in MISSION_GIVER.items():
+                flat = {item for item, _count in rules._mission_requirements(
+                    mission, giver, active_items, data.CONTENT_SPLIT_OFF, split)}
+                for groups, _needed in rules._mission_region_thresholds(
+                        mission, giver, split):
+                    flat.update(item for group in groups for item, _count in group)
+                for predecessor in rules._inherited_missions(mission, giver):
+                    region = LOCATION_REGIONS[predecessor]
+                    if region == LOCATION_REGIONS[mission]:
+                        # The region graph puts this location there already.
+                        continue
+                    for group in data.region_access_groups(region, split):
+                        with self.subTest(mission=mission, predecessor=predecessor,
+                                          split=split):
+                            self.assertTrue(set(group) & flat, group)
+
     def test_an_asset_slice_needs_no_region_the_finale_lacks(self) -> None:
         # The finale's asset groups carry lock terms and no region, because they
         # sit inside the finale's own threshold over groups, where a nested
