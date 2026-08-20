@@ -533,16 +533,18 @@ class TestAbilityLocksAll(WorldTestBase):
         self.collect_by_name([data.AIR_VEHICLES_ITEM])
         self.assertTrue(self.can_reach_location("Ocean Beach Chopper Checkpoint"))
 
-    def test_warp_seated_side_events_need_no_vehicle(self) -> None:
-        # Hotring and Bloodring take the player on foot and warp them into the
-        # event car, which no lock constrains, so they carry no term. Dirtring
-        # sets the player down beside a Sanchez to mount, so it does.
+    def test_every_stadium_event_needs_the_car(self) -> None:
+        # All three stadium events are driven, so all three take the car. The
+        # game would allow two of them without it, since Hotring and Bloodring
+        # take the player on foot and warp them into the event car while
+        # Dirtring sets them down beside a Sanchez to mount; the term is what the
+        # event is, not what its launcher checks.
         self.collect_by_name(["Mainland Access"])
-        self.assertTrue(self.can_reach_location("Hotring"))
-        self.assertTrue(self.can_reach_location("Bloodring"))
-        self.assertFalse(self.can_reach_location("Dirtring"))
+        for name in ("Hotring", "Bloodring", "Dirtring"):
+            self.assertFalse(self.can_reach_location(name), name)
         self.collect_by_name([data.LAND_VEHICLES_ITEM])
-        self.assertTrue(self.can_reach_location("Dirtring"))
+        for name in ("Hotring", "Bloodring", "Dirtring"):
+            self.assertTrue(self.can_reach_location(name), name)
 
     def test_robbable_store_needs_weapon_equip(self) -> None:
         self.assertFalse(self.can_reach_location(data.robbable_store_name(1)))
@@ -577,12 +579,19 @@ class TestAbilityLocksAll(WorldTestBase):
             data.LAND_VEHICLES_ITEM,
             data.MISSION_ABILITY_REQUIREMENTS["Sunshine Autos Import List 1"],
         )
-        # And in the built rule, with Sunshine Autos as the deciding asset
-        # rather than a passenger: hold the mandatory Printworks plus exactly
-        # four optional assets that need no land vehicle (Kaufman Cabs,
-        # Cherry Popper and Pole Position carry no ability term at all, and
-        # Boatyard needs only the boat), so the threshold of five rests on
-        # Sunshine Autos alone and Land Vehicles is what completes it.
+        # And in the built group for the asset, which is the slice itself: the
+        # asset's own term and the sliced mission's both have to survive the cut
+        # at one progressive.
+        active_items = frozenset(
+            item for items in data.ABILITY_LOCK_ITEMS.values() for item in items)
+        group = dict(rules._asset_completion_requirements(
+            "Sunshine Autos", data.FINALE_OPTIONAL_ASSETS["Sunshine Autos"],
+            active_items, data.CONTENT_SPLIT_OFF))
+        self.assertIn(data.LAND_VEHICLES_ITEM, group)
+        # And in the whole finale rule. This half no longer isolates Sunshine
+        # Autos, since Kaufman Cabs and Cherry Popper need the car too, so the
+        # threshold fails for their sake as well; the group above is what says
+        # the slice kept the term.
         self.collect_by_name([
             "Progressive Vercetti Finale", "Progressive Vercetti Protection",
             "Mainland Access", "Starfish Island Access", data.WALLET_ITEM,
@@ -593,6 +602,9 @@ class TestAbilityLocksAll(WorldTestBase):
             "Pole Position Ownership",
             "Boatyard Ownership", "Progressive Boatyard",
             "Sunshine Autos Ownership", "Progressive Sunshine Autos",
+            # Every asset behind a venue strand now needs a weapon somewhere in
+            # it, so the weapon is not what the threshold turns on.
+            data.WEAPON_EQUIP_ITEM,
         ])
         self.assertFalse(self.can_reach_location("Cap the Collector"))
         self.collect_by_name([data.LAND_VEHICLES_ITEM])
@@ -605,6 +617,9 @@ class TestAbilityLocksAll(WorldTestBase):
         self.assertFalse(self.can_reach_location("El Swanko Casa Purchase"))
         self.collect_by_name([
             "Progressive Vercetti Protection", "Starfish Island Access",
+            # Shakedown puts the businesses up for sale and takes a weapon, so
+            # the sale requirements carry it onto every business purchase.
+            data.WEAPON_EQUIP_ITEM,
         ])
         self.assertFalse(self.can_reach_location("Malibu Club Purchase"))
         self.collect_by_name([data.WALLET_ITEM])
@@ -617,7 +632,8 @@ class TestAbilityLocksAll(WorldTestBase):
         # Demolition Man carries the Land Vehicles term. Without the inherited
         # term the fill could put Land Vehicles at Two Bit Hit, which no player
         # could then reach.
-        self.collect_by_name(["Progressive Avery"])
+        self.collect_by_name(["Progressive Avery", data.WEAPON_EQUIP_ITEM,
+                              "Mainland Access"])
         self.assertFalse(self.can_reach_location("Demolition Man"))
         self.assertFalse(self.can_reach_location("Two Bit Hit"))
         self.collect_by_name([data.LAND_VEHICLES_ITEM])
@@ -625,55 +641,128 @@ class TestAbilityLocksAll(WorldTestBase):
         self.assertTrue(self.can_reach_location("Two Bit Hit"))
 
     def test_a_first_mission_term_reaches_the_whole_strand(self) -> None:
-        # Umberto's first mission is the one carrying the term, so every later
-        # mission of his strand inherits it.
+        # Umberto's first mission is the one carrying the boat, so every later
+        # mission of his strand inherits it: the boat is what opens the first and
+        # is still required at the last, even though the last needs more besides.
         self.collect_by_name(["Progressive Umberto Robina", "Mainland Access"])
         self.assertFalse(self.can_reach_location("Stunt Boat Challenge"))
         self.assertFalse(self.can_reach_location("Trojan Voodoo"))
         self.collect_by_name([data.SEA_VEHICLES_ITEM])
         self.assertTrue(self.can_reach_location("Stunt Boat Challenge"))
+        # Its own car and the weapon Cannon Fodder needs, both inherited down the
+        # strand, are the rest of what the last mission takes.
+        self.assertFalse(self.can_reach_location("Trojan Voodoo"))
+        self.collect_by_name([data.LAND_VEHICLES_ITEM, data.WEAPON_EQUIP_ITEM])
         self.assertTrue(self.can_reach_location("Trojan Voodoo"))
 
     def test_a_strand_first_mission_inherits_nothing(self) -> None:
-        # Propagation runs forward only: Four Iron opens on its unlock alone
-        # even though Demolition Man behind it carries a term.
-        self.collect_by_name(["Progressive Avery"])
+        # Propagation runs forward only: Four Iron opens on its unlock and its
+        # own weapon, without the car Demolition Man behind it carries.
+        self.collect_by_name(["Progressive Avery", data.WEAPON_EQUIP_ITEM])
         self.assertTrue(self.can_reach_location("Four Iron"))
+        self.assertNotIn(
+            data.LAND_VEHICLES_ITEM,
+            data.LOCATION_ABILITY_REQUIREMENTS.get("Four Iron", []))
 
-    def test_cross_giver_edges_point_at_termless_missions(self) -> None:
-        # Propagation stops at the strand boundary, so a cross-giver edge names
-        # the target strand's progressive count alone. That is sound only while
-        # the missions the count implies carry no lock or area requirement of
-        # their own; an edge onto a locked mission would put that lock's item
-        # behind the lock again, which is what propagation exists to prevent.
+    def test_a_cross_giver_edge_carries_what_it_implies(self) -> None:
+        # An edge says "N progressives of that strand", which stands in for
+        # having PASSED that strand's first N missions, so whatever passing them
+        # takes belongs to the mission holding the edge. Otherwise the fill can
+        # put an item behind the very mission that needs it: Rub Out opens on one
+        # Progressive Death Row, and passing Death Row takes a weapon and the
+        # mainland, so without this a seed could hide either behind Rub Out.
+        active_items = frozenset(
+            item for items in data.ABILITY_LOCK_ITEMS.values() for item in items)
         for mission, giver in MISSION_GIVER.items():
             edges = (list(data.MISSION_PREREQUISITES.get(mission, []))
                      + list(data.STRAND_PREREQUISITES.get(giver, [])))
             for target_strand, count in edges:
                 for implied in STRAND_MISSIONS[target_strand][:count]:
-                    self.assertEqual(
-                        data.LOCATION_ABILITY_REQUIREMENTS.get(implied, []), [],
-                        f"{mission} implies {implied}")
-                    self.assertEqual(
-                        data.LOCATION_CONTENT_REQUIREMENTS.get(implied, []), [],
-                        f"{mission} implies {implied}")
-                    self.assertEqual(
-                        data.MISSION_REGION_REQUIREMENTS.get(implied, []), [],
-                        f"{mission} implies {implied}")
+                    with self.subTest(mission=mission, implied=implied):
+                        self.assertIn(implied,
+                                      rules._inherited_missions(mission, giver))
+                        # The built requirement list, since that is what the fill
+                        # reads. Reachability cannot show this: every mission
+                        # holding an edge is unreachable in the empty state for
+                        # its progressives alone, whatever else it carries.
+                        requirements = dict(rules._mission_requirements(
+                            mission, giver, active_items,
+                            data.CONTENT_SPLIT_OFF, False))
+                        for item in data.LOCATION_ABILITY_REQUIREMENTS.get(implied, []):
+                            self.assertIn(item, requirements,
+                                          f"{mission} misses {item} from {implied}")
+                        inherited_regions = rules._inherited_regions(mission, giver)
+                        for region in data.MISSION_REGION_REQUIREMENTS.get(implied, []):
+                            self.assertIn(region, inherited_regions,
+                                          f"{mission} misses {region} from {implied}")
+
+    def test_vigilante_needs_a_weapon_and_the_other_levels_do_not(self) -> None:
+        # Shooting the criminal is the whole of Vigilante, so its levels take a
+        # weapon on top of the car every emergency level takes. The other four
+        # activities are driving or carrying, so the car is all they take.
+        self.collect_by_name([data.LAND_VEHICLES_ITEM, "Mainland Access"])
+        self.assertFalse(self.can_reach_location("Vigilante Level 01"))
+        for activity in data.EMERGENCY_LEVELS:
+            if activity != "Vigilante":
+                name = data.emergency_name(activity, 1)
+                self.assertTrue(self.can_reach_location(name), name)
+        self.collect_by_name([data.WEAPON_EQUIP_ITEM])
+        self.assertTrue(self.can_reach_location("Vigilante Level 01"))
+
+    def test_the_unwalkable_packages_need_their_ability(self) -> None:
+        # Seven packages cannot be walked to, four wanting a jump and three
+        # reachable only from the air. Every other package needs nothing, which
+        # is what keeps an ability-locked seed wide, so the count is pinned here
+        # as well as the terms.
+        self.assertEqual(len(data.PACKAGE_ABILITY_REQUIREMENTS), 7)
+        self.collect_by_name(["Mainland Access", "Starfish Island Access"])
+        for index, items in data.PACKAGE_ABILITY_REQUIREMENTS.items():
+            name = data.hidden_package_name(index)
+            with self.subTest(package=name):
+                self.assertEqual(data.LOCATION_ABILITY_REQUIREMENTS[name], items)
+                self.assertFalse(self.can_reach_location(name))
+        for index in range(1, data.HIDDEN_PACKAGE_COUNT + 1):
+            if index not in data.PACKAGE_ABILITY_REQUIREMENTS:
+                name = data.hidden_package_name(index)
+                self.assertTrue(self.can_reach_location(name), name)
+        self.collect_by_name([data.JUMP_ITEM, data.AIR_VEHICLES_ITEM])
+        for index in data.PACKAGE_ABILITY_REQUIREMENTS:
+            name = data.hidden_package_name(index)
+            self.assertTrue(self.can_reach_location(name), name)
+
+    def test_an_asset_slice_needs_no_region_the_finale_lacks(self) -> None:
+        # The finale's asset groups carry lock terms and no region, because they
+        # sit inside the finale's own threshold over groups, where a nested
+        # threshold has no shape. That is sound only while every region a sliced
+        # mission needs is one the finale's own rule already requires, which the
+        # audit came close to breaking: The Shootist, The Job, Recruitment Drive
+        # and G-spotlight all gained the mainland and all sit in a slice.
+        finale = data.STORY_GIVERS["Vercetti Finale"][-1]
+        covered = set(rules._inherited_regions(finale, "Vercetti Finale"))
+        covered.add(LOCATION_REGIONS[finale])
+        for asset, progressive_count in data.FINALE_OPTIONAL_ASSETS.items():
+            for mission in data.VENUE_STRANDS.get(asset, [])[:progressive_count]:
+                with self.subTest(asset=asset, mission=mission):
+                    for region in data.MISSION_REGION_REQUIREMENTS.get(mission, []):
+                        self.assertIn(region, covered)
 
     def test_venue_race_mission_needs_its_vehicle(self) -> None:
-        # The Driver is a forced car race, so it needs Land Vehicles on top of
-        # the venue's own requirements.
+        # The Driver is a forced car race, so its own rule names the car. No
+        # Escape? opens the strand and needs one too, so reachability cannot tell
+        # the two apart and the table entry is what pins the race itself.
+        self.assertIn(data.LAND_VEHICLES_ITEM,
+                      data.MISSION_ABILITY_REQUIREMENTS["The Driver"])
         self.collect_by_name([
             "Progressive Malibu Club", "Malibu Club Ownership",
             "Progressive Vercetti Protection", "Starfish Island Access",
-            data.WALLET_ITEM,
+            data.WALLET_ITEM, data.WEAPON_EQUIP_ITEM, "Mainland Access",
         ])
-        self.assertTrue(self.can_reach_location("No Escape?"))
+        self.assertFalse(self.can_reach_location("No Escape?"))
         self.assertFalse(self.can_reach_location("The Driver"))
         # The Job follows The Driver in the strand, so it inherits the term.
         self.assertFalse(self.can_reach_location("The Job"))
         self.collect_by_name([data.LAND_VEHICLES_ITEM])
+        self.assertTrue(self.can_reach_location("No Escape?"))
         self.assertTrue(self.can_reach_location("The Driver"))
         self.assertTrue(self.can_reach_location("The Job"))
 
@@ -686,6 +775,7 @@ class TestAbilityLocksAll(WorldTestBase):
         self.collect_by_name([
             "Sunshine Autos Ownership", "Progressive Vercetti Protection",
             "Starfish Island Access", "Mainland Access", data.WALLET_ITEM,
+            data.WEAPON_EQUIP_ITEM,
         ])
         for race in data.SUNSHINE_RACES:
             self.assertFalse(self.can_reach_location(race), race)
@@ -1370,6 +1460,9 @@ class TestStrandAccess(WorldTestBase):
         # Two Bit Hit second.
         self.assertEqual(
             data.STORY_GIVERS["Avery"], ["Four Iron", "Demolition Man", "Two Bit Hit"])
+        # Avery gives from the mainland. No ability key is selected here, so the
+        # three carry no ability term and the order is the only thing under test.
+        self.collect_by_name(["Mainland Access"])
         progressives = self.get_items_by_name("Progressive Avery")
         self.assertFalse(self.can_reach_location("Four Iron"))
         self.collect(progressives[0])
@@ -1384,7 +1477,13 @@ class TestStrandAccess(WorldTestBase):
     def test_rub_out_requires_death_row(self) -> None:
         # Rub Out, Diaz's last mission, keeps the one mission-level cross-giver
         # edge: Lance must be rescued in Death Row first.
-        self.collect_by_name(["Progressive Diaz", "Starfish Island Access"])
+        # Death Row is played on the mainland and Rub Out inherits that across
+        # the edge, so the crossing is collected here to leave the edge itself as
+        # the thing under test. Its weapon is inherited too, and is covered where
+        # the ability keys are on, in
+        # test_a_cross_giver_edge_carries_what_it_implies.
+        self.collect_by_name(["Progressive Diaz", "Starfish Island Access",
+                              "Mainland Access"])
         self.assertFalse(self.can_reach_location("Rub Out"))
         self.collect_by_name(["Progressive Death Row"])
         self.assertTrue(self.can_reach_location("Rub Out"))
@@ -1458,7 +1557,7 @@ class TestSplitMainlandAccessOn(WorldTestBase):
         self.assertFalse(self._mainland_reachable())
         self.collect_by_name(["Leaf Links Bridge"])
         self.assertTrue(self._mainland_reachable())
-        self.assertTrue(self.can_reach_location(data.hidden_package_name(3)))
+        self.assertTrue(self.can_reach_location(data.hidden_package_name(56)))
         self.assertTrue(self.can_reach_location(
             data.rampage_name(2)))
 
@@ -1556,9 +1655,11 @@ class TestMainlandGating(WorldTestBase):
                             data.rampage_name(34),
                             data.hidden_package_name(1), "Paramedic Level 06"]:
             self.assertTrue(self.can_reach_location(start_name), start_name)
+        # Package 56 is Downtown. Package 3 used to stand here and the audit
+        # moved it to Ocean Beach, which is the start island.
         mainland = [data.rampage_name(2),
                     data.rampage_name(33),
-                    data.hidden_package_name(3), "Paramedic Level 07"]
+                    data.hidden_package_name(56), "Paramedic Level 07"]
         for name in mainland:
             self.assertFalse(self.can_reach_location(name), name)
         self.collect_by_name(["Mainland Access"])
@@ -1607,9 +1708,9 @@ class TestStarfishGating(WorldTestBase):
         # The island's west gate opens only with both area items, so Starfish
         # Island Access alone never opens a walkable route onto the mainland.
         self.collect_by_name(["Starfish Island Access"])
-        self.assertFalse(self.can_reach_location(data.hidden_package_name(3)))
+        self.assertFalse(self.can_reach_location(data.hidden_package_name(56)))
         self.collect_by_name(["Mainland Access"])
-        self.assertTrue(self.can_reach_location(data.hidden_package_name(3)))
+        self.assertTrue(self.can_reach_location(data.hidden_package_name(56)))
 
     def test_mansion_giver_missions_sit_on_the_island(self) -> None:
         # Diaz and Vercetti Protection give from the mansion, so their first
@@ -2132,8 +2233,9 @@ class TestRejections(WorldTestBase):
         # families; the three after it are far smaller, so refusing does not
         # take every key. Nor does it take both families: content locks plus
         # disabled classes close the start with no ability key at all. Hidden
-        # packages are the one class no ability term touches, so holding them is
-        # what tips an ability-locked seed over. The neighbouring
+        # packages are the class the ability terms barely touch, seven of the
+        # hundred, so holding them is what tips an ability-locked seed over. The
+        # neighbouring
         # content=[hidden_packages, rampages, robbable_stores] with
         # ability=[vehicles] is ACCEPTED at a free count of 6, so the boundary
         # is not simply "how many keys".
@@ -2150,12 +2252,21 @@ class TestRejections(WorldTestBase):
                     "only 1 check is reachable",
                 )
 
-    def test_a_mainland_only_class_narrows_the_start_to_a_refusal(self) -> None:
-        # The other way to a narrow start, with no lock involved: every stunt
-        # jump sits on the mainland, so carrying them as the only collectible
-        # class puts nothing in the start region.
-        self._assert_rejected(dict(_STORY_ONLY_OPTIONS, enable_stunt_jumps=True),
-                              "only 1 check is reachable")
+    def test_every_class_alone_leaves_a_wide_start(self) -> None:
+        # The counterpart to the lock refusals: a class whose checks all sit on
+        # the mainland would put nothing in the start region and narrow the seed
+        # with no lock involved. Every class spreads across both islands, so one
+        # class alone is enough to keep the start wide, and the measured floor is
+        # the properties at 6. This is what closes that route, so it is asserted
+        # per class rather than inferred from the district tables.
+        for key, (option_name, _names) in data.optional_check_classes().items():
+            with self.subTest(check_class=key):
+                self.options = dict(_STORY_ONLY_OPTIONS, **{option_name: True})
+                # world_setup raises on a narrow start, so reaching the assertion
+                # is most of the answer; the assertion says which way it failed.
+                self.world_setup()
+                self.assertGreaterEqual(self.world._free_start_location_count(),
+                                        MINIMUM_SPHERE_ZERO)
 
     def test_a_narrow_seed_generates_in_a_multiworld(self) -> None:
         # Options a solo seed refuses reach the fill when another world is
@@ -2200,9 +2311,9 @@ class TestRejections(WorldTestBase):
         )
 
     def test_packages_keep_a_locked_seed_wide(self) -> None:
-        # The counterpart to the refusals above: no ability term touches a
-        # hidden package, so with them on every lock key can be selected and
-        # the start stays wide enough.
+        # The counterpart to the refusals above: an ability term touches only
+        # seven of the hundred hidden packages, so with them on every lock key
+        # can be selected and the start stays wide enough.
         self.options = {"ability_locks": _ALL_ABILITY_LOCKS}
         self.world_setup()
         self.assertGreaterEqual(self.world._free_start_location_count(),
@@ -2286,11 +2397,17 @@ class TestTables(WorldTestBase):
         self.assertEqual(named_for_a_vehicle, set(data.VEHICLE_RAMPAGE_INDICES))
         # And each side of the split carries the ability its kill frenzy needs.
         for index in range(1, data.RAMPAGE_COUNT + 1):
+            # The class rule, which five rampages then add to: three drive-bys
+            # need the car as well as the weapon, one is only reachable from the
+            # air, and one of the run-them-down pair takes a jump to its icon.
             expected = (data.LAND_VEHICLES_ITEM if index in data.VEHICLE_RAMPAGE_INDICES
                         else data.WEAPON_EQUIP_ITEM)
             self.assertEqual(
                 data.LOCATION_ABILITY_REQUIREMENTS[data.rampage_name(index)],
-                [expected], index,
+                [expected, *(item for item in
+                             data.RAMPAGE_ABILITY_EXTRAS.get(index, [])
+                             if item != expected)],
+                index,
             )
 
     def test_package_rewards_are_named_as_spawns(self) -> None:
@@ -2591,6 +2708,25 @@ class TestReservedGlobals(WorldTestBase):
         self.assertEqual(district_data.PACKAGE_DISTRICTS[3], "Viceport")
         self.assertEqual(district_data.PACKAGE_DISTRICTS[40], "Prawn Island")
         self.assertEqual(district_data.PACKAGE_DISTRICTS[41], "Prawn Island")
+
+    def test_every_district_is_on_a_named_island(self) -> None:
+        # Which island a district is on is what gates every collectible in it,
+        # and it is derived rather than stored, so an unclassified district would
+        # read as the start island and let the fill strand a crossing item behind
+        # a mainland check. The three sets partition the districts, and an
+        # unknown one raises rather than defaulting.
+        islands = (data.MAINLAND_DISTRICTS, data.STARFISH_DISTRICTS,
+                   data.START_ISLAND_DISTRICTS)
+        self.assertEqual(set().union(*islands), set(district_data.DISTRICTS))
+        self.assertEqual(sum(len(island) for island in islands),
+                         len(district_data.DISTRICTS))
+        for district in district_data.DISTRICTS:
+            with self.subTest(district=district):
+                self.assertIn(data.district_region(district),
+                              (data.REGION_MAINLAND, data.REGION_STARFISH,
+                               data.REGION_VICE_CITY))
+        with self.assertRaises(ValueError):
+            data.district_region("Vice Beach")
 
     def test_a_location_name_names_the_district_that_releases_it(self) -> None:
         # Every content location reads "<class> - <district> - <where>", and the

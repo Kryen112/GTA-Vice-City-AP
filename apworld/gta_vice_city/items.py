@@ -86,10 +86,9 @@ def _classify(name: str) -> ItemClassification:
         # term found later needs no classification flip.
         return ItemClassification.progression
     if name in data.ABILITY_ITEMS:
-        # Crouch gates nothing, so it is useful; every other locked ability may
-        # appear in a rule. Sprint and Jump hold no term today but stay
-        # progression, so a term found in the runthrough needs no
-        # classification flip.
+        # Crouch gates nothing, so it is useful; every other locked ability
+        # appears in a rule. Sprint holds no term and stays progression anyway,
+        # so a term found later needs no classification flip.
         return (ItemClassification.useful if name in data.ABILITY_USEFUL_ITEMS
                 else ItemClassification.progression)
     if (name in data.PACKAGE_REWARD_ITEMS or name in data.EMERGENCY_REWARD_ITEMS

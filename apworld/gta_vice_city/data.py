@@ -427,11 +427,13 @@ def location_district(location_name: str) -> str | None:
     """
     return _LOCATION_DISTRICTS.get(location_name)
 
-# Ability requirements per mission, the minimal day-one set: only missions
-# whose script demonstrably forces the vehicle (a race or delivery in a
-# specific vehicle the player enters). Everything subtler is deliberately
-# absent and comes from the pre-release manual runthrough; a term only takes
-# effect while its ability_locks key is selected.
+# Ability requirements per mission, from the manual runthrough of every mission.
+# A term only takes effect while its ability_locks key is selected.
+#
+# Each entry says what that mission itself needs. rules.py propagates a strand's
+# lock terms forward, so a mission also carries what every mission before it
+# needs, which makes an entry that restates an inherited term harmless: Martha's
+# Mug Shot inherits Dildo Dodo's helicopter whether or not it names one.
 MISSION_ABILITY_REQUIREMENTS: dict[str, list[str]] = {
     "The Driver": [LAND_VEHICLES_ITEM],
     "Demolition Man": [LAND_VEHICLES_ITEM],
@@ -441,10 +443,53 @@ MISSION_ABILITY_REQUIREMENTS: dict[str, list[str]] = {
     "Sunshine Autos Import List 3": [LAND_VEHICLES_ITEM],
     "Sunshine Autos Import List 4": [LAND_VEHICLES_ITEM],
     "The Fastest Boat": [SEA_VEHICLES_ITEM],
-    "Supply & Demand": [SEA_VEHICLES_ITEM],
+    "Supply & Demand": [SEA_VEHICLES_ITEM, WEAPON_EQUIP_ITEM],
     "Stunt Boat Challenge": [SEA_VEHICLES_ITEM],
     "Checkpoint Charlie": [SEA_VEHICLES_ITEM],
     "Dildo Dodo": [AIR_VEHICLES_ITEM],
+    # From the runthrough. A weapon means the mission cannot be finished with
+    # fists, a vehicle means it cannot be walked.
+    "Alloy Wheels of Steel": [LAND_VEHICLES_ITEM],
+    "Autocide": [WEAPON_EQUIP_ITEM],
+    "Back Alley Brawl": [LAND_VEHICLES_ITEM],
+    "Bar Brawl": [WEAPON_EQUIP_ITEM, LAND_VEHICLES_ITEM],
+    "Bombs Away!": [LAND_VEHICLES_ITEM],
+    "Boomshine Saigon": [LAND_VEHICLES_ITEM],
+    "Cabmaggedon": [WEAPON_EQUIP_ITEM, LAND_VEHICLES_ITEM],
+    "Cannon Fodder": [WEAPON_EQUIP_ITEM, LAND_VEHICLES_ITEM],
+    "Cap the Collector": [WEAPON_EQUIP_ITEM, LAND_VEHICLES_ITEM],
+    "Check Out at the Check In": [WEAPON_EQUIP_ITEM],
+    "Cop Land": [WEAPON_EQUIP_ITEM, LAND_VEHICLES_ITEM],
+    "Death Row": [WEAPON_EQUIP_ITEM],
+    "Dirty Lickin's": [WEAPON_EQUIP_ITEM],
+    "Distribution": [LAND_VEHICLES_ITEM],
+    "Four Iron": [WEAPON_EQUIP_ITEM],
+    "Friendly Rivalry": [WEAPON_EQUIP_ITEM, LAND_VEHICLES_ITEM],
+    "Guardian Angels": [WEAPON_EQUIP_ITEM, LAND_VEHICLES_ITEM],
+    "Hit the Courier": [WEAPON_EQUIP_ITEM],
+    "Hog Tied": [LAND_VEHICLES_ITEM],
+    "Jury Fury": [WEAPON_EQUIP_ITEM],
+    "Keep Your Friends Close...": [WEAPON_EQUIP_ITEM],
+    "Loose Ends": [WEAPON_EQUIP_ITEM],
+    "Love Juice": [LAND_VEHICLES_ITEM],
+    "Mall Shootout": [WEAPON_EQUIP_ITEM, LAND_VEHICLES_ITEM],
+    "Martha's Mug Shot": [WEAPON_EQUIP_ITEM],
+    "Messing with the Man": [WEAPON_EQUIP_ITEM],
+    "Naval Engagement": [WEAPON_EQUIP_ITEM],
+    "No Escape?": [WEAPON_EQUIP_ITEM, LAND_VEHICLES_ITEM],
+    "Psycho Killer": [WEAPON_EQUIP_ITEM, LAND_VEHICLES_ITEM],
+    "Publicity Tour": [LAND_VEHICLES_ITEM],
+    "Recruitment Drive": [WEAPON_EQUIP_ITEM, LAND_VEHICLES_ITEM],
+    "Rub Out": [WEAPON_EQUIP_ITEM],
+    "Shakedown": [WEAPON_EQUIP_ITEM],
+    "Spilling the Beans": [WEAPON_EQUIP_ITEM],
+    "The Job": [WEAPON_EQUIP_ITEM],
+    "The Party": [LAND_VEHICLES_ITEM],
+    "The Shootist": [WEAPON_EQUIP_ITEM],
+    "Trojan Voodoo": [LAND_VEHICLES_ITEM],
+    "Two Bit Hit": [WEAPON_EQUIP_ITEM],
+    "V.I.P.": [WEAPON_EQUIP_ITEM, LAND_VEHICLES_ITEM],
+    "Waste the Wife": [LAND_VEHICLES_ITEM],
 }
 
 # Ability requirements per finale income asset, beyond the asset's own venue
@@ -467,16 +512,6 @@ AIR_SIDE_EVENTS: frozenset[str] = frozenset({
     "Downtown Chopper Checkpoint", "Ocean Beach Chopper Checkpoint",
     "Vice Point Chopper Checkpoint", "Little Haiti Chopper Checkpoint",
 })
-
-# Side events that need no vehicle of the player's own: the launcher takes
-# the player on foot and the mission warps them into the event vehicle
-# (warp_player_into_car), which no lock constrains. Dirtring is absent
-# because its script sets the player down beside a created Sanchez and the
-# player mounts it, a real entry. Every other side event's launcher requires
-# the player to already be in a specific vehicle: the RC trio in a Top Fun
-# van and the four trials in their own model.
-SEATED_SIDE_EVENTS: frozenset[str] = frozenset({"Hotring", "Bloodring"})
-
 
 def cash_item_name(amount: int) -> str:
     # The amount alone: an item called "$100" says everything a player needs, and
@@ -888,11 +923,66 @@ STARFISH_MISSIONS: frozenset[str] = frozenset({
     "Keep Your Friends Close...",
 })
 
+# Which island each district is on, which is what turns the audited district of
+# a package, a rampage, a stunt jump or a store into the region that gates it.
+# Every crossing's roadblock stands on the start-island side, so Prawn Island and
+# Leaf Links belong to the start island even though they are separate land;
+# Starfish Island is its own gated area.
+MAINLAND_DISTRICTS: frozenset[str] = frozenset({
+    "Downtown", "Little Haiti", "Little Havana", "Viceport",
+    "Escobar International",
+})
+STARFISH_DISTRICTS: frozenset[str] = frozenset({"Starfish Island"})
+START_ISLAND_DISTRICTS: frozenset[str] = frozenset({
+    "Ocean Beach", "Washington Beach", "Vice Point", "Prawn Island",
+    "Leaf Links",
+})
+
+# The three name every district and none twice, so a district misspelt in
+# district_data raises below instead of quietly reading as the start island,
+# which would let the fill strand a crossing item behind a mainland check.
+_ISLAND_DISTRICTS = (MAINLAND_DISTRICTS, STARFISH_DISTRICTS,
+                     START_ISLAND_DISTRICTS)
+assert frozenset.union(*_ISLAND_DISTRICTS) == frozenset(district_data.DISTRICTS), (
+    "on no island, or on no part of the map: "
+    f"{sorted(frozenset(district_data.DISTRICTS) ^ frozenset.union(*_ISLAND_DISTRICTS))}"
+)
+assert sum(len(island) for island in _ISLAND_DISTRICTS) == len(
+    district_data.DISTRICTS), "a district is on two islands at once"
+
+
+def district_region(district: str) -> str:
+    if district in MAINLAND_DISTRICTS:
+        return REGION_MAINLAND
+    if district in STARFISH_DISTRICTS:
+        return REGION_STARFISH
+    if district in START_ISLAND_DISTRICTS:
+        return REGION_VICE_CITY
+    raise ValueError(f"{district} is not one of the map's districts")
+
+
+def _districted_region_members(districts: list[str], names: list[str],
+                               region: str) -> frozenset[str]:
+    return frozenset(name for district, name in zip(districts, names, strict=True)
+                     if district_region(district) == region)
+
+
 # Regions a mission needs beyond its own. Keep Your Friends Close... sits on
 # Starfish, but its launcher only activates once Cap the Collector passes, and
 # that mission is on the mainland, so the finale also needs the mainland. Named
 # by region rather than by item, so the crossing split reaches it too.
 MISSION_REGION_REQUIREMENTS: dict[str, list[str]] = {
+    # The eight below are played on the mainland while their own region is the
+    # start island or Starfish. Four of them carry Starfish Island Access
+    # already, through the property sale requirements, which is a different
+    # island and opens no bridge.
+    "Sir, Yes Sir!": [REGION_MAINLAND],
+    "Death Row": [REGION_MAINLAND],
+    "Two Bit Hit": [REGION_MAINLAND],
+    "The Shootist": [REGION_MAINLAND],
+    "The Job": [REGION_MAINLAND],
+    "Recruitment Drive": [REGION_MAINLAND],
+    "G-spotlight": [REGION_MAINLAND],
     "Keep Your Friends Close...": [REGION_MAINLAND],
 }
 
@@ -924,28 +1014,27 @@ def mission_region(giver: str, mission: str) -> str:
     return REGION_VICE_CITY
 
 
-# Rampages on the mainland, from the kill-frenzy pickup coordinates in the RAMPAGE
-# controller (pickup order equals flag order equals check order). Indices with
-# pickup X below the bridge channel (about -480) are mainland; rampages 25
-# (X = -366, far south) and 26 (X = -449, far north) sit in the band west of the
-# beaches and count as mainland too.
-MAINLAND_RAMPAGES: frozenset[str] = frozenset(
-    rampage_name(index)
-    for index in (2, 7, 8, 9, 10, 11, 15, 16, 17, 18, 19, 25, 26, 27, 28, 32, 33, 35)
-)
+# Rampages by island, from the audited district of each. The kill-frenzy pickup
+# coordinates in the RAMPAGE controller are what the districts were audited
+# against, and pickup order equals flag order equals check order there.
+MAINLAND_RAMPAGES: frozenset[str] = _districted_region_members(
+    district_data.RAMPAGE_DISTRICTS, RAMPAGE_NAMES, REGION_MAINLAND)
 
-# Rampages on Starfish Island. Rampage 14's pickup at (-679.7, -419.7) sits on
-# the island's west tip, verified against the starisl.ipl map instances; its
-# provisional Little Havana district name is wrong and the naming pass renames
-# it.
-STARFISH_RAMPAGES: frozenset[str] = frozenset({rampage_name(14)})
+# Rampage 14 is the one on Starfish Island, its pickup at (-679.7, -419.7) on the
+# island's west tip, verified against the starisl.ipl map instances.
+STARFISH_RAMPAGES: frozenset[str] = _districted_region_members(
+    district_data.RAMPAGE_DISTRICTS, RAMPAGE_NAMES, REGION_STARFISH)
 
 # Hidden packages are per package, each detected individually by the ASI (by
-# coordinate) rather than by a running count. Island membership and coordinates
-# come from package_data, in the SCM placement order. PACKAGE_COORDS is sent to
-# the ASI via slot_data so it can match a collected pickup to its package.
-MAINLAND_PACKAGES: frozenset[str] = package_data.MAINLAND_PACKAGES
-STARFISH_PACKAGES: frozenset[str] = package_data.STARFISH_PACKAGES
+# coordinate) rather than by a running count. Coordinates come from package_data
+# in the SCM placement order, and PACKAGE_COORDS is sent to the ASI via slot_data
+# so it can match a collected pickup to its package. Island membership follows
+# the audited district, like every other class.
+MAINLAND_PACKAGES: frozenset[str] = _districted_region_members(
+    district_data.PACKAGE_DISTRICTS, package_data.PACKAGE_NAMES, REGION_MAINLAND)
+STARFISH_PACKAGES: frozenset[str] = _districted_region_members(
+    district_data.PACKAGE_DISTRICTS, package_data.PACKAGE_NAMES,
+    REGION_STARFISH)
 PACKAGE_COORDS: list[tuple[float, float, float]] = package_data.PACKAGE_COORDS
 
 # Ambient pickup slots for the randomize_pickups permutation, extracted from
@@ -970,11 +1059,10 @@ MAINLAND_PROPERTIES: frozenset[str] = frozenset({
     "Hyman Condo Purchase", "Skumole Shack Purchase",
 })
 
-# Robbable stores on the mainland, from each store's locate/area coordinates in
-# the store controller (source order equals check order).
-MAINLAND_STORES: frozenset[str] = frozenset(
-    robbable_store_name(index) for index in (3, 4, 5, 6, 7, 14, 15)
-)
+# Robbable stores on the mainland, from the audited district of each. Source
+# order equals check order, which is how a store's district reaches its site.
+MAINLAND_STORES: frozenset[str] = _districted_region_members(
+    district_data.STORE_DISTRICTS, ROBBABLE_STORE_NAMES, REGION_MAINLAND)
 
 # Side events on the mainland. The three stadium events (Hyman Stadium, Downtown)
 # and the Downtown and Little Haiti chopper checkpoints are confirmed mainland. RC
@@ -990,22 +1078,50 @@ MAINLAND_SIDE_EVENTS: frozenset[str] = frozenset({
     "RC Raider Pickup", "Trial by Dirt", "Test Track",
 })
 
-# Stunt jump islands, from the same audit the names come from. Jump 36 is the one
-# on Starfish Island: its takeoff at (-346.8, -290.7) sits inside the span the
-# five audited island packages describe, and the island needs its own item, since
-# Mainland Access alone leaves both island gates shut. Calling it mainland would
-# let the fill place Starfish Island Access on a check that needs the island to
-# reach, a loop no other check can break.
-#
-# Every other jump is mainland. That is still the coordinate-derived answer
-# rather than a per-jump audit, and it is the strict direction, so it holds until
-# the logic pass.
-STARFISH_STUNT_JUMPS: frozenset[str] = frozenset({stunt_jump_name(36)})
+# Stunt jump islands, from the audited district of each jump: 19 of the 36 sit on
+# the start island, 16 on the mainland, and jump 36 is the one on Starfish Island,
+# which needs its own item, since Mainland Access alone leaves both island gates
+# shut. This is the one island set with no in-repo cross-check, there being no
+# per-jump coordinates to derive from and the names coming from the same audit,
+# so it waits on the in-game gate.
+STARFISH_STUNT_JUMPS: frozenset[str] = _districted_region_members(
+    district_data.STUNT_JUMP_DISTRICTS, STUNT_JUMP_NAMES, REGION_STARFISH)
 
-MAINLAND_STUNT_JUMPS: frozenset[str] = frozenset(
-    stunt_jump_name(index) for index in range(1, STUNT_JUMP_COUNT + 1)
-    if stunt_jump_name(index) not in STARFISH_STUNT_JUMPS
-)
+MAINLAND_STUNT_JUMPS: frozenset[str] = _districted_region_members(
+    district_data.STUNT_JUMP_DISTRICTS, STUNT_JUMP_NAMES, REGION_MAINLAND)
+
+
+# Ability terms the runthrough found beyond a class's own rule, keyed by index
+# rather than by name so the tables survive a rename.
+#
+# Vigilante is the emergency activity that needs a weapon: the others are driving
+# or carrying, and shooting the criminal is the whole of this one.
+EMERGENCY_ABILITY_EXTRAS: dict[str, list[str]] = {
+    "Vigilante": [WEAPON_EQUIP_ITEM],
+}
+
+# Five rampages need more than their class rule gives them. Three are drive-bys,
+# needing the car as well as the weapon; rampage 19 is reachable only from the
+# air; and rampage 14, one of the run-them-down pair, takes a jump to its icon.
+RAMPAGE_ABILITY_EXTRAS: dict[int, list[str]] = {
+    3: [LAND_VEHICLES_ITEM],
+    8: [LAND_VEHICLES_ITEM],
+    14: [JUMP_ITEM],
+    19: [AIR_VEHICLES_ITEM],
+    23: [LAND_VEHICLES_ITEM],
+}
+
+# Packages a player cannot simply walk to: four need a jump and three are only
+# reachable from the air.
+PACKAGE_ABILITY_REQUIREMENTS: dict[int, list[str]] = {
+    18: [JUMP_ITEM],
+    21: [AIR_VEHICLES_ITEM],
+    40: [AIR_VEHICLES_ITEM],
+    57: [JUMP_ITEM],
+    74: [JUMP_ITEM],
+    81: [AIR_VEHICLES_ITEM],
+    92: [JUMP_ITEM],
+}
 
 
 def location_ability_requirements() -> dict[str, list[str]]:
@@ -1013,37 +1129,44 @@ def location_ability_requirements() -> dict[str, list[str]]:
     only while its ability_locks key is selected (rules.py filters); with the
     key off the item is not in the pool and the location plays vanilla.
 
-    Class-wide entries: every unique stunt jump and every emergency level
-    takes a land vehicle; a chopper checkpoint takes a helicopter, the two
-    warp-seated stadium events take nothing, and every other side event
-    starts by entering a land vehicle; robbing a store takes aiming a weapon
-    (bare fists cannot); a weapon rampage wields its handed weapon while the
-    two run-them-down rampages take a land vehicle; a safehouse purchase
-    takes holdable money (a business purchase carries the wallet through the
-    property-sale requirements instead); and each Sunshine Autos race is driven
-    in the player's own car, since the launcher takes them on foot and the
-    mission creates only the opponents.
+    Class-wide entries: every unique stunt jump and every emergency level takes
+    a land vehicle, and a Vigilante level takes a weapon besides; a chopper
+    checkpoint takes a helicopter and every other side event a land vehicle, the
+    stadium events included, since the event is driven even where its launcher
+    warps the player into the car rather than asking them to arrive in one;
+    robbing a store takes aiming a
+    weapon (bare fists cannot); a weapon rampage wields its handed weapon while
+    the two run-them-down rampages take a land vehicle, with five rampages
+    needing more than that; seven hidden packages cannot be walked to; a
+    safehouse purchase takes holdable money (a business purchase carries
+    the wallet through the property-sale requirements instead); and each Sunshine
+    Autos race is driven in the player's own car, since the launcher takes them
+    on foot and the mission creates only the opponents.
     """
     requirements: dict[str, list[str]] = {}
     for mission, items in MISSION_ABILITY_REQUIREMENTS.items():
         requirements[mission] = list(items)
     for index in range(1, STUNT_JUMP_COUNT + 1):
         requirements[stunt_jump_name(index)] = [LAND_VEHICLES_ITEM]
-    for name in emergency_names():
-        requirements[name] = [LAND_VEHICLES_ITEM]
+    for activity, levels in EMERGENCY_LEVELS.items():
+        extras = EMERGENCY_ABILITY_EXTRAS.get(activity, [])
+        for level in range(1, levels + 1):
+            requirements[emergency_name(activity, level)] = [
+                LAND_VEHICLES_ITEM, *extras]
     for name in SIDE_EVENTS:
-        if name in SEATED_SIDE_EVENTS:
-            continue
         requirements[name] = (
             [AIR_VEHICLES_ITEM] if name in AIR_SIDE_EVENTS else [LAND_VEHICLES_ITEM]
         )
     for index in range(1, ROBBABLE_STORE_COUNT + 1):
         requirements[robbable_store_name(index)] = [WEAPON_EQUIP_ITEM]
     for index in range(1, RAMPAGE_COUNT + 1):
-        requirements[rampage_name(index)] = (
-            [LAND_VEHICLES_ITEM] if index in VEHICLE_RAMPAGE_INDICES
-            else [WEAPON_EQUIP_ITEM]
-        )
+        base = ([LAND_VEHICLES_ITEM] if index in VEHICLE_RAMPAGE_INDICES
+                else [WEAPON_EQUIP_ITEM])
+        extras = [item for item in RAMPAGE_ABILITY_EXTRAS.get(index, [])
+                  if item not in base]
+        requirements[rampage_name(index)] = [*base, *extras]
+    for index, items in PACKAGE_ABILITY_REQUIREMENTS.items():
+        requirements[hidden_package_name(index)] = list(items)
     for purchase in PROPERTY_PURCHASES:
         if purchase not in BUSINESS_PURCHASES:
             requirements[purchase] = [WALLET_ITEM]

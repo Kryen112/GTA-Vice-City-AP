@@ -2,9 +2,9 @@
 
 Story missions are always on. Every other check class is optional and governed
 by its toggle (data.optional_check_classes). Each location's region (island) is
-assigned below from the game's own coordinates where available (givers, rampages,
-payphones, stores) and from the district otherwise. Stunt jumps and the
-bespoke-trigger side events are provisionally on the mainland (safe over-gating)
+assigned below from the audited district for the collectible classes and from the
+game's own coordinates for the rest (givers, payphones, venues). The
+bespoke-trigger side events are provisionally on the mainland, safe over-gating,
 until an in-game audit places each one.
 """
 
@@ -85,11 +85,11 @@ for _strand, (_class_key, _missions) in data.progressive_strands().items():
 
 # Location name to region (island). Missions (story and venue) follow their
 # giver or venue island, and a venue's activities follow their venue, with
-# per-mission overrides; rampages, hidden packages, and robbable stores follow
-# their world position; property purchases follow their
-# business or safehouse island; the upper half of each emergency activity gates on
-# the mainland for logic pacing; the mainland side events and (provisionally) all
-# stunt jumps gate on the mainland. Anything left over is the start island.
+# per-mission overrides; rampages, hidden packages, stunt jumps and robbable stores
+# follow their audited district; property purchases follow their business or
+# safehouse island; the upper half of each emergency activity gates on the mainland
+# for logic pacing; and the mainland side events gate on the mainland. Anything
+# left over is the start island.
 LOCATION_REGIONS: dict[str, str] = {}
 for _mission, _strand in MISSION_GIVER.items():
     LOCATION_REGIONS[_mission] = data.mission_region(_strand, _mission)

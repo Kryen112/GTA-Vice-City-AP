@@ -5,11 +5,8 @@ Each index is the Nth placed package. PACKAGE_COORDS is the game position
 is the district the package is in and where in it to look, from the hand audit
 of every location, so the name alone takes a player to the package.
 
-The mainland and Starfish sets are keyed by index rather than by name. They come
-from the coordinate derivation the audit supersedes, and twelve of them name a
-district the audit puts on the start island, so the two disagree on purpose:
-which island a package is on is a logic question and the district is a naming
-one.
+Which island a package is on is not here any more: it follows from the audited
+district, so data.py derives it and there is one source for the fact.
 """
 
 from __future__ import annotations
@@ -219,32 +216,3 @@ PACKAGE_NAMES: list[str] = [
     "Hidden Package - Viceport - Between 4 silos southwest of Sunshine Autos",
     "Hidden Package - Escobar International - On top of the freight terminal building",
 ]
-
-# Packages needing mainland access, by placement index rather than by name. The
-# island a package sits on is a fact about the package, not about what it is
-# called, and the two no longer line up: these were derived from coordinates
-# before the audit, and twelve of them now name a district the audit puts on the
-# start island. That is a logic question, not a naming one, so it waits for the
-# logic pass; keying by index is what keeps the disagreement from reading as a
-# typo in the meantime.
-_MAINLAND_PACKAGES_INDICES: frozenset[int] = frozenset({
-    3, 4, 5, 6, 7, 31, 32, 33, 34, 42, 44, 45, 48, 56, 57, 58, 59, 60, 61,
-    62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79,
-    80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96, 97,
-    98, 99, 100,
-})
-
-MAINLAND_PACKAGES: frozenset[str] = frozenset(
-    PACKAGE_NAMES[index - 1] for index in _MAINLAND_PACKAGES_INDICES
-)
-
-# Packages on Starfish Island, by placement index for the same reason, verified
-# against the map instances (starisl.ipl and the estate's mansion.ipl). The audit
-# agrees with this set exactly: the five it names Starfish Island are these five.
-_STARFISH_PACKAGES_INDICES: frozenset[int] = frozenset({
-    51, 52, 53, 54, 55,
-})
-
-STARFISH_PACKAGES: frozenset[str] = frozenset(
-    PACKAGE_NAMES[index - 1] for index in _STARFISH_PACKAGES_INDICES
-)
