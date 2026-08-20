@@ -38,8 +38,9 @@ version control.
   items), so a venue strand stays hidden and unstartable until the property is
   bought and owned. In logic the purchase's stand-in is the items to pass
   Shakedown, the mission that puts the businesses up for sale. The safehouse
-  save threads gate on the same ownership globals (save pickup and garage wait
-  for bought plus owned), and the Pole Position and Sunshine Autos
+  save threads gate on the same ownership globals (the save pickup, the garage,
+  the save-house radar icon and the cutscene's own "you can save here" text all
+  wait for bought plus owned), and the Pole Position and Sunshine Autos
   asset-completion recognitions do too. Sunshine Autos' strand is its four
   import garage lists, each gated and completed at its own recognition block,
   and its six street races are flat checks behind the showroom's ownership

@@ -312,36 +312,122 @@ def add_purchase_completions():
 OWNERSHIP_SUNSHINE = 9414
 OWNERSHIP_POLE_POSITION = 9420
 
-# Safehouse save threads: (save thread, ownership global, garage grant lines
-# moved out of the buy cutscene). Each SAVEn thread is started only by its buy
-# cutscene and persists inside saves, so gating its body on the ownership
-# global defers the save pickup until the property is bought and owned in
-# either order, and the garage changes ride the same gate. The buy cutscene
-# keeps its camera work, money, blip swap, and owned-property stat.
+# Safehouse save threads: (save thread, ownership global, the buy cutscene that
+# starts it, garage grant lines moved out of that cutscene). Each SAVEn thread is
+# started only by its buy cutscene and persists inside saves, so gating its body
+# on the ownership global defers the save pickup until the property is bought and
+# owned in either order, and the garage changes ride the same gate.
+#
+# The buy cutscene also announces the save three ways the gate was not holding:
+# it swaps the property's radar blip to the save-house icon, and it prints that
+# the player can save here and, where the house has one, store cars in the
+# garage. All three move behind the gate, so the icon appears and the texts print
+# when the save actually becomes usable. The cutscene keeps its camera work, its
+# money, and the owned-property stat.
+#
+# The cutscene names here are asserted rather than trusted: the save thread a
+# cutscene starts is what pairs a house with its ownership global, and SAVE4 and
+# SAVE5 pair in the opposite order to the global order, so a silent mismatch
+# would gate two houses on each other's items.
 SAFEHOUSES = [
-    ("SAVE1", 9421, ["change_garage_type $663 change_to_type 16"]),   # El Swanko Casa
-    ("SAVE2", 9422, ["change_garage_type $655 change_to_type 26"]),   # Links View Apartment
-    ("SAVE3", 9423, ["change_garage_type $667 change_to_type 17",     # Hyman Condo
-                     "change_garage_type $668 change_to_type 18",
-                     "change_garage_type $669 change_to_type 24"]),
-    ("SAVE4", 9425, []),                                              # 1102 Washington Street
-    ("SAVE5", 9424, ["change_garage_type $659 change_to_type 25"]),   # Ocean Heights Apartment
-    ("SAVE6", 9426, []),                                              # Vice Point
-    ("SAVE7", 9427, []),                                              # Skumole Shack
+    # El Swanko Casa. Its cutscene is the one not named for its property.
+    ("SAVE1", 9421, "BUYPRO5", ["change_garage_type $663 change_to_type 16"]),
+    # Links View Apartment
+    ("SAVE2", 9422, "LNKVBUY", ["change_garage_type $655 change_to_type 26"]),
+    # Hyman Condo
+    ("SAVE3", 9423, "HYCOBUY", ["change_garage_type $667 change_to_type 17",
+                                "change_garage_type $668 change_to_type 18",
+                                "change_garage_type $669 change_to_type 24"]),
+    # 1102 Washington Street, whose ownership global is the higher of the pair
+    ("SAVE4", 9425, "WASHBUY", []),
+    # Ocean Heights Apartment, the lower one: this is the inversion
+    ("SAVE5", 9424, "OCHEBUY", ["change_garage_type $659 change_to_type 25"]),
+    # Vice Point
+    ("SAVE6", 9426, "VCPTBUY", []),
+    # Skumole Shack
+    ("SAVE7", 9427, "SKUMBUY", []),
 ]
+# The blip a buy cutscene swaps in for a bought safehouse: the save-house icon at
+# the property's own coordinates. The vanilla script creates it on two paths, the
+# ordinary cutscene and the not-playing bail, both naming one handle.
+SAVE_HOUSE_BLIP = re.compile(
+    r"^add_short_range_sprite_blip_for_contact_point (\$\d+) = "
+    r"create_asset_radar_marker_with_icon 19 at ")
+# The cutscene's own announcements: that the player can save here, and for a
+# house with a garage that they can store cars in it. Read rather than named,
+# since Hyman Condo's is plural for its three garages.
+BUY_ANNOUNCEMENT = re.compile(r"^print_now 'BUY\w+' time 3000 1$")
+
+
+def safehouse_cutscene(save_thread, buy_thread, garage_lines):
+    # What the buy cutscene gives this safehouse: the save-house blip handle and
+    # the announcements to move behind the gate. Read from the cutscene that
+    # starts the save thread rather than tabled by hand, since that start is what
+    # pairs the two, so the pairing cannot drift from the source.
+    starts = [i for i, ln in enumerate(lines) if ln == f"start_new_script @{save_thread} "]
+    assert starts, f"safehouse {save_thread}: nothing starts it"
+    names = [i for i, ln in enumerate(lines) if ln.startswith("script_name '")]
+    cutscenes = [i for i in names if lines[i] == f"script_name '{buy_thread}'"]
+    assert len(cutscenes) == 1, (
+        f"safehouse {save_thread}: script_name {buy_thread!r} matched {len(cutscenes)}")
+    # The cutscene starts the thread from both its paths, the ordinary one and
+    # the not-playing bail, so several starts are expected; all of them being in
+    # the one cutscene is what pairs the house with its ownership global.
+    owners = {max(i for i in names if i < start) for start in starts}
+    assert owners == set(cutscenes), (
+        f"safehouse {save_thread}: started by "
+        f"{sorted(lines[owner] for owner in owners)}, not {buy_thread} alone")
+    owner = cutscenes[0]
+    end = min([i for i in names if i > owner] + [len(lines)])
+    handles = {match.group(1) for match in
+               (SAVE_HOUSE_BLIP.match(lines[i]) for i in range(owner, end)) if match}
+    assert len(handles) == 1, (
+        f"safehouse {save_thread}: {buy_thread} names blips {sorted(handles)}")
+    sites = [i for i in range(owner, end) if BUY_ANNOUNCEMENT.match(lines[i])]
+    # A house announces its garage exactly when it has one to change, so the two
+    # tables prove each other: a mistabled garage line shows up as a text with no
+    # grant or a grant with no text.
+    assert len(sites) == (2 if garage_lines else 1), (
+        f"safehouse {save_thread}: {buy_thread} announces "
+        f"{[lines[i] for i in sites]} against {len(garage_lines)} garage grants")
+    return handles.pop(), sites
 
 
 def defer_safehouse_grants():
-    for save_thread, ownership, garage_lines in SAFEHOUSES:
+    for save_thread, ownership, buy_thread, garage_lines in SAFEHOUSES:
+        blip, sites = safehouse_cutscene(save_thread, buy_thread, garage_lines)
+        # The announcements read the same in every cutscene, so they move by
+        # position, highest first; the garage grants each name their own garage,
+        # so those move by text, and after the positions have been used.
+        announcements = [lines[site] for site in sites]
+        for site in sorted(sites, reverse=True):
+            del lines[site]
         for grant in garage_lines:
             hits = [i for i, ln in enumerate(lines) if ln == grant]
             assert len(hits) == 1, f"safehouse {save_thread}: {grant!r} matched {len(hits)}"
             del lines[hits[0]]
-        gate = [f":AP{save_thread}", "wait 250",
+        # The announcements keep the cutscene's own spacing between them, so two
+        # texts still read one after the other rather than the second replacing
+        # the first. The gate's open path runs once, then falls into the vanilla
+        # body, so they print once.
+        told = []
+        for announcement in announcements:
+            if told:
+                told.append("wait 3000")
+            told.append(announcement)
+        # The hide sits above the wait, so it runs on the thread's first slice
+        # rather than a quarter second in, and inside the loop, so a save written
+        # while the gate held comes back hidden too.
+        gate = [f":AP{save_thread}",
+                f"change_blip_display {blip} display 0",
+                "wait 250",
                 "if ", f"  ${ownership} >= 1", f"goto_if_false @AP{save_thread}",
-                *garage_lines]
+                f"change_blip_display {blip} display 2",
+                *garage_lines,
+                *told]
         insert_after(f"script_name '{save_thread}'", gate,
-                     f"safehouse {save_thread} ownership ${ownership}")
+                     f"safehouse {save_thread} ownership ${ownership} blip {blip}, "
+                     f"{len(announcements)} announcements moved")
 
 
 def gate_pole_position_completion():

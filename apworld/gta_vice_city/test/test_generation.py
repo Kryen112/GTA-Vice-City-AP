@@ -2268,6 +2268,35 @@ class TestReservedGlobals(WorldTestBase):
         # the class off pays vanilla; the same shift argument applies to it.
         self.assertEqual(scm.SIDE_EVENTS_CASH_GLOBAL, 9430)
 
+    def test_safehouse_ownership_globals_match_the_hand_written_mirrors(self) -> None:
+        # build_scm.py's SAFEHOUSES table hard-codes one ownership global per
+        # safehouse, and that global gates everything the house gives: its save
+        # pickup, its garage, its save-house radar icon and the buy cutscene's
+        # own "you can save here" text. The table cannot derive them, so a
+        # location or an area item added anywhere earlier would leave each house
+        # gated on another house's item, which the player would read as the wrong
+        # save point unlocking. 1102 Washington Street and Ocean Heights pair in
+        # the opposite order to the save-thread numbering, so that is the mistake
+        # this is here to catch; the build asserts the thread pairing itself.
+        expected = {
+            "El Swanko Casa": 9421,
+            "Links View Apartment": 9422,
+            "Hyman Condo": 9423,
+            "Ocean Heights Apartment": 9424,
+            "1102 Washington Street": 9425,
+            "Vice Point": 9426,
+            "Skumole Shack": 9427,
+        }
+        self.assertEqual(
+            sorted(data.ownership_item_name(house) for house in expected),
+            sorted(data.SAFEHOUSE_OWNERSHIP_ITEMS),
+        )
+        for house, global_index in expected.items():
+            self.assertEqual(
+                scm.ownership_global(data.ownership_item_name(house)),
+                global_index, house,
+            )
+
     def test_sunshine_completion_globals_match_the_hand_written_mirrors(self) -> None:
         # build_scm.py hard-codes these in three tables: SUNSHINE_IMPORT_LISTS
         # (the gate and completion write at each :IMPORTn_87 recognition block),
