@@ -802,23 +802,47 @@ def progressive_item_count(strand: str) -> int:
     return missions - 1 if strand == SPHERE_ZERO_GIVER else missions
 
 
-# Cross-giver prerequisites that gate a whole strand. Every giver's strand
-# opens on its own progressive unlocks alone, so the strands play in any
-# order: the vanilla phone-call chain (Cortez after Riot, Diaz after All
-# Hands On Deck, Death Row after Supply & Demand, the protection strand
-# after Rub Out) is deliberately not enforced, and the mod severs the
-# vanilla marker reveals and launcher starts that carried it. The one
-# strand-level edge kept is the finale, the goal mission, behind the
-# protection strand. The finale's vanilla asset prerequisite has its own
-# encoding, the FINALE tables below.
+# Cross-giver prerequisites that gate a whole strand, from the hand audit of
+# every mission. These are the audit's "After <mission>" clauses that no earlier
+# mission of the same strand already covers, expressed as the progressive count
+# that stands for having passed the mission named.
+#
+# The mod severs the vanilla marker reveals and launcher starts, so the game
+# itself no longer enforces most of this and a player may well be able to start
+# a strand early. Logic requires the chain regardless: it is what makes a seed
+# beatable by the route the audit walked, and being stricter than the game costs
+# only linearity.
+#
+# The audit opens every strand "After An Old Friend", and that clause costs
+# nothing, so it is not here. An Old Friend is the sphere-zero mission: its rule
+# is empty, it is reachable in every state, and passing it takes no item. The
+# smallest progressive count that would stand for it, one Progressive Rosenberg,
+# stands for reaching The Party instead, which is a mission further on than the
+# audit asks for. So An Old Friend roots the play order and adds no term.
 STRAND_PREREQUISITES: dict[str, list[tuple[str, int]]] = {
+    # Death Row is Lance's rescue, which the audit puts after Cortez's fourth
+    # and Diaz's fourth.
+    "Death Row": [("Cortez", 4), ("Diaz", 4)],
+    # The protection strand starts once Rub Out hands over the mansion, which is
+    # Diaz's fifth and last.
+    "Vercetti Protection": [("Diaz", 5)],
     "Vercetti Finale": [("Vercetti Protection", 3)],
 }
 
 # Cross-giver edges that gate a single mission rather than a whole strand. Rub
-# Out (Diaz's last) needs Lance rescued in Death Row first.
+# Out (Diaz's last) needs Lance rescued in Death Row first, and Publicity Tour
+# needs the bikers on side from Hog Tied.
 MISSION_PREREQUISITES: dict[str, list[tuple[str, int]]] = {
     "Rub Out": [("Death Row", 1)],
+    "Publicity Tour": [("Big Mitch Baker", 3)],
+}
+
+# The same, for an edge into a venue strand: Cap the Collector needs the
+# Printworks courier dealt with. Kept apart because a venue strand's progressive
+# leaves the pool when the properties class is off, and no rule may name an item
+# that is not in the pool, so rules.py carries these only while the class is on.
+PROPERTY_MISSION_PREREQUISITES: dict[str, list[tuple[str, int]]] = {
+    "Cap the Collector": [("Printworks", 2)],
 }
 
 

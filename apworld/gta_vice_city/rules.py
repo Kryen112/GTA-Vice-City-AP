@@ -2,10 +2,11 @@
 
 Every mission location (story giver or venue strand) has a rule that is the
 conjunction of: its strand's progressive-unlock count, any cross-giver
-prerequisite gating the whole strand (only the finale has one), any
-mission-specific cross-giver edge, and everything the earlier missions of its
-own strand require, since a strand runs in order and a mission cannot start
-until its predecessors have passed. A venue mission additionally requires its
+prerequisite gating the whole strand (the finale behind the protection strand,
+the protection strand behind Diaz, and Death Row behind Cortez and Diaz), any
+mission-specific cross-giver edge, and everything the missions it inherits
+require, since a strand runs in order and a mission cannot start until its
+predecessors have passed. A venue mission additionally requires its
 property's ownership item (the building arrives as an item, not with the
 purchase) and the items to pass Shakedown: the property must also be bought in
 game, and the businesses go on sale only when Shakedown passes. The same sale
@@ -16,14 +17,16 @@ plus enough of the optional income assets completable, each through its
 ownership item and progressives. A location's own area requirement is carried
 by the region it sits in; a rule names a region requirement only when it needs a
 region its own does not give it, which is the eight missions in
-data.MISSION_REGION_REQUIREMENTS, the one mission whose predecessors are played
-on another island (Cap the Collector, behind the three mansion missions), and the
-Starfish Island Access inside the property-sale requirements, since Shakedown
-gives from the mansion. A region with one way in
+data.MISSION_REGION_REQUIREMENTS, the missions whose predecessors are played on
+another island (Death Row and Cap the Collector are the two where inheritance is
+the only source), and the Starfish Island Access inside the property-sale
+requirements, since Shakedown gives from the mansion. A region with one way in
 contributes flat terms, so an unsplit seed's rules keep the shape they always
 had; the mainland with split_mainland_access on contributes a one-of threshold
-over its crossings instead, and the finale's last mission is the one rule
-carrying two thresholds at once.
+over its crossings instead. The crossing threshold reaches a long way, since the
+property-sale requirements inherit the mainland through Death Row: every business
+purchase, venue mission and venue activity carries it, and the two finale
+missions carry it alongside the asset threshold.
 
 Two families of lock add terms, each only while its own key is selected (with
 the key off the item is not in the pool, so no rule may name it). Ability locks
@@ -173,6 +176,16 @@ def _lock_terms(location_name: str, active_items: frozenset[str],
             + _content_terms(location_name, active_items, split_content_locks))
 
 
+def _deduplicated_thresholds(thresholds: list[Threshold]) -> list[Threshold]:
+    # Two callers can hand over the same one-of group, the mainland crossings
+    # being the only group there is, and asking for it twice gates nothing extra.
+    ordered: list[Threshold] = []
+    for threshold in thresholds:
+        if threshold not in ordered:
+            ordered.append(threshold)
+    return ordered
+
+
 def _deduplicated(requirements: list[Requirement]) -> list[Requirement]:
     # Same item twice is the same requirement; keep the higher count and the
     # first position, so a gathered list stays one entry per item.
@@ -189,7 +202,18 @@ def _deduplicated(requirements: list[Requirement]) -> list[Requirement]:
     return ordered
 
 
-def _inherited_missions(mission: str, giver: str) -> list[str]:
+def _mission_edges(mission: str, properties_enabled: bool) -> list[tuple[str, int]]:
+    # A mission's own cross-strand edges. The Printworks one is carried only
+    # while the properties class is on, since Progressive Printworks leaves the
+    # pool with the class and no rule may name an item that is not in it.
+    edges = list(data.MISSION_PREREQUISITES.get(mission, []))
+    if properties_enabled:
+        edges += list(data.PROPERTY_MISSION_PREREQUISITES.get(mission, []))
+    return edges
+
+
+def _inherited_missions(mission: str, giver: str,
+                        properties_enabled: bool = True) -> list[str]:
     """Every mission whose rules this one inherits, transitively.
 
     A mission cannot start until its strand's earlier missions have passed, and
@@ -201,9 +225,9 @@ def _inherited_missions(mission: str, giver: str) -> list[str]:
     Rub Out is reachable on one Progressive Death Row, but passing Death Row
     needs a weapon, so a seed could hide Weapon Equip behind Rub Out.
 
-    Transitive and cycle-safe. The tables have only two edges today and no chain
-    longer than one, but the rule is about what a mission inherits and not about
-    how deep this particular data happens to go.
+    Transitive and cycle-safe, which the audit's chain needs: the finale reaches
+    the protection strand, which reaches Diaz, which reaches Death Row through
+    Rub Out, and Death Row reaches Cortez.
     """
     reached: list[str] = []
     seen: set[str] = set()
@@ -213,7 +237,7 @@ def _inherited_missions(mission: str, giver: str) -> list[str]:
         index = locations.MISSION_INDEX[current]
         earlier = list(locations.STRAND_MISSIONS[current_giver][:index])
         edges = list(data.STRAND_PREREQUISITES.get(current_giver, []))
-        edges += list(data.MISSION_PREREQUISITES.get(current, []))
+        edges += _mission_edges(current, properties_enabled)
         for strand, count in edges:
             earlier += locations.STRAND_MISSIONS[strand][:count]
         for predecessor in earlier:
@@ -227,7 +251,8 @@ def _inherited_missions(mission: str, giver: str) -> list[str]:
 
 def _predecessor_requirements(mission: str, giver: str,
                               active_items: frozenset[str],
-                              split_content_locks: int) -> list[Requirement]:
+                              split_content_locks: int,
+                              properties_enabled: bool) -> list[Requirement]:
     # What the missions this one inherits demand. A strand runs in order: APMARK
     # reveals only the strand's first unpassed mission and the vanilla launcher
     # starts are severed, so a mission cannot start until every earlier mission
@@ -246,9 +271,9 @@ def _predecessor_requirements(mission: str, giver: str,
     # in-strand progressives here only ever restate it; the counts that matter
     # are the ones an inherited mission of ANOTHER strand opens on.
     requirements: list[Requirement] = []
-    for earlier in _inherited_missions(mission, giver):
+    for earlier in _inherited_missions(mission, giver, properties_enabled):
         edges = list(data.STRAND_PREREQUISITES.get(locations.MISSION_GIVER[earlier], []))
-        edges += list(data.MISSION_PREREQUISITES.get(earlier, []))
+        edges += _mission_edges(earlier, properties_enabled)
         for prerequisite_giver, count in edges:
             requirements.append((data.progressive_item_name(prerequisite_giver), count))
         requirements.extend(
@@ -258,7 +283,8 @@ def _predecessor_requirements(mission: str, giver: str,
 
 def _mission_requirements(mission: str, giver: str, active_items: frozenset[str],
                           split_content_locks: int,
-                          split_mainland_access: bool) -> list[Requirement]:
+                          split_mainland_access: bool,
+                          properties_enabled: bool = True) -> list[Requirement]:
     # The launcher-gate view: progressive unlocks, plus any area item the mission
     # needs that its own region does not give it, its own or a predecessor's, plus
     # the mission's ability terms and those of the earlier missions of its
@@ -276,21 +302,22 @@ def _mission_requirements(mission: str, giver: str, active_items: frozenset[str]
         requirements.append((data.progressive_item_name(giver), own_count))
     for prerequisite_giver, count in data.STRAND_PREREQUISITES.get(giver, []):
         requirements.append((data.progressive_item_name(prerequisite_giver), count))
-    for prerequisite_giver, count in data.MISSION_PREREQUISITES.get(mission, []):
+    for prerequisite_giver, count in _mission_edges(mission, properties_enabled):
         requirements.append((data.progressive_item_name(prerequisite_giver), count))
     # Its own regions and the ones it inherits, from the one gatherer, so the
     # flat half here and the threshold half in _mission_region_thresholds always
     # describe the same set.
     region_requirements, _ = _region_terms(
-        _inherited_regions(mission, giver), split_mainland_access)
+        _inherited_regions(mission, giver, properties_enabled), split_mainland_access)
     requirements.extend(region_requirements)
     requirements.extend(_lock_terms(mission, active_items, split_content_locks))
     requirements.extend(_predecessor_requirements(
-        mission, giver, active_items, split_content_locks))
+        mission, giver, active_items, split_content_locks, properties_enabled))
     return _deduplicated(requirements)
 
 
-def _inherited_regions(mission: str, giver: str) -> list[str]:
+def _inherited_regions(mission: str, giver: str,
+                       properties_enabled: bool = True) -> list[str]:
     """Every region this mission needs, its own and the ones it inherits.
 
     A predecessor contributes two regions, and both are part of passing it: the
@@ -314,7 +341,7 @@ def _inherited_regions(mission: str, giver: str) -> list[str]:
     """
     own_region = locations.LOCATION_REGIONS[mission]
     regions = list(data.MISSION_REGION_REQUIREMENTS.get(mission, []))
-    for earlier in _inherited_missions(mission, giver):
+    for earlier in _inherited_missions(mission, giver, properties_enabled):
         if locations.LOCATION_REGIONS[earlier] != own_region:
             regions.append(locations.LOCATION_REGIONS[earlier])
         regions.extend(data.MISSION_REGION_REQUIREMENTS.get(earlier, []))
@@ -322,17 +349,21 @@ def _inherited_regions(mission: str, giver: str) -> list[str]:
 
 
 def _mission_region_thresholds(mission: str, giver: str,
-                               split_mainland_access: bool) -> list[Threshold]:
+                               split_mainland_access: bool,
+                               properties_enabled: bool = True) -> list[Threshold]:
     # The threshold part of those regions, which only the mainland has and only
     # while the crossings are split.
     _flat, thresholds = _region_terms(
-        _inherited_regions(mission, giver), split_mainland_access)
+        _inherited_regions(mission, giver, properties_enabled), split_mainland_access)
     return thresholds
 
 
-def _property_sale_requirements(active_items: frozenset[str],
-                                split_content_locks: int,
-                                split_mainland_access: bool) -> list[Requirement]:
+def _property_sale_requirements(
+    active_items: frozenset[str],
+    split_content_locks: int,
+    split_mainland_access: bool,
+    properties_enabled: bool,
+) -> tuple[list[Requirement], list[Threshold]]:
     # A business is for sale only once Shakedown passes, so anything behind
     # buying one requires everything logic needs to pass Shakedown: its items
     # and the area item of the region its marker sits in (the mansion on
@@ -341,33 +372,29 @@ def _property_sale_requirements(active_items: frozenset[str],
     # the wallet term rides here, covering business purchases, venue missions,
     # and the finale's assets in one place.
     mission = data.PROPERTY_UNLOCK_MISSION
+    giver = locations.MISSION_GIVER[mission]
     requirements = _mission_requirements(
-        mission, locations.MISSION_GIVER[mission], active_items,
-        split_content_locks, split_mainland_access)
+        mission, giver, active_items, split_content_locks, split_mainland_access,
+        properties_enabled)
     region = locations.LOCATION_REGIONS[mission]
-    # Shakedown is on Starfish Island, which has one way in however the mainland
-    # crossings are set, so its own region is always flat.
+    # Shakedown's own island has one way in however the mainland crossings are
+    # set, so this half is always flat.
     region_requirements, _ = _region_terms([region], split_mainland_access)
     requirements = [*requirements, *region_requirements]
-    # Everything behind a business purchase carries this list flat, so a
-    # threshold in it would be dropped rather than gated, which is the loop the
-    # crossing split exists to avoid: a mission needing the mainland to be
-    # passed, and the crossing item free to sit behind a purchase that needs it.
-    # Empty today, since Shakedown opens its own strand from the mansion and
-    # inherits nothing. Give it or one of its predecessors a mainland term and
-    # this raises, which is the signal to hand the callers both halves.
-    if _mission_region_thresholds(mission, locations.MISSION_GIVER[mission],
-                                  split_mainland_access):
-        raise ValueError(
-            f"{mission} needs a region with several ways in; the property sale "
-            f"requirements are carried flat and cannot hold a threshold")
+    # The threshold half is not: the mission chain puts Rub Out and Death Row
+    # behind Shakedown, Death Row is played on the mainland, and with the
+    # crossings split the mainland is a one-of over four of them. Every caller
+    # carries both halves, since dropping this one would leave a crossing item
+    # free to sit behind a purchase that cannot happen without it.
+    thresholds = _mission_region_thresholds(mission, giver, split_mainland_access,
+                                            properties_enabled)
     if data.WALLET_ITEM in active_items:
         requirements = [*requirements, (data.WALLET_ITEM, 1)]
     # The property content lock does NOT ride here, because split by district it
     # is not one item for all fifteen icons: each caller adds the term for the
     # property it is buying, through _property_content_terms, or the strict union
     # through _any_property_content_terms where it can name none.
-    return requirements
+    return requirements, thresholds
 
 
 def _asset_completion_requirements(asset: str, progressive_count: int,
@@ -412,19 +439,19 @@ def _asset_completion_requirements(asset: str, progressive_count: int,
 def _finale_asset_terms(
     active_items: frozenset[str],
     split_content_locks: int,
-    split_mainland_access: bool,
+    sale_requirements: list[Requirement],
 ) -> tuple[list[Requirement], list[list[Requirement]]]:
     # The finale's vanilla asset prerequisite as items. Hit the Courier
     # (Printworks' last mission) is individually mandatory, Cop Land arrives
     # through the protection progressives already in the finale's own
-    # requirements, and the remaining threshold picks from the optional
-    # assets. The sale requirements ride along once, covering every purchase.
+    # requirements, and the remaining threshold picks from the optional assets.
+    # The sale requirements are handed in rather than rebuilt, so the flat half
+    # here and the threshold half the caller carries are one answer.
     mandatory = (
         _asset_completion_requirements(
             "Printworks", len(data.VENUE_STRANDS["Printworks"]), active_items,
             split_content_locks)
-        + _property_sale_requirements(
-            active_items, split_content_locks, split_mainland_access)
+        + sale_requirements
     )
     optional = [
         _asset_completion_requirements(asset, progressive_count, active_items,
@@ -452,15 +479,16 @@ def build_location_rules(
         + [data.CONTENT_LOCK_ITEMS[key] for key in content_locks]
     )
     rules: dict[str, RulePredicate] = {}
-    sale_requirements = _property_sale_requirements(
-        active_items, split_content_locks, split_mainland_access)
+    sale_requirements, sale_thresholds = _property_sale_requirements(
+        active_items, split_content_locks, split_mainland_access, properties_enabled)
     finale_mandatory, finale_optional = _finale_asset_terms(
-        active_items, split_content_locks, split_mainland_access)
+        active_items, split_content_locks, sale_requirements)
     for mission, giver in locations.MISSION_GIVER.items():
         requirements = _mission_requirements(
-            mission, giver, active_items, split_content_locks, split_mainland_access)
+            mission, giver, active_items, split_content_locks, split_mainland_access,
+            properties_enabled)
         region_thresholds = _mission_region_thresholds(
-            mission, giver, split_mainland_access)
+            mission, giver, split_mainland_access, properties_enabled)
         if giver in data.VENUE_STRANDS:
             requirements = [
                 *requirements,
@@ -469,7 +497,13 @@ def build_location_rules(
                 *_property_content_terms(f"{giver} Purchase", active_items,
                                          split_content_locks),
             ]
+            region_thresholds = _deduplicated_thresholds(
+                [*region_thresholds, *sale_thresholds])
         if giver == "Vercetti Finale":
+            # The finale carries the sale requirements whichever way the
+            # properties class is set, so it carries their threshold half too.
+            region_thresholds = _deduplicated_thresholds(
+                [*region_thresholds, *sale_thresholds])
             if properties_enabled:
                 rules[mission] = _requires_with_thresholds(
                     requirements + finale_mandatory,
@@ -498,9 +532,12 @@ def build_location_rules(
         elif requirements:
             rules[mission] = _requires(requirements)
     for purchase in data.BUSINESS_PURCHASES:
-        rules[purchase] = _requires(
+        purchase_requirements = (
             sale_requirements
             + _property_content_terms(purchase, active_items, split_content_locks))
+        rules[purchase] = (
+            _requires_with_thresholds(purchase_requirements, sale_thresholds)
+            if sale_thresholds else _requires(purchase_requirements))
     # A venue's own activities carry no progressive unlock: vanilla opens them
     # all the moment the venue is bought, so they need the venue bought and
     # owned and nothing more, plus their own lock terms.
@@ -508,13 +545,16 @@ def build_location_rules(
     for venue, activities in data.VENUE_ACTIVITIES.items():
         for activity in activities:
             venue_activities.add(activity)
-            rules[activity] = _requires([
+            activity_requirements = [
                 (data.ownership_item_name(venue), 1),
                 *sale_requirements,
                 *_property_content_terms(f"{venue} Purchase", active_items,
                                          split_content_locks),
                 *_lock_terms(activity, active_items, split_content_locks),
-            ])
+            ]
+            rules[activity] = (
+                _requires_with_thresholds(activity_requirements, sale_thresholds)
+                if sale_thresholds else _requires(activity_requirements))
     # Every remaining location with a lock term: the collectible and activity
     # classes and the safehouse purchases, which carry no other rule. A
     # business purchase and a venue activity are already ruled above, with the

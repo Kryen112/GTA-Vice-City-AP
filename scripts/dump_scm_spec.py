@@ -98,9 +98,15 @@ def main() -> int:
             # single mainland item. build_scm.py writes a mainland term as an
             # if-or over Mainland Access and all four crossing globals, since
             # they are alternatives and one static script serves both settings.
+            # Logic is deliberately stricter than the shipped gates for the
+            # audit's mission chain: it requires a strand's predecessors where
+            # the mod severs the vanilla reveal and lets a player start early. So
+            # a chain term printed here and absent from build_scm.py's MISSIONS
+            # table is expected, and only a term about an unlock count, an area
+            # item or a lock is drift.
             requirements = rules._mission_requirements(
                 mission, giver, frozenset(), data.CONTENT_SPLIT_OFF,
-                split_mainland_access=False)
+                split_mainland_access=False, properties_enabled=True)
             parts = [
                 f"${scm.unlock_global(item if item in data.AREA_ITEMS else _strand_of(item))}"
                 f" >= {count}"

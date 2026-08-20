@@ -105,6 +105,25 @@ _TIGHTEST_OPTIONS: dict = dict(_STORY_ONLY_OPTIONS, enable_robbable_stores=True)
 # The items that satisfy the finale's asset prerequisite (the mandatory
 # Printworks asset plus five optional ones), for tests whose subject is a
 # different finale edge and needs the asset terms out of the way.
+# The audit's mission chain: Death Row waits on Cortez's fourth and Diaz's
+# fourth, and Rub Out hands the mansion over as Diaz's last, which is what the
+# protection strand and everything behind it wait on. Progressives only, so a
+# test whose subject is an area item or an ability still collects that itself and
+# still sees it withheld.
+_MANSION_CHAIN: list[str] = [
+    "Progressive Rosenberg", "Progressive Cortez", "Progressive Diaz",
+    "Progressive Death Row",
+]
+
+# What passing that chain takes besides the progressives: Death Row is played on
+# the mainland, the Diaz missions want a weapon and the Cubans' boat, and the
+# mansion missions behind them want a car. Tests whose subject is one of these
+# collect it themselves instead.
+_MANSION_CHAIN_COST: list[str] = [
+    "Mainland Access", data.WEAPON_EQUIP_ITEM, data.SEA_VEHICLES_ITEM,
+    data.LAND_VEHICLES_ITEM,
+]
+
 _FINALE_ASSET_ITEMS: list[str] = [
     "Printworks Ownership", "Progressive Printworks",
     "Malibu Club Ownership", "Progressive Malibu Club",
@@ -570,6 +589,7 @@ class TestAbilityLocksAll(WorldTestBase):
         # requirement must survive that slice, through the asset's own entry and
         # through the sliced mission, or the threshold would count an asset the
         # player cannot actually finish.
+        self.collect_by_name(_MANSION_CHAIN)
         self.assertEqual(data.FINALE_OPTIONAL_ASSETS["Sunshine Autos"], 1)
         self.assertIn(
             data.LAND_VEHICLES_ITEM,
@@ -614,12 +634,13 @@ class TestAbilityLocksAll(WorldTestBase):
         # A safehouse is for sale from a new game but locked money still blocks
         # paying; a business purchase carries the wallet through the sale
         # requirements.
+        self.collect_by_name(_MANSION_CHAIN)
         self.assertFalse(self.can_reach_location("El Swanko Casa Purchase"))
         self.collect_by_name([
             "Progressive Vercetti Protection", "Starfish Island Access",
             # Shakedown puts the businesses up for sale and takes a weapon, so
             # the sale requirements carry it onto every business purchase.
-            data.WEAPON_EQUIP_ITEM,
+            *_MANSION_CHAIN_COST,
         ])
         self.assertFalse(self.can_reach_location("Malibu Club Purchase"))
         self.collect_by_name([data.WALLET_ITEM])
@@ -632,6 +653,7 @@ class TestAbilityLocksAll(WorldTestBase):
         # Demolition Man carries the Land Vehicles term. Without the inherited
         # term the fill could put Land Vehicles at Two Bit Hit, which no player
         # could then reach.
+        self.collect_by_name(_MANSION_CHAIN)
         self.collect_by_name(["Progressive Avery", data.WEAPON_EQUIP_ITEM,
                               "Mainland Access"])
         self.assertFalse(self.can_reach_location("Demolition Man"))
@@ -644,6 +666,7 @@ class TestAbilityLocksAll(WorldTestBase):
         # Umberto's first mission is the one carrying the boat, so every later
         # mission of his strand inherits it: the boat is what opens the first and
         # is still required at the last, even though the last needs more besides.
+        self.collect_by_name(_MANSION_CHAIN)
         self.collect_by_name(["Progressive Umberto Robina", "Mainland Access"])
         self.assertFalse(self.can_reach_location("Stunt Boat Challenge"))
         self.assertFalse(self.can_reach_location("Trojan Voodoo"))
@@ -658,6 +681,7 @@ class TestAbilityLocksAll(WorldTestBase):
     def test_a_strand_first_mission_inherits_nothing(self) -> None:
         # Propagation runs forward only: Four Iron opens on its unlock and its
         # own weapon, without the car Demolition Man behind it carries.
+        self.collect_by_name(_MANSION_CHAIN)
         self.collect_by_name(["Progressive Avery", data.WEAPON_EQUIP_ITEM])
         self.assertTrue(self.can_reach_location("Four Iron"))
         self.assertNotIn(
@@ -738,6 +762,7 @@ class TestAbilityLocksAll(WorldTestBase):
         # could put that item behind it: the progressives can sit anywhere, so a
         # sweep could hold all three while the mansion is still shut, and the
         # strand could never be passed.
+        self.collect_by_name(_MANSION_CHAIN)
         for predecessor in ("Shakedown", "Bar Brawl", "Cop Land"):
             self.assertEqual(LOCATION_REGIONS[predecessor], data.REGION_STARFISH)
         active_items = frozenset(
@@ -746,11 +771,11 @@ class TestAbilityLocksAll(WorldTestBase):
             "Cap the Collector", "Vercetti Finale", active_items,
             data.CONTENT_SPLIT_OFF, False))
         self.assertIn("Starfish Island Access", requirements)
-        # Five missions inherit a predecessor from another island, and on three of
-        # them that island is the start island, which costs nothing. Of the two
-        # left, the finale names the mainland in its own right, so Cap the
-        # Collector is the one mission where inheritance is the only source of an
-        # area item, and this is the whole list rather than a spot check.
+        # Many missions inherit a predecessor from another island, and for most
+        # of them that island is the start island, which costs nothing. Three are
+        # left, and the finale names the mainland in its own right, so Death Row
+        # and Cap the Collector are where inheritance is the only source of an
+        # area item. This is the whole list rather than a spot check.
         elsewhere = {
             name: sorted({LOCATION_REGIONS[predecessor] for predecessor
                           in rules._inherited_missions(name, strand)
@@ -760,13 +785,14 @@ class TestAbilityLocksAll(WorldTestBase):
             for name, strand in MISSION_GIVER.items()}
         self.assertEqual({name: regions for name, regions in elsewhere.items()
                           if regions},
-                         {"Cap the Collector": [data.REGION_STARFISH],
+                         {"Death Row": [data.REGION_STARFISH],
+                          "Cap the Collector": [data.REGION_STARFISH],
                           "Keep Your Friends Close...": [data.REGION_MAINLAND]})
         self.assertIn(data.REGION_MAINLAND,
                       data.MISSION_REGION_REQUIREMENTS["Keep Your Friends Close..."])
 
     def test_a_mission_requires_every_inherited_island(self) -> None:
-        # The invariant behind that case, over every mission and through the
+        # The invariant behind those, over every mission and through the
         # built rule rather than through the gatherer: a mission cannot be
         # reachable while an island one of its predecessors is played on is still
         # shut, whichever direction the strands run. Read off the requirement
@@ -791,6 +817,26 @@ class TestAbilityLocksAll(WorldTestBase):
                                           split=split):
                             self.assertTrue(set(group) & flat, group)
 
+    def test_the_printworks_edge_comes_and_goes_with_its_class(self) -> None:
+        # Cap the Collector waits on Hit the Courier, which is a Printworks
+        # mission, so the edge names a progressive that leaves the pool when the
+        # properties class is off. It is carried only while the class is on,
+        # since no rule may name an item that is not in the pool.
+        self.assertEqual(data.PROPERTY_MISSION_PREREQUISITES,
+                         {"Cap the Collector": [("Printworks", 2)]})
+        for mission, edges in data.MISSION_PREREQUISITES.items():
+            for strand, _count in edges:
+                self.assertNotIn(strand, data.VENUE_STRANDS,
+                                 f"{mission} names a venue strand unguarded")
+        with_class = dict(rules._mission_requirements(
+            "Cap the Collector", "Vercetti Finale", frozenset(),
+            data.CONTENT_SPLIT_OFF, False, properties_enabled=True))
+        without = dict(rules._mission_requirements(
+            "Cap the Collector", "Vercetti Finale", frozenset(),
+            data.CONTENT_SPLIT_OFF, False, properties_enabled=False))
+        self.assertEqual(with_class["Progressive Printworks"], 2)
+        self.assertNotIn("Progressive Printworks", without)
+
     def test_an_asset_slice_needs_no_region_the_finale_lacks(self) -> None:
         # The finale's asset groups carry lock terms and no region, because they
         # sit inside the finale's own threshold over groups, where a nested
@@ -811,12 +857,15 @@ class TestAbilityLocksAll(WorldTestBase):
         # The Driver is a forced car race, so its own rule names the car. No
         # Escape? opens the strand and needs one too, so reachability cannot tell
         # the two apart and the table entry is what pins the race itself.
+        self.collect_by_name(_MANSION_CHAIN)
         self.assertIn(data.LAND_VEHICLES_ITEM,
                       data.MISSION_ABILITY_REQUIREMENTS["The Driver"])
         self.collect_by_name([
             "Progressive Malibu Club", "Malibu Club Ownership",
             "Progressive Vercetti Protection", "Starfish Island Access",
             data.WALLET_ITEM, data.WEAPON_EQUIP_ITEM, "Mainland Access",
+            # The chain to the mansion wants the Cubans' boat as well.
+            data.SEA_VEHICLES_ITEM,
         ])
         self.assertFalse(self.can_reach_location("No Escape?"))
         self.assertFalse(self.can_reach_location("The Driver"))
@@ -833,10 +882,14 @@ class TestAbilityLocksAll(WorldTestBase):
         # ruled by venue, not by the lock-term fallback), so it is pinned
         # through the rule rather than through the table alone. Without it the
         # fill could put Land Vehicles behind a race that needs it.
+        self.collect_by_name(_MANSION_CHAIN)
         self.collect_by_name([
             "Sunshine Autos Ownership", "Progressive Vercetti Protection",
             "Starfish Island Access", "Mainland Access", data.WALLET_ITEM,
             data.WEAPON_EQUIP_ITEM,
+            # The chain wants the Cubans' boat, and the car is the subject, so
+            # only the boat comes from the chain's cost here.
+            data.SEA_VEHICLES_ITEM,
         ])
         for race in data.SUNSHINE_RACES:
             self.assertFalse(self.can_reach_location(race), race)
@@ -878,6 +931,7 @@ class TestAbilityLocksOff(WorldTestBase):
     def test_no_ability_terms_without_the_locks(self) -> None:
         # With every key off a stunt jump needs only its region and a store
         # nothing at all: no rule may name an item that is not in the pool.
+        self.collect_by_name(_MANSION_CHAIN)
         self.assertTrue(self.can_reach_location(data.robbable_store_name(1)))
         self.collect_by_name(["Mainland Access"])
         self.assertTrue(self.can_reach_location(data.stunt_jump_name(1)))
@@ -906,6 +960,7 @@ class TestAbilityLocksWalletOnly(WorldTestBase):
     def test_finale_carries_the_wallet_through_the_sale_requirements(self) -> None:
         # Vanilla asset completion spends money, so the finale must hold the
         # wallet term or the fill could strand Wallet behind Cap the Collector.
+        self.collect_by_name(_MANSION_CHAIN)
         self.collect_by_name([
             "Progressive Vercetti Finale", "Progressive Vercetti Protection",
             "Mainland Access", "Starfish Island Access",
@@ -967,8 +1022,10 @@ class TestContentLocksAllKeys(WorldTestBase):
         # A business purchase carries the term through the property-sale
         # requirements rather than its own table entry, so it needs pinning
         # separately from the safehouse path.
+        self.collect_by_name(_MANSION_CHAIN)
         self.collect_by_name([
             "Progressive Vercetti Protection", "Starfish Island Access",
+            "Mainland Access",
         ])
         self.assertFalse(self.can_reach_location("Malibu Club Purchase"))
         self.collect_by_name([data.PROPERTY_PURCHASES_ITEM])
@@ -1050,8 +1107,10 @@ class TestContentLocksPerClass(WorldTestBase):
         # A business purchase carries its content term through the property-sale
         # requirements, so the split has to reach it there rather than through
         # the location's own entry. The Malibu Club is Vice Point.
+        self.collect_by_name(_MANSION_CHAIN)
         self.collect_by_name([
             "Progressive Vercetti Protection", "Starfish Island Access",
+            "Mainland Access",
         ])
         self.assertFalse(self.can_reach_location("Malibu Club Purchase"))
         self.collect_by_name(["Ocean Beach Property Purchases"])
@@ -1190,6 +1249,7 @@ class TestContentLockOnADisabledClass(WorldTestBase):
         # Nothing can be bought while the icons are held, so the finale's
         # vanilla asset prerequisite cannot be met without the item. Without
         # this the seed generates unbeatable.
+        self.collect_by_name(_MANSION_CHAIN)
         self.collect_by_name([
             "Progressive Vercetti Finale", "Progressive Vercetti Protection",
             "Mainland Access", "Starfish Island Access",
@@ -1504,14 +1564,18 @@ class TestStartingUnlocksRegeneration(WorldTestBase):
 class TestStrandAccess(WorldTestBase):
     game = "Grand Theft Auto Vice City"
 
-    def test_strand_opens_on_its_own_unlocks_alone(self) -> None:
+    def test_a_strand_the_audit_chains_to_nothing_opens_on_its_own(self) -> None:
         # The Chase is Diaz's first mission, given from the mansion on Starfish
-        # Island. Strand starts are independent, so its rule is a Diaz unlock
-        # plus the island; no other strand's items are needed.
+        # Island. The audit opens Diaz's strand "After An Old Friend", which
+        # costs nothing, so its rule is a Diaz unlock plus the island and no
+        # other strand's items. Nine of the twelve story strands are like this;
+        # the three the audit does chain are pinned below.
         self.collect_by_name(["Progressive Diaz"])
         self.assertFalse(self.can_reach_location("The Chase"))
         self.collect_by_name(["Starfish Island Access"])
         self.assertTrue(self.can_reach_location("The Chase"))
+        self.assertEqual(sorted(data.STRAND_PREREQUISITES),
+                         ["Death Row", "Vercetti Finale", "Vercetti Protection"])
 
     def test_avery_unlocks_in_vanilla_play_order(self) -> None:
         # Avery's vanilla chain is Four Iron, Demolition Man, Two Bit Hit: his
@@ -1519,6 +1583,7 @@ class TestStrandAccess(WorldTestBase):
         # pass is what starts Demolition Man's launcher. His mission threads are
         # named SERG1, SERG3, SERG2, so pairing launchers by thread name puts
         # Two Bit Hit second.
+        self.collect_by_name(_MANSION_CHAIN)
         self.assertEqual(
             data.STORY_GIVERS["Avery"], ["Four Iron", "Demolition Man", "Two Bit Hit"])
         # Avery gives from the mainland. No ability key is selected here, so the
@@ -1543,6 +1608,8 @@ class TestStrandAccess(WorldTestBase):
         # the thing under test. Its weapon is inherited too, and is covered where
         # the ability keys are on, in
         # test_a_cross_giver_edge_carries_what_it_implies.
+        self.collect_by_name([name for name in _MANSION_CHAIN
+                              if name != "Progressive Death Row"])
         self.collect_by_name(["Progressive Diaz", "Starfish Island Access",
                               "Mainland Access"])
         self.assertFalse(self.can_reach_location("Rub Out"))
@@ -1553,6 +1620,7 @@ class TestStrandAccess(WorldTestBase):
         # The finale keeps the one strand-level cross-giver edge: it sits
         # behind the protection strand. The asset items are collected up
         # front so the protection edge is the only thing under test.
+        self.collect_by_name(_MANSION_CHAIN)
         self.collect_by_name([
             "Progressive Vercetti Finale", "Mainland Access", "Starfish Island Access",
         ])
@@ -1653,6 +1721,7 @@ class TestSplitMainlandAccessOn(WorldTestBase):
         # Keep Your Friends Close... sits on Starfish but its launcher waits on
         # Cap the Collector, which is on the mainland, so its own rule carries
         # the crossing choice as a threshold rather than a single item.
+        self.collect_by_name(_MANSION_CHAIN)
         self.collect_by_name([
             "Progressive Vercetti Finale", "Progressive Vercetti Protection",
             "Starfish Island Access",
@@ -1730,6 +1799,7 @@ class TestMainlandGating(WorldTestBase):
     def test_mainland_giver_mission_needs_mainland_access(self) -> None:
         # Phil Cassidy is a mainland giver, so his first mission needs its own
         # unlock AND Mainland Access, not the unlock alone.
+        self.collect_by_name(_MANSION_CHAIN)
         self.collect_by_name(["Progressive Phil Cassidy"])
         self.assertFalse(self.can_reach_location("Gun Runner"))
         self.collect_by_name(["Mainland Access"])
@@ -1739,6 +1809,7 @@ class TestMainlandGating(WorldTestBase):
         # Mr. Black's payphones span both islands. With his full unlock strand,
         # Road Kill (start island) is reachable but Loose Ends (mainland) still
         # waits on Mainland Access.
+        self.collect_by_name(_MANSION_CHAIN)
         self.collect_by_name(["Progressive Mr. Black"])
         self.assertTrue(self.can_reach_location("Road Kill"))
         self.assertFalse(self.can_reach_location("Loose Ends"))
@@ -1776,7 +1847,9 @@ class TestStarfishGating(WorldTestBase):
     def test_mansion_giver_missions_sit_on_the_island(self) -> None:
         # Diaz and Vercetti Protection give from the mansion, so their first
         # missions need Starfish Island Access besides their own unlock.
-        self.collect_by_name(["Progressive Diaz", "Progressive Vercetti Protection"])
+        self.collect_by_name(_MANSION_CHAIN)
+        self.collect_by_name(["Progressive Diaz", "Progressive Vercetti Protection",
+                              "Mainland Access"])
         for name in ["The Chase", "Shakedown"]:
             self.assertFalse(self.can_reach_location(name), name)
         self.collect_by_name(["Starfish Island Access"])
@@ -1788,6 +1861,7 @@ class TestStarfishGating(WorldTestBase):
         # once Cap the Collector (mainland) passes, so it needs both islands.
         # The asset items are collected up front so the area edge is the only
         # thing under test.
+        self.collect_by_name(_MANSION_CHAIN)
         self.collect_by_name([
             "Progressive Vercetti Finale", "Progressive Vercetti Protection",
         ])
@@ -1823,23 +1897,34 @@ class TestPropertyAccess(WorldTestBase):
     def test_business_purchase_needs_the_shakedown_items(self) -> None:
         # A business goes on sale only when Shakedown passes, so its purchase
         # requires everything logic needs to pass Shakedown: its unlock item
-        # and Starfish Island Access, since Shakedown gives from the mansion.
+        # and Starfish Island Access, since Shakedown gives from the mansion,
+        # and the mainland, since the chain that opens the mansion crosses it.
         # The price itself is grindable money and needs no item.
+        self.collect_by_name([*_MANSION_CHAIN, "Mainland Access"])
         self.assertFalse(self.can_reach_location("Malibu Club Purchase"))
         self.collect_by_name(["Progressive Vercetti Protection"])
         self.assertFalse(self.can_reach_location("Malibu Club Purchase"))
         self.collect_by_name(["Starfish Island Access"])
         self.assertTrue(self.can_reach_location("Malibu Club Purchase"))
 
-    def test_mainland_purchase_needs_mainland_access_too(self) -> None:
-        # A mainland business must also gate on Mainland Access so the fill
-        # cannot strand Mainland Access behind it; a start-island business
-        # does not.
+    def test_every_purchase_gates_on_mainland_access(self) -> None:
+        # Every business purchase gates on Mainland Access, wherever the business
+        # stands, so the fill cannot strand that item behind one: a business goes
+        # on sale when Shakedown passes, and the chain that opens the mansion
+        # runs through Death Row on the mainland. A purchase still says which
+        # island it is on through its region, which is what gates the location
+        # itself.
+        self.assertEqual(LOCATION_REGIONS["Kaufman Cabs Purchase"],
+                         data.REGION_MAINLAND)
+        self.assertEqual(LOCATION_REGIONS["Malibu Club Purchase"],
+                         data.REGION_VICE_CITY)
+        self.collect_by_name(_MANSION_CHAIN)
         self.collect_by_name(["Progressive Vercetti Protection", "Starfish Island Access"])
-        self.assertTrue(self.can_reach_location("Malibu Club Purchase"))
-        self.assertFalse(self.can_reach_location("Kaufman Cabs Purchase"))
+        for purchase in ("Malibu Club Purchase", "Kaufman Cabs Purchase"):
+            self.assertFalse(self.can_reach_location(purchase), purchase)
         self.collect_by_name(["Mainland Access"])
-        self.assertTrue(self.can_reach_location("Kaufman Cabs Purchase"))
+        for purchase in ("Malibu Club Purchase", "Kaufman Cabs Purchase"):
+            self.assertTrue(self.can_reach_location(purchase), purchase)
 
     def test_safehouse_purchase_is_free(self) -> None:
         # A safehouse is for sale from a new game, so a start-island safehouse
@@ -1851,7 +1936,9 @@ class TestPropertyAccess(WorldTestBase):
         # bought (it goes on sale only after Shakedown, so the mission needs
         # the Shakedown items) and owned (the building arrives as its
         # ownership item), besides its own progressive.
-        self.collect_by_name(["Progressive Malibu Club", "Starfish Island Access"])
+        self.collect_by_name(_MANSION_CHAIN)
+        self.collect_by_name(["Progressive Malibu Club", "Starfish Island Access",
+                              "Mainland Access"])
         self.assertFalse(self.can_reach_location("No Escape?"))
         self.collect_by_name(["Progressive Vercetti Protection"])
         self.assertFalse(self.can_reach_location("No Escape?"))
@@ -1871,6 +1958,7 @@ class TestPropertyAccess(WorldTestBase):
         # The showroom menu wraps all six races freely from the first visit, so
         # they carry no progressive: buying and owning the lot opens every one
         # of them at once, and the entry fees are money.
+        self.collect_by_name(_MANSION_CHAIN)
         for race in data.SUNSHINE_RACES:
             self.assertFalse(self.can_reach_location(race), race)
         self._collect_sunshine_base()
@@ -1881,6 +1969,7 @@ class TestPropertyAccess(WorldTestBase):
         # The four lists are the venue's strand, in the order vanilla already
         # chains them (each list's recognition thread starts the next), so list
         # n needs the first n unlocks. The races share the lot and need none.
+        self.collect_by_name(_MANSION_CHAIN)
         lists = data.VENUE_STRANDS["Sunshine Autos"]
         self.assertEqual(len(lists), 4)
         progressives = self.get_items_by_name("Progressive Sunshine Autos")
@@ -1922,6 +2011,10 @@ class TestFinaleAssetThreshold(WorldTestBase):
     options: ClassVar[dict] = {"enable_properties": True}
 
     def _collect_finale_base(self) -> None:
+        # The chain first: the finale sits behind the protection strand, which
+        # sits behind Diaz, so a test that skipped it would find Cap the
+        # Collector unreachable for that reason and prove nothing about assets.
+        self.collect_by_name(_MANSION_CHAIN)
         self.collect_by_name([
             "Progressive Vercetti Finale", "Progressive Vercetti Protection",
             "Mainland Access", "Starfish Island Access",
@@ -1930,6 +2023,7 @@ class TestFinaleAssetThreshold(WorldTestBase):
     def test_finale_needs_the_printworks_asset(self) -> None:
         # Cap the Collector keeps its vanilla prerequisite: Hit the Courier
         # passed is individually mandatory, so the Printworks items are too.
+        self.collect_by_name(_MANSION_CHAIN)
         self._collect_finale_base()
         self.collect_by_name([
             "Malibu Club Ownership", "Progressive Malibu Club",
@@ -1947,6 +2041,7 @@ class TestFinaleAssetThreshold(WorldTestBase):
         # Seven of the nine assets must be completable. Printworks and the
         # estate are mandatory, leaving five of the seven optional assets;
         # four are one short, and an ownership-only asset crosses the line.
+        self.collect_by_name(_MANSION_CHAIN)
         self._collect_finale_base()
         self.collect_by_name(["Printworks Ownership", "Progressive Printworks"])
         self.assertFalse(self.can_reach_location("Cap the Collector"))
@@ -2018,6 +2113,7 @@ class TestFinaleWithoutProperties(WorldTestBase):
         # mansion, so the finale must keep Starfish Island Access or the fill
         # could strand that item behind Cap the Collector, an in-game
         # deadlock.
+        self.collect_by_name(_MANSION_CHAIN)
         self.collect_by_name([
             "Progressive Vercetti Finale", "Progressive Vercetti Protection",
             "Mainland Access",
