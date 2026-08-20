@@ -87,9 +87,10 @@ RADIO_REQUEST_GLOBAL = RADIO_RESOLVE_BASE + RADIO_STATION_COUNT
 # Property ownership globals follow the radio block, one per purchasable
 # property in purchase order. The ASI writes one when the property's ownership
 # item is received (through item_globals like any unlock); the main.scm gates
-# venue missions, the safehouse save threads, and the Pole Position and
-# Sunshine Autos asset-completion recognitions on them, alongside each
-# purchase's completion global. With the properties class disabled the client
+# venue missions, the safehouse and business save threads, and the Pole Position
+# and Sunshine Autos asset-completion recognitions on them, alongside each
+# purchase's completion global. What a purchase physically opens up, a venue's
+# doors and gates, stays at the purchase. With the properties class disabled the client
 # instead stamps every ownership global through config_globals
 # (properties_vanilla_globals below), so the static gates collapse to
 # purchase-only, the vanilla semantics.

@@ -27,6 +27,59 @@ UNLOCK_FIRST, UNLOCK_LAST = 9010, 9029
 # an if-or over all five. MAINLAND_UNLOCKS mirrors the area block in scm.py.
 MAINLAND_ANY = "any mainland crossing"
 MAINLAND_UNLOCKS = [9030, 9032, 9033, 9034, 9035]
+
+# The fifteen property purchases in purchase order: (buy cutscene, the purchase
+# completion global written at that cutscene). Each purchase is an AP location,
+# and the property itself is an AP item whose ownership global sits at the same
+# offset into its own block, so both terms of "bought AND owned" come from a
+# property's position here.
+PURCHASES = [
+    ("BUYPRO1", 9336), ("CARBUY1", 9337), ("BUYPRO2", 9338), ("ICECUT", 9339),
+    ("TAXCUT", 9340), ("BUYPRO3", 9341), ("BOATBY", 9342), ("BUYPRO4", 9343),
+    ("BUYPRO5", 9344), ("LNKVBUY", 9345), ("HYCOBUY", 9346), ("OCHEBUY", 9347),
+    ("WASHBUY", 9348), ("VCPTBUY", 9349), ("SKUMBUY", 9350),
+]
+
+# The base of the ownership block, matching scm.py: one global per purchasable
+# property, in the order above, written by the ASI when the ownership item
+# arrives (or all stamped to 1 when the properties class is off, the vanilla
+# collapse). Every property grant reads bought AND owned.
+#
+# This and the first completion global above are the only two property globals
+# written down. Everything that gates on a property, the venue mission gates,
+# the two activity gates, the safehouse and business save threads and the Pole
+# Position and Sunshine Autos recognitions, names the buy cutscene and derives
+# the number, so no gate can end up on another property's item and no gate can
+# be missed when a block moves. The world test
+# test_property_ownership_globals_match_the_hand_written_mirrors pins all
+# fifteen ownership globals against the world's own layout, which is what
+# catches a location added anywhere earlier shifting the block.
+OWNERSHIP_BASE = 9413
+
+
+def purchase_index(buy_thread):
+    labels = [label for label, _completion in PURCHASES]
+    assert buy_thread in labels, f"{buy_thread} is not a property purchase"
+    return labels.index(buy_thread)
+
+
+def bought(buy_thread):
+    """The gate term for the purchase having been made."""
+    return (PURCHASES[purchase_index(buy_thread)][1], 1)
+
+
+def ownership_global(buy_thread):
+    return OWNERSHIP_BASE + purchase_index(buy_thread)
+
+
+def owned(buy_thread):
+    """The gate term for the property's ownership item having arrived."""
+    return (ownership_global(buy_thread), 1)
+
+
+OWNERSHIP_SUNSHINE = ownership_global("CARBUY1")
+OWNERSHIP_POLE_POSITION = ownership_global("BUYPRO4")
+
 MISSIONS = [
     # Rosenberg (9010)
     ("HOT", [], 9036), ("LAW1", [(9010, 1)], 9037), ("LAW2", [(9010, 2)], 9038),
@@ -72,32 +125,32 @@ MISSIONS = [
     # MAINLAND_ANY so it stays true whichever mainland item the seed hands out.
     ("FIN1", [(9022, 1), (9016, 3), (268, 1), (273, 1), (1175, 7)], 9078),
     ("FIN2", [(9022, 2), (9016, 3), MAINLAND_ANY], 9079),
-    # Venue strands also require their property bought, read from the venue
-    # purchase's completion global (set at the buy cutscene, save-persisted),
-    # and owned, read from the ownership global its AP item drives.
-    # Malibu Club (9023, bought $9341, owned $9418)
-    ("BANK1", [(9023, 1), (9341, 1), (9418, 1)], 9351),
-    ("BANK2", [(9023, 2), (9341, 1), (9418, 1)], 9352),
-    ("BANK3", [(9023, 3), (9341, 1), (9418, 1)], 9353),
-    ("BANK4", [(9023, 4), (9341, 1), (9418, 1)], 9354),
-    # Film Studio (9024, bought $9338, owned $9415)
-    ("PORN1", [(9024, 1), (9338, 1), (9415, 1)], 9355),
-    ("PORN2", [(9024, 2), (9338, 1), (9415, 1)], 9356),
-    ("PORN3", [(9024, 3), (9338, 1), (9415, 1)], 9357),
-    ("PORN4", [(9024, 4), (9338, 1), (9415, 1)], 9358),
-    # Printworks (9025, bought $9336, owned $9413)
-    ("COU1", [(9025, 1), (9336, 1), (9413, 1)], 9359),
-    ("COU2", [(9025, 2), (9336, 1), (9413, 1)], 9360),
-    # Kaufman Cabs (9026, bought $9340, owned $9417)
-    ("TWAR1", [(9026, 1), (9340, 1), (9417, 1)], 9361),
-    ("TWAR2", [(9026, 2), (9340, 1), (9417, 1)], 9362),
-    ("TWAR3", [(9026, 3), (9340, 1), (9417, 1)], 9363),
-    # Cherry Popper (9027, bought $9339, owned $9416; the buy cutscene is also
-    # what starts its launcher). Boatyard (9028) and Sunshine Autos (9029) are
-    # activity launchers with no passed-flag guard, wired bespoke in
-    # ACTIVITIES; their threads too start only at the buy cutscene, which
-    # carries the purchase condition.
-    ("ICE1", [(9027, 1), (9339, 1), (9416, 1)], 9364),
+    # Venue strands also require their property bought, read from the purchase's
+    # completion global (set at the buy cutscene, save-persisted), and owned,
+    # read from the ownership global its AP item drives. Both terms name the buy
+    # cutscene, so a venue cannot end up gated on another venue's property.
+    # Malibu Club (9023)
+    ("BANK1", [(9023, 1), bought("BUYPRO3"), owned("BUYPRO3")], 9351),
+    ("BANK2", [(9023, 2), bought("BUYPRO3"), owned("BUYPRO3")], 9352),
+    ("BANK3", [(9023, 3), bought("BUYPRO3"), owned("BUYPRO3")], 9353),
+    ("BANK4", [(9023, 4), bought("BUYPRO3"), owned("BUYPRO3")], 9354),
+    # Film Studio (9024)
+    ("PORN1", [(9024, 1), bought("BUYPRO2"), owned("BUYPRO2")], 9355),
+    ("PORN2", [(9024, 2), bought("BUYPRO2"), owned("BUYPRO2")], 9356),
+    ("PORN3", [(9024, 3), bought("BUYPRO2"), owned("BUYPRO2")], 9357),
+    ("PORN4", [(9024, 4), bought("BUYPRO2"), owned("BUYPRO2")], 9358),
+    # Printworks (9025)
+    ("COU1", [(9025, 1), bought("BUYPRO1"), owned("BUYPRO1")], 9359),
+    ("COU2", [(9025, 2), bought("BUYPRO1"), owned("BUYPRO1")], 9360),
+    # Kaufman Cabs (9026)
+    ("TWAR1", [(9026, 1), bought("TAXCUT"), owned("TAXCUT")], 9361),
+    ("TWAR2", [(9026, 2), bought("TAXCUT"), owned("TAXCUT")], 9362),
+    ("TWAR3", [(9026, 3), bought("TAXCUT"), owned("TAXCUT")], 9363),
+    # Cherry Popper (9027; the buy cutscene is also what starts its launcher).
+    # Boatyard (9028) and Sunshine Autos (9029) are activity launchers with no
+    # passed-flag guard, wired bespoke in ACTIVITIES; their threads too start
+    # only at the buy cutscene, which carries the purchase condition.
+    ("ICE1", [(9027, 1), bought("ICECUT"), owned("ICECUT")], 9364),
 ]
 
 with open(SRC, "rb") as handle:
@@ -291,32 +344,16 @@ def sever_starfish_east_open():
 
 # Property purchases: each buy mission-let is a post-purchase cutscene, so mark
 # its completion at the mission-let start. Order matches the apworld order.
-PURCHASES = [
-    ("BUYPRO1", 9336), ("CARBUY1", 9337), ("BUYPRO2", 9338), ("ICECUT", 9339),
-    ("TAXCUT", 9340), ("BUYPRO3", 9341), ("BOATBY", 9342), ("BUYPRO4", 9343),
-    ("BUYPRO5", 9344), ("LNKVBUY", 9345), ("HYCOBUY", 9346), ("OCHEBUY", 9347),
-    ("WASHBUY", 9348), ("VCPTBUY", 9349), ("SKUMBUY", 9350),
-]
-
-
 def add_purchase_completions():
     for label, completion in PURCHASES:
         insert_after(f"script_name '{label}'", [f"${completion} = 1"], f"purchase {label} ${completion}")
 
 
-# Property ownership globals, indices matching scm.py: one per purchasable
-# property in purchase order ($9413 Printworks .. $9427 Skumole Shack), written
-# by the ASI when the ownership item arrives (or all stamped to 1 when the
-# properties class is off, the vanilla collapse). Every property grant reads
-# bought AND owned.
-OWNERSHIP_SUNSHINE = 9414
-OWNERSHIP_POLE_POSITION = 9420
-
-# Safehouse save threads: (save thread, ownership global, the buy cutscene that
-# starts it, garage grant lines moved out of that cutscene). Each SAVEn thread is
-# started only by its buy cutscene and persists inside saves, so gating its body
-# on the ownership global defers the save pickup until the property is bought and
-# owned in either order, and the garage changes ride the same gate.
+# Safehouse save threads: (save thread, the buy cutscene that starts it, garage
+# grant lines moved out of that cutscene). Each SAVEn thread is started only by
+# its buy cutscene and persists inside saves, so gating its body on the ownership
+# global defers the save pickup until the property is bought and owned in either
+# order, and the garage changes ride the same gate.
 #
 # The buy cutscene also announces the save three ways the gate was not holding:
 # it swaps the property's radar blip to the save-house icon, and it prints that
@@ -327,25 +364,25 @@ OWNERSHIP_POLE_POSITION = 9420
 #
 # The cutscene names here are asserted rather than trusted: the save thread a
 # cutscene starts is what pairs a house with its ownership global, and SAVE4 and
-# SAVE5 pair in the opposite order to the global order, so a silent mismatch
+# SAVE5 pair in the opposite order to that global order, so a silent mismatch
 # would gate two houses on each other's items.
 SAFEHOUSES = [
     # El Swanko Casa. Its cutscene is the one not named for its property.
-    ("SAVE1", 9421, "BUYPRO5", ["change_garage_type $663 change_to_type 16"]),
+    ("SAVE1", "BUYPRO5", ["change_garage_type $663 change_to_type 16"]),
     # Links View Apartment
-    ("SAVE2", 9422, "LNKVBUY", ["change_garage_type $655 change_to_type 26"]),
+    ("SAVE2", "LNKVBUY", ["change_garage_type $655 change_to_type 26"]),
     # Hyman Condo
-    ("SAVE3", 9423, "HYCOBUY", ["change_garage_type $667 change_to_type 17",
-                                "change_garage_type $668 change_to_type 18",
-                                "change_garage_type $669 change_to_type 24"]),
-    # 1102 Washington Street, whose ownership global is the higher of the pair
-    ("SAVE4", 9425, "WASHBUY", []),
-    # Ocean Heights Apartment, the lower one: this is the inversion
-    ("SAVE5", 9424, "OCHEBUY", ["change_garage_type $659 change_to_type 25"]),
+    ("SAVE3", "HYCOBUY", ["change_garage_type $667 change_to_type 17",
+                          "change_garage_type $668 change_to_type 18",
+                          "change_garage_type $669 change_to_type 24"]),
+    # 1102 Washington Street, the higher global of the inverted pair
+    ("SAVE4", "WASHBUY", []),
+    # Ocean Heights Apartment, the lower one
+    ("SAVE5", "OCHEBUY", ["change_garage_type $659 change_to_type 25"]),
     # Vice Point
-    ("SAVE6", 9426, "VCPTBUY", []),
+    ("SAVE6", "VCPTBUY", []),
     # Skumole Shack
-    ("SAVE7", 9427, "SKUMBUY", []),
+    ("SAVE7", "SKUMBUY", []),
 ]
 # The blip a buy cutscene swaps in for a bought safehouse: the save-house icon at
 # the property's own coordinates. The vanilla script creates it on two paths, the
@@ -359,26 +396,33 @@ SAVE_HOUSE_BLIP = re.compile(
 BUY_ANNOUNCEMENT = re.compile(r"^print_now 'BUY\w+' time 3000 1$")
 
 
-def safehouse_cutscene(save_thread, buy_thread, garage_lines):
-    # What the buy cutscene gives this safehouse: the save-house blip handle and
-    # the announcements to move behind the gate. Read from the cutscene that
-    # starts the save thread rather than tabled by hand, since that start is what
-    # pairs the two, so the pairing cannot drift from the source.
+def buy_cutscene_span(save_thread, buy_thread):
+    """The line range of the cutscene that starts this save thread.
+
+    A save thread is started only by the purchase that grants it, from every path
+    that purchase can take, so which cutscene starts it is what pairs a property
+    with its ownership global. Read from the source rather than tabled, and the
+    expected name asserted, so the pairing cannot drift.
+    """
     starts = [i for i, ln in enumerate(lines) if ln == f"start_new_script @{save_thread} "]
-    assert starts, f"safehouse {save_thread}: nothing starts it"
+    assert starts, f"property save {save_thread}: nothing starts it"
     names = [i for i, ln in enumerate(lines) if ln.startswith("script_name '")]
     cutscenes = [i for i in names if lines[i] == f"script_name '{buy_thread}'"]
     assert len(cutscenes) == 1, (
-        f"safehouse {save_thread}: script_name {buy_thread!r} matched {len(cutscenes)}")
-    # The cutscene starts the thread from both its paths, the ordinary one and
-    # the not-playing bail, so several starts are expected; all of them being in
-    # the one cutscene is what pairs the house with its ownership global.
+        f"property save {save_thread}: script_name {buy_thread!r} "
+        f"matched {len(cutscenes)}")
     owners = {max(i for i in names if i < start) for start in starts}
     assert owners == set(cutscenes), (
-        f"safehouse {save_thread}: started by "
+        f"property save {save_thread}: started by "
         f"{sorted(lines[owner] for owner in owners)}, not {buy_thread} alone")
     owner = cutscenes[0]
-    end = min([i for i in names if i > owner] + [len(lines)])
+    return owner, min([i for i in names if i > owner] + [len(lines)])
+
+
+def safehouse_cutscene(save_thread, buy_thread, garage_lines):
+    # What the buy cutscene gives this safehouse: the save-house blip handle and
+    # the announcements to move behind the gate.
+    owner, end = buy_cutscene_span(save_thread, buy_thread)
     handles = {match.group(1) for match in
                (SAVE_HOUSE_BLIP.match(lines[i]) for i in range(owner, end)) if match}
     assert len(handles) == 1, (
@@ -393,8 +437,94 @@ def safehouse_cutscene(save_thread, buy_thread, garage_lines):
     return handles.pop(), sites
 
 
+# Business save threads: (save thread, the buy cutscene that starts it). Every
+# business a player buys carries a save point of its own, and like a safehouse's
+# it is created by a thread that only its purchase starts, so the same gate
+# defers it until the property is owned.
+#
+# A business needs less of that gate than a safehouse does: its save is the
+# pickup alone, which the engine draws on the radar itself, so there is no save
+# icon to hide, and its cutscene announces nothing about saving. So this is the
+# wait and nothing else. The asset icon the purchase puts on the radar is a
+# different thing and stays at the purchase, like the rest of what a purchase
+# opens up.
+#
+# What a business purchase opens up, and keeps opening before the item arrives:
+# the Film Studio's three gates, the Cherry Popper and Kaufman Cabs doors, the
+# Boatyard doors, Sunshine Autos' five garages. All passage into a property the
+# player paid for, so all left alone. The safehouse gate holds a garage, which
+# looks like the same thing and is not: that garage is storage the save point
+# comes with, one of the three things its cutscene announces, so it waits with
+# the save rather than with the front door.
+#
+# For the Film Studio the gates are a solvability matter besides. Two hidden
+# packages sit inside its walls and no access rule gives them an ownership term,
+# so holding the gates would put two locations behind an item the fill never
+# required for them.
+#
+# PSAVE1 and PSAVE2 are absent on purpose: the Ocean View Hotel comes with the
+# game and the mansion arrives with Rub Out, so neither is bought and neither has
+# an ownership item to wait for. check_property_saves proves the split.
+BUSINESS_SAVES = [
+    ("PSAVE8", "BUYPRO1"),    # Printworks
+    ("PSAVE3", "CARBUY1"),    # Sunshine Autos
+    ("PSAVE9", "BUYPRO2"),    # Film Studio
+    ("PSAVE7", "ICECUT"),     # Cherry Popper
+    ("PSAVE4", "TAXCUT"),     # Kaufman Cabs
+    ("PSAVE10", "BUYPRO3"),   # Malibu Club
+    ("PSAVE6", "BOATBY"),     # Boatyard
+    ("PSAVE5", "BUYPRO4"),    # Pole Position
+]
+
+
+def check_property_saves():
+    # Every thread named PSAVEn, split by whether a property purchase starts it.
+    # The ones a purchase starts are exactly the ones that must wait for an
+    # ownership item, so a save added to a property, or one tabled against the
+    # wrong purchase, fails here rather than granting a save nobody bought. The
+    # safehouses' SAVEn threads are outside this and prove themselves the same
+    # way, one at a time, in safehouse_cutscene.
+    purchases = {label for label, _completion in PURCHASES}
+    names = [i for i, ln in enumerate(lines) if ln.startswith("script_name '")]
+    bought = set()
+    for index in names:
+        thread = lines[index].split("'")[1]
+        if not thread.startswith("PSAVE"):
+            continue
+        starts = [i for i, ln in enumerate(lines)
+                  if ln == f"start_new_script @{thread} "]
+        starters = {lines[max(i for i in names if i < start)].split("'")[1]
+                    for start in starts}
+        if starters & purchases:
+            assert starters <= purchases, (
+                f"property save {thread}: started by {sorted(starters)}, "
+                f"which is a purchase and something else")
+            bought.add(thread)
+    tabled = {save_thread for save_thread, _buy in BUSINESS_SAVES}
+    assert bought == tabled, (
+        f"property saves a purchase starts are {sorted(bought)}, "
+        f"the table holds {sorted(tabled)}")
+    # Which cutscene starts each one, so the pairing that picks the ownership
+    # global is proved row by row and not only as a set.
+    for save_thread, buy_thread in BUSINESS_SAVES:
+        buy_cutscene_span(save_thread, buy_thread)
+    print(f"verified {len(tabled)} business saves against the purchase table")
+
+
+def defer_business_saves():
+    # The ownership global comes from the cutscene column, which check_property_saves
+    # proves against the script before this runs.
+    for save_thread, buy_thread in BUSINESS_SAVES:
+        ownership = ownership_global(buy_thread)
+        gate = [f":AP{save_thread}", "wait 250",
+                "if ", f"  ${ownership} >= 1", f"goto_if_false @AP{save_thread}"]
+        insert_after(f"script_name '{save_thread}'", gate,
+                     f"business save {save_thread} ownership ${ownership}")
+
+
 def defer_safehouse_grants():
-    for save_thread, ownership, buy_thread, garage_lines in SAFEHOUSES:
+    for save_thread, buy_thread, garage_lines in SAFEHOUSES:
+        ownership = ownership_global(buy_thread)
         blip, sites = safehouse_cutscene(save_thread, buy_thread, garage_lines)
         # The announcements read the same in every cutscene, so they move by
         # position, highest first; the garage grants each name their own garage,
@@ -646,8 +776,8 @@ def add_area_watcher(shared_block, crossing_pieces, east_gate, west_gate):
 # progressive gates the import lists instead.
 # (launcher-10 label, [(global, count), ...], loop-back label.)
 ACTIVITIES = [
-    ("COKRUN_10", [(9028, 1), (9419, 1)], "COKRUN_345"),
-    ("RACES_10", [(9414, 1)], "RACES_121"),
+    ("COKRUN_10", [(9028, 1), owned("BOATBY")], "COKRUN_345"),
+    ("RACES_10", [owned("CARBUY1")], "RACES_121"),
 ]
 
 # The six races' vanilla win flags in showroom menu order (menu arm n sets
@@ -1368,6 +1498,8 @@ add_area_watcher(mainland_shared, mainland_crossings,
 add_package_watcher()
 add_purchase_completions()
 defer_safehouse_grants()
+check_property_saves()
+defer_business_saves()
 gate_pole_position_completion()
 gate_sunshine_import_lists()
 add_store_completions()

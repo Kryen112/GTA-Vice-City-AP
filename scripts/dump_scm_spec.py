@@ -60,9 +60,9 @@ def main() -> int:
     print(f"- Ownership:      ${scm.OWNERSHIP_BASE}..${ownership_top}  (ASI writes 1 "
           "when the property's ownership item is received; with the properties "
           "class off the client stamps them all to 1 through config_globals, the "
-          "vanilla collapse. The SCM gates venue missions, the safehouse save "
-          "threads, and the Pole Position and Sunshine Autos asset-completion "
-          "recognitions on them)")
+          "vanilla collapse. The SCM gates venue missions, the safehouse and "
+          "business save threads, and the Pole Position and Sunshine Autos "
+          "asset-completion recognitions on them)")
     print(f"- Highest reserved global: ${scm.highest_reserved_global()} "
           "(reference it once so Sanny grows the global space to cover the block)")
     print()
