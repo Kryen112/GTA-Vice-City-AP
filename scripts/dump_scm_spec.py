@@ -99,7 +99,8 @@ def main() -> int:
             # if-or over Mainland Access and all four crossing globals, since
             # they are alternatives and one static script serves both settings.
             requirements = rules._mission_requirements(
-                mission, giver, frozenset(), split_mainland_access=False)
+                mission, giver, frozenset(), data.CONTENT_SPLIT_OFF,
+                split_mainland_access=False)
             parts = [
                 f"${scm.unlock_global(item if item in data.AREA_ITEMS else _strand_of(item))}"
                 f" >= {count}"

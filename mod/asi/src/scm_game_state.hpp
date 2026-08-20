@@ -42,7 +42,10 @@ class ScmGameState : public GameState {
                    const std::map<int, int>& config_globals,
                    const std::vector<PackageLocation>& package_locations,
                    const std::vector<PickupTarget>& pickup_targets,
-                   const std::vector<MainlandRoute>& routes) override;
+                   const std::vector<MainlandRoute>& routes,
+                   const std::map<std::int64_t, std::vector<int>>&
+                       content_district_globals,
+                   const std::vector<PickupDistrict>& pickup_districts) override;
   std::string SeedHash() override;
   void StampSeedHash(const std::string& expected) override;
   void ApplyItems(const std::vector<std::pair<std::int64_t, std::int64_t>>& items) override;
@@ -143,6 +146,16 @@ class ScmGameState : public GameState {
   // Reads the five content lock flags and unlocks into `lock_flags` and
   // returns which classes are held right now.
   ContentLocks ReadContentLocks(std::array<int, kContentCount>& lock_flags);
+  // Where each holdable pickup stands and which district it belongs to, from
+  // the config. Empty until a seed sends one, which reads every pickup's
+  // district as unknown and so holds by class, the safe answer.
+  std::vector<PickupDistrict> pickup_districts_;
+  // One diagnostic per held class for a pickup the district table did not
+  // place, so a wrong table says so once rather than every frame.
+  std::array<bool, kHeldPickupClassCount> pickup_unplaced_logged_{};
+  // AP item id -> the district unlock globals that item releases. One item can
+  // release many, which is why this is not in item_globals_.
+  std::map<std::int64_t, std::vector<int>> content_district_globals_;
   // Sinks the pickups of every held class out of reach and raises them back on
   // release: the hidden packages, the rampage icons, and the fifteen property
   // icons. One pool walk covers all three, and the two lock families union, so

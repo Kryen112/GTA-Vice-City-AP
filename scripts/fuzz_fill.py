@@ -71,6 +71,25 @@ CONFIGURATIONS: list[tuple[str, dict]] = [
     # tightest accepted pool, and with the collectible classes that put the most
     # checks behind the mainland.
     ("mainland crossings split", {"split_mainland_access": True}),
+    # Splitting the content locks turns five progression items into 42, which is
+    # the largest single change to the pool any option makes, so it is fuzzed at
+    # both granularities and against the mainland split it composes with.
+    ("content locks per district", {
+        "content_locks": ["hidden_packages", "rampages", "stunt_jumps",
+                          "properties", "robbable_stores"],
+        "split_content_locks": "per_district",
+    }),
+    ("content locks per class", {
+        "content_locks": ["hidden_packages", "rampages", "stunt_jumps",
+                          "properties", "robbable_stores"],
+        "split_content_locks": "per_class",
+    }),
+    ("content locks per class, mainland split too", {
+        "content_locks": ["hidden_packages", "rampages", "stunt_jumps",
+                          "properties", "robbable_stores"],
+        "split_content_locks": "per_class",
+        "split_mainland_access": True,
+    }),
     ("mainland crossings split, tightest pool", {
         "split_mainland_access": True,
         "enable_hidden_packages": True, "enable_rampages": False,

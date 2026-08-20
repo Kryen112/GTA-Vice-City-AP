@@ -209,12 +209,42 @@ class ContentLocks(OptionSet):
     default = frozenset()
 
 
+class SplitContentLocks(Choice):
+    """How wide one content item's reach is. Only matters while content_locks
+    selects something, and it never changes WHICH content is held, only how many
+    items carry the holding.
+
+    off: one item per selected class, the whole city at once. Hidden Packages
+    releases all 100.
+    per_district: one item per district, covering every selected class there.
+    Ocean Beach Content releases the packages, rampages, jumps, stores and
+    property icons in Ocean Beach.
+    per_class: one item per class per district. Ocean Beach Hidden Packages
+    releases only the packages in Ocean Beach. The finest, and the most items:
+    42 with every key selected against 5 with the locks whole.
+
+    The districts are the eleven the map names, so a district item covers what a
+    player would call that part of town. A class-district pair holding nothing
+    gets no item, which is why 42 rather than 55.
+
+    Splitting narrows the biggest single unlock: whole, Hidden Packages opens
+    100 checks at once; per_district the largest is Vice Point at 42; per_class
+    it is the Vice Point packages at 21."""
+    display_name = "Split content locks"
+    option_off = 0
+    option_per_district = 1
+    option_per_class = 2
+    default = 0
+
+
 class StartingContentUnlock(Toggle):
-    """Start with one held content class already released, drawn at random from
-    the content_locks keys this seed selected. The seed makes the choice, so the
-    class is not known until the game starts. The item is starting
-    inventory, so it leaves the pool rather than adding to it. Nothing happens
-    when content_locks is empty.
+    """Start with one held content item already released, drawn at random from
+    the ones this seed's content_locks keys produce. The seed makes the choice,
+    so what is released is not known until the game starts. With
+    split_content_locks on that is one district's worth rather than a whole
+    class, so this opens correspondingly less. The item is starting inventory,
+    so it leaves the pool rather than adding to it. Nothing happens when
+    content_locks is empty.
 
     A released class widens the start of the game, but generation cannot count
     on it: the narrow-start refusal measures what is open with no item at all,
@@ -266,6 +296,7 @@ class GTAViceCityOptions(PerGameCommonOptions):
     ability_locks: AbilityLocks
     starting_ability_unlock: StartingAbilityUnlock
     content_locks: ContentLocks
+    split_content_locks: SplitContentLocks
     starting_content_unlock: StartingContentUnlock
     trap_percentage: TrapPercentage
     death_link: DeathLink

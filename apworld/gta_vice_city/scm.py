@@ -35,7 +35,7 @@ each location's completion global on completion, at these same indices.
 
 from __future__ import annotations
 
-from . import data, items, locations
+from . import data, district_data, items, locations, package_data
 
 # The reserved block starts here, clear of the vanilla maximum global ($8583).
 RESERVED_BASE = 9000
@@ -144,6 +144,20 @@ CONTENT_KEYS: list[str] = list(data.CONTENT_ITEMS)
 CONTENT_LOCK_FLAG_BASE = ABILITY_UNLOCK_BASE + len(ABILITY_KEYS)
 CONTENT_UNLOCK_BASE = CONTENT_LOCK_FLAG_BASE + len(CONTENT_KEYS)
 
+# District content unlock globals: one per class per district, a uniform grid
+# rather than only the pairs that hold something, so a class and a district
+# index by formula and the block's size never depends on the audit.
+#
+# These are what the game actually reads, at every granularity. An item releases
+# the globals it covers (content_district_globals below), so a whole-class item
+# releases all eleven of its class's and the script needs no idea which mode the
+# seed chose: one code path, and no gate has to ask. The per-class unlock
+# globals above stay, still driven by item_globals, since they are what tells the
+# ASI a whole class went at once for its own status listing.
+DISTRICT_KEYS: list[str] = list(district_data.DISTRICTS)
+DISTRICT_UNLOCK_BASE = CONTENT_UNLOCK_BASE + len(CONTENT_KEYS)
+DISTRICT_UNLOCK_COUNT = len(CONTENT_KEYS) * len(DISTRICT_KEYS)
+
 
 def unlock_global(key: str) -> int:
     return UNLOCK_BASE + UNLOCK_KEYS.index(key)
@@ -177,8 +191,105 @@ def content_unlock_global(item_name: str) -> int:
     return CONTENT_UNLOCK_BASE + CONTENT_KEYS.index(item_name)
 
 
+def district_unlock_global(content_item: str, district: str) -> int:
+    return (DISTRICT_UNLOCK_BASE
+            + CONTENT_KEYS.index(content_item) * len(DISTRICT_KEYS)
+            + DISTRICT_KEYS.index(district))
+
+
+def content_district_globals() -> dict[int, list[int]]:
+    """AP item id -> every district unlock global that item releases.
+
+    One entry per content item the item table holds, all three granularities at
+    once, because the table is one table for every seed and a seed only ever
+    receives the items it placed. A whole-class item lists its class's eleven, a
+    district item lists one per class that has content there, and a class-in-one-
+    district item lists exactly one.
+    """
+    mapping: dict[int, list[int]] = {}
+    for content_item in data.CONTENT_ITEMS:
+        mapping[items.ITEM_NAME_TO_ID[content_item]] = [
+            district_unlock_global(content_item, district)
+            for district in DISTRICT_KEYS
+        ]
+    for district in data.CONTENT_DISTRICTS:
+        item_id = items.ITEM_NAME_TO_ID[data.district_content_item_name(district)]
+        mapping[item_id] = [
+            district_unlock_global(content_item, district)
+            for content_item in data.CONTENT_ITEMS
+            if district in data.CONTENT_CLASS_DISTRICTS[content_item]
+        ]
+    for content_item in data.CONTENT_ITEMS:
+        for district in data.CONTENT_CLASS_DISTRICTS[content_item]:
+            item_id = items.ITEM_NAME_TO_ID[
+                data.district_class_item_name(district, content_item)]
+            mapping[item_id] = [district_unlock_global(content_item, district)]
+    return mapping
+
+
+def unlocked_district_globals(selected_keys: frozenset[str]) -> dict[int, int]:
+    """Global index -> 1 for every district unlock no item will ever release.
+
+    Every gate the script makes for the two classes with no icon is a single
+    condition, "this district is released", and so is every hold the ASI makes.
+    That works only if the globals no item covers start released, which is what
+    this stamps at config time. Without it each gate would have to ask whether
+    the class was locked at all, which the script cannot express in one
+    condition, and the toggle invariant would need a second code path. This
+    function is therefore the whole of that invariant: with no key selected it
+    stamps the entire block.
+
+    Two kinds of global qualify. A class the seed does not lock, which is the
+    invariant proper. And a class-district pair holding no content of that class
+    at all, in any seed: 13 of the 55 pairs, since Leaf Links has only packages
+    and Escobar International no properties. Those get no item either, so
+    leaving them zero would read as permanently held, which the ASI's own
+    accounting believes: a class would report as part-held on the status key
+    forever, and a pickup the district table failed to place would never be
+    released by anything.
+    """
+    stamped: dict[int, int] = {}
+    for content_item in CONTENT_KEYS:
+        locked = data.CONTENT_ITEM_KEY[content_item] in selected_keys
+        for district in DISTRICT_KEYS:
+            covered = (locked
+                       and district in data.CONTENT_CLASS_DISTRICTS[content_item])
+            if not covered:
+                stamped[district_unlock_global(content_item, district)] = 1
+    return stamped
+
+
+def content_districts() -> list[dict]:
+    """Where every holdable pickup is and which district it belongs to.
+
+    The three classes the ASI holds are found in the pickup pool by type or
+    model, which says what a pickup is but not where, and the district table is
+    keyed by index rather than by position. This joins the two, so the ASI can
+    put a pool entry in a district without carrying the audit itself. Coordinates
+    only, since a held pickup keeps its x and y and only sinks in z.
+    """
+    positions: list[tuple[str, list[str], list[tuple[float, float, float]]]] = [
+        (data.HIDDEN_PACKAGES_ITEM, district_data.PACKAGE_DISTRICTS,
+         package_data.PACKAGE_COORDS),
+        (data.RAMPAGES_ITEM, district_data.RAMPAGE_DISTRICTS,
+         district_data.RAMPAGE_COORDS),
+        (data.PROPERTY_PURCHASES_ITEM,
+         [district_data.PROPERTY_DISTRICTS[purchase.removesuffix(" Purchase")]
+          for purchase in data.PROPERTY_PURCHASES],
+         [district_data.PROPERTY_COORDS[purchase.removesuffix(" Purchase")]
+          for purchase in data.PROPERTY_PURCHASES]),
+    ]
+    entries: list[dict] = []
+    for content_item, districts, coordinates in positions:
+        for district, (x, y, _z) in zip(districts, coordinates, strict=True):
+            entries.append({"x": x, "y": y,
+                            "class": CONTENT_KEYS.index(content_item),
+                            "district": DISTRICT_KEYS.index(district)})
+    return entries
+
+
 def highest_reserved_global() -> int:
-    return CONTENT_UNLOCK_BASE + len(CONTENT_KEYS) - 1
+    return DISTRICT_UNLOCK_BASE + DISTRICT_UNLOCK_COUNT - 1
 
 
 def mainland_routes(split_mainland_access: bool) -> list[dict]:

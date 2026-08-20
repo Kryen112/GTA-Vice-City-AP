@@ -566,38 +566,44 @@ int main() {
   // unexplained). The first observation is the baseline; every edge after it
   // speaks.
   {
+    const std::size_t ocean_beach = ContentDistrictSlot(kContentHiddenPackages, 0);
+    const std::size_t vice_point = ContentDistrictSlot(kContentHiddenPackages, 2);
     std::array<int, kContentCount> flags{};
     flags[kContentHiddenPackages] = 1;
     ContentLocks held{};
-    held[kContentHiddenPackages] = true;
+    held[ocean_beach] = true;
+    held[vice_point] = true;
     ContentLocks none{};
 
     // First observation on a new game: held, and silent.
     ContentReleasePlan plan = PlanContentReleases(held, flags, none, false);
-    Expect(!plan.announce[kContentHiddenPackages],
+    Expect(!plan.announce[ocean_beach],
            "the first observed frame is the baseline, not an announcement");
-    Expect(plan.next_was_held[kContentHiddenPackages],
-           "and it records the class as held");
+    Expect(plan.next_was_held[ocean_beach],
+           "and it records the district as held");
 
-    // The item lands: the edge speaks, exactly once. This is the case an
-    // earlier guard swallowed when the item was the game's first.
-    plan = PlanContentReleases(none, flags, plan.next_was_held, true);
-    Expect(plan.announce[kContentHiddenPackages],
-           "the release announces on its edge");
-    plan = PlanContentReleases(none, flags, plan.next_was_held, true);
-    Expect(!plan.announce[kContentHiddenPackages],
+    // One district's item lands: that district speaks, and the one still held
+    // stays quiet. A split seed releases a class a district at a time, so an
+    // announcement that spoke for the whole class would be a lie.
+    ContentLocks ocean_released = held;
+    ocean_released[ocean_beach] = false;
+    plan = PlanContentReleases(ocean_released, flags, plan.next_was_held, true);
+    Expect(plan.announce[ocean_beach], "the released district announces");
+    Expect(!plan.announce[vice_point], "the one still held says nothing");
+    plan = PlanContentReleases(ocean_released, flags, plan.next_was_held, true);
+    Expect(!plan.announce[ocean_beach],
            "and never again while it stays released");
 
     // A save that already holds the item reads released at the first
     // observation, so it stays quiet.
     plan = PlanContentReleases(none, flags, held, false);
-    Expect(!plan.announce[kContentHiddenPackages],
+    Expect(!plan.announce[ocean_beach],
            "a save already carrying the item does not re-announce");
 
     // An unconfigured class never speaks, whatever the state does.
     std::array<int, kContentCount> unselected{};
     plan = PlanContentReleases(none, unselected, held, true);
-    Expect(!plan.announce[kContentHiddenPackages],
+    Expect(!plan.announce[ocean_beach],
            "an unselected key never announces, the toggle invariant");
   }
 
@@ -610,47 +616,96 @@ int main() {
     AbilityLocks weapon_locked{};
     weapon_locked[kAbilityWeaponEquip] = true;
     ContentLocks rampages_held{};
-    rampages_held[kContentRampages] = true;
+    rampages_held[ContentDistrictSlot(kContentRampages, 0)] = true;
+    const int ocean = 0;
 
     Expect(IsVehicleRampagePickup(-679.66f, -419.712f) &&
                IsVehicleRampagePickup(468.656f, -1608.79f),
            "both run-them-down rampage icons are recognized");
     Expect(!IsVehicleRampagePickup(218.22f, -1613.76f),
            "a weapon rampage icon is not");
-    Expect(ShouldHoldPickup(HeldPickupClass::kRampage, false, weapon_locked, no_content),
+    Expect(ShouldHoldPickup(HeldPickupClass::kRampage, ocean, false, weapon_locked,
+                            no_content),
            "the weapon lock alone holds a weapon rampage icon");
-    Expect(ShouldHoldPickup(HeldPickupClass::kRampage, false, no_ability, rampages_held),
+    Expect(ShouldHoldPickup(HeldPickupClass::kRampage, ocean, false, no_ability,
+                            rampages_held),
            "the rampages key alone holds it too");
-    Expect(!ShouldHoldPickup(HeldPickupClass::kRampage, true, weapon_locked, no_content),
+    Expect(!ShouldHoldPickup(HeldPickupClass::kRampage, ocean, true, weapon_locked,
+                             no_content),
            "a run-them-down icon stays collectible under the weapon lock");
-    Expect(ShouldHoldPickup(HeldPickupClass::kRampage, true, no_ability, rampages_held),
+    Expect(ShouldHoldPickup(HeldPickupClass::kRampage, ocean, true, no_ability,
+                            rampages_held),
            "but the rampages key holds it");
-    Expect(!ShouldHoldPickup(HeldPickupClass::kRampage, false, no_ability, no_content),
+    Expect(!ShouldHoldPickup(HeldPickupClass::kRampage, ocean, false, no_ability,
+                             no_content),
            "neither lock leaves every icon alone");
+    // The weapon lock is not per district: it holds a weapon rampage icon
+    // wherever it stands, so a district the rampages key released still answers
+    // to it.
+    Expect(ShouldHoldPickup(HeldPickupClass::kRampage, 5, false, weapon_locked,
+                            no_content),
+           "the weapon lock reaches every district");
   }
 
   // Each content key holds its own class and nothing else, and a class is held
   // only while its flag is set and its unlock is still zero.
   {
     ContentLocks packages_held{};
-    packages_held[kContentHiddenPackages] = true;
+    packages_held[ContentDistrictSlot(kContentHiddenPackages, 0)] = true;
     AbilityLocks no_ability{};
-    Expect(ShouldHoldPickup(HeldPickupClass::kPackage, false, no_ability, packages_held),
-           "the packages key holds a package");
-    Expect(!ShouldHoldPickup(HeldPickupClass::kProperty, false, no_ability, packages_held),
+    Expect(ShouldHoldPickup(HeldPickupClass::kPackage, 0, false, no_ability,
+                            packages_held),
+           "the packages key holds a package in the district it holds");
+    Expect(!ShouldHoldPickup(HeldPickupClass::kPackage, 1, false, no_ability,
+                            packages_held),
+           "and not one in a district it has released, the whole point of the split");
+    Expect(!ShouldHoldPickup(HeldPickupClass::kProperty, 0, false, no_ability,
+                             packages_held),
            "and leaves the property icons alone");
 
-    std::array<int, kContentCount> flags{};
-    std::array<int, kContentCount> unlocks{};
-    flags[kContentPropertyPurchases] = 1;
-    Expect(PlanContentLocks(flags, unlocks)[kContentPropertyPurchases],
-           "a selected key with no item held");
-    unlocks[kContentPropertyPurchases] = 1;
-    Expect(!PlanContentLocks(flags, unlocks)[kContentPropertyPurchases],
-           "the item releases it");
-    std::array<int, kContentCount> unselected{};
-    Expect(!AnyContentHeld(PlanContentLocks(unselected, unlocks)),
-           "an unselected key never holds, the toggle invariant");
+    // A pickup the seed never described has no district. It is held while any
+    // district of its class is, so a table missing an entry hides that pickup
+    // rather than handing out a check no item has released.
+    Expect(ShouldHoldPickup(HeldPickupClass::kPackage, kDistrictUnknown, false,
+                            no_ability, packages_held),
+           "an unplaced pickup is held while any district of its class is");
+
+    // The block itself: released is what the globals say, and a class the seed
+    // does not lock arrives with every district already stamped released, which
+    // is what makes a single condition enough in the script.
+    std::array<int, kContentCount * kDistrictCount> unlocks{};
+    const std::size_t property_ocean =
+        ContentDistrictSlot(kContentPropertyPurchases, 0);
+    Expect(PlanContentLocks(unlocks)[property_ocean],
+           "a district with no item is held");
+    unlocks[property_ocean] = 1;
+    Expect(!PlanContentLocks(unlocks)[property_ocean], "the item releases it");
+    Expect(ContentHeldAnywhere(PlanContentLocks(unlocks), kContentPropertyPurchases),
+           "the class is still held elsewhere");
+    Expect(ContentDistrictsHeld(PlanContentLocks(unlocks), kContentPropertyPurchases)
+               == kDistrictCount - 1,
+           "and the count says how much of it is left");
+    std::array<int, kContentCount * kDistrictCount> all_released{};
+    all_released.fill(1);
+    Expect(!AnyContentHeld(PlanContentLocks(all_released)),
+           "an unlocked seed never holds, the toggle invariant");
+
+    // Placing a pool entry: the position finds it, and the class has to agree,
+    // since a property icon and a package can stand close together.
+    const std::vector<PickupDistrict> table = {
+        {100.0f, 200.0f, kContentHiddenPackages, 3},
+        {100.5f, 200.0f, kContentPropertyPurchases, 7},
+    };
+    Expect(DistrictForPickup(table, HeldPickupClass::kPackage, 100.0f, 200.0f) == 3,
+           "a package finds its own district");
+    Expect(DistrictForPickup(table, HeldPickupClass::kProperty, 100.5f, 200.0f) == 7,
+           "and a property icon beside it finds its own");
+    Expect(DistrictForPickup(table, HeldPickupClass::kRampage, 100.0f, 200.0f)
+               == kDistrictUnknown,
+           "a class with no entry there is unplaced rather than mismatched");
+    Expect(DistrictForPickup(table, HeldPickupClass::kPackage, 900.0f, 900.0f)
+               == kDistrictUnknown,
+           "and so is a position the table does not carry");
   }
 
   // Ability toast pacing: the first attempt toasts, the cooldown silences the

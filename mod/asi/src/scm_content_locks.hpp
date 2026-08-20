@@ -1,11 +1,18 @@
 // Pure content-lock planning, free of any game headers so the console
 // self-test can exercise it without plugin-sdk or the game.
 //
-// The content_locks option holds whole classes of content at new game until
-// their items arrive. The reserved globals carry one lock flag and one unlock
-// count per content item (apworld scm.py order); a class is held while its
-// flag is set and its unlock is zero, so the enforcement works offline from a
-// save like the ability locks.
+// The content_locks option holds classes of content at new game until their
+// items arrive, and split_content_locks decides how wide one item's reach is:
+// a whole class, one district, or one class in one district. The game never
+// learns which: the reserved globals carry one unlock per class per district,
+// an item releases every one it covers, and content is held wherever its
+// district unlock is still zero. So there is one rule here for all three
+// granularities, and it works offline from a save like the ability locks.
+//
+// A class the seed does not lock arrives with all eleven of its districts
+// already released, stamped by the client at config time, which is why holding
+// needs no lock flag: at zero locks nothing is ever held. The per-class lock
+// flags remain, read only to decide which classes the status key lists.
 //
 // Enforcement splits by whether the content has an icon. Three classes are
 // pickups and are held here, by sinking them out of reach. The other two, the
@@ -16,6 +23,7 @@
 
 #include <array>
 #include <cstddef>
+#include <vector>
 
 #include "scm_ability_locks.hpp"
 
@@ -36,25 +44,56 @@ enum ContentIndex {
 // The content contract, matching apworld scm.py: one lock-flag global per
 // item from the flag base, then one unlock global per item from the unlock
 // base, both in ContentIndex order.
+// Only the flags are read, to decide which classes the status key lists. The
+// five per-class unlocks above them are written by item_globals and read by
+// nothing here: what is held comes from the district block below.
 constexpr int kContentLockFlagBase = 9450;
-constexpr int kContentUnlockBase = 9455;
 
-// True per class while it is held right now.
-using ContentLocks = std::array<bool, kContentCount>;
+// The district block, matching apworld scm.py: one unlock global per class per
+// district, class-major, so a class and a district give a global by formula.
+// Eleven districts in apworld district_data.DISTRICTS order; the main.scm's
+// per-site gates index the same block the same way.
+constexpr int kDistrictCount = 11;
+constexpr int kDistrictUnlockBase = 9460;
+
+constexpr int DistrictUnlockGlobal(int content_index, int district) {
+  return kDistrictUnlockBase + content_index * kDistrictCount + district;
+}
+
+// True per class per district while that district of that class is held.
+using ContentLocks = std::array<bool, kContentCount * kDistrictCount>;
+
+constexpr std::size_t ContentDistrictSlot(int content_index, int district) {
+  return static_cast<std::size_t>(content_index) * kDistrictCount + district;
+}
 
 inline ContentLocks PlanContentLocks(
-    const std::array<int, kContentCount>& lock_flags,
-    const std::array<int, kContentCount>& unlocks) {
+    const std::array<int, kContentCount * kDistrictCount>& district_unlocks) {
   ContentLocks held{};
-  for (int index = 0; index < kContentCount; ++index) {
-    held[index] = lock_flags[index] != 0 && unlocks[index] == 0;
+  for (std::size_t slot = 0; slot < held.size(); ++slot) {
+    held[slot] = district_unlocks[slot] == 0;
   }
   return held;
 }
 
+inline bool ContentHeldAnywhere(const ContentLocks& held, int content_index) {
+  for (int district = 0; district < kDistrictCount; ++district) {
+    if (held[ContentDistrictSlot(content_index, district)]) return true;
+  }
+  return false;
+}
+
+inline int ContentDistrictsHeld(const ContentLocks& held, int content_index) {
+  int count = 0;
+  for (int district = 0; district < kDistrictCount; ++district) {
+    if (held[ContentDistrictSlot(content_index, district)]) ++count;
+  }
+  return count;
+}
+
 inline bool AnyContentHeld(const ContentLocks& held) {
-  for (int index = 0; index < kContentCount; ++index) {
-    if (held[index]) return true;
+  for (const bool slot : held) {
+    if (slot) return true;
   }
   return false;
 }
@@ -94,17 +133,32 @@ inline HeldPickupClass ClassifyHeldPickup(int pickup_type, int model,
 // icon; the weapon_equip ability key holds only the weapon rampages, because
 // the two run-them-down rampages hand no weapon and need a land vehicle
 // instead, which is a logic term rather than a hold.
-inline bool ShouldHoldPickup(HeldPickupClass held_class, bool vehicle_rampage,
-                             const AbilityLocks& ability,
+// A pickup whose position matched no district entry. Its class is still held or
+// released as a whole, which is the safe reading: a pickup the seed never
+// described is held while any district of its class is, so a table that misses
+// an entry hides that pickup rather than handing out a check the item has not
+// released.
+constexpr int kDistrictUnknown = -1;
+
+inline bool HeldForDistrict(const ContentLocks& content, int content_index,
+                            int district) {
+  if (district == kDistrictUnknown) {
+    return ContentHeldAnywhere(content, content_index);
+  }
+  return content[ContentDistrictSlot(content_index, district)];
+}
+
+inline bool ShouldHoldPickup(HeldPickupClass held_class, int district,
+                             bool vehicle_rampage, const AbilityLocks& ability,
                              const ContentLocks& content) {
   switch (held_class) {
     case HeldPickupClass::kPackage:
-      return content[kContentHiddenPackages];
+      return HeldForDistrict(content, kContentHiddenPackages, district);
     case HeldPickupClass::kRampage:
-      return content[kContentRampages] ||
+      return HeldForDistrict(content, kContentRampages, district) ||
              (ability[kAbilityWeaponEquip] && !vehicle_rampage);
     case HeldPickupClass::kProperty:
-      return content[kContentPropertyPurchases];
+      return HeldForDistrict(content, kContentPropertyPurchases, district);
     case HeldPickupClass::kNone:
       return false;
   }
@@ -148,7 +202,7 @@ inline float UnsunkHeight(float z) {
 // item arrived reads held, then releases, and correctly announces.
 struct ContentReleasePlan {
   ContentLocks next_was_held{};
-  std::array<bool, kContentCount> announce{};
+  std::array<bool, kContentCount * kDistrictCount> announce{};
 };
 
 inline ContentReleasePlan PlanContentReleases(
@@ -158,8 +212,11 @@ inline ContentReleasePlan PlanContentReleases(
   plan.next_was_held = held;
   if (!baseline_ready) return plan;
   for (int index = 0; index < kContentCount; ++index) {
-    plan.announce[index] =
-        lock_flags[index] != 0 && was_held[index] && !held[index];
+    if (lock_flags[index] == 0) continue;
+    for (int district = 0; district < kDistrictCount; ++district) {
+      const std::size_t slot = ContentDistrictSlot(index, district);
+      plan.announce[slot] = was_held[slot] && !held[slot];
+    }
   }
   return plan;
 }
@@ -170,6 +227,41 @@ enum class PickupHoldAction { kLeaveAlone, kLower, kRaise };
 // and awaiting respawn or retired. Such a pickup is neither visible nor
 // collectable, so it needs no holding, and the walk re-evaluates it once the
 // game puts it back.
+// Which district a pickup is in, from the table the seed sent: entries are
+// positions, and a held pickup keeps its x and y, so a sunk one still matches.
+// Linear because the table is 150 entries and the pool walk asks once per
+// entry per frame; a quantized lookup would be faster and is not needed yet.
+struct PickupDistrict {
+  float x = 0.0f;
+  float y = 0.0f;
+  int content_index = 0;
+  int district = 0;
+};
+
+inline int DistrictForPickup(const std::vector<PickupDistrict>& table,
+                             HeldPickupClass held_class, float x, float y) {
+  // Within a metre counts as the same pickup; the nearest two of any class sit
+  // far further apart than that, so the tolerance only absorbs the float
+  // round-trip through JSON.
+  constexpr float kMatchDistanceSquared = 1.0f;
+  for (const PickupDistrict& entry : table) {
+    const float delta_x = x - entry.x;
+    const float delta_y = y - entry.y;
+    if (delta_x * delta_x + delta_y * delta_y > kMatchDistanceSquared) continue;
+    // The class has to agree too: a property icon and a package can stand close
+    // together, and holding one by the other's district would be wrong.
+    const bool matches =
+        (held_class == HeldPickupClass::kPackage &&
+         entry.content_index == kContentHiddenPackages) ||
+        (held_class == HeldPickupClass::kRampage &&
+         entry.content_index == kContentRampages) ||
+        (held_class == HeldPickupClass::kProperty &&
+         entry.content_index == kContentPropertyPurchases);
+    if (matches) return entry.district;
+  }
+  return kDistrictUnknown;
+}
+
 inline PickupHoldAction PlanPickupHold(bool should_hold, float z, bool removed) {
   if (removed) return PickupHoldAction::kLeaveAlone;
   const bool sunk = IsPickupSunk(z);

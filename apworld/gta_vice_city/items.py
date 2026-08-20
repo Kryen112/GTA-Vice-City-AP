@@ -45,7 +45,13 @@ _ORDERED_ITEM_NAMES: list[str] = (
     + [data.MINIMAP_ITEM]
     + data.ABILITY_ITEMS
     + data.CONTENT_ITEMS
+    + data.all_district_content_items()
 )
+
+# The district content items as a set, for classification. Every one of them is
+# a content lock at a narrower granularity, so they classify with the class
+# items rather than beside them.
+DISTRICT_CONTENT_NAMES: frozenset[str] = frozenset(data.all_district_content_items())
 
 # The ordered names as the id table read them, so a test can see a duplicate the
 # dict below would silently collapse.
@@ -73,11 +79,11 @@ def _classify(name: str) -> ItemClassification:
         # reachable, skip_balancing because there are many and none unlocks
         # anything, so they must not distort progression balancing.
         return ItemClassification.progression_skip_balancing
-    if name in data.CONTENT_ITEMS:
-        # A content lock gates every check in its class, and stays progression
-        # even in a seed whose class toggle is off and the item gates nothing:
-        # the Sprint precedent, so a term found later needs no classification
-        # flip.
+    if name in data.CONTENT_ITEMS or name in DISTRICT_CONTENT_NAMES:
+        # A content lock gates every check it covers, a whole class or one
+        # district of one, and stays progression even in a seed whose class
+        # toggle is off and the item gates nothing: the Sprint precedent, so a
+        # term found later needs no classification flip.
         return ItemClassification.progression
     if name in data.ABILITY_ITEMS:
         # Crouch gates nothing, so it is useful; every other locked ability may
@@ -111,6 +117,7 @@ ITEM_GROUPS: dict[str, list[str]] = {
     "Property Ownership": list(data.PROPERTY_OWNERSHIP_ITEMS),
     "Abilities": list(data.ABILITY_ITEMS),
     "Content Locks": list(data.CONTENT_ITEMS),
+    "District Content Locks": list(data.all_district_content_items()),
 }
 
 # The item quantity each name contributes to the pool. Progressive items have

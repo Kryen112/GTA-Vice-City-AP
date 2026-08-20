@@ -617,67 +617,153 @@ def gate_sunshine_import_lists():
                  f"on ${SUNSHINE_UNLOCK} and owned ${OWNERSHIP_SUNSHINE}")
 
 
-def _content_unlocked_guard(lock_flag, unlock, label):
-    # A content class is held while its lock flag is set and its unlock global
-    # is still zero. Passing means either: the seed never selected the key, or
-    # the item has arrived. At zero flags every gate falls through, the toggle
-    # invariant.
-    return ["if or", f"  ${lock_flag} == 0", f"  ${unlock} >= 1",
-            f"goto_if_false @{label}"]
+def _hold_condition(class_index, district):
+    # One condition, "this district of this class is released", to add to a test
+    # the vanilla script already makes. A single condition rather than a pair is
+    # what config_globals buys: an unlocked class arrives already released.
+    return f"  ${district_unlock(class_index, district)} >= 1"
 
 
 def gate_stunt_jumps():
-    # The USJ thread resolves a jump at one point: `if $794 == 1`, reached only
-    # through @USJ_5369, which clears $794 as each attempt begins. Everything
-    # that credits a jump sits behind that test, so one guard in front of it
-    # holds the whole class: no per-jump flag ($795..$830) sets, so the APSTAT
-    # watcher never sees one and no check fires; the 36-counter $791 does not
-    # advance; player_made_progress and register_unique_jump_found do not run,
-    # so the vanilla completion percentage and jump stat do not move either; and
-    # the pass text and cash never print. The jump still flies and the slow-motion camera
-    # still resolves, since the guard sits after set_time_scale and
-    # restore_camera_jumpcut. @USJ_7497 is the thread's own did-not-land path,
-    # straight back to the loop, so a held jump reads exactly as a failed one
-    # and stays re-doable forever.
-    anchor = "  $794 == 1"
-    hits = [i for i, ln in enumerate(lines) if ln == anchor]
-    assert len(hits) == 1, f"stunt jump gate: {anchor!r} matched {len(hits)}"
-    index = hits[0] - 1
-    assert lines[index] == "if ", f"stunt jump gate: expected `if ` at {index}"
-    assert lines[hits[0] + 1] == "goto_if_false @USJ_7497", \
-        f"stunt jump gate: unexpected false target {lines[hits[0] + 1]!r}"
-    lines[index:index] = _content_unlocked_guard(
-        STUNT_JUMPS_LOCK_FLAG, STUNT_JUMPS_UNLOCK, "USJ_7497")
-    edits.append("stunt jump credit gated on the content lock")
+    # Each jump is detected at its own takeoff, a locate_player_in_car_3d over
+    # the ramp followed by `$792 = <id>`, and gating there is what makes the hold
+    # per district: the id is the index into STUNT_JUMP_DISTRICTS. A held jump
+    # never enters the sequence at all, so no per-jump flag ($795..$830) sets and
+    # the APSTAT watcher sees nothing, the 36-counter $791 does not advance,
+    # player_made_progress and register_unique_jump_found do not run so neither
+    # the completion percentage nor the jump stat moves, and no pass text or cash
+    # prints. The jump still flies, since only the detection is skipped, and it
+    # stays re-doable forever.
+    #
+    # Ids 25 and 26 each have two takeoff definitions, so there are more sites
+    # than jumps; every site gates on its own id's district.
+    sites = []
+    for index, line in enumerate(lines):
+        match = re.fullmatch(r"\$792 = (\d+)", line)
+        if match is None or match.group(1) == "0":
+            continue
+        identifier = int(match.group(1))
+        assert 1 <= identifier <= len(STUNT_JUMP_DISTRICTS), \
+            f"stunt jump gate: id {identifier} outside the district table"
+        assert lines[index - 3] == "if ", (
+            f"stunt jump {identifier}: expected `if ` at {index - 3}, "
+            f"found {lines[index - 3]!r}")
+        assert lines[index - 2].startswith("  locate_player_in_car_3d "), (
+            f"stunt jump {identifier}: expected a takeoff locate at {index - 2}, "
+            f"found {lines[index - 2]!r}")
+        assert lines[index - 1].startswith("goto_if_false @USJ_"), (
+            f"stunt jump {identifier}: expected the miss branch at {index - 1}, "
+            f"found {lines[index - 1]!r}")
+        sites.append((index, identifier))
+    assert len(sites) >= len(STUNT_JUMP_DISTRICTS), \
+        f"stunt jump gate: {len(sites)} takeoff sites for {len(STUNT_JUMP_DISTRICTS)} jumps"
+    covered = {identifier for _index, identifier in sites}
+    assert covered == set(range(1, len(STUNT_JUMP_DISTRICTS) + 1)), \
+        f"stunt jump gate: ids {sorted(covered)} do not cover every jump"
+    # Highest first, so an insertion never moves a site still to be edited.
+    for index, identifier in sorted(sites, reverse=True):
+        district = STUNT_JUMP_DISTRICTS[identifier - 1]
+        lines[index - 3] = "if and"
+        lines[index - 2:index - 2] = [_hold_condition(STUNT_JUMPS_CLASS, district)]
+    edits.append(f"stunt jumps: {len(sites)} takeoffs gated by district")
+
+
+STORE_GUARD_NUMBER = r"(-?[\d.]+|\$\d+)"
+STORE_AREA = re.compile(
+    rf"^  is_player_in_area_3d \$player_char 0 {STORE_GUARD_NUMBER} {STORE_GUARD_NUMBER} "
+    rf"{STORE_GUARD_NUMBER} {STORE_GUARD_NUMBER} {STORE_GUARD_NUMBER} "
+    rf"{STORE_GUARD_NUMBER}$")
+STORE_LOCATE = re.compile(
+    rf"^  locate_\w+ \$player_char (?:stopped 1 |0 ){STORE_GUARD_NUMBER} "
+    rf"{STORE_GUARD_NUMBER} {STORE_GUARD_NUMBER} radius")
+
+
+def _scalar_global(token):
+    # A coordinate the script keeps in a global, resolvable only because the
+    # whole file assigns it exactly once, as a literal.
+    if not token.startswith("$"):
+        return float(token)
+    pattern = re.compile(rf"^\{token} = (-?\d+\.?\d*)$")
+    values = [match.group(1) for match in (pattern.match(ln) for ln in lines) if match]
+    assert len(values) == 1, f"{token}: {len(values)} assignments, expected 1"
+    return float(values[0])
+
+
+def _store_guard_point(index):
+    # Where the nearest guarding test above this line puts the player: an area
+    # box gives its centre, a locate gives its point.
+    for probe in range(index, max(index - 8, -1), -1):
+        area = STORE_AREA.match(lines[probe])
+        if area:
+            return ((_scalar_global(area.group(1)) + _scalar_global(area.group(4))) / 2,
+                    (_scalar_global(area.group(2)) + _scalar_global(area.group(5))) / 2)
+        locate = STORE_LOCATE.match(lines[probe])
+        if locate:
+            return (_scalar_global(locate.group(1)), _scalar_global(locate.group(2)))
+    raise AssertionError(f"store gate: no guarding test above line {index}")
 
 
 def gate_store_robberies():
     # The 15 stores are two thread families sharing two robbery handlers:
     # @SHOP5_1010 for the 12 street stores (gosub'd from SHOP1..SHOP5) and
-    # @HARD3_2856 for the 3 hardware stores (from HARD1..HARD3). Each handler
-    # opens on `not is_char_dead` and then tests
-    # `is_player_targetting_char` against its shopkeeper, and that aim is the
-    # whole trigger: it freezes the clerk into the hands-up state,
-    # zeroes TIMERA and starts the 50/100/250/600 payout ladder, whose first
-    # tier gosubs the proximity sweep that calls add_stores_knocked_off. One
-    # guard in front of each aim check therefore holds all 15.
+    # @HARD3_2856 for the 3 hardware stores (from HARD1..HARD3). The aim test
+    # inside a handler is the whole trigger, but it is shared, so it cannot say
+    # which store is being robbed. What can is the per-store test that gosubs
+    # into the handler, one for each of the 15, guarded by that store's own area.
     #
-    # Each guard branches to that check's own false target, the handler's
-    # not-aiming path, so a held store reads exactly as the player not aiming:
-    # the clerk still spawns, still tracks the player, and killing him still
-    # raises the wanted level, all vanilla.
-    targets = [("$1532", "SHOP5_1636"), ("$854", "HARD3_3454")]
-    for actor, label in targets:
-        anchor = f"  is_player_targetting_char $player_char aiming_at_actor {actor}"
-        hits = [i for i, ln in enumerate(lines) if ln == anchor]
-        assert len(hits) == 1, f"store gate {actor}: {anchor!r} matched {len(hits)}"
-        index = hits[0] - 1
-        assert lines[index] == "if ", f"store gate {actor}: expected `if ` at {index}"
-        assert lines[hits[0] + 1] == f"goto_if_false @{label}", \
-            f"store gate {actor}: unexpected false target {lines[hits[0] + 1]!r}"
-        lines[index:index] = _content_unlocked_guard(
-            ROBBABLE_STORES_LOCK_FLAG, ROBBABLE_STORES_UNLOCK, label)
-    edits.append(f"store robbery gated on the content lock at {len(targets)} handlers")
+    # Those entries are not in store order, and store order is the
+    # add_stores_knocked_off order the completions and the district table use, so
+    # the two are paired by position: each stat site's guarding coordinate
+    # against each entry's. Asserted to be a bijection within a few metres, so a
+    # mispairing fails the build rather than gating the wrong store.
+    #
+    # A held store reads exactly as the player standing outside: the clerk still
+    # spawns, still tracks the player, and killing him still raises the wanted
+    # level, all vanilla.
+    stat_sites = [i for i, ln in enumerate(lines) if ln == "add_stores_knocked_off 1"]
+    assert len(stat_sites) == len(STORE_DISTRICTS), \
+        f"store gate: {len(stat_sites)} stat sites for {len(STORE_DISTRICTS)} stores"
+    entries = [i for i, ln in enumerate(lines)
+               if ln.strip() in ("gosub @SHOP5_1010", "gosub @HARD3_2856")]
+    assert len(entries) == len(STORE_DISTRICTS), \
+        f"store gate: {len(entries)} robbery entries for {len(STORE_DISTRICTS)} stores"
+    stat_points = [_store_guard_point(site) for site in stat_sites]
+    entry_points = [_store_guard_point(site) for site in entries]
+    paired: dict[int, int] = {}
+    for order, point in enumerate(stat_points):
+        distance, nearest = min(
+            (((other[0] - point[0]) ** 2 + (other[1] - point[1]) ** 2) ** 0.5, k)
+            for k, other in enumerate(entry_points))
+        assert distance < 40.0, (
+            f"store {order + 1}: nearest robbery entry is {distance:.0f} units away, "
+            f"too far to pair")
+        # Nearest alone would pair two stores that stand close together; the
+        # margin over the runner-up is what says the pairing is the only
+        # reading. Measured at 20 units for the tightest pair and 60 or more for
+        # every other, with eleven of the fifteen exact.
+        runner_up = sorted(
+            ((other[0] - point[0]) ** 2 + (other[1] - point[1]) ** 2) ** 0.5
+            for other in entry_points)[1]
+        assert runner_up - distance > 15.0, (
+            f"store {order + 1}: robbery entries at {distance:.0f} and "
+            f"{runner_up:.0f} units are too close together to tell apart")
+        assert nearest not in paired, (
+            f"store {order + 1} and store {paired[nearest] + 1} both pair with "
+            f"robbery entry {nearest}")
+        paired[nearest] = order
+    # Highest first, so an insertion never moves an entry still to be edited.
+    for entry, order in sorted(paired.items(), reverse=True):
+        index = entries[entry]
+        assert lines[index - 1].startswith("goto_if_false @"), (
+            f"store {order + 1}: expected the outside branch at {index - 1}, "
+            f"found {lines[index - 1]!r}")
+        assert lines[index - 3] == "if ", (
+            f"store {order + 1}: expected `if ` at {index - 3}, "
+            f"found {lines[index - 3]!r}")
+        lines[index - 3] = "if and"
+        lines[index - 2:index - 2] = [
+            _hold_condition(ROBBABLE_STORES_CLASS, STORE_DISTRICTS[order])]
+    edits.append(f"stores: {len(paired)} robbery entries gated by district")
 
 
 def add_store_completions():
@@ -1321,21 +1407,79 @@ PROPERTIES_ENABLED = 9433
 # The content lock block follows it in the same shape: five lock flags at
 # $9450..$9454 then five unlock globals at $9455..$9459, in scm.CONTENT_KEYS
 # order (hidden packages, rampages, stunt jumps, property purchases, robbable
-# stores). The top unlock is the highest reserved global, so the foundation's
-# sizing line references it; add_markers.py anchors on that line.
+# stores). No gate reads these either: a whole-class release reaches the script
+# through the district block below, which is what a gate reads.
 CONTENT_LOCK_FLAG_BASE = 9450
 CONTENT_UNLOCK_BASE = 9455
-CONTENT_TOP = 9459
 
+# The district content unlock block follows: one global per class per district,
+# a uniform five by eleven grid indexed class-major, so a class and a district
+# give a global by formula. These are what a gate actually reads, at every
+# granularity, because an item releases every global it covers: a whole-class
+# item releases all eleven of its class's, so no gate has to know which
+# granularity the seed chose and there is one code path for all three.
+#
+# A class the seed does not lock has its eleven stamped to 1 at config time (the
+# client's config_globals), which is what lets each gate be a single condition
+# rather than "not locked OR released", and keeps the toggle invariant: at zero
+# locks every gate falls through.
 # Three of the five classes are pickups, so holding them belongs to the ASI and
 # the script needs nothing for them. The other two have no icon to hold, so
 # their gates belong to the script, and these are the globals those gates read.
-# The offsets into the block are pinned by a world test, since reordering
-# scm.CONTENT_KEYS would point both gates at another class.
-STUNT_JUMPS_LOCK_FLAG = CONTENT_LOCK_FLAG_BASE + 2
-STUNT_JUMPS_UNLOCK = CONTENT_UNLOCK_BASE + 2
-ROBBABLE_STORES_LOCK_FLAG = CONTENT_LOCK_FLAG_BASE + 4
-ROBBABLE_STORES_UNLOCK = CONTENT_UNLOCK_BASE + 4
+DISTRICT_UNLOCK_BASE = 9460
+DISTRICTS = [
+    "Ocean Beach", "Washington Beach",
+    "Vice Point", "Starfish Island",
+    "Prawn Island", "Leaf Links",
+    "Downtown", "Little Haiti",
+    "Little Havana", "Viceport",
+    "Escobar International",
+]
+
+# scm.CONTENT_KEYS order, which fixes the class-major stride into the block.
+# Pinned by a world test, since reordering it would point every gate at another
+# class.
+CONTENT_KEYS_ORDER = [
+    "hidden packages", "rampages", "stunt jumps", "property purchases",
+    "robbable stores",
+]
+STUNT_JUMPS_CLASS = 2
+ROBBABLE_STORES_CLASS = 4
+DISTRICT_TOP = DISTRICT_UNLOCK_BASE + len(CONTENT_KEYS_ORDER) * len(DISTRICTS) - 1
+
+
+def district_unlock(class_index, district):
+    assert district in DISTRICTS, f"unknown district {district!r}"
+    return (DISTRICT_UNLOCK_BASE + class_index * len(DISTRICTS)
+            + DISTRICTS.index(district))
+
+
+# Which district each of the 36 unique stunt jumps is in, by the id the USJ
+# thread writes to $792, and each of the 15 robbable stores, in
+# add_stores_knocked_off order. Transcribed from the world's own generated
+# district table and pinned against it by a world test.
+STUNT_JUMP_DISTRICTS = [
+    "Escobar International", "Escobar International", "Escobar International",
+    "Escobar International", "Escobar International", "Escobar International",
+    "Escobar International", "Escobar International", "Prawn Island",
+    "Vice Point", "Downtown", "Downtown",
+    "Downtown", "Downtown", "Little Haiti",
+    "Little Haiti", "Little Haiti", "Little Havana",
+    "Ocean Beach", "Ocean Beach", "Washington Beach",
+    "Ocean Beach", "Ocean Beach", "Ocean Beach",
+    "Ocean Beach", "Ocean Beach", "Ocean Beach",
+    "Ocean Beach", "Vice Point", "Washington Beach",
+    "Washington Beach", "Washington Beach", "Washington Beach",
+    "Washington Beach", "Washington Beach", "Starfish Island",
+]
+
+STORE_DISTRICTS = [
+    "Washington Beach", "Vice Point", "Little Havana",
+    "Little Havana", "Downtown", "Downtown",
+    "Little Haiti", "Vice Point", "Vice Point",
+    "Vice Point", "Vice Point", "Vice Point",
+    "Vice Point", "Little Havana", "Little Havana",
+]
 
 # Reward global -> the vanilla weapon flag or car generator it drives, in
 # reward-global order (body armor, chainsaw, .357, flamethrower, sniper, minigun,
@@ -1476,15 +1620,16 @@ def add_reward_applier():
 # Foundation: initialize the radio resolve map to identity (vanilla until the
 # ASI overwrites it) and reference the highest reserved global once so Sanny
 # sizes the whole $9000..N block as real zero-initialized globals. The last
-# line must equal scm.highest_reserved_global() (now the top content unlock
-# $9459: 26 unlocks + 340 completions + 15 reward globals + 3 config flags +
-# 19 radio globals + 15 ownership globals + the minimap flag and unlock + 4
-# class-cash flags + 16 ability globals + 10 content globals, 450 in all, from
-# $9010 up; the ten below that are the seed hash and the bookkeeping scratch).
+# line must equal scm.highest_reserved_global() (now the top district content
+# unlock $9514: 26 unlocks + 340 completions + 15 reward globals + 3 config
+# flags + 19 radio globals + 15 ownership globals + the minimap flag and unlock
+# + 4 class-cash flags + 16 ability globals + 10 content globals + 55 district
+# content globals, 505 in all, from $9010 up; the ten below that are the seed
+# hash and the bookkeeping scratch).
 # add_markers.py anchors on that line.
 foundation = [f"${RADIO_RESOLVE_BASE + station} = {station}" for station in range(9)]
-foundation += [f"${RADIO_REQUEST} = 0", f"${PROPERTIES_ENABLED} = 0", f"${CONTENT_TOP} = 0"]
-insert_after("script_name 'HOT'", foundation, f"foundation radio identity + ${CONTENT_TOP} = 0")
+foundation += [f"${RADIO_REQUEST} = 0", f"${PROPERTIES_ENABLED} = 0", f"${DISTRICT_TOP} = 0"]
+insert_after("script_name 'HOT'", foundation, f"foundation radio identity + ${DISTRICT_TOP} = 0")
 check_play_order()
 check_gate_mainland_terms()
 for launcher, gate_conditions, completion_global in MISSIONS:

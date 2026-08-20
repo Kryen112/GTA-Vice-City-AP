@@ -10,7 +10,7 @@ Nothing here gates logic on money.
 
 from __future__ import annotations
 
-from . import package_data, pickup_data
+from . import district_data, package_data, pickup_data
 
 # Story missions grouped by giver, each list in vanilla play order. Progressive
 # unlocks follow this order (Progressive <giver> #n opens the giver's nth
@@ -332,6 +332,100 @@ CONTENT_ITEMS: list[str] = list(CONTENT_LOCK_ITEMS.values())
 CONTENT_ITEM_KEY: dict[str, str] = {
     item: key for key, item in CONTENT_LOCK_ITEMS.items()
 }
+
+# How wide one content item's reach is, matching options.SplitContentLocks.
+# OFF is one item per class, the whole city at once. PER_DISTRICT is one item
+# per district covering every selected class there. PER_CLASS is one item per
+# class per district, the finest.
+CONTENT_SPLIT_OFF = 0
+CONTENT_SPLIT_PER_DISTRICT = 1
+CONTENT_SPLIT_PER_CLASS = 2
+
+
+def district_content_item_name(district: str) -> str:
+    # PER_DISTRICT: everything lockable in one district. "Content" rather than a
+    # list of classes, since which classes it covers is the seed's choice.
+    return f"{district} Content"
+
+
+def district_class_item_name(district: str, content_item: str) -> str:
+    # PER_CLASS: one class in one district. The class item's own name is the
+    # plural, so this reads as the place followed by what it holds.
+    return f"{district} {content_item}"
+
+
+# Which class each district table belongs to. The tables are keyed by index, so
+# index i is content i of that class in the world's own order.
+CONTENT_DISTRICT_TABLES: dict[str, list[str]] = {
+    HIDDEN_PACKAGES_ITEM: district_data.PACKAGE_DISTRICTS,
+    RAMPAGES_ITEM: district_data.RAMPAGE_DISTRICTS,
+    STUNT_JUMPS_ITEM: district_data.STUNT_JUMP_DISTRICTS,
+    PROPERTY_PURCHASES_ITEM: [
+        district_data.PROPERTY_DISTRICTS[purchase.removesuffix(" Purchase")]
+        for purchase in PROPERTY_PURCHASES
+    ],
+    ROBBABLE_STORES_ITEM: district_data.STORE_DISTRICTS,
+}
+
+# Which districts hold each class, in DISTRICTS order. A class-district pair
+# with nothing in it gets no item, which is why the PER_CLASS pool is 42 and not
+# five times eleven. Thirteen pairs are empty: packages reach all eleven
+# districts, rampages and stunt jumps nine each, properties eight and stores
+# five. Leaf Links holds packages alone.
+CONTENT_CLASS_DISTRICTS: dict[str, list[str]] = {
+    item: [district for district in district_data.DISTRICTS if district in set(table)]
+    for item, table in CONTENT_DISTRICT_TABLES.items()
+}
+
+# Every district that holds anything lockable, in DISTRICTS order. All eleven
+# do, so PER_DISTRICT is eleven items, but this is derived rather than assumed.
+CONTENT_DISTRICTS: list[str] = [
+    district for district in district_data.DISTRICTS
+    if any(district in districts for districts in CONTENT_CLASS_DISTRICTS.values())
+]
+
+
+def content_items(selected_keys: frozenset[str], split: int) -> list[str]:
+    """The content items a seed puts in the pool, in a stable order.
+
+    A key holds its class whether or not that class is a check class, so this
+    reads the selected keys alone. Splitting changes only how many items carry
+    the same holding, never which content is held.
+    """
+    locked = [item for item in CONTENT_ITEMS if CONTENT_ITEM_KEY[item] in selected_keys]
+    if split == CONTENT_SPLIT_OFF or not locked:
+        return locked
+    if split == CONTENT_SPLIT_PER_DISTRICT:
+        covered = {district for item in locked
+                   for district in CONTENT_CLASS_DISTRICTS[item]}
+        return [district_content_item_name(district)
+                for district in district_data.DISTRICTS if district in covered]
+    return [district_class_item_name(district, item)
+            for item in locked for district in CONTENT_CLASS_DISTRICTS[item]]
+
+
+def all_district_content_items() -> list[str]:
+    """Every district content item any seed can produce, in id order.
+
+    The item table is one table for all seeds, so it holds both granularities
+    at once: the PER_DISTRICT items first, then the PER_CLASS items grouped by
+    class. A seed uses one group or the other, never both.
+    """
+    names = [district_content_item_name(district) for district in CONTENT_DISTRICTS]
+    names.extend(district_class_item_name(district, item)
+                 for item in CONTENT_ITEMS
+                 for district in CONTENT_CLASS_DISTRICTS[item])
+    return names
+
+
+def location_district(location_name: str) -> str | None:
+    """The district a lockable location sits in, or None if it has no district.
+
+    Only the five content classes have one. A business purchase is listed like
+    any other purchase, though its rule is built from the sale requirements plus
+    its own property term rather than from a lookup here.
+    """
+    return _LOCATION_DISTRICTS.get(location_name)
 
 # Ability requirements per mission, the minimal day-one set: only missions
 # whose script demonstrably forces the vehicle (a race or delivery in a
@@ -890,10 +984,84 @@ def location_ability_requirements() -> dict[str, list[str]]:
 LOCATION_ABILITY_REQUIREMENTS: dict[str, list[str]] = location_ability_requirements()
 
 
-def location_content_requirements() -> dict[str, list[str]]:
-    """Every location's content-lock item. Unlike an ability term these are
-    uniform across a class, since a key holds its whole class: every location
-    in the class carries the one item. A term binds only while its
+def _content_class_locations() -> dict[str, list[str]]:
+    """Each content class's locations, in the order its district table is in."""
+    return {
+        HIDDEN_PACKAGES_ITEM: [hidden_package_name(index)
+                               for index in range(1, HIDDEN_PACKAGE_COUNT + 1)],
+        RAMPAGES_ITEM: [rampage_name(index)
+                        for index in range(1, RAMPAGE_COUNT + 1)],
+        STUNT_JUMPS_ITEM: [stunt_jump_name(index)
+                           for index in range(1, STUNT_JUMP_COUNT + 1)],
+        PROPERTY_PURCHASES_ITEM: list(PROPERTY_PURCHASES),
+        ROBBABLE_STORES_ITEM: [robbable_store_name(index)
+                               for index in range(1, ROBBABLE_STORE_COUNT + 1)],
+    }
+
+
+CONTENT_CLASS_LOCATIONS: dict[str, list[str]] = _content_class_locations()
+
+# Every lockable location's district, from its position in its class's table.
+_LOCATION_DISTRICTS: dict[str, str] = {
+    location: CONTENT_DISTRICT_TABLES[item][index]
+    for item, locations_in_class in CONTENT_CLASS_LOCATIONS.items()
+    for index, location in enumerate(locations_in_class)
+}
+
+# Which content class each lockable location belongs to. Independent of the
+# granularity, so a rule can ask whether a location is locked at all before
+# working out which item covers it.
+LOCATION_CONTENT_CLASS: dict[str, str] = {
+    location: item
+    for item, locations_in_class in CONTENT_CLASS_LOCATIONS.items()
+    for location in locations_in_class
+}
+
+
+def content_item_for(location_name: str, split: int) -> str | None:
+    """The content item covering this location, at this granularity.
+
+    One item either way: a class item holding the whole city, or the item
+    holding this location's district. Returns None for a location no content
+    key covers.
+    """
+    item = LOCATION_CONTENT_CLASS.get(location_name)
+    if item is None:
+        return None
+    if split == CONTENT_SPLIT_OFF:
+        return item
+    district = _LOCATION_DISTRICTS[location_name]
+    if split == CONTENT_SPLIT_PER_DISTRICT:
+        return district_content_item_name(district)
+    return district_class_item_name(district, item)
+
+
+def property_content_items(split: int) -> list[str]:
+    """Every item that has to arrive before ANY property can be bought.
+
+    For the one caller that cannot name a property: the finale with the
+    properties class off, where no purchase location exists to carry a term but
+    vanilla asset completion still spends money at property icons. Whole, that
+    is the one class item. Split, it is every district holding a property, which
+    is stricter than vanilla needs and deliberately so, since over-requiring
+    here costs a little fill freedom and under-requiring could strand the
+    finale behind icons that are still held.
+    """
+    if split == CONTENT_SPLIT_OFF:
+        return [PROPERTY_PURCHASES_ITEM]
+    covering = [content_item_for(purchase, split) for purchase in PROPERTY_PURCHASES]
+    return list(dict.fromkeys(item for item in covering if item is not None))
+
+
+def location_content_requirements(
+    split: int = CONTENT_SPLIT_OFF,
+) -> dict[str, list[str]]:
+    """Every location's content-lock item, at the seed's granularity.
+
+    With the locks whole this is uniform across a class, since one key holds one
+    whole class: every location in the class carries the one item. Split, it is
+    the item covering that location's district instead, so it is still exactly
+    one item per location, just a narrower one. A term binds only while its
     content_locks key is selected (rules.py filters); with the key off the item
     is not in the pool and the class plays vanilla.
 
@@ -903,16 +1071,16 @@ def location_content_requirements() -> dict[str, list[str]]:
     The entry is what carries a safehouse purchase, which has no other rule.
     """
     requirements: dict[str, list[str]] = {}
-    for index in range(1, HIDDEN_PACKAGE_COUNT + 1):
-        requirements[hidden_package_name(index)] = [HIDDEN_PACKAGES_ITEM]
-    for index in range(1, RAMPAGE_COUNT + 1):
-        requirements[rampage_name(index)] = [RAMPAGES_ITEM]
-    for index in range(1, STUNT_JUMP_COUNT + 1):
-        requirements[stunt_jump_name(index)] = [STUNT_JUMPS_ITEM]
-    for index in range(1, ROBBABLE_STORE_COUNT + 1):
-        requirements[robbable_store_name(index)] = [ROBBABLE_STORES_ITEM]
-    for purchase in PROPERTY_PURCHASES:
-        requirements[purchase] = [PROPERTY_PURCHASES_ITEM]
+    for item, locations_in_class in CONTENT_CLASS_LOCATIONS.items():
+        for location in locations_in_class:
+            if split == CONTENT_SPLIT_OFF:
+                requirements[location] = [item]
+            elif split == CONTENT_SPLIT_PER_DISTRICT:
+                requirements[location] = [
+                    district_content_item_name(_LOCATION_DISTRICTS[location])]
+            else:
+                requirements[location] = [
+                    district_class_item_name(_LOCATION_DISTRICTS[location], item)]
     return requirements
 
 

@@ -24,7 +24,14 @@ from worlds.LauncherComponents import Component, Type, components
 from worlds.LauncherComponents import launch as launch_component
 
 from . import data, regions, rules, scm
-from .items import GENERAL_FILLER_NAMES, ITEM_CLASSIFICATIONS, ITEM_GROUPS, ITEM_NAME_TO_ID, ITEM_QUANTITIES
+from .items import (
+    DISTRICT_CONTENT_NAMES,
+    GENERAL_FILLER_NAMES,
+    ITEM_CLASSIFICATIONS,
+    ITEM_GROUPS,
+    ITEM_NAME_TO_ID,
+    ITEM_QUANTITIES,
+)
 from .locations import CLASS_TOGGLE, LOCATION_GROUPS, LOCATION_NAME_TO_ID, LOCATION_REGIONS, LOCATION_TOGGLE
 from .options import CHECK_CLASS_OPTIONS, Goal, GTAViceCityOptions
 
@@ -166,6 +173,11 @@ class GTAViceCityWorld(World):
             options.ability_locks.value = set(slot_data["ability_locks"])
         if "content_locks" in slot_data:
             options.content_locks.value = set(slot_data["content_locks"])
+        if "split_content_locks" in slot_data:
+            # Without this a regeneration rebuilds a split seed's rules against
+            # the whole-class items, which the pool does not hold: every
+            # collectible would read as gated on an item that never arrives.
+            options.split_content_locks.value = int(slot_data["split_content_locks"])
         if "starting_ability_unlock" in slot_data:
             options.starting_ability_unlock.value = int(bool(slot_data["starting_ability_unlock"]))
         if "starting_content_unlock" in slot_data:
@@ -239,8 +251,7 @@ class GTAViceCityWorld(World):
         )
         self.starting_content_item = self._draw_starting_unlock(
             bool(self.options.starting_content_unlock.value),
-            [data.CONTENT_LOCK_ITEMS[key]
-             for key in sorted(self.options.content_locks.value)],
+            self._content_items(),
             (passthrough or {}).get("starting_content_item"),
         )
 
@@ -311,12 +322,24 @@ class GTAViceCityWorld(World):
             return bool(self.options.enable_properties.value)
         if name in data.ABILITY_ITEM_KEY:
             return data.ABILITY_ITEM_KEY[name] in self.options.ability_locks.value
-        if name in data.CONTENT_ITEM_KEY:
+        if name in data.CONTENT_ITEM_KEY or name in DISTRICT_CONTENT_NAMES:
             # A content lock rides its own key, never the class toggle: a key
             # selected on a disabled class still holds the content in game, so
-            # the item that releases it still belongs in the pool.
-            return data.CONTENT_ITEM_KEY[name] in self.options.content_locks.value
+            # the item that releases it still belongs in the pool. Which of the
+            # three granularities' items those are is content_items' answer, and
+            # the item table holds all of them, so membership is the test.
+            return name in set(self._content_items())
         return True
+
+    def _split_content_locks(self) -> int:
+        return int(self.options.split_content_locks.value)
+
+    def _content_items(self) -> list[str]:
+        # The content items this seed puts in the pool, at its granularity.
+        # Deterministic despite content_locks being a set: content_items walks
+        # CONTENT_ITEMS and DISTRICTS, both fixed orders, rather than the keys.
+        return data.content_items(
+            frozenset(self.options.content_locks.value), self._split_content_locks())
 
     def _ability_lock_keys(self) -> frozenset[str]:
         return frozenset(self.options.ability_locks.value)
@@ -335,6 +358,7 @@ class GTAViceCityWorld(World):
             self._ability_lock_keys(),
             self._content_lock_keys(),
             bool(self.options.split_mainland_access.value),
+            self._split_content_locks(),
         )
 
     def create_item(self, name: str) -> GTAViceCityItem:
@@ -422,14 +446,11 @@ class GTAViceCityWorld(World):
             # unlocking item(s) into the pool. Sorted so the pool order is
             # deterministic (the option value is a set).
             placeable.extend(data.ABILITY_LOCK_ITEMS[key])
-        # Each selected key holds its class at new game and shuffles the
-        # releasing item into the pool, whether or not that class is also a
-        # check class this seed. Sorted so the pool order is deterministic (the
-        # option value is a set).
-        placeable.extend(
-            data.CONTENT_LOCK_ITEMS[key]
-            for key in sorted(self.options.content_locks.value)
-        )
+        # Each selected key holds its class at new game and shuffles the items
+        # that release it into the pool, whether or not that class is also a
+        # check class this seed. One item for the class, or one per district, or
+        # one per class per district, as split_content_locks says.
+        placeable.extend(self._content_items())
         for chosen in (self.starting_ability_item, self.starting_content_item):
             if chosen is None:
                 continue
@@ -450,12 +471,19 @@ class GTAViceCityWorld(World):
         )
         overflow = len(placeable) - active_locations
         if overflow > 0:
-            # More progression and useful items than checks. Not reachable with
-            # the current classes and item math; guard rather than misfill.
+            # More progression and useful items than checks. Filler is what
+            # gives way as the item count grows, and by here there is none left
+            # to give, so only the options can resolve it. Splitting the content
+            # locks is the widest of them, turning five items into 42, so it is
+            # named when it is on.
+            advice = ("Widen the seed with another check class, or narrow "
+                      "split_content_locks")
+            if not self.options.split_content_locks.value:
+                advice = "Enable another check class"
             raise OptionError(
                 f"{self.game}: {len(placeable)} progression and useful items but "
-                f"only {active_locations} checks this seed. Enable another check "
-                "class so the items have reachable homes."
+                f"only {active_locations} checks this seed. {advice} so the items "
+                "have reachable homes."
             )
         self._guard_fill_room()
 
@@ -468,25 +496,44 @@ class GTAViceCityWorld(World):
         # bounding total money to the mirror. A trap_percentage share of the slots
         # become traps instead; traps only ever replace filler, so they never
         # crowd out progression or useful items.
-        mirror = self._reward_mirror()
         filler_slots = active_locations - len(pool)
         trap_slots = filler_slots * self.options.trap_percentage.value // 100
         pool.extend(self.create_item(self._random_trap()) for _ in range(trap_slots))
-        for entry in self.multiworld.random.sample(mirror, filler_slots - trap_slots):
+        for entry in self._filler_entries(filler_slots - trap_slots):
             name = entry if entry is not None else self.multiworld.random.choice(GENERAL_FILLER_NAMES)
             pool.append(self.create_item(name))
         self.multiworld.itempool += pool
 
+    def _filler_entries(self, slots: int) -> list[str | None]:
+        # Which mirror entries survive when the mirror has more entries than
+        # there are slots. The smallest amounts give way first, so what a seed
+        # keeps is the money that matters: an item worth $100 saves a player
+        # almost no grinding where one worth thousands does. Progression and
+        # useful items take their slots before filler does, so the more of them a
+        # seed carries the further up this order it cuts, and a seed whose items
+        # only just fit keeps only its largest rewards.
+        #
+        # A check that paid nothing in vanilla sorts last and becomes generic
+        # filler if it survives at all. Ties break on the location name so the
+        # order is total, and the shuffle afterwards is what decides where the
+        # survivors land.
+        ranked = sorted(self._enabled_locations(),
+                        key=lambda name: (-data.LOCATION_REWARD[name], name))
+        kept = [data.mirror_item(name) for name in ranked[:slots]]
+        self.multiworld.random.shuffle(kept)
+        return kept
+
+    def _enabled_locations(self) -> list[str]:
+        # Every check this seed has, in id order. The same predicate
+        # create_regions uses, so the mirror stays one entry per location.
+        return [name for name in LOCATION_NAME_TO_ID if self._location_enabled(name)]
+
     def _reward_mirror(self) -> list[str | None]:
         # One filler entry per enabled check, mirroring the vanilla cash it would
-        # have paid: a cash item name, or None for a check that paid nothing. The
-        # same enabled-location predicate as create_regions, so it stays one entry
-        # per location this seed.
-        return [
-            data.mirror_item(name)
-            for name in LOCATION_NAME_TO_ID
-            if self._location_enabled(name)
-        ]
+        # have paid: a cash item name, or None for a check that paid nothing.
+        # create_items goes through _filler_entries, which orders and trims this;
+        # what is left here is the mirror itself, which the tests assert on.
+        return [data.mirror_item(name) for name in self._enabled_locations()]
 
     def _random_trap(self) -> str:
         # The trap types are equally weighted, so each filler-replacing slot
@@ -587,6 +634,7 @@ class GTAViceCityWorld(World):
             # flags themselves reach the ASI through config_globals.
             "ability_locks": sorted(self.options.ability_locks.value),
             "content_locks": sorted(self.options.content_locks.value),
+            "split_content_locks": int(self.options.split_content_locks.value),
             "starting_ability_unlock": bool(self.options.starting_ability_unlock.value),
             "starting_content_unlock": bool(self.options.starting_content_unlock.value),
             # The drawn items themselves (None when the option is off or the
@@ -606,6 +654,19 @@ class GTAViceCityWorld(World):
                 str(item_id): global_index
                 for item_id, global_index in scm.item_globals().items()
             },
+            # One content item can release many district globals: a whole-class
+            # item releases all eleven of its class's. item_globals is one global
+            # per item, so the fan-out rides beside it rather than bending that
+            # shape. Every granularity's items are listed, since the item table
+            # holds them all and a seed only ever receives the ones it placed.
+            "content_district_globals": {
+                str(item_id): global_indices
+                for item_id, global_indices in scm.content_district_globals().items()
+            },
+            # Where each holdable pickup stands and which district it is in, so
+            # the ASI can put a pool entry it found by type or model into a
+            # district without carrying the district audit itself.
+            "content_districts": scm.content_districts(),
             "item_effects": {
                 str(item_id): effect for item_id, effect in scm.item_effects().items()
             },
@@ -677,6 +738,10 @@ class GTAViceCityWorld(World):
         ))
         flags.update(scm.ability_lock_flags(self._ability_lock_keys()))
         flags.update(scm.content_lock_flags(self._content_lock_keys()))
+        # A class this seed does not lock arrives already released in every
+        # district, so each gate and each hold is one condition and a seed with
+        # no content_locks key behaves exactly vanilla.
+        flags.update(scm.unlocked_district_globals(self._content_lock_keys()))
         if not self.options.enable_properties.value:
             flags.update(scm.properties_vanilla_globals())
         if self.options.randomize_pickups.value:

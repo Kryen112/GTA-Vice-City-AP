@@ -178,6 +178,14 @@ constexpr const char* kContentNames[kContentCount] = {
     "Hidden Packages", "Rampages", "Stunt Jumps", "Property Purchases",
     "Robbable Stores",
 };
+// Player-facing district names, in the apworld district_data.DISTRICTS order the
+// unlock block indexes by. Only the toasts read these, so a wrong one misnames a
+// message rather than holding the wrong content.
+constexpr const char* kDistrictNames[kDistrictCount] = {
+    "Ocean Beach", "Washington Beach", "Vice Point", "Starfish Island",
+    "Prawn Island", "Leaf Links", "Downtown", "Little Haiti", "Little Havana",
+    "Viceport", "Escobar International",
+};
 // The key listing every configured ability's locked or unlocked state and
 // every configured content class's held or available state.
 constexpr int kAbilityStatusKey = VK_F6;
@@ -379,7 +387,10 @@ void ScmGameState::ApplyConfig(const std::map<std::int64_t, int>& item_globals,
                                const std::map<int, int>& config_globals,
                                const std::vector<PackageLocation>& package_locations,
                                const std::vector<PickupTarget>& pickup_targets,
-                               const std::vector<MainlandRoute>& routes) {
+                               const std::vector<MainlandRoute>& routes,
+                               const std::map<std::int64_t, std::vector<int>>&
+                                   content_district_globals,
+                               const std::vector<PickupDistrict>& pickup_districts) {
   std::lock_guard<std::mutex> lock(mutex_);
   item_globals_ = item_globals;
   item_effects_ = item_effects;
@@ -387,6 +398,8 @@ void ScmGameState::ApplyConfig(const std::map<std::int64_t, int>& item_globals,
   completion_watch_ = completion_watch;
   package_locations_ = package_locations;
   pickup_targets_ = pickup_targets;
+  content_district_globals_ = content_district_globals;
+  pickup_districts_ = pickup_districts;
   // A fresh route set is a fresh baseline: the next observation records what
   // this seed already holds instead of announcing it.
   mainland_routes_ = routes;
@@ -613,9 +626,17 @@ void ScmGameState::ToastLockStatus(
   std::string available_list;
   for (int index = 0; index < kContentCount; ++index) {
     if (content_flags[index] == 0) continue;
-    std::string& list = held[index] ? held_list : available_list;
+    const int districts_held = ContentDistrictsHeld(held, index);
+    std::string& list = districts_held > 0 ? held_list : available_list;
     if (!list.empty()) list += ", ";
     list += kContentNames[index];
+    // A split seed releases a class a district at a time, so the count is the
+    // only thing that says how far along it is. A whole class goes at once, so
+    // its count is every district and saying so would be noise.
+    if (districts_held > 0 && districts_held < kDistrictCount) {
+      list += " (" + std::to_string(districts_held) + " of " +
+              std::to_string(kDistrictCount) + " districts)";
+    }
   }
   pending_toasts_.push_back(
       ComposeLockStatus(locked_list, unlocked_list, held_list, available_list));
@@ -663,8 +684,25 @@ void ScmGameState::EnforceHeldPickups(const AbilityLocks& locked,
         static_cast<int>(pickup.bPickupType), static_cast<int>(pickup.nModelId),
         kill_frenzy_model_);
     if (held_class == HeldPickupClass::kNone) continue;
+    const int district = DistrictForPickup(pickup_districts_, held_class,
+                                          pickup.vecPos.x, pickup.vecPos.y);
+    // A pickup no row placed is held while any district of its class is, which
+    // hides it rather than handing out a check nothing released. That is the
+    // safe direction but not a correct state: logic gates that location on one
+    // district's item, so the two disagree and the check could become
+    // unreachable. Logged once per class, since only a wrong or missing table
+    // row causes it and one line is enough to find that.
+    if (district == kDistrictUnknown && logger_ != nullptr &&
+        !pickup_unplaced_logged_[static_cast<std::size_t>(held_class)]) {
+      pickup_unplaced_logged_[static_cast<std::size_t>(held_class)] = true;
+      logger_(std::string("content locks: no district for a ") +
+              kHeldClassNames[static_cast<int>(held_class)] + " pickup at " +
+              std::to_string(pickup.vecPos.x) + ", " +
+              std::to_string(pickup.vecPos.y) +
+              "; holding it while its class is held anywhere");
+    }
     const bool should_hold = ShouldHoldPickup(
-        held_class,
+        held_class, district,
         IsVehicleRampagePickup(pickup.vecPos.x, pickup.vecPos.y),
         locked, held);
     const PickupHoldAction action =
@@ -688,12 +726,19 @@ void ScmGameState::EnforceHeldPickups(const AbilityLocks& locked,
 
 ContentLocks ScmGameState::ReadContentLocks(
     std::array<int, kContentCount>& lock_flags) {
-  std::array<int, kContentCount> unlocks{};
+  // The lock flags say which classes this seed configured, which is what the
+  // status key lists. What is held comes from the district block alone: a class
+  // the seed does not lock arrives with every district already released, so a
+  // flag test here would only repeat what the globals say.
+  std::array<int, kContentCount * kDistrictCount> district_unlocks{};
   for (int index = 0; index < kContentCount; ++index) {
     lock_flags[index] = GetGlobal(kContentLockFlagBase + index);
-    unlocks[index] = GetGlobal(kContentUnlockBase + index);
+    for (int district = 0; district < kDistrictCount; ++district) {
+      district_unlocks[ContentDistrictSlot(index, district)] =
+          GetGlobal(DistrictUnlockGlobal(index, district));
+    }
   }
-  return PlanContentLocks(lock_flags, unlocks);
+  return PlanContentLocks(district_unlocks);
 }
 
 
@@ -738,9 +783,24 @@ void ScmGameState::ReportReleasedContent(
   content_was_held_ = plan.next_was_held;
   content_baseline_ready_ = true;
   for (int index = 0; index < kContentCount; ++index) {
-    if (!plan.announce[index]) continue;
-    pending_toasts_.push_back(std::string(kContentNames[index]) +
-                              " are now available.");
+    // A whole-class item releases every district at once, so it announces once
+    // with no district named; a split item releases one, and where matters more
+    // than what. Counted first so the two cases can be told apart.
+    int released_here = 0;
+    int last_district = 0;
+    for (int district = 0; district < kDistrictCount; ++district) {
+      if (!plan.announce[ContentDistrictSlot(index, district)]) continue;
+      ++released_here;
+      last_district = district;
+    }
+    if (released_here == 0) continue;
+    if (released_here == 1) {
+      pending_toasts_.push_back(std::string(kDistrictNames[last_district]) + " " +
+                                kContentNames[index] + " are now available.");
+    } else {
+      pending_toasts_.push_back(std::string(kContentNames[index]) +
+                                " are now available.");
+    }
   }
 }
 
@@ -1491,9 +1551,18 @@ void ScmGameState::OnGameFrame() {
     // unlock global, then tally received copies per global.
     std::map<int, int> counts;
     for (const auto& [item_id, global_index] : item_globals_) counts[global_index] = 0;
+    for (const auto& [item_id, global_indices] : content_district_globals_) {
+      for (const int global_index : global_indices) counts[global_index] = 0;
+    }
     for (const auto& [received_index, item_id] : items_) {
       const auto it = item_globals_.find(item_id);
       if (it != item_globals_.end()) ++counts[it->second];
+      // A content item also releases every district it covers, which is one
+      // global for a split item and eleven for a whole class.
+      const auto districts = content_district_globals_.find(item_id);
+      if (districts != content_district_globals_.end()) {
+        for (const int global_index : districts->second) ++counts[global_index];
+      }
     }
     for (const auto& [global_index, count] : counts) SetGlobal(global_index, count);
     items_dirty_ = false;
@@ -1502,6 +1571,13 @@ void ScmGameState::OnGameFrame() {
 
   // Stamp the config flags every frame so the SCM knows which reward groups are
   // shuffled, even after the new-game zeroing clears them.
+  //
+  // After the re-derive above, deliberately. Every district content global is
+  // released either by an item or by this stamp, and the re-derive zeroes every
+  // global any content item could touch, including the ones no item in THIS
+  // seed's pool covers: a split seed still carries the whole-class items in its
+  // fan-out table, since that table serves all three granularities. Stamping
+  // second is what keeps those released.
   for (const auto& [global_index, value] : config_globals_) {
     SetGlobal(global_index, value);
   }

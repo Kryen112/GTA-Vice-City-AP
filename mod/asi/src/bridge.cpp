@@ -185,8 +185,35 @@ void BridgeClient::HandleMessage(const json& message) {
           }
         }
       }
+      std::map<std::int64_t, std::vector<int>> content_district_globals;
+      if (message.contains("content_district_globals")) {
+        for (auto it = message.at("content_district_globals").begin();
+             it != message.at("content_district_globals").end(); ++it) {
+          std::vector<int> globals;
+          for (const json& global_index : it.value()) {
+            globals.push_back(global_index.get<int>());
+          }
+          content_district_globals[std::stoll(it.key())] = std::move(globals);
+        }
+      }
+      std::vector<PickupDistrict> pickup_districts;
+      if (message.contains("content_districts")) {
+        for (const json& entry : message.at("content_districts")) {
+          PickupDistrict placed;
+          placed.x = entry.at("x").get<float>();
+          placed.y = entry.at("y").get<float>();
+          placed.content_index = entry.at("class").get<int>();
+          placed.district = entry.at("district").get<int>();
+          // A row naming a class or a district outside the block would index
+          // past the lock array, so it is dropped rather than trusted.
+          if (placed.content_index < 0 || placed.content_index >= kContentCount) continue;
+          if (placed.district < 0 || placed.district >= kDistrictCount) continue;
+          pickup_districts.push_back(placed);
+        }
+      }
       game_->ApplyConfig(item_globals, completion_watch, item_effects, config_globals,
-                         package_locations, pickup_targets, mainland_routes);
+                         package_locations, pickup_targets, mainland_routes,
+                         content_district_globals, pickup_districts);
     } else if (type == msg::kItems) {
       std::vector<std::pair<std::int64_t, std::int64_t>> items;
       for (const json& entry : message.at("items")) {

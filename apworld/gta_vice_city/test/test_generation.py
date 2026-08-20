@@ -18,8 +18,8 @@ from test.bases import WorldTestBase
 from test.general import gen_steps, setup_multiworld
 from worlds.AutoWorld import call_all
 
-from .. import MINIMUM_SPHERE_ZERO, GTAViceCityWorld, data, rules, scm
-from ..items import ITEM_CLASSIFICATIONS, ITEM_NAME_TO_ID, ORDERED_ITEM_NAMES
+from .. import MINIMUM_SPHERE_ZERO, GTAViceCityWorld, data, district_data, rules, scm
+from ..items import DISTRICT_CONTENT_NAMES, ITEM_CLASSIFICATIONS, ITEM_NAME_TO_ID, ORDERED_ITEM_NAMES
 from ..locations import (
     LOCATION_NAME_TO_ID,
     LOCATION_REGIONS,
@@ -260,10 +260,13 @@ class TestRadioStationsOn(WorldTestBase):
             )
 
     def test_reserved_block_stays_below_the_marker_globals(self) -> None:
-        # $9460 up is SCM-internal (marker handles and visibility flags, whose
+        # $9515 up is SCM-internal (marker handles and visibility flags, whose
         # bases live in add_markers.py); the reserved contract must never grow
-        # into it.
-        self.assertLess(scm.highest_reserved_global(), 9460)
+        # into it. The district content unlocks took $9460..$9514, which is why
+        # add_markers.py's HANDLE_BASE moved with them: a reserved block growing
+        # into the marker scratch would have the ASI writing over live marker
+        # handles.
+        self.assertLess(scm.highest_reserved_global(), 9515)
 
 
 class TestRadioStationsOff(WorldTestBase):
@@ -837,6 +840,152 @@ class TestContentLocksAllKeys(WorldTestBase):
             )
 
 
+class TestContentLocksPerClass(WorldTestBase):
+    # Every class held, split into one item per class per district. The
+    # inherited default tests prove the seed still fills and stays reachable
+    # with 42 progression items where there were 5.
+    game = "Grand Theft Auto Vice City"
+    options: ClassVar[dict] = {
+        "content_locks": _ALL_CONTENT_LOCKS,
+        "split_content_locks": "per_class",
+    }
+
+    def test_the_pool_holds_the_district_items_and_not_the_class_ones(self) -> None:
+        pool_names = {item.name for item in self.multiworld.itempool}
+        for name in data.CONTENT_ITEMS:
+            self.assertNotIn(name, pool_names, name)
+        expected = data.content_items(frozenset(_ALL_CONTENT_LOCKS),
+                                     data.CONTENT_SPLIT_PER_CLASS)
+        self.assertEqual(len(expected), 42)
+        for name in expected:
+            self.assertIn(name, pool_names, name)
+            self.assertEqual(
+                ITEM_CLASSIFICATIONS[name], ItemClassification.progression, name,
+            )
+
+    def test_a_district_item_releases_its_district_and_no_other(self) -> None:
+        # Package 1 is Ocean Beach and package 2 is Washington Beach, so one
+        # item cannot open both: this is the whole point of the split, and it is
+        # what a single class-wide term would silently undo.
+        first = data.hidden_package_name(1)
+        second = data.hidden_package_name(2)
+        self.assertEqual(data.location_district(first), "Ocean Beach")
+        self.assertEqual(data.location_district(second), "Washington Beach")
+        self.assertFalse(self.can_reach_location(first))
+        self.assertFalse(self.can_reach_location(second))
+        self.collect_by_name(["Ocean Beach Hidden Packages"])
+        self.assertTrue(self.can_reach_location(first))
+        self.assertFalse(self.can_reach_location(second))
+        self.collect_by_name(["Washington Beach Hidden Packages"])
+        self.assertTrue(self.can_reach_location(second))
+
+    def test_a_class_item_does_not_leak_across_classes(self) -> None:
+        # Ocean Beach holds packages, rampages, jumps and properties, and each
+        # class waits for its own item there. A district-wide term would open
+        # all four at once, which is the per_district behaviour, not this one.
+        self.collect_by_name(["Mainland Access", "Ocean Beach Hidden Packages"])
+        self.assertTrue(self.can_reach_location(data.hidden_package_name(1)))
+        rampage = next(
+            data.rampage_name(index) for index in range(1, data.RAMPAGE_COUNT + 1)
+            if data.location_district(data.rampage_name(index)) == "Ocean Beach"
+        )
+        self.assertFalse(self.can_reach_location(rampage))
+        self.collect_by_name(["Ocean Beach Rampages"])
+        self.assertTrue(self.can_reach_location(rampage))
+
+    def test_a_business_purchase_needs_its_own_district(self) -> None:
+        # A business purchase carries its content term through the property-sale
+        # requirements, so the split has to reach it there rather than through
+        # the location's own entry. The Malibu Club is Vice Point.
+        self.collect_by_name([
+            "Progressive Vercetti Protection", "Starfish Island Access",
+        ])
+        self.assertFalse(self.can_reach_location("Malibu Club Purchase"))
+        self.collect_by_name(["Ocean Beach Property Purchases"])
+        self.assertFalse(self.can_reach_location("Malibu Club Purchase"))
+        self.collect_by_name(["Vice Point Property Purchases"])
+        self.assertTrue(self.can_reach_location("Malibu Club Purchase"))
+
+    def test_the_42_items_fit_the_pool(self) -> None:
+        # 42 progression items where the whole locks put 5, so filler is what
+        # gives way. create_items refuses a pool with more progression and useful
+        # items than checks, so generating at all is the assertion; the counts
+        # are here so a later class or item change says which side moved.
+        pool_names = [item.name for item in self.multiworld.itempool]
+        district_items = [name for name in pool_names
+                          if name in DISTRICT_CONTENT_NAMES]
+        self.assertEqual(len(district_items), 42)
+        self.assertEqual(len(pool_names),
+                         len(self.multiworld.get_unfilled_locations(self.player)))
+
+    def test_the_fan_out_and_the_pickup_districts_reach_the_mod(self) -> None:
+        slot_data = self.world.fill_slot_data()
+        self.assertEqual(slot_data["split_content_locks"],
+                         data.CONTENT_SPLIT_PER_CLASS)
+        fan_out = slot_data["content_district_globals"]
+        # A class-in-one-district item releases exactly one global, and it is
+        # the one its own class and district name.
+        item_id = str(ITEM_NAME_TO_ID["Ocean Beach Hidden Packages"])
+        self.assertEqual(
+            fan_out[item_id],
+            [scm.district_unlock_global(data.HIDDEN_PACKAGES_ITEM, "Ocean Beach")],
+        )
+        # A whole-class item releases all eleven of its class's, which is what
+        # lets one script gate serve every granularity.
+        whole = str(ITEM_NAME_TO_ID[data.HIDDEN_PACKAGES_ITEM])
+        self.assertEqual(len(fan_out[whole]), len(scm.DISTRICT_KEYS))
+        # Every held pickup is placed, and no entry names a district or class
+        # outside the block.
+        entries = slot_data["content_districts"]
+        self.assertEqual(len(entries), 150)
+        for entry in entries:
+            self.assertIn(entry["class"], range(len(scm.CONTENT_KEYS)))
+            self.assertIn(entry["district"], range(len(scm.DISTRICT_KEYS)))
+
+
+class TestContentLocksPerDistrict(WorldTestBase):
+    # Every class held, split into one item per district covering all of them.
+    game = "Grand Theft Auto Vice City"
+    options: ClassVar[dict] = {
+        "content_locks": _ALL_CONTENT_LOCKS,
+        "split_content_locks": "per_district",
+    }
+
+    def test_one_item_per_district_covers_every_class_there(self) -> None:
+        pool_names = {item.name for item in self.multiworld.itempool}
+        expected = data.content_items(frozenset(_ALL_CONTENT_LOCKS),
+                                      data.CONTENT_SPLIT_PER_DISTRICT)
+        self.assertEqual(len(expected), 11)
+        for name in expected:
+            self.assertIn(name, pool_names, name)
+        for name in data.CONTENT_ITEMS:
+            self.assertNotIn(name, pool_names, name)
+        # One item, every class in that district: the package and the rampage
+        # both open, where per_class would need two items.
+        self.collect_by_name(["Mainland Access", "Ocean Beach Content"])
+        self.assertTrue(self.can_reach_location(data.hidden_package_name(1)))
+        rampage = next(
+            data.rampage_name(index) for index in range(1, data.RAMPAGE_COUNT + 1)
+            if data.location_district(data.rampage_name(index)) == "Ocean Beach"
+        )
+        self.assertTrue(self.can_reach_location(rampage))
+
+    def test_a_district_item_releases_one_global_per_class_it_covers(self) -> None:
+        slot_data = self.world.fill_slot_data()
+        self.assertEqual(slot_data["split_content_locks"],
+                         data.CONTENT_SPLIT_PER_DISTRICT)
+        fan_out = slot_data["content_district_globals"]
+        for district in data.CONTENT_DISTRICTS:
+            item_id = str(ITEM_NAME_TO_ID[data.district_content_item_name(district)])
+            covered = [item for item in data.CONTENT_ITEMS
+                       if district in data.CONTENT_CLASS_DISTRICTS[item]]
+            self.assertEqual(
+                sorted(fan_out[item_id]),
+                sorted(scm.district_unlock_global(item, district) for item in covered),
+                district,
+            )
+
+
 class TestContentLocksOff(WorldTestBase):
     game = "Grand Theft Auto Vice City"
     # Default options: content_locks is empty.
@@ -1142,6 +1291,36 @@ class TestStartingUnlocksRegeneration(WorldTestBase):
         for name in (data.RAMPAGES_ITEM, data.STUNT_JUMPS_ITEM):
             if name != replayed.starting_content_item:
                 self.assertIn(name, pool, name)
+
+    def test_a_tracker_regeneration_replays_the_split_granularity(self) -> None:
+        # A split seed's rules name district items, which only exist in the pool
+        # while the granularity is restored too. Replayed at the wrong
+        # granularity every collectible reads as gated on a whole-class item the
+        # player never receives, so the tracker would show a seed nobody could
+        # play.
+        played = setup_multiworld(GTAViceCityWorld, seed=0, options={
+            "content_locks": ["rampages", "stunt_jumps"],
+            "split_content_locks": "per_class",
+            "starting_content_unlock": True,
+        })
+        world = played.worlds[1]
+        slot_data = GTAViceCityWorld.interpret_slot_data(world.fill_slot_data())
+        self.assertEqual(slot_data["split_content_locks"],
+                         data.CONTENT_SPLIT_PER_CLASS)
+
+        tracker = self._regenerate(slot_data)
+        replayed = tracker.worlds[1]
+        self.assertEqual(replayed.options.split_content_locks.value,
+                         data.CONTENT_SPLIT_PER_CLASS)
+        self.assertEqual(replayed.starting_content_item, world.starting_content_item)
+        pool = {item.name for item in tracker.itempool}
+        precollected = {item.name for item in tracker.precollected_items[1]}
+        for name in data.content_items(frozenset({"rampages", "stunt_jumps"}),
+                                       data.CONTENT_SPLIT_PER_CLASS):
+            self.assertIn(name, pool | precollected, name)
+        # And the whole-class items stay out, since the split replaced them.
+        self.assertNotIn(data.RAMPAGES_ITEM, pool)
+        self.assertNotIn(data.STUNT_JUMPS_ITEM, pool)
 
     def test_a_draw_the_restored_keys_no_longer_offer_is_dropped(self) -> None:
         # Mismatched slot_data (hand-edited, or written by an older world) must
@@ -2226,7 +2405,12 @@ class TestReservedGlobals(WorldTestBase):
         self.assertEqual(scm.ABILITY_UNLOCK_BASE, 9442)
         self.assertEqual(scm.CONTENT_LOCK_FLAG_BASE, 9450)
         self.assertEqual(scm.CONTENT_UNLOCK_BASE, 9455)
-        self.assertEqual(scm.highest_reserved_global(), 9459)
+        # The district content unlocks, the block every content gate and every
+        # content hold actually reads. build_scm.py mirrors the base and the
+        # class-major stride by literal, so a shift here has to move with it.
+        self.assertEqual(scm.DISTRICT_UNLOCK_BASE, 9460)
+        self.assertEqual(scm.DISTRICT_UNLOCK_COUNT, 55)
+        self.assertEqual(scm.highest_reserved_global(), 9514)
         self.assertEqual(scm.ABILITY_KEYS, data.ABILITY_ITEMS)
         self.assertEqual(scm.CONTENT_KEYS, data.CONTENT_ITEMS)
 
@@ -2310,6 +2494,135 @@ class TestReservedGlobals(WorldTestBase):
                     global_index, name,
                 )
 
+    def test_every_holdable_pickup_is_placed_unambiguously(self) -> None:
+        # The ASI puts a pool entry in a district by matching its position
+        # within one unit, and its fallback for an unmatched entry is to hold it
+        # while any district of its class is held. That is the safe direction but
+        # it disagrees with logic, which gates that location on one district's
+        # item alone, so the fallback must never be reached: every holdable
+        # pickup needs a row, and no two rows of one class may sit close enough
+        # to match the same entry.
+        entries = scm.content_districts()
+        self.assertEqual(len(entries), data.HIDDEN_PACKAGE_COUNT
+                         + data.RAMPAGE_COUNT + len(data.PROPERTY_PURCHASES))
+        by_class: dict[int, list[tuple[float, float]]] = {}
+        for entry in entries:
+            by_class.setdefault(entry["class"], []).append((entry["x"], entry["y"]))
+        for class_index, points in by_class.items():
+            with self.subTest(content=scm.CONTENT_KEYS[class_index]):
+                closest = min(
+                    ((left[0] - right[0]) ** 2 + (left[1] - right[1]) ** 2) ** 0.5
+                    for index, left in enumerate(points)
+                    for right in points[index + 1:]
+                )
+                self.assertGreater(closest, 1.0)
+
+    def test_the_district_stamp_is_the_whole_toggle_invariant(self) -> None:
+        # Every district unlock is released by an item or by this stamp, and
+        # nothing else: each script gate is a bare "$district >= 1" and the ASI
+        # holds a pickup on the same read, so a global neither covered nor
+        # stamped reads held forever. With no key selected that means the whole
+        # block has to be stamped, which is the toggle invariant itself; the
+        # lock flags no longer decide anything.
+        block = {scm.DISTRICT_UNLOCK_BASE + offset
+                 for offset in range(scm.DISTRICT_UNLOCK_COUNT)}
+        self.assertEqual(set(scm.unlocked_district_globals(frozenset())), block)
+        for key in data.CONTENT_LOCK_ITEMS:
+            with self.subTest(key=key):
+                selected = frozenset({key})
+                stamped = set(scm.unlocked_district_globals(selected))
+                covered = {
+                    global_index
+                    for item_name in data.content_items(selected,
+                                                        data.CONTENT_SPLIT_PER_CLASS)
+                    for global_index in scm.content_district_globals()[
+                        ITEM_NAME_TO_ID[item_name]]
+                }
+                # Exactly one of the two reaches every global: an item covers it
+                # or the stamp does, never neither and never both.
+                self.assertEqual(stamped | covered, block, key)
+                self.assertEqual(stamped & covered, set(), key)
+
+    def test_every_district_global_is_reachable_at_every_granularity(self) -> None:
+        # The same accounting for whole classes and for district-wide items. A
+        # class-district pair holding no content is covered by the stamp in every
+        # mode, since no item names it: 13 of the 55, which the ASI would
+        # otherwise read as a class held forever on the status key.
+        block = {scm.DISTRICT_UNLOCK_BASE + offset
+                 for offset in range(scm.DISTRICT_UNLOCK_COUNT)}
+        every = frozenset(data.CONTENT_LOCK_ITEMS)
+        stamped = set(scm.unlocked_district_globals(every))
+        self.assertEqual(len(stamped), 13)
+        for split in (data.CONTENT_SPLIT_OFF, data.CONTENT_SPLIT_PER_DISTRICT,
+                      data.CONTENT_SPLIT_PER_CLASS):
+            with self.subTest(split=split):
+                covered = {
+                    global_index
+                    for item_name in data.content_items(every, split)
+                    for global_index in scm.content_district_globals()[
+                        ITEM_NAME_TO_ID[item_name]]
+                }
+                self.assertEqual(stamped | covered, block, split)
+
+    def test_district_tables_match_the_hand_written_mirrors(self) -> None:
+        # build_scm.py transcribes three tables out of district_data.py, because
+        # it cannot import the world: the district order, which fixes every
+        # district unlock global, and the district of each stunt jump and each
+        # store, which decides the global each of the 53 per-site gates reads. A
+        # district reordered or a jump remapped would gate the wrong part of
+        # town, silently and only in game, so both copies are pinned here: when
+        # this fails, the generated data moved and build_scm.py must move with
+        # it.
+        districts = [
+            "Ocean Beach", "Washington Beach",
+            "Vice Point", "Starfish Island",
+            "Prawn Island", "Leaf Links",
+            "Downtown", "Little Haiti",
+            "Little Havana", "Viceport",
+            "Escobar International",
+        ]
+        self.assertEqual(district_data.DISTRICTS, districts)
+        jumps = [
+            "Escobar International", "Escobar International", "Escobar International",
+            "Escobar International", "Escobar International", "Escobar International",
+            "Escobar International", "Escobar International", "Prawn Island",
+            "Vice Point", "Downtown", "Downtown",
+            "Downtown", "Downtown", "Little Haiti",
+            "Little Haiti", "Little Haiti", "Little Havana",
+            "Ocean Beach", "Ocean Beach", "Washington Beach",
+            "Ocean Beach", "Ocean Beach", "Ocean Beach",
+            "Ocean Beach", "Ocean Beach", "Ocean Beach",
+            "Ocean Beach", "Vice Point", "Washington Beach",
+            "Washington Beach", "Washington Beach", "Washington Beach",
+            "Washington Beach", "Washington Beach", "Starfish Island",
+        ]
+        self.assertEqual(district_data.STUNT_JUMP_DISTRICTS, jumps)
+        stores = [
+            "Washington Beach", "Vice Point", "Little Havana",
+            "Little Havana", "Downtown", "Downtown",
+            "Little Haiti", "Vice Point", "Vice Point",
+            "Vice Point", "Vice Point", "Vice Point",
+            "Vice Point", "Little Havana", "Little Havana",
+        ]
+        self.assertEqual(district_data.STORE_DISTRICTS, stores)
+        # The block those tables index into. build_scm.py mirrors the base and
+        # derives the stride from the class count, so both are pinned.
+        self.assertEqual(scm.DISTRICT_UNLOCK_BASE, 9460)
+        self.assertEqual(len(scm.DISTRICT_KEYS), len(districts))
+        self.assertEqual(scm.CONTENT_KEYS.index(data.STUNT_JUMPS_ITEM), 2)
+        self.assertEqual(scm.CONTENT_KEYS.index(data.ROBBABLE_STORES_ITEM), 4)
+
+    def test_every_lockable_location_has_a_district(self) -> None:
+        # A location with a content class but no district would fall out of the
+        # split silently: content_item_for would return the class item and that
+        # location would answer to an item no seed places once split.
+        for location, class_item in data.LOCATION_CONTENT_CLASS.items():
+            with self.subTest(location=location):
+                district = data.location_district(location)
+                self.assertIsNotNone(district, location)
+                self.assertIn(district, district_data.DISTRICTS, location)
+                self.assertIn(district, data.CONTENT_CLASS_DISTRICTS[class_item])
+
     def test_sunshine_completion_globals_match_the_hand_written_mirrors(self) -> None:
         # build_scm.py hard-codes these in three tables: SUNSHINE_IMPORT_LISTS
         # (the gate and completion write at each :IMPORTn_87 recognition block),
@@ -2342,10 +2655,11 @@ class TestReservedGlobals(WorldTestBase):
         self.assertEqual(scm.PROPERTIES_CASH_GLOBAL, 9433)
 
     def test_the_script_gated_content_items_keep_their_offsets(self) -> None:
-        # build_scm.py derives the two gates it writes into the script from
-        # fixed offsets into this block (stunt jumps at +2, robbable stores at
-        # +4), because those two classes have no icon for the ASI to hold.
-        # Reordering CONTENT_ITEMS would point both gates at another class.
+        # The two classes with no icon for the ASI to hold gate in the script
+        # instead, and build_scm.py indexes the district block by their position
+        # in CONTENT_ITEMS (stunt jumps at 2, robbable stores at 4) times the
+        # district count. Reordering CONTENT_ITEMS would point all 53 of those
+        # gates at another class.
         self.assertEqual(scm.CONTENT_KEYS.index(data.STUNT_JUMPS_ITEM), 2)
         self.assertEqual(scm.CONTENT_KEYS.index(data.ROBBABLE_STORES_ITEM), 4)
 
@@ -2677,6 +2991,22 @@ class TestRewardMirror(WorldTestBase):
         )
         self.assertGreater(cash_total, 0)
         self.assertLessEqual(cash_total, sum(data.LOCATION_REWARD.values()))
+
+    def test_filler_gives_way_from_the_smallest_amount_up(self) -> None:
+        # There are always more mirror entries than filler slots, since
+        # progression and useful items take slots first, so something is always
+        # dropped. What survives is the money that matters: asked for ten slots,
+        # the mirror hands back the entries of the ten best-paying checks and
+        # nothing else, so a seed never spends a scarce slot on a hundred-dollar
+        # item while thousands go unplaced. The wider the item pool grows, the
+        # further up this order the cut lands.
+        ranked = sorted(self.world._enabled_locations(),
+                        key=lambda name: (-data.LOCATION_REWARD[name], name))
+        kept = self.world._filler_entries(10)
+        self.assertEqual(
+            sorted(kept, key=str),
+            sorted((data.mirror_item(name) for name in ranked[:10]), key=str),
+        )
 
     def test_rampage_cash_present_when_rampages_on(self) -> None:
         mirror = set(self.world._reward_mirror())

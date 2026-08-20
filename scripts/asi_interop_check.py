@@ -49,7 +49,29 @@ CONFIG = {
         {"global": 9035, "label": "Starfish Island Causeway",
          "needs_global": 9031, "needs_label": "Starfish Island Access"},
     ],
+    # One content item releasing several district globals and one releasing a
+    # single global: the two shapes the fan-out has to decode.
+    "content_district_globals": {
+        "542100200": [9460, 9461, 9462],
+        "542100201": [9471],
+    },
+    # Two placed pickups of different classes, close enough together that only
+    # the class tells them apart.
+    "content_districts": [
+        {"x": 479.6, "y": -1718.5, "class": 0, "district": 0},
+        {"x": 480.1, "y": -1718.5, "class": 3, "district": 9},
+    ],
 }
+
+# Pickup district rows the ASI must drop rather than keep: a class and a district
+# outside their blocks would index past the lock array. Sent with the good rows;
+# the harness does not echo them, so the assertion is that the config frame
+# decodes at all rather than that these are filtered, which the console
+# self-test covers directly.
+DROPPED_PICKUP_DISTRICTS = [
+    {"x": 1.0, "y": 2.0, "class": 99, "district": 0},
+    {"x": 3.0, "y": 4.0, "class": 0, "district": 99},
+]
 
 # Rows the ASI must drop rather than keep: one with no global to read, one with
 # no name to show, and one claiming a second requirement it cannot name, which
@@ -85,6 +107,8 @@ class Recorder:
             CONFIG["item_globals"], CONFIG["completion_watch"],
             CONFIG["item_effects"], CONFIG["config_globals"], {},
             CONFIG["pickup_layout"], CONFIG["mainland_routes"] + DROPPED_ROUTES,
+            CONFIG["content_district_globals"],
+            CONFIG["content_districts"] + DROPPED_PICKUP_DISTRICTS,
         )
         await bridge.send_items(RESYNC_ITEMS)
         await bridge.send_checked(RESYNC_CHECKED)

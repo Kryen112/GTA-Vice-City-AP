@@ -82,7 +82,7 @@ version control.
   Repeatable earnings (emergency pay, till cash, race replay prizes, in-mission
   bonuses) are never touched, and a build-time audit pins every remaining
   payout so a new site fails the build instead of leaking. Reserved globals
-  above `$9459` are SCM-internal: `$9460` up are marker handles and
+  above `$9514` are SCM-internal: `$9515` up are marker handles and
   visibility flags. `$9004`, `$9006`, `$9007`, `$9008`, and `$9009` in the
   bookkeeping gap below `$9392` are SCM-internal scratch (the two island-gate
   once-guards, a package counter, and two reward once-guards). The ASI never
@@ -96,12 +96,31 @@ version control.
 - Content locks: `$9450..$9454` (one lock flag per content item, ASI-stamped
   from slot_data) and `$9455..$9459` (one unlock per item), in the order
   hidden packages, rampages, stunt jumps, property purchases, robbable
-  stores. Three of the classes are pickups, so holding them belongs to the ASI
-  and the script needs nothing for them. The other two have no icon to hold, so their gates
-  belong to the script rather than the ASI: the USJ thread reads the stunt jump
-  pair and the two store robbery handlers read the store pair. The top unlock
-  is the highest reserved global, which the foundation's sizing line references
-  as `$9459`.
+  stores. No gate reads either range: the flags only tell the ASI which classes
+  to list on its status key, and a whole-class release reaches the script
+  through the district block below.
+- District content locks: `$9460..$9514`, one unlock per content class per
+  district, class-major over eleven districts in the apworld's
+  `district_data.DISTRICTS` order. This is the block every content gate and
+  every content hold reads, whatever `split_content_locks` is set to, because
+  an item releases every global it covers: one for a class-in-one-district
+  item, all eleven for a whole-class item. So the script needs no idea which
+  granularity a seed chose.
+
+  Every global no item covers, which is an unlocked class's eleven plus the
+  thirteen class-district pairs holding no content at all, is stamped to 1 at
+  config time. That is what lets each gate be a single condition, since the
+  script cannot express "not locked OR released" in one, and it is the whole of
+  the toggle invariant: at zero keys the entire block is stamped and every gate
+  falls through.
+
+  Three of the classes are pickups, so holding them belongs to the ASI, which
+  puts a pool entry in a district by position. The other two have no icon, so
+  their gates belong to the script and are per site: each of the 36 stunt jumps
+  gates at its own takeoff test (38 sites, since ids 25 and 26 each have two
+  definitions) and each of the 15 stores at its own entry into the shared
+  robbery handler. The top of this block is the highest reserved global, which
+  the foundation's sizing line references as `$9514`.
 - Stunt jump dump: F7 in a loaded game writes `gtavc_ap_stuntjumps.txt` beside
   the executable. Vice City defines its 36 unique stunt jumps nowhere a build
   step can read, neither in the SCM nor as a static table in the executable;

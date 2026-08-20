@@ -11,8 +11,9 @@
 #include <utility>
 #include <vector>
 
-// MainlandRoute is part of the configuration this interface carries, and the
-// header holding it is game-free like this one.
+// MainlandRoute and PickupDistrict are part of the configuration this interface
+// carries, and the headers holding them are game-free like this one.
+#include "scm_content_locks.hpp"
 #include "scm_crossings.hpp"
 
 namespace gtavc {
@@ -63,6 +64,12 @@ class GameState {
   virtual ~GameState() = default;
 
   // How received items map to SCM state, sent once per connection before the
+  // content_district_globals: AP item id -> every district unlock global that
+  // item releases, beside item_globals rather than inside it because one content
+  // item can release many. content_districts: where each holdable pickup stands
+  // and which district it is in, so a pool entry found by type or model can be
+  // placed.
+  //
   // resync. item_globals: AP item id -> the count global it adds one to (unlock
   // or persistent reward). item_effects: AP item id -> a one-shot consumable
   // effect. config_globals: config-flag global index -> value to stamp.
@@ -76,7 +83,10 @@ class GameState {
                            const std::map<int, int>& config_globals,
                            const std::vector<PackageLocation>& package_locations,
                            const std::vector<PickupTarget>& pickup_targets,
-                           const std::vector<MainlandRoute>& routes) = 0;
+                           const std::vector<MainlandRoute>& routes,
+                           const std::map<std::int64_t, std::vector<int>>&
+                               content_district_globals,
+                           const std::vector<PickupDistrict>& pickup_districts) = 0;
 
   // The seed hash to present on hello, read from the reserved SCM global.
   // Empty when no game has been started for this seed.

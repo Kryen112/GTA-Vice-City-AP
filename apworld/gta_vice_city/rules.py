@@ -26,15 +26,18 @@ carrying two thresholds at once.
 Two families of lock add terms, each only while its own key is selected (with
 the key off the item is not in the pool, so no rule may name it). Ability locks
 gate on what Tommy can do and content locks on what is in the world; they
-compose by union, since either lock alone still stops the check. The wallet and
-the property content item both ride the property-sale requirements, covering
-business purchases, venue missions, and the finale's assets in one place;
-safehouse purchases and the collectible classes carry their items directly from
-data.LOCATION_ABILITY_REQUIREMENTS and data.LOCATION_CONTENT_REQUIREMENTS. The
-ability terms are the minimal day-one set and the pre-release manual runthrough
-adds the rest; a content term is uniform across its whole class, so it needs no
-audit. Both families propagate forward through a strand along with everything
-else, so a mission behind an ability-locked mission carries that lock too: Two
+compose by union, since either lock alone still stops the check. The wallet
+rides the property-sale requirements, covering business purchases, venue
+missions, and the finale's assets in one place; the item releasing a particular
+property's icon does not, since split locks make that item the district's rather
+than the class's, so each caller that names a property adds its own. Safehouse
+purchases and the collectible classes carry their items directly, through
+data.LOCATION_ABILITY_REQUIREMENTS and data.content_item_for. The ability terms
+are the minimal day-one set and the pre-release manual runthrough adds the rest;
+a content term covers a whole class or one district of one, which
+data.content_item_for decides from the seed's granularity. Both families
+propagate forward through a strand along with everything else, so a mission
+behind an ability-locked mission carries that lock too: Two
 Bit Hit needs the land vehicle Demolition Man needs, and within a strand no fill
 can strand a lock item behind the mission its own lock holds. Propagation stops
 at the strand boundary, where the in-game ordering constraint stops: a
@@ -123,22 +126,50 @@ def _ability_terms(location_name: str, active_items: frozenset[str]) -> list[Req
     ]
 
 
-def _content_terms(location_name: str, active_items: frozenset[str]) -> list[Requirement]:
+def _content_terms(location_name: str, active_items: frozenset[str],
+                   split_content_locks: int) -> list[Requirement]:
     # The location's content-lock item, on the same terms as an ability item.
-    # A content lock is uniform across its class, so this is one item or none.
-    return [
-        (item, 1)
-        for item in data.LOCATION_CONTENT_REQUIREMENTS.get(location_name, [])
-        if item in active_items
-    ]
+    # One item or none either way. Whether a location is locked at all is a
+    # question about its class, which active_items answers by class item; the
+    # granularity then decides which item covers it, the class or its district.
+    class_item = data.LOCATION_CONTENT_CLASS.get(location_name)
+    if class_item is None or class_item not in active_items:
+        return []
+    covering = data.content_item_for(location_name, split_content_locks)
+    return [] if covering is None else [(covering, 1)]
 
 
-def _lock_terms(location_name: str, active_items: frozenset[str]) -> list[Requirement]:
+def _property_content_terms(purchase: str, active_items: frozenset[str],
+                            split_content_locks: int) -> list[Requirement]:
+    # What has to arrive before this one property can be bought: whole, the one
+    # class item covering all fifteen icons; split, the item covering the
+    # district this property stands in.
+    if data.PROPERTY_PURCHASES_ITEM not in active_items:
+        return []
+    covering = data.content_item_for(purchase, split_content_locks)
+    return [] if covering is None else [(covering, 1)]
+
+
+def _any_property_content_terms(active_items: frozenset[str],
+                                split_content_locks: int) -> list[Requirement]:
+    # What has to arrive before ANY property can be bought, for the one caller
+    # that cannot name one: the finale with the properties class off, where no
+    # purchase location exists to carry a term and vanilla asset completion
+    # still spends money at the icons. Whole that is the class item; split it is
+    # every district holding a property, which over-requires on purpose rather
+    # than risk a finale reachable while the icons it needs are still held.
+    if data.PROPERTY_PURCHASES_ITEM not in active_items:
+        return []
+    return [(item, 1) for item in data.property_content_items(split_content_locks)]
+
+
+def _lock_terms(location_name: str, active_items: frozenset[str],
+                split_content_locks: int) -> list[Requirement]:
     # Every lock term a location carries. The two families compose by union: a
     # store behind both the weapon_equip ability key and the robbable_stores
     # content key needs both items, since either lock alone still stops it.
     return (_ability_terms(location_name, active_items)
-            + _content_terms(location_name, active_items))
+            + _content_terms(location_name, active_items, split_content_locks))
 
 
 def _deduplicated(requirements: list[Requirement]) -> list[Requirement]:
@@ -158,6 +189,7 @@ def _deduplicated(requirements: list[Requirement]) -> list[Requirement]:
 
 
 def _predecessor_requirements(giver: str, index: int, active_items: frozenset[str],
+                              split_content_locks: int,
                               split_mainland_access: bool) -> list[Requirement]:
     # What the earlier missions of this strand demand. A strand runs in order:
     # APMARK reveals only the strand's first unpassed mission and the vanilla
@@ -182,11 +214,13 @@ def _predecessor_requirements(giver: str, index: int, active_items: frozenset[st
                 f"{earlier} precedes a mission in its own strand and needs a "
                 f"region with several ways in; propagate it as a threshold")
         requirements.extend(earlier_regions)
-        requirements.extend(_lock_terms(earlier, active_items))
+        requirements.extend(
+            _lock_terms(earlier, active_items, split_content_locks))
     return requirements
 
 
 def _mission_requirements(mission: str, giver: str, active_items: frozenset[str],
+                          split_content_locks: int,
                           split_mainland_access: bool) -> list[Requirement]:
     # The launcher-gate view: progressive unlocks, plus any area item the
     # mission needs beyond its own region (the finale's Mainland Access), plus
@@ -210,9 +244,9 @@ def _mission_requirements(mission: str, giver: str, active_items: frozenset[str]
     region_requirements, _ = _region_terms(
         data.MISSION_REGION_REQUIREMENTS.get(mission, []), split_mainland_access)
     requirements.extend(region_requirements)
-    requirements.extend(_lock_terms(mission, active_items))
+    requirements.extend(_lock_terms(mission, active_items, split_content_locks))
     requirements.extend(_predecessor_requirements(
-        giver, index, active_items, split_mainland_access))
+        giver, index, active_items, split_content_locks, split_mainland_access))
     return _deduplicated(requirements)
 
 
@@ -226,6 +260,7 @@ def _mission_region_thresholds(mission: str,
 
 
 def _property_sale_requirements(active_items: frozenset[str],
+                                split_content_locks: int,
                                 split_mainland_access: bool) -> list[Requirement]:
     # A business is for sale only once Shakedown passes, so anything behind
     # buying one requires everything logic needs to pass Shakedown: its items
@@ -236,7 +271,8 @@ def _property_sale_requirements(active_items: frozenset[str],
     # and the finale's assets in one place.
     mission = data.PROPERTY_UNLOCK_MISSION
     requirements = _mission_requirements(
-        mission, locations.MISSION_GIVER[mission], active_items, split_mainland_access)
+        mission, locations.MISSION_GIVER[mission], active_items,
+        split_content_locks, split_mainland_access)
     region = locations.LOCATION_REGIONS[mission]
     # Shakedown is on Starfish Island, which has one way in however the mainland
     # crossings are set, so this is always flat.
@@ -244,17 +280,16 @@ def _property_sale_requirements(active_items: frozenset[str],
     requirements = [*requirements, *region_requirements]
     if data.WALLET_ITEM in active_items:
         requirements = [*requirements, (data.WALLET_ITEM, 1)]
-    # The property content lock rides here for the same reason the wallet does:
-    # with the icons held, nothing can be bought, so everything behind buying a
-    # property needs the item. This is what carries it onto the finale when the
-    # properties class is off and no purchase location exists to carry it.
-    if data.PROPERTY_PURCHASES_ITEM in active_items:
-        requirements = [*requirements, (data.PROPERTY_PURCHASES_ITEM, 1)]
+    # The property content lock does NOT ride here, because split by district it
+    # is not one item for all fifteen icons: each caller adds the term for the
+    # property it is buying, through _property_content_terms, or the strict union
+    # through _any_property_content_terms where it can name none.
     return requirements
 
 
 def _asset_completion_requirements(asset: str, progressive_count: int,
-                                   active_items: frozenset[str]) -> list[Requirement]:
+                                   active_items: frozenset[str],
+                                   split_content_locks: int) -> list[Requirement]:
     # The items to complete an income asset: its ownership item (buying the
     # property is covered by the property-sale requirements the finale rule
     # carries once), where the asset completes through its venue strand the
@@ -265,11 +300,18 @@ def _asset_completion_requirements(asset: str, progressive_count: int,
     # through the import lists, not its race, so the race's terms are none of
     # the threshold's business. The count doubles as a mission count because a
     # venue strand's nth mission is exactly what its nth progressive opens.
-    requirements: list[Requirement] = [(data.ownership_item_name(asset), 1)]
+    # Everything else about buying the property is the sale requirements' job,
+    # carried once by the finale rule; what belongs to the asset itself is the
+    # item releasing its own icon, since split locks make that the district's.
+    requirements: list[Requirement] = [
+        (data.ownership_item_name(asset), 1),
+        *_property_content_terms(f"{asset} Purchase", active_items,
+                                 split_content_locks),
+    ]
     if progressive_count > 0:
         requirements.append((data.progressive_item_name(asset), progressive_count))
     for mission in data.VENUE_STRANDS.get(asset, [])[:progressive_count]:
-        requirements.extend(_lock_terms(mission, active_items))
+        requirements.extend(_lock_terms(mission, active_items, split_content_locks))
     requirements.extend(
         (item, 1)
         for item in data.ASSET_ABILITY_REQUIREMENTS.get(asset, [])
@@ -280,6 +322,7 @@ def _asset_completion_requirements(asset: str, progressive_count: int,
 
 def _finale_asset_terms(
     active_items: frozenset[str],
+    split_content_locks: int,
     split_mainland_access: bool,
 ) -> tuple[list[Requirement], list[list[Requirement]]]:
     # The finale's vanilla asset prerequisite as items. Hit the Courier
@@ -289,11 +332,14 @@ def _finale_asset_terms(
     # assets. The sale requirements ride along once, covering every purchase.
     mandatory = (
         _asset_completion_requirements(
-            "Printworks", len(data.VENUE_STRANDS["Printworks"]), active_items)
-        + _property_sale_requirements(active_items, split_mainland_access)
+            "Printworks", len(data.VENUE_STRANDS["Printworks"]), active_items,
+            split_content_locks)
+        + _property_sale_requirements(
+            active_items, split_content_locks, split_mainland_access)
     )
     optional = [
-        _asset_completion_requirements(asset, progressive_count, active_items)
+        _asset_completion_requirements(asset, progressive_count, active_items,
+                                       split_content_locks)
         for asset, progressive_count in data.FINALE_OPTIONAL_ASSETS.items()
     ]
     return mandatory, optional
@@ -304,26 +350,34 @@ def build_location_rules(
     ability_locks: frozenset[str] = frozenset(),
     content_locks: frozenset[str] = frozenset(),
     split_mainland_access: bool = False,
+    split_content_locks: int = data.CONTENT_SPLIT_OFF,
 ) -> dict[str, RulePredicate]:
     # One active set for both lock families: a term binds when its own key is
     # selected, and every predicate below filters against this.
+    # The class item is what says a class is locked, whatever the granularity,
+    # so it stays in here even when the items in the pool are the district ones:
+    # every content term is emitted through data.content_item_for, which turns
+    # the class into the covering item for the seed.
     active_items = frozenset(
         [item for key in ability_locks for item in data.ABILITY_LOCK_ITEMS[key]]
         + [data.CONTENT_LOCK_ITEMS[key] for key in content_locks]
     )
     rules: dict[str, RulePredicate] = {}
-    sale_requirements = _property_sale_requirements(active_items, split_mainland_access)
+    sale_requirements = _property_sale_requirements(
+        active_items, split_content_locks, split_mainland_access)
     finale_mandatory, finale_optional = _finale_asset_terms(
-        active_items, split_mainland_access)
+        active_items, split_content_locks, split_mainland_access)
     for mission, giver in locations.MISSION_GIVER.items():
         requirements = _mission_requirements(
-            mission, giver, active_items, split_mainland_access)
+            mission, giver, active_items, split_content_locks, split_mainland_access)
         region_thresholds = _mission_region_thresholds(mission, split_mainland_access)
         if giver in data.VENUE_STRANDS:
             requirements = [
                 *requirements,
                 (data.ownership_item_name(giver), 1),
                 *sale_requirements,
+                *_property_content_terms(f"{giver} Purchase", active_items,
+                                         split_content_locks),
             ]
         if giver == "Vercetti Finale":
             if properties_enabled:
@@ -341,7 +395,9 @@ def build_location_rules(
                 # included, and the wallet term while its lock is selected,
                 # since vanilla asset completion still spends money) so the
                 # fill cannot strand those items behind it.
-                off_requirements = requirements + sale_requirements
+                off_requirements = (
+                    requirements + sale_requirements
+                    + _any_property_content_terms(active_items, split_content_locks))
                 rules[mission] = (
                     _requires_with_thresholds(off_requirements, region_thresholds)
                     if region_thresholds else _requires(off_requirements)
@@ -352,7 +408,9 @@ def build_location_rules(
         elif requirements:
             rules[mission] = _requires(requirements)
     for purchase in data.BUSINESS_PURCHASES:
-        rules[purchase] = _requires(sale_requirements)
+        rules[purchase] = _requires(
+            sale_requirements
+            + _property_content_terms(purchase, active_items, split_content_locks))
     # A venue's own activities carry no progressive unlock: vanilla opens them
     # all the moment the venue is bought, so they need the venue bought and
     # owned and nothing more, plus their own lock terms.
@@ -363,13 +421,15 @@ def build_location_rules(
             rules[activity] = _requires([
                 (data.ownership_item_name(venue), 1),
                 *sale_requirements,
-                *_lock_terms(activity, active_items),
+                *_property_content_terms(f"{venue} Purchase", active_items,
+                                         split_content_locks),
+                *_lock_terms(activity, active_items, split_content_locks),
             ])
     # Every remaining location with a lock term: the collectible and activity
     # classes and the safehouse purchases, which carry no other rule. A
-    # business purchase and a venue activity are already ruled above, and a
-    # business purchase's content term rides the sale requirements, so both are
-    # skipped here rather than ruled twice.
+    # business purchase and a venue activity are already ruled above, with the
+    # item releasing their property's icon added there, so both are skipped here
+    # rather than ruled twice.
     handled = (
         set(locations.MISSION_GIVER) | set(data.BUSINESS_PURCHASES) | venue_activities
     )
@@ -380,7 +440,7 @@ def build_location_rules(
     for location_name in locked_locations:
         if location_name in handled:
             continue
-        lock_terms = _lock_terms(location_name, active_items)
+        lock_terms = _lock_terms(location_name, active_items, split_content_locks)
         if lock_terms:
             rules[location_name] = _requires(lock_terms)
     return rules

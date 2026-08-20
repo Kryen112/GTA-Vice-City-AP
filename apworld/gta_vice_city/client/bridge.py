@@ -96,11 +96,12 @@ class AsiBridge:
     async def send_config(
         self, item_globals: dict, completion_watch: dict, item_effects: dict, config_globals: dict,
         package_coords: dict, pickup_layout: list, mainland_routes: list,
+        content_district_globals: dict, content_districts: list,
     ) -> None:
         await self.send(
             protocol.config_message(
                 item_globals, completion_watch, item_effects, config_globals, package_coords,
-                pickup_layout, mainland_routes,
+                pickup_layout, mainland_routes, content_district_globals, content_districts,
             )
         )
 

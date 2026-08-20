@@ -50,6 +50,8 @@ class Recorder:
                 self.config.get("item_effects", {}), self.config.get("config_globals", {}),
                 self.config.get("package_coords", {}), self.config.get("pickup_layout", []),
                 self.config.get("mainland_routes", []),
+                self.config.get("content_district_globals", {}),
+                self.config.get("content_districts", []),
             )
         await bridge.send_items(self.resync_items)
         await bridge.send_checked(self.resync_checked)

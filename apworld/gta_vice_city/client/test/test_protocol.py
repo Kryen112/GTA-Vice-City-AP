@@ -43,6 +43,11 @@ class TestFraming(unittest.TestCase):
               "needs_global": 0, "needs_label": ""},
              {"global": 9035, "label": "Starfish Island Causeway",
               "needs_global": 9031, "needs_label": "Starfish Island Access"}],
+            # A whole-class item releasing several districts, and a district item
+            # releasing one: the two shapes the fan-out has to survive framing.
+            {"542100200": [9460, 9461, 9462], "542100201": [9471]},
+            [{"x": 479.6, "y": -1718.5, "class": 0, "district": 0},
+             {"x": 218.22, "y": -1613.76, "class": 1, "district": 0}],
         )
         self.assertEqual(_round_trip(message), [message])
 

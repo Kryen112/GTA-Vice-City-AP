@@ -41,7 +41,9 @@ Client to ASI:
               completion_watch, index; config-flag global index -> value to
               package_coords,   stamp; completion global index -> location id
               pickup_layout,    to poll and report; package coordinates for
-              mainland_routes}  per-package detection; the ambient pickup
+              mainland_routes,  per-package detection; the ambient pickup
+              content_district_globals,
+              content_districts}
                               layout to enforce (empty when pickups are
                               vanilla); and the ways to the mainland, one entry
                               when Mainland Access opens them all and one per
@@ -125,6 +127,7 @@ def refused_message(reason: str) -> dict:
 def config_message(
     item_globals: dict, completion_watch: dict, item_effects: dict, config_globals: dict,
     package_coords: dict, pickup_layout: list, mainland_routes: list,
+    content_district_globals: dict, content_districts: list,
 ) -> dict:
     return {
         "type": CONFIG,
@@ -135,6 +138,11 @@ def config_message(
         "package_coords": package_coords,
         "pickup_layout": pickup_layout,
         "mainland_routes": mainland_routes,
+        # One content item can release many district globals, so this rides
+        # beside item_globals rather than bending its one-global-per-item shape.
+        "content_district_globals": content_district_globals,
+        # Where each holdable pickup stands and which district it belongs to.
+        "content_districts": content_districts,
     }
 
 
