@@ -480,6 +480,9 @@ MISSION_ABILITY_REQUIREMENTS: dict[str, list[str]] = {
     "Psycho Killer": [WEAPON_EQUIP_ITEM, LAND_VEHICLES_ITEM],
     "Publicity Tour": [LAND_VEHICLES_ITEM],
     "Recruitment Drive": [WEAPON_EQUIP_ITEM, LAND_VEHICLES_ITEM],
+    # A foot chase, which the audit runs down with an infinite sprint or a car.
+    # The game has no infinite sprint, so the car is what is left.
+    "The Chase": [LAND_VEHICLES_ITEM],
     "Rub Out": [WEAPON_EQUIP_ITEM],
     "Shakedown": [WEAPON_EQUIP_ITEM],
     "Spilling the Beans": [WEAPON_EQUIP_ITEM],
@@ -1148,6 +1151,79 @@ PACKAGE_ABILITY_REQUIREMENTS: dict[int, list[str]] = {
 }
 
 
+# Where the audit gives a location several routes and any one is enough. Each
+# entry is a list of alternatives, and each alternative the items that route takes
+# together, so [[A], [B, C]] reads "A, or B and C". These sit beside the tables
+# above rather than in them, since those mean AND.
+#
+# A route whose items are none of them locked is always open, which makes the
+# whole requirement free, and rules.py drops it rather than emitting a one-of
+# nobody can fail.
+#
+# A route this cannot express is left out, and leaving one out only narrows, so
+# it is the safe direction. Two are left out. The audit opens package 42 from
+# inside the Film Studio as well, once the studio is bought and owned. And it
+# opens The Chase on foot with an infinite sprint, which is not a thing the game
+# or the mod has, so The Chase keeps the car alone, in
+# MISSION_ABILITY_REQUIREMENTS rather than here: an or with one route left is a
+# requirement. Whether the plain sprint is enough is an in-game question, and if
+# it is, The Chase gains a route.
+MISSION_ABILITY_ALTERNATIVES: dict[str, list[list[str]]] = {
+    "Death Row": [[LAND_VEHICLES_ITEM], [AIR_VEHICLES_ITEM]],
+    "Gun Runner": [[WEAPON_EQUIP_ITEM], [LAND_VEHICLES_ITEM]],
+    "Road Kill": [[WEAPON_EQUIP_ITEM], [LAND_VEHICLES_ITEM]],
+    "Hit the Courier": [[LAND_VEHICLES_ITEM], [AIR_VEHICLES_ITEM]],
+}
+
+# Packages that can be got at more than one way: the first two sit out in the
+# water, the rest are on roofs a car can be jumped off or a helicopter landed on.
+PACKAGE_ABILITY_ALTERNATIVES: dict[int, list[list[str]]] = {
+    3: [[AIR_VEHICLES_ITEM], [SEA_VEHICLES_ITEM]],
+    4: [[AIR_VEHICLES_ITEM], [SEA_VEHICLES_ITEM]],
+    7: [[AIR_VEHICLES_ITEM], [LAND_VEHICLES_ITEM]],
+    12: [[AIR_VEHICLES_ITEM], [LAND_VEHICLES_ITEM]],
+    41: [[AIR_VEHICLES_ITEM], [LAND_VEHICLES_ITEM]],
+    42: [[AIR_VEHICLES_ITEM], [LAND_VEHICLES_ITEM]],
+    65: [[AIR_VEHICLES_ITEM], [LAND_VEHICLES_ITEM]],
+    86: [[AIR_VEHICLES_ITEM], [LAND_VEHICLES_ITEM], [SPRINT_ITEM, JUMP_ITEM]],
+    89: [[AIR_VEHICLES_ITEM], [LAND_VEHICLES_ITEM]],
+    91: [[AIR_VEHICLES_ITEM], [LAND_VEHICLES_ITEM, JUMP_ITEM]],
+    92: [[AIR_VEHICLES_ITEM], [LAND_VEHICLES_ITEM]],
+    100: [[AIR_VEHICLES_ITEM], [LAND_VEHICLES_ITEM]],
+}
+
+# Two rampages whose icon cannot be walked to. There are four rocket launcher
+# rampages and two of them are in Viceport, so these are named by index and by
+# the name the table gives them: 2 is "Rampage - Escobar International - RPG",
+# reached by air or by road, and 25 is "Rampage - Viceport - RPG", out in the
+# water and reached by air or by boat.
+#
+# Both keep the weapon their class rule gives them. The audit names the weapon
+# for 25 and not for 2, and the two are the same kind of site, so the weapon
+# stays on both as the stricter reading of a sheet that disagrees with itself.
+RAMPAGE_ABILITY_ALTERNATIVES: dict[int, list[list[str]]] = {
+    2: [[AIR_VEHICLES_ITEM], [LAND_VEHICLES_ITEM]],
+    25: [[AIR_VEHICLES_ITEM], [SEA_VEHICLES_ITEM]],
+}
+
+
+def location_ability_alternatives() -> dict[str, list[list[str]]]:
+    """Every location's several-routes requirement, by location name.
+
+    Built the same way as location_ability_requirements, so a rename of a
+    collectible moves its routes with it.
+    """
+    alternatives: dict[str, list[list[str]]] = {
+        mission: [list(route) for route in routes]
+        for mission, routes in MISSION_ABILITY_ALTERNATIVES.items()
+    }
+    for index, routes in PACKAGE_ABILITY_ALTERNATIVES.items():
+        alternatives[hidden_package_name(index)] = [list(route) for route in routes]
+    for index, routes in RAMPAGE_ABILITY_ALTERNATIVES.items():
+        alternatives[rampage_name(index)] = [list(route) for route in routes]
+    return alternatives
+
+
 def location_ability_requirements() -> dict[str, list[str]]:
     """Every location's ability items, the minimal day-one set. A term binds
     only while its ability_locks key is selected (rules.py filters); with the
@@ -1200,6 +1276,7 @@ def location_ability_requirements() -> dict[str, list[str]]:
 
 
 LOCATION_ABILITY_REQUIREMENTS: dict[str, list[str]] = location_ability_requirements()
+LOCATION_ABILITY_ALTERNATIVES: dict[str, list[list[str]]] = location_ability_alternatives()
 
 
 def _content_class_locations() -> dict[str, list[str]]:

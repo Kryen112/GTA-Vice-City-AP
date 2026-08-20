@@ -28,6 +28,11 @@ property-sale requirements inherit the mainland through Death Row: every busines
 purchase, venue mission and venue activity carries it, and the two finale
 missions carry it alongside the asset threshold.
 
+Where the audit gives a location more than one way in, the rule carries a one-of
+threshold over those routes instead of a term, and a route propagates down a
+strand exactly as a term does. A route whose items are none of them locked is
+always open, so the requirement is dropped rather than emitted.
+
 Two families of lock add terms, each only while its own key is selected (with
 the key off the item is not in the pool, so no rule may name it). Ability locks
 gate on what Tommy can do and content locks on what is in the world; they
@@ -88,11 +93,12 @@ def _requires_with_thresholds(
     thresholds: list[Threshold],
 ) -> RulePredicate:
     # The conjunction of `requirements` plus one count per threshold: at least
-    # `needed` of that threshold's alternatives fully satisfiable. Two are in
+    # `needed` of that threshold's alternatives fully satisfiable. Three are in
     # use. The finale's mirrors the FIN1 gate's owned-asset count, which any
     # large enough subset satisfies. A region's counts the ways in, which is one
-    # group unless the mainland crossings are split, and the finale's last
-    # mission carries both at once.
+    # group unless the mainland crossings are split. The audit's several-routes
+    # requirements are the third, one group per route, and a rule can carry
+    # several of them alongside the other two.
     return lambda state, player: (
         _satisfied(state, player, requirements)
         and all(
@@ -174,6 +180,28 @@ def _lock_terms(location_name: str, active_items: frozenset[str],
     # content key needs both items, since either lock alone still stops it.
     return (_ability_terms(location_name, active_items)
             + _content_terms(location_name, active_items, split_content_locks))
+
+
+def _ability_alternative_thresholds(location_name: str,
+                                    active_items: frozenset[str]) -> list[Threshold]:
+    """The audit's several-routes requirement for one location, as a one-of.
+
+    Nothing at all when any route is free, since a route whose items are none of
+    them locked is always open and the whole requirement is then satisfied
+    however the seed placed things. Otherwise each route keeps the items its own
+    key selected, the unlocked ones being free to begin with, and the result is
+    one threshold over those routes.
+    """
+    routes = data.LOCATION_ABILITY_ALTERNATIVES.get(location_name, [])
+    if not routes:
+        return []
+    groups: list[list[Requirement]] = []
+    for route in routes:
+        needed = [item for item in route if item in active_items]
+        if not needed:
+            return []
+        groups.append([(item, 1) for item in needed])
+    return [(groups, 1)]
 
 
 def _deduplicated_thresholds(thresholds: list[Threshold]) -> list[Threshold]:
@@ -305,7 +333,7 @@ def _mission_requirements(mission: str, giver: str, active_items: frozenset[str]
     for prerequisite_giver, count in _mission_edges(mission, properties_enabled):
         requirements.append((data.progressive_item_name(prerequisite_giver), count))
     # Its own regions and the ones it inherits, from the one gatherer, so the
-    # flat half here and the threshold half in _mission_region_thresholds always
+    # flat half here and the threshold half in _mission_thresholds always
     # describe the same set.
     region_requirements, _ = _region_terms(
         _inherited_regions(mission, giver, properties_enabled), split_mainland_access)
@@ -348,14 +376,21 @@ def _inherited_regions(mission: str, giver: str,
     return list(dict.fromkeys(regions))
 
 
-def _mission_region_thresholds(mission: str, giver: str,
-                               split_mainland_access: bool,
-                               properties_enabled: bool = True) -> list[Threshold]:
-    # The threshold part of those regions, which only the mainland has and only
-    # while the crossings are split.
+def _mission_thresholds(mission: str, giver: str, active_items: frozenset[str],
+                        split_mainland_access: bool,
+                        properties_enabled: bool = True) -> list[Threshold]:
+    # Everything about this mission that is a one-of rather than a term: the
+    # threshold part of its regions, which only the mainland has and only while
+    # the crossings are split, and the audit's several-routes requirements, its
+    # own and every inherited mission's. The routes propagate for the same reason
+    # the terms do, so a mission behind Death Row needs a car or a helicopter
+    # too, and no fill can strand both behind it.
     _flat, thresholds = _region_terms(
         _inherited_regions(mission, giver, properties_enabled), split_mainland_access)
-    return thresholds
+    thresholds.extend(_ability_alternative_thresholds(mission, active_items))
+    for earlier in _inherited_missions(mission, giver, properties_enabled):
+        thresholds.extend(_ability_alternative_thresholds(earlier, active_items))
+    return _deduplicated_thresholds(thresholds)
 
 
 def _property_sale_requirements(
@@ -381,13 +416,14 @@ def _property_sale_requirements(
     # set, so this half is always flat.
     region_requirements, _ = _region_terms([region], split_mainland_access)
     requirements = [*requirements, *region_requirements]
-    # The threshold half is not: the mission chain puts Rub Out and Death Row
+    # The threshold half is not. The mission chain puts Rub Out and Death Row
     # behind Shakedown, Death Row is played on the mainland, and with the
-    # crossings split the mainland is a one-of over four of them. Every caller
-    # carries both halves, since dropping this one would leave a crossing item
-    # free to sit behind a purchase that cannot happen without it.
-    thresholds = _mission_region_thresholds(mission, giver, split_mainland_access,
-                                            properties_enabled)
+    # crossings split the mainland is a one-of over four of them; Shakedown also
+    # inherits the several-routes requirements of everything behind it. Every
+    # caller carries both halves, since dropping this one would leave a crossing
+    # item free to sit behind a purchase that cannot happen without it.
+    thresholds = _mission_thresholds(mission, giver, active_items,
+                                     split_mainland_access, properties_enabled)
     if data.WALLET_ITEM in active_items:
         requirements = [*requirements, (data.WALLET_ITEM, 1)]
     # The property content lock does NOT ride here, because split by district it
@@ -411,11 +447,13 @@ def _asset_completion_requirements(asset: str, progressive_count: int,
     # the threshold's business. The count doubles as a mission count because a
     # venue strand's nth mission is exactly what its nth progressive opens.
     #
-    # Lock terms only, no region: these lists sit inside the finale's own
-    # threshold over asset groups, where a nested threshold has no shape, and
-    # they need none. Every region a sliced mission needs is one the finale's own
-    # rule already requires, so the group's copy would add nothing, which
-    # test_an_asset_slice_needs_no_region_the_finale_lacks pins.
+    # Lock terms only: these lists sit inside the finale's own threshold over
+    # asset groups, where a nested threshold has no shape, so neither a region
+    # nor a several-routes requirement can ride here. Neither is needed. Every
+    # region a sliced mission needs is one the finale's own rule already
+    # requires, and the one sliced mission carrying a route is Hit the Courier,
+    # whose route reaches the finale through Cap the Collector's Printworks edge.
+    # test_an_asset_slice_carries_nothing_a_threshold_cannot_hold pins both.
     # Everything else about buying the property is the sale requirements' job,
     # carried once by the finale rule; what belongs to the asset itself is the
     # item releasing its own icon, since split locks make that the district's.
@@ -487,8 +525,8 @@ def build_location_rules(
         requirements = _mission_requirements(
             mission, giver, active_items, split_content_locks, split_mainland_access,
             properties_enabled)
-        region_thresholds = _mission_region_thresholds(
-            mission, giver, split_mainland_access, properties_enabled)
+        mission_thresholds = _mission_thresholds(
+            mission, giver, active_items, split_mainland_access, properties_enabled)
         if giver in data.VENUE_STRANDS:
             requirements = [
                 *requirements,
@@ -497,17 +535,17 @@ def build_location_rules(
                 *_property_content_terms(f"{giver} Purchase", active_items,
                                          split_content_locks),
             ]
-            region_thresholds = _deduplicated_thresholds(
-                [*region_thresholds, *sale_thresholds])
+            mission_thresholds = _deduplicated_thresholds(
+                [*mission_thresholds, *sale_thresholds])
         if giver == "Vercetti Finale":
             # The finale carries the sale requirements whichever way the
             # properties class is set, so it carries their threshold half too.
-            region_thresholds = _deduplicated_thresholds(
-                [*region_thresholds, *sale_thresholds])
+            mission_thresholds = _deduplicated_thresholds(
+                [*mission_thresholds, *sale_thresholds])
             if properties_enabled:
                 rules[mission] = _requires_with_thresholds(
                     requirements + finale_mandatory,
-                    [*region_thresholds,
+                    [*mission_thresholds,
                      (finale_optional, data.FINALE_OPTIONAL_ASSETS_REQUIRED)],
                 )
             else:
@@ -523,12 +561,12 @@ def build_location_rules(
                     requirements + sale_requirements
                     + _any_property_content_terms(active_items, split_content_locks))
                 rules[mission] = (
-                    _requires_with_thresholds(off_requirements, region_thresholds)
-                    if region_thresholds else _requires(off_requirements)
+                    _requires_with_thresholds(off_requirements, mission_thresholds)
+                    if mission_thresholds else _requires(off_requirements)
                 )
             continue
-        if region_thresholds:
-            rules[mission] = _requires_with_thresholds(requirements, region_thresholds)
+        if mission_thresholds:
+            rules[mission] = _requires_with_thresholds(requirements, mission_thresholds)
         elif requirements:
             rules[mission] = _requires(requirements)
     for purchase in data.BUSINESS_PURCHASES:
@@ -552,9 +590,13 @@ def build_location_rules(
                                          split_content_locks),
                 *_lock_terms(activity, active_items, split_content_locks),
             ]
+            activity_thresholds = _deduplicated_thresholds([
+                *sale_thresholds,
+                *_ability_alternative_thresholds(activity, active_items),
+            ])
             rules[activity] = (
-                _requires_with_thresholds(activity_requirements, sale_thresholds)
-                if sale_thresholds else _requires(activity_requirements))
+                _requires_with_thresholds(activity_requirements, activity_thresholds)
+                if activity_thresholds else _requires(activity_requirements))
     # Every remaining location with a lock term: the collectible and activity
     # classes and the safehouse purchases, which carry no other rule. A
     # business purchase and a venue activity are already ruled above, with the
@@ -565,12 +607,16 @@ def build_location_rules(
     )
     locked_locations = (
         dict.fromkeys(data.LOCATION_ABILITY_REQUIREMENTS)
+        | dict.fromkeys(data.LOCATION_ABILITY_ALTERNATIVES)
         | dict.fromkeys(data.LOCATION_CONTENT_REQUIREMENTS)
     )
     for location_name in locked_locations:
         if location_name in handled:
             continue
         lock_terms = _lock_terms(location_name, active_items, split_content_locks)
-        if lock_terms:
+        thresholds = _ability_alternative_thresholds(location_name, active_items)
+        if thresholds:
+            rules[location_name] = _requires_with_thresholds(lock_terms, thresholds)
+        elif lock_terms:
             rules[location_name] = _requires(lock_terms)
     return rules

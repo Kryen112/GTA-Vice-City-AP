@@ -82,13 +82,12 @@ def _classify(name: str) -> ItemClassification:
     if name in data.CONTENT_ITEMS or name in DISTRICT_CONTENT_NAMES:
         # A content lock gates every check it covers, a whole class or one
         # district of one, and stays progression even in a seed whose class
-        # toggle is off and the item gates nothing: the Sprint precedent, so a
-        # term found later needs no classification flip.
+        # toggle is off and the item gates nothing, so a term found later needs
+        # no classification flip.
         return ItemClassification.progression
     if name in data.ABILITY_ITEMS:
         # Crouch gates nothing, so it is useful; every other locked ability
-        # appears in a rule. Sprint holds no term and stays progression anyway,
-        # so a term found later needs no classification flip.
+        # appears in a rule, the sprint through one of package 86's routes.
         return (ItemClassification.useful if name in data.ABILITY_USEFUL_ITEMS
                 else ItemClassification.progression)
     if (name in data.PACKAGE_REWARD_ITEMS or name in data.EMERGENCY_REWARD_ITEMS

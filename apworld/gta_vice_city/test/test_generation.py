@@ -715,6 +715,17 @@ class TestAbilityLocksAll(WorldTestBase):
                         for item in data.LOCATION_ABILITY_REQUIREMENTS.get(implied, []):
                             self.assertIn(item, requirements,
                                           f"{mission} misses {item} from {implied}")
+                        # And the several-routes half, which propagates the same
+                        # way and would be as easy to leave behind.
+                        thresholds = rules._mission_thresholds(
+                            mission, giver, active_items, False)
+                        for route in data.LOCATION_ABILITY_ALTERNATIVES.get(implied, []):
+                            group = [(item, 1) for item in route]
+                            self.assertTrue(
+                                any(group in alternatives
+                                    for alternatives, _needed in thresholds),
+                                f"{mission} misses the {route} route "
+                                f"from {implied}")
                         inherited_regions = rules._inherited_regions(mission, giver)
                         for region in data.MISSION_REGION_REQUIREMENTS.get(implied, []):
                             self.assertIn(region, inherited_regions,
@@ -734,11 +745,19 @@ class TestAbilityLocksAll(WorldTestBase):
         self.assertTrue(self.can_reach_location("Vigilante Level 01"))
 
     def test_the_unwalkable_packages_need_their_ability(self) -> None:
-        # Seven packages cannot be walked to, four wanting a jump and three
-        # reachable only from the air. Every other package needs nothing, which
-        # is what keeps an ability-locked seed wide, so the count is pinned here
-        # as well as the terms.
+        # Seven packages cannot be walked to at all, four wanting a jump and
+        # three reachable only from the air, and twelve more have more than one
+        # way in. The remaining eighty-two need nothing, which is what keeps an
+        # ability-locked seed wide, so the counts are pinned here as well as the
+        # terms.
         self.assertEqual(len(data.PACKAGE_ABILITY_REQUIREMENTS), 7)
+        self.assertEqual(len(data.PACKAGE_ABILITY_ALTERNATIVES), 12)
+        awkward = (set(data.PACKAGE_ABILITY_REQUIREMENTS)
+                   | set(data.PACKAGE_ABILITY_ALTERNATIVES))
+        # Package 92 is in both tables, needing a jump and then either a car or
+        # a helicopter, so eighteen packages are awkward and not nineteen.
+        self.assertEqual(len(awkward), 18)
+        self.assertEqual(data.HIDDEN_PACKAGE_COUNT - len(awkward), 82)
         self.collect_by_name(["Mainland Access", "Starfish Island Access"])
         for index, items in data.PACKAGE_ABILITY_REQUIREMENTS.items():
             name = data.hidden_package_name(index)
@@ -746,13 +765,113 @@ class TestAbilityLocksAll(WorldTestBase):
                 self.assertEqual(data.LOCATION_ABILITY_REQUIREMENTS[name], items)
                 self.assertFalse(self.can_reach_location(name))
         for index in range(1, data.HIDDEN_PACKAGE_COUNT + 1):
-            if index not in data.PACKAGE_ABILITY_REQUIREMENTS:
+            if index not in awkward:
                 name = data.hidden_package_name(index)
                 self.assertTrue(self.can_reach_location(name), name)
         self.collect_by_name([data.JUMP_ITEM, data.AIR_VEHICLES_ITEM])
         for index in data.PACKAGE_ABILITY_REQUIREMENTS:
             name = data.hidden_package_name(index)
             self.assertTrue(self.can_reach_location(name), name)
+
+    def test_a_rampage_out_of_reach_takes_a_vehicle_and_its_weapon(self) -> None:
+        # Two rampage icons cannot be walked to: 2 is reached by air or by road
+        # and 25, out in the water, by air or by boat. Both keep the weapon their
+        # class rule gives them, which the audit names for 25 and not for 2.
+        self.collect_by_name(["Mainland Access"])
+        for index, other in ((2, data.LAND_VEHICLES_ITEM),
+                             (25, data.SEA_VEHICLES_ITEM)):
+            name = data.rampage_name(index)
+            with self.subTest(rampage=name):
+                self.assertEqual(
+                    data.RAMPAGE_ABILITY_ALTERNATIVES[index],
+                    [[data.AIR_VEHICLES_ITEM], [other]])
+                self.assertIn(data.WEAPON_EQUIP_ITEM,
+                              data.LOCATION_ABILITY_REQUIREMENTS[name])
+                self.assertFalse(self.can_reach_location(name))
+        self.collect_by_name([data.WEAPON_EQUIP_ITEM])
+        for index in data.RAMPAGE_ABILITY_ALTERNATIVES:
+            # The weapon alone is not enough, since the icon is still out of
+            # reach.
+            self.assertFalse(self.can_reach_location(data.rampage_name(index)))
+        self.collect_by_name([data.AIR_VEHICLES_ITEM])
+        for index in data.RAMPAGE_ABILITY_ALTERNATIVES:
+            name = data.rampage_name(index)
+            self.assertTrue(self.can_reach_location(name), name)
+
+    def test_a_package_with_two_ways_in_takes_either(self) -> None:
+        # Package 7 sits on a roof, which the audit reaches by jumping a car up
+        # or by landing a helicopter. Either is enough on its own, and neither is
+        # required, so the fill may place one of them behind the other.
+        self.assertEqual(data.PACKAGE_ABILITY_ALTERNATIVES[7],
+                         [[data.AIR_VEHICLES_ITEM], [data.LAND_VEHICLES_ITEM]])
+        name = data.hidden_package_name(7)
+        self.assertFalse(self.can_reach_location(name))
+        self.collect_by_name([data.AIR_VEHICLES_ITEM])
+        self.assertTrue(self.can_reach_location(name))
+        self.remove_by_name([data.AIR_VEHICLES_ITEM])
+        self.assertFalse(self.can_reach_location(name))
+        self.collect_by_name([data.LAND_VEHICLES_ITEM])
+        self.assertTrue(self.can_reach_location(name))
+
+    def test_a_route_of_two_abilities_takes_both(self) -> None:
+        # One of package 86's three ways in is a running jump, which takes the
+        # sprint and the jump together, so neither alone opens it while the other
+        # two routes are shut.
+        self.assertIn([data.SPRINT_ITEM, data.JUMP_ITEM],
+                      data.PACKAGE_ABILITY_ALTERNATIVES[86])
+        name = data.hidden_package_name(86)
+        self.collect_by_name(["Mainland Access", data.SPRINT_ITEM])
+        self.assertFalse(self.can_reach_location(name))
+        self.collect_by_name([data.JUMP_ITEM])
+        self.assertTrue(self.can_reach_location(name))
+
+    def test_a_mission_route_propagates_down_its_strand(self) -> None:
+        # Gun Runner opens with a weapon or a car, and Boomshine Saigon follows
+        # it in Phil Cassidy's strand, so Boomshine Saigon carries that route
+        # too. Read off the built thresholds, since Boomshine Saigon also needs a
+        # weapon outright and reachability cannot separate the two.
+        active_items = frozenset(
+            item for items in data.ABILITY_LOCK_ITEMS.values() for item in items)
+        route = [[(data.WEAPON_EQUIP_ITEM, 1)], [(data.LAND_VEHICLES_ITEM, 1)]]
+        self.assertEqual(data.MISSION_ABILITY_ALTERNATIVES["Gun Runner"],
+                         [[data.WEAPON_EQUIP_ITEM], [data.LAND_VEHICLES_ITEM]])
+        for mission, giver in (("Gun Runner", "Phil Cassidy"),
+                               ("Boomshine Saigon", "Phil Cassidy")):
+            with self.subTest(mission=mission):
+                self.assertIn((route, 1), rules._mission_thresholds(
+                    mission, giver, active_items, False))
+        # And Gun Runner itself, where the route is the whole requirement, so
+        # either item opens it and neither is needed.
+        self.collect_by_name(["Mainland Access", "Progressive Phil Cassidy"])
+        self.assertFalse(self.can_reach_location("Gun Runner"))
+        self.collect_by_name([data.LAND_VEHICLES_ITEM])
+        self.assertTrue(self.can_reach_location("Gun Runner"))
+        self.remove_by_name([data.LAND_VEHICLES_ITEM])
+        self.assertFalse(self.can_reach_location("Gun Runner"))
+        self.collect_by_name([data.WEAPON_EQUIP_ITEM])
+        self.assertTrue(self.can_reach_location("Gun Runner"))
+
+    def test_a_route_an_earlier_term_covers_gates_nothing(self) -> None:
+        # A route is only as useful as the terms around it. Death Row opens with
+        # a car or a helicopter, but it also inherits Mall Shootout, which needs
+        # the car outright, so the car is required either way and the route
+        # decides nothing. Measured rather than assumed, because a route that
+        # cannot fail is worth knowing about: fifteen mission locations carry a
+        # route, three of them live and the rest covered like this one.
+        active_items = frozenset(
+            item for items in data.ABILITY_LOCK_ITEMS.values() for item in items)
+        flat = {item for item, _count in rules._mission_requirements(
+            "Death Row", "Death Row", active_items, data.CONTENT_SPLIT_OFF, False)}
+        thresholds = rules._mission_thresholds("Death Row", "Death Row",
+                                               active_items, False)
+        self.assertIn(([[(data.LAND_VEHICLES_ITEM, 1)],
+                        [(data.AIR_VEHICLES_ITEM, 1)]], 1), thresholds)
+        # The car is a flat term besides, inherited from Mall Shootout, so one
+        # side of the route is required whatever the other says.
+        self.assertIn(data.LAND_VEHICLES_ITEM, flat)
+        carriers = [mission for mission, giver in MISSION_GIVER.items()
+                    if rules._mission_thresholds(mission, giver, active_items, False)]
+        self.assertEqual(len(carriers), 15)
 
     def test_a_predecessor_island_is_inherited(self) -> None:
         # Cap the Collector is played on the mainland and opens on three
@@ -804,8 +923,8 @@ class TestAbilityLocksAll(WorldTestBase):
             for mission, giver in MISSION_GIVER.items():
                 flat = {item for item, _count in rules._mission_requirements(
                     mission, giver, active_items, data.CONTENT_SPLIT_OFF, split)}
-                for groups, _needed in rules._mission_region_thresholds(
-                        mission, giver, split):
+                for groups, _needed in rules._mission_thresholds(
+                        mission, giver, active_items, split):
                     flat.update(item for group in groups for item, _count in group)
                 for predecessor in rules._inherited_missions(mission, giver):
                     region = LOCATION_REGIONS[predecessor]
@@ -837,12 +956,14 @@ class TestAbilityLocksAll(WorldTestBase):
         self.assertEqual(with_class["Progressive Printworks"], 2)
         self.assertNotIn("Progressive Printworks", without)
 
-    def test_an_asset_slice_needs_no_region_the_finale_lacks(self) -> None:
-        # The finale's asset groups carry lock terms and no region, because they
-        # sit inside the finale's own threshold over groups, where a nested
-        # threshold has no shape. That is sound only while every region a sliced
-        # mission needs is one the finale's own rule already requires, which the
-        # audit came close to breaking: The Shootist, The Job, Recruitment Drive
+    def test_an_asset_slice_carries_nothing_a_threshold_cannot_hold(self) -> None:
+        # The finale's asset groups carry lock terms and nothing else, because
+        # they sit inside the finale's own threshold over groups, where a nested
+        # threshold has no shape. So neither a region nor a several-routes
+        # requirement can ride in a group, and neither has to: every region a
+        # sliced mission needs is one the finale's own rule already requires, and
+        # no optional asset's slice carries a route. The audit came close to
+        # breaking the first half, since The Shootist, The Job, Recruitment Drive
         # and G-spotlight all gained the mainland and all sit in a slice.
         finale = data.STORY_GIVERS["Vercetti Finale"][-1]
         covered = set(rules._inherited_regions(finale, "Vercetti Finale"))
@@ -852,6 +973,7 @@ class TestAbilityLocksAll(WorldTestBase):
                 with self.subTest(asset=asset, mission=mission):
                     for region in data.MISSION_REGION_REQUIREMENTS.get(mission, []):
                         self.assertIn(region, covered)
+                    self.assertNotIn(mission, data.LOCATION_ABILITY_ALTERNATIVES)
 
     def test_venue_race_mission_needs_its_vehicle(self) -> None:
         # The Driver is a forced car race, so its own rule names the car. No
@@ -927,6 +1049,30 @@ class TestAbilityLocksOff(WorldTestBase):
         config = slot_data["config_globals"]
         for name in data.ABILITY_ITEMS:
             self.assertEqual(config[str(scm.ability_lock_flag_global(name))], 0, name)
+
+    def test_a_route_nothing_locks_is_no_requirement(self) -> None:
+        # A route whose items are none of them locked is always open, so the
+        # whole several-routes requirement is free and no rule mentions it. Read
+        # off the emitter with one key selected at a time, since a seed's options
+        # cannot show both answers at once.
+        vehicles = frozenset(data.ABILITY_LOCK_ITEMS["vehicles"])
+        # Package 86's running jump route needs the sprint and the jump, neither
+        # of which the vehicles key locks, so that route is free and the other
+        # two stop mattering.
+        self.assertEqual(rules._ability_alternative_thresholds(
+            data.hidden_package_name(86), vehicles), [])
+        # Package 7's two routes are both vehicles, so it keeps its one-of.
+        self.assertEqual(
+            rules._ability_alternative_thresholds(data.hidden_package_name(7),
+                                                  vehicles),
+            [([[(data.AIR_VEHICLES_ITEM, 1)], [(data.LAND_VEHICLES_ITEM, 1)]], 1)])
+        # With every key selected, package 86 keeps all three routes.
+        every_item = frozenset(item for items in data.ABILITY_LOCK_ITEMS.values()
+                               for item in items)
+        groups, needed = rules._ability_alternative_thresholds(
+            data.hidden_package_name(86), every_item)[0]
+        self.assertEqual(needed, 1)
+        self.assertEqual(len(groups), 3)
 
     def test_no_ability_terms_without_the_locks(self) -> None:
         # With every key off a stunt jump needs only its region and a store
@@ -2540,6 +2686,22 @@ class TestTables(WorldTestBase):
         # are no longer always-on story checks.
         for mission in ["No Escape?", "Recruitment Drive", "Cabmaggedon"]:
             self.assertNotIn(mission, STORY_MISSION_NAMES)
+
+    def test_every_route_names_a_locked_ability(self) -> None:
+        # A route may only name items an ability key locks. Anything else is
+        # filtered out as free, and a route filtered to nothing drops the whole
+        # several-routes requirement, so a stray name here would fail loose in
+        # exactly the direction the routes exist to fix. Crouch is excluded with
+        # the rest: it is classified useful, and a rule may not need it.
+        lockable = {item for items in data.ABILITY_LOCK_ITEMS.values()
+                    for item in items if item not in data.ABILITY_USEFUL_ITEMS}
+        for location, routes in data.LOCATION_ABILITY_ALTERNATIVES.items():
+            with self.subTest(location=location):
+                self.assertGreaterEqual(len(routes), 2)
+                for route in routes:
+                    self.assertTrue(route)
+                    for item in route:
+                        self.assertIn(item, lockable)
 
     def test_vehicle_rampages_are_the_unnamed_weapon_ones(self) -> None:
         # The ASI holds the weapon rampage icons by coordinate while this
