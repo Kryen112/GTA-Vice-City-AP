@@ -15,8 +15,10 @@ version control.
    completion write, reward re-gating, the mainland-area watcher, and the
    package, activity, stat, and reward watchers.
 3. Apply the AP-driven markers: `python add_markers.py built.txt built.markers.txt apwatchers.txt`.
-   This makes every mission-giver marker appear only on its AP unlock, severs the
-   vanilla story reveals and launcher starts, adds the APMARK watcher, and moves
+   This makes every mission-giver marker appear only on its AP unlock, holds the
+   whole marker and launcher pass until An Old Friend is done (the vanilla flag
+   `$222` that mission sets), severs the vanilla story reveals and launcher
+   starts, adds the APMARK watcher, and moves
    the three heaviest completion watchers into the CLEO script it writes to
    `apwatchers.txt`, so the MAIN section stays under the game's script buffer.
 4. Compile both: `sanny.exe --compile built.markers.txt main.scm --game vc` and

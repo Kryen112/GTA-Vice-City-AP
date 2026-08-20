@@ -18,7 +18,7 @@ from test.bases import WorldTestBase
 from test.general import gen_steps, setup_multiworld
 from worlds.AutoWorld import call_all
 
-from .. import MINIMUM_SPHERE_ZERO, GTAViceCityWorld, data, scm
+from .. import MINIMUM_SPHERE_ZERO, GTAViceCityWorld, data, rules, scm
 from ..items import ITEM_CLASSIFICATIONS, ITEM_NAME_TO_ID
 from ..locations import (
     LOCATION_NAME_TO_ID,
@@ -2031,6 +2031,31 @@ class TestRejections(WorldTestBase):
 class TestTables(WorldTestBase):
     game = "Grand Theft Auto Vice City"
     run_default_tests = False
+
+    def test_the_opening_mission_is_free_and_first(self) -> None:
+        # add_markers.py holds every managed marker and every managed launcher
+        # start until the game's opening mission is done, reading the vanilla flag
+        # that mission sets. The gate is only right while the opening mission is
+        # the sphere-0 giver's first: that is the one story mission with no unlock
+        # of its own, and the one APMARK leaves on its vanilla marker, so it stays
+        # playable while everything else waits. Reordering that strand would leave
+        # the gate holding the map behind a mission the player cannot start.
+        opening = data.STORY_GIVERS[data.SPHERE_ZERO_GIVER][0]
+        self.assertEqual(opening, "An Old Friend")
+        # And it carries no requirement under ANY option combination, so no item
+        # can be placed behind it. Checked against every lock key selected rather
+        # than this world's options, where no key is: a lock term added to the
+        # opening mission would gate the whole map behind an item in any seed
+        # selecting that key, since the map now waits on this mission.
+        for properties in (True, False):
+            for split in (False, True):
+                built = rules.build_location_rules(
+                    properties_enabled=properties,
+                    ability_locks=frozenset(_ALL_ABILITY_LOCKS),
+                    content_locks=frozenset(_ALL_CONTENT_LOCKS),
+                    split_mainland_access=split,
+                )
+                self.assertNotIn(opening, built, (properties, split))
 
     def test_ids_are_unique(self) -> None:
         self.assertEqual(len(ITEM_NAME_TO_ID), len(set(ITEM_NAME_TO_ID.values())))

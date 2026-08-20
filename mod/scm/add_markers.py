@@ -8,6 +8,10 @@ marker reveals and launcher starts for these missions are severed, so nothing
 appears on the map until the AP unlock lands. Marker coordinates are static
 (each coord global is assigned once at init), so a fresh handle at those coords
 reproduces the vanilla marker without depending on vanilla's reveal timing.
+
+The whole pass is also held until the game's opening mission is done, so the
+first mission of the game is the first mission of the seed whatever items are in
+hand when it starts.
 """
 from __future__ import annotations
 
@@ -22,6 +26,15 @@ CLEO_OUT = sys.argv[3] if len(sys.argv) > 3 else None
 # one of them alone would hold forever under the setting that never writes it.
 MAINLAND_ANY = "any mainland crossing"
 MAINLAND_UNLOCKS = [9030, 9032, 9033, 9034, 9035]
+
+# The vanilla flag An Old Friend sets as it ends, which is the game's own record
+# that the opening mission is done. Read rather than mirrored into a reserved
+# global, the way the finale gate reads vanilla $273, $268 and $1175: it is a
+# vanilla fact, and reading it does not depend on the HOT launcher still running
+# to have observed it.
+AN_OLD_FRIEND_PASSED = 222
+# The mission's own thread, whose end is the one place that flag is set.
+AN_OLD_FRIEND_THREAD = "HOTEL"
 
 # Strand -> ordered launchers, and each launcher's unlock gate (global, count).
 # Mirrors build_scm.py MISSIONS. HOT (free, sphere-0) keeps its vanilla marker.
@@ -89,10 +102,32 @@ with open(SRC, "rb") as handle:
 nl = "\r\n" if b"\r\n" in raw else "\n"
 lines = raw.decode("latin-1").split(nl)
 
+def check_an_old_friend_flag():
+    # The APMARK gate reads a vanilla flag, so the build refuses a source where
+    # that flag means anything other than "the opening mission is done": it is
+    # set exactly once, and inside the mission's own thread. A decompile or an
+    # earlier transform that set it from somewhere else would leave the gate
+    # holding the whole map on a condition nobody satisfies.
+    write = f"${AN_OLD_FRIEND_PASSED} = 1"
+    sites = [i for i, ln in enumerate(lines) if ln == write]
+    assert len(sites) == 1, (
+        f"an old friend: {write} appears at {len(sites)} sites, not one")
+    own_name = f"script_name '{AN_OLD_FRIEND_THREAD}'"
+    starts = [i for i, ln in enumerate(lines) if ln == own_name]
+    assert len(starts) == 1, f"an old friend: {own_name} matched {len(starts)}"
+    end = next(i for i in range(starts[0] + 1, len(lines))
+               if lines[i].startswith("script_name '"))
+    assert starts[0] < sites[0] < end, (
+        f"an old friend: {write} is at line {sites[0] + 1}, outside "
+        f"{AN_OLD_FRIEND_THREAD}'s own thread")
+
+
 label_at: dict[str, int] = {}
 for i, ln in enumerate(lines):
     if ln.startswith(":") and ln[1:] not in label_at:
         label_at[ln[1:]] = i
+
+check_an_old_friend_flag()
 
 create_re = re.compile(
     r"^add_sprite_blip_for_contact_point (\$\d+) = create_icon_marker_and_sphere (\S+) at (\S+) (\S+) (\S+)$")
@@ -320,13 +355,25 @@ def strand_block(strand, missions):
 
 
 # Defer all marker work while the player is not controllable (loading, cutscene,
-# script-owned interior) or is on a mission, so a marker create or launcher start
-# never runs during a cutscene or mission transition. The not-controllable half
-# is the same flag all item application defers on; the on-mission half
-# additionally keeps a launcher start out of an already-running mission.
+# script-owned interior), while the player is on a mission, or until An Old Friend
+# is done. The not-controllable condition is the same flag all item application
+# defers on; the on-mission one keeps a launcher start out of an already-running
+# mission; the opening-mission one orders the game's first mission ahead of every
+# managed one.
+#
+# That last one is why the pass is gated as a whole rather than per mission. An
+# Old Friend is the game's opening mission and the one story mission APMARK does
+# not manage: it keeps its vanilla marker and its vanilla launcher, so it stays
+# visible and startable while every managed marker and launcher start waits. A
+# seed hands its items over before the game starts, so without this a strand's
+# first mission opens beside the opening one. One condition here holds every
+# launcher start, which is what the ordering needs, for three lines of the MAIN
+# section instead of the thousand-odd bytes a condition on every launcher gate
+# costs.
 body = ["", ":APMARK", "script_name 'APMARK'", "", ":APMARK_LOOP", "wait 250",
         "if ", "  is_player_playing $player_char", "goto_if_false @APMARK_LOOP",
-        "if ", "  $onmission == 0", "goto_if_false @APMARK_LOOP"]
+        "if ", "  $onmission == 0", "goto_if_false @APMARK_LOOP",
+        "if ", f"  ${AN_OLD_FRIEND_PASSED} == 1", "goto_if_false @APMARK_LOOP"]
 for strand in by_strand:
     body += [f"gosub @APMARK_{strand}"]
 body += ["goto @APMARK_LOOP"]
