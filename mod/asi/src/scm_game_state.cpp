@@ -198,6 +198,11 @@ static_assert(std::size(kHeldClassNames) == kHeldPickupClassCount,
 // that never moves. Capitals because the counter draws in FONT_HEADING, whose
 // glyphs are capitals.
 //
+// Nine characters, which is exactly what the amount occupies: the counter draws
+// with proportional spacing off, so every glyph takes one cell, and the vanilla
+// format pads to "$00000000". The replacement therefore cannot reach anything
+// the amount does not already reach.
+//
 // Deliberately not const: CFont::PrintString writes a terminator over a trailing
 // space in the buffer it is handed, so a buffer in writable storage cannot fault
 // the draw path however the text is later edited. The vanilla caller hands it a
@@ -206,7 +211,7 @@ static_assert(std::size(kHeldClassNames) == kHeldPickupClassCount,
 // The flag is shared by the frame handler that writes it and the print below
 // that reads it. Both run on the game thread, so this is not guarding against a
 // second thread; it is atomic so that sharing is explicit at both ends.
-wchar_t kMoneyLockedText[] = L"NO WALLET YET";
+wchar_t kMoneyLockedText[] = L"NO WALLET";
 std::atomic<bool> g_money_reads_locked{false};
 
 // Stands in for the money counter's own text print. The game has already set
