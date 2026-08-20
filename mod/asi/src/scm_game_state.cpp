@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -11,6 +12,7 @@
 #include "scm_stunt_jumps.hpp"
 
 #include <plugin.h>
+#include <CFont.h>
 #include <CHud.h>
 #include <CMessages.h>
 #include <CModelInfo.h>
@@ -189,6 +191,34 @@ constexpr const char* kHeldClassNames[] = {"none", "package", "rampage", "proper
 static_assert(std::size(kHeldClassNames) == kHeldPickupClassCount,
               "one diagnostic name per held pickup class");
 
+// What the money counter reads while the wallet is locked, and whether it should.
+//
+// The counter is the only place a player looks to understand their money, so
+// while the wallet holds it at zero it says why instead of reading an amount
+// that never moves. Capitals because the counter draws in FONT_HEADING, whose
+// glyphs are capitals.
+//
+// Deliberately not const: CFont::PrintString writes a terminator over a trailing
+// space in the buffer it is handed, so a buffer in writable storage cannot fault
+// the draw path however the text is later edited. The vanilla caller hands it a
+// stack buffer for the same reason.
+//
+// The flag is shared by the frame handler that writes it and the print below
+// that reads it. Both run on the game thread, so this is not guarding against a
+// second thread; it is atomic so that sharing is explicit at both ends.
+wchar_t kMoneyLockedText[] = L"NO WALLET YET";
+std::atomic<bool> g_money_reads_locked{false};
+
+// Stands in for the money counter's own text print. The game has already set
+// the position, font, scale, colour and justification for the amount, so this
+// prints the replacement into all of it and passes anything else through.
+void __cdecl PrintMoneyCounter(float x, float y, const wchar_t* text) {
+  CFont::PrintString(x, y,
+                     g_money_reads_locked.load(std::memory_order_relaxed)
+                         ? kMoneyLockedText
+                         : text);
+}
+
 // Posts one brief message with text the mod owns for as long as the game can
 // hold the pointer. The game reads the pointer it was handed, so the storage
 // outlives the call by a full ring.
@@ -280,7 +310,30 @@ bool GameWindowHasFocus() {
 }
 }  // namespace
 
-ScmGameState::ScmGameState(Logger logger) : logger_(std::move(logger)) {}
+ScmGameState::ScmGameState(Logger logger) : logger_(std::move(logger)) {
+  // The counter's print is redirected once, at load, and the flag decides what
+  // it prints from then on, so no seed and no lock state changes the code. A
+  // seed that locks nothing keeps a vanilla counter because the replacement
+  // passes the game's own text through, not because the patch is absent.
+  //
+  // Pinned for the classic 1.0 executable only. The version guard fingerprints
+  // four bytes elsewhere in the image, so it cannot tell a 1.0 lookalike with a
+  // different HUD from the real thing; what can is the destination the site
+  // already holds. If that is not CFont::PrintString the pin is not this call,
+  // so the patch is put back and the counter stays vanilla.
+  if (plugin::GetGameVersion() != GAME_10EN) return;
+  const injector::memory_pointer_raw previous =
+      injector::MakeCALL(kMoneyPrintCallSite10, &PrintMoneyCounter, true);
+  if (previous.as_int() != kMoneyPrintCallee10) {
+    injector::MakeCALL(kMoneyPrintCallSite10, previous, true);
+    if (logger_) {
+      logger_("money counter print NOT redirected: the call site points at "
+              + std::to_string(previous.as_int()) + ", not CFont::PrintString");
+    }
+    return;
+  }
+  if (logger_) logger_("money counter print redirected");
+}
 
 int ScmGameState::GetGlobal(int index) {
   return *reinterpret_cast<int*>(&CTheScripts::ScriptSpace[index * 4]);
@@ -769,6 +822,12 @@ void ScmGameState::EnforceLocks() {
   for (int index = 0; index < kContentCount; ++index) {
     any_flag_set = any_flag_set || content_flags[index] != 0;
   }
+  // The counter reads as locked for exactly as long as the wallet is locked, so
+  // the two can never disagree. Written above the early return below, so a seed
+  // that locks nothing clears it rather than inheriting the last seed's answer
+  // and reading NO WALLET YET over real money.
+  g_money_reads_locked.store(locked[kAbilityWallet], std::memory_order_relaxed);
+
   // The routes are not a lock family: every seed has a way to the mainland, so
   // both halves of reporting one sit above the early return. A seed selecting no
   // lock key at all is the default, and its routes still open and still list.
@@ -1378,6 +1437,11 @@ void ScmGameState::OnGameFrame() {
     pending_toasts_.clear();
     next_toast_ms_ = 0;
     content_baseline_ready_ = false;
+    // The frame handler keeps this true to the seed while it runs, so this is
+    // for the case where it does not run at all: a game with no stamped seed
+    // hash never reaches it, and the counter would otherwise still be answering
+    // for the game before.
+    g_money_reads_locked.store(false, std::memory_order_relaxed);
     // The routes belong to the game that observed them, exactly as the content
     // classes do: kept across the boundary, a fresh game would read them absent
     // for a frame and then re-announce every route already held.

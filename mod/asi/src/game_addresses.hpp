@@ -17,6 +17,33 @@ namespace gtavc {
 // consistent with the decompiled usage.
 constexpr unsigned int kRetunePressesAddress10 = 0x783998;
 
+// The money counter's own text print inside CHud::Draw, classic 1.0 executable
+// only. Pinned from the executable rather than guessed:
+//
+// - CHud::Draw (plugin-sdk 1.0 address 0x557320) reads m_nDisplayMoney three
+//   times as an absolute, 0x94ADCC, which is CWorld::Players (0x94AD28) plus the
+//   0xA4 that plugin-sdk's CPlayerInfo layout gives that field.
+// - At 0x5581A8 it formats that value with the string at 0x697B48, "$%08d",
+//   which is the only occurrence of that format in the whole image, and widens
+//   the result at 0x552500.
+// - It then sets FONT_HEADING (SetFontStyle(2)), right justification, the
+//   counter's scale and its green, and computes the counter's own position:
+//   x = width - width * 110 / 640, y = height * 43 / 448.
+// - This is the call that prints it. Redirecting the call substitutes the text
+//   and inherits every one of those, so the replacement lands exactly where the
+//   amount would and looks like it belongs.
+//
+// The signature the replacement declares is read from the same place: the site
+// holds E8 rel32 and is followed by add esp, 0xc, so three dword arguments,
+// caller cleaned, which is cdecl; the pushes before it are the text, then y,
+// then x, so the order is (x, y, text). Nothing in the image branches into the
+// five patched bytes and the site is not inside a loop, so the patch covers
+// exactly one instruction on one path. The callee below is what the site must
+// already point at for the pin to be this call and not another; the installer
+// checks it and refuses rather than forwarding blindly.
+constexpr unsigned int kMoneyPrintCallSite10 = 0x55830F;
+constexpr unsigned int kMoneyPrintCallee10 = 0x551040;
+
 // The call site immediately before CWorld::Process inside CGame::Process,
 // classic 1.0 executable only. Hooking it after the call gives the one point
 // in the frame where a pad write still reaches the player: CGame::Process
