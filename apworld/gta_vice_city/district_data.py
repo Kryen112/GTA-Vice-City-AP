@@ -36,7 +36,7 @@ DISTRICTS: list[str] = [
 # The 100 hidden packages, in placement order.
 PACKAGE_DISTRICTS: list[str] = [
     "Ocean Beach", "Washington Beach", "Ocean Beach",
-    "Ocean Beach", "Ocean Beach", "Ocean Beach",
+    "Viceport", "Ocean Beach", "Ocean Beach",
     "Ocean Beach", "Washington Beach", "Washington Beach",
     "Washington Beach", "Washington Beach", "Washington Beach",
     "Vice Point", "Vice Point", "Vice Point",
@@ -114,6 +114,15 @@ STORE_DISTRICTS: list[str] = [
     "Vice Point", "Little Havana", "Little Havana",
 ]
 
+# Places a location name may say instead of its district. A name is written for
+# a player looking for the thing, so it can name a landmark inside a district
+# where that is the better direction; the district is what an item releases.
+# North Point Mall is the only one: four stores sit inside it, and telling a
+# player "the mall" beats telling them "Vice Point".
+NAME_DISTRICT_FOLDS: dict[str, str] = {
+    "North Point Mall": "Vice Point",
+}
+
 # The 15 purchasable properties, keyed by the property name rather than by
 # index, since that name is what the purchase and ownership items are built
 # from and it does not move in the rename.
@@ -131,7 +140,7 @@ PROPERTY_DISTRICTS: dict[str, str] = {
     "Hyman Condo": "Downtown",
     "Ocean Heights Apartment": "Ocean Beach",
     "1102 Washington Street": "Washington Beach",
-    "Vice Point": "Vice Point",
+    "3321 Vice Point": "Vice Point",
     "Skumole Shack": "Downtown",
 }
 
@@ -197,6 +206,6 @@ PROPERTY_COORDS: dict[str, tuple[float, float, float]] = {
     "Hyman Condo": (-834.8, 1306.9, 11.0),
     "Ocean Heights Apartment": (14.0, -1500.7, 12.7),
     "1102 Washington Street": (88.5, -804.7, 11.2),
-    "Vice Point": (531.4, 1273.7, 17.6),
+    "3321 Vice Point": (531.4, 1273.7, 17.6),
     "Skumole Shack": (-560.1, 703.6, 20.5),
 }

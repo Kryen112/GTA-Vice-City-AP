@@ -6,6 +6,7 @@ Archipelago checkout and invokes pytest.
 
 from __future__ import annotations
 
+import collections
 import io
 import math
 import random
@@ -24,6 +25,7 @@ from ..locations import (
     LOCATION_NAME_TO_ID,
     LOCATION_REGIONS,
     MISSION_GIVER,
+    ORDERED_LOCATION_NAMES,
     PACKAGE_NAMES,
     STORY_MISSION_NAMES,
     STRAND_MISSIONS,
@@ -514,9 +516,9 @@ class TestAbilityLocksAll(WorldTestBase):
 
     def test_stunt_jump_needs_a_land_vehicle(self) -> None:
         self.collect_by_name(["Mainland Access"])
-        self.assertFalse(self.can_reach_location("Unique Stunt Jump 01"))
+        self.assertFalse(self.can_reach_location(data.stunt_jump_name(1)))
         self.collect_by_name([data.LAND_VEHICLES_ITEM])
-        self.assertTrue(self.can_reach_location("Unique Stunt Jump 01"))
+        self.assertTrue(self.can_reach_location(data.stunt_jump_name(1)))
 
     def test_emergency_level_needs_a_land_vehicle(self) -> None:
         self.assertFalse(self.can_reach_location("Paramedic Level 01"))
@@ -543,9 +545,9 @@ class TestAbilityLocksAll(WorldTestBase):
         self.assertTrue(self.can_reach_location("Dirtring"))
 
     def test_robbable_store_needs_weapon_equip(self) -> None:
-        self.assertFalse(self.can_reach_location("Robbable Store 01"))
+        self.assertFalse(self.can_reach_location(data.robbable_store_name(1)))
         self.collect_by_name([data.WEAPON_EQUIP_ITEM])
-        self.assertTrue(self.can_reach_location("Robbable Store 01"))
+        self.assertTrue(self.can_reach_location(data.robbable_store_name(1)))
 
     def test_rampages_split_weapon_from_vehicle(self) -> None:
         # A weapon rampage waits for Weapon Equip; the run-them-down rampage
@@ -725,9 +727,9 @@ class TestAbilityLocksOff(WorldTestBase):
     def test_no_ability_terms_without_the_locks(self) -> None:
         # With every key off a stunt jump needs only its region and a store
         # nothing at all: no rule may name an item that is not in the pool.
-        self.assertTrue(self.can_reach_location("Robbable Store 01"))
+        self.assertTrue(self.can_reach_location(data.robbable_store_name(1)))
         self.collect_by_name(["Mainland Access"])
-        self.assertTrue(self.can_reach_location("Unique Stunt Jump 01"))
+        self.assertTrue(self.can_reach_location(data.stunt_jump_name(1)))
         # Nothing propagates through a strand either, for the same reason: the
         # predecessor's term is filtered out with its key.
         self.collect_by_name(["Progressive Avery"])
@@ -746,7 +748,7 @@ class TestAbilityLocksWalletOnly(WorldTestBase):
         self.assertNotIn(data.LAND_VEHICLES_ITEM, pool_names)
         self.assertFalse(self.can_reach_location("El Swanko Casa Purchase"))
         self.collect_by_name(["Mainland Access"])
-        self.assertTrue(self.can_reach_location("Unique Stunt Jump 01"))
+        self.assertTrue(self.can_reach_location(data.stunt_jump_name(1)))
         self.collect_by_name([data.WALLET_ITEM])
         self.assertTrue(self.can_reach_location("El Swanko Casa Purchase"))
 
@@ -795,7 +797,7 @@ class TestContentLocksAllKeys(WorldTestBase):
         pairs = [
             (data.hidden_package_name(1), data.HIDDEN_PACKAGES_ITEM),
             (data.rampage_name(1), data.RAMPAGES_ITEM),
-            ("Robbable Store 01", data.ROBBABLE_STORES_ITEM),
+            (data.robbable_store_name(1), data.ROBBABLE_STORES_ITEM),
             ("El Swanko Casa Purchase", data.PROPERTY_PURCHASES_ITEM),
         ]
         for location, _ in pairs:
@@ -823,9 +825,9 @@ class TestContentLocksAllKeys(WorldTestBase):
 
     def test_a_stunt_jump_needs_its_item_beyond_the_mainland(self) -> None:
         self.collect_by_name(["Mainland Access"])
-        self.assertFalse(self.can_reach_location("Unique Stunt Jump 01"))
+        self.assertFalse(self.can_reach_location(data.stunt_jump_name(1)))
         self.collect_by_name([data.STUNT_JUMPS_ITEM])
-        self.assertTrue(self.can_reach_location("Unique Stunt Jump 01"))
+        self.assertTrue(self.can_reach_location(data.stunt_jump_name(1)))
 
     def test_the_lock_flags_and_unlock_globals_reach_the_mod(self) -> None:
         slot_data = self.world.fill_slot_data()
@@ -1008,7 +1010,7 @@ class TestContentLocksOff(WorldTestBase):
         # No rule may name an item that is not in the pool, so every class is
         # free within its region.
         self.assertTrue(self.can_reach_location(data.hidden_package_name(1)))
-        self.assertTrue(self.can_reach_location("Robbable Store 01"))
+        self.assertTrue(self.can_reach_location(data.robbable_store_name(1)))
         self.assertTrue(self.can_reach_location("El Swanko Casa Purchase"))
 
 
@@ -1086,11 +1088,11 @@ class TestContentAndAbilityLocksCompose(WorldTestBase):
     }
 
     def test_a_store_needs_both_items(self) -> None:
-        self.assertFalse(self.can_reach_location("Robbable Store 01"))
+        self.assertFalse(self.can_reach_location(data.robbable_store_name(1)))
         self.collect_by_name([data.ROBBABLE_STORES_ITEM])
-        self.assertFalse(self.can_reach_location("Robbable Store 01"))
+        self.assertFalse(self.can_reach_location(data.robbable_store_name(1)))
         self.collect_by_name([data.WEAPON_EQUIP_ITEM])
-        self.assertTrue(self.can_reach_location("Robbable Store 01"))
+        self.assertTrue(self.can_reach_location(data.robbable_store_name(1)))
 
     def test_a_vehicle_rampage_keeps_its_own_ability_term(self) -> None:
         # The two run-them-down rampages take a land vehicle rather than the
@@ -1456,9 +1458,9 @@ class TestSplitMainlandAccessOn(WorldTestBase):
         self.assertFalse(self._mainland_reachable())
         self.collect_by_name(["Leaf Links Bridge"])
         self.assertTrue(self._mainland_reachable())
-        self.assertTrue(self.can_reach_location("Hidden Package - Viceport - 1"))
+        self.assertTrue(self.can_reach_location(data.hidden_package_name(3)))
         self.assertTrue(self.can_reach_location(
-            "Rocket Launcher Rampage - Escobar International"))
+            data.rampage_name(2)))
 
     def test_each_bridge_opens_it_on_its_own(self) -> None:
         # Every crossing is a whole answer by itself, so the fill may place the
@@ -1550,13 +1552,13 @@ class TestMainlandGating(WorldTestBase):
         # mainland counterpart waits on Mainland Access. Covers a rampage (per
         # pickup coordinate), the hidden-package count threshold, and the emergency
         # upper-half pacing.
-        for start_name in ["Tear Gas Rampage - Ocean Beach",
-                            "Tec-9 Rampage - Washington Beach",
-                            "Hidden Package - Ocean Beach - 1", "Paramedic Level 06"]:
+        for start_name in [data.rampage_name(1),
+                            data.rampage_name(34),
+                            data.hidden_package_name(1), "Paramedic Level 06"]:
             self.assertTrue(self.can_reach_location(start_name), start_name)
-        mainland = ["Rocket Launcher Rampage - Escobar International",
-                    "S.P.A.S. 12 Rampage - Escobar International",
-                    "Hidden Package - Viceport - 1", "Paramedic Level 07"]
+        mainland = [data.rampage_name(2),
+                    data.rampage_name(33),
+                    data.hidden_package_name(3), "Paramedic Level 07"]
         for name in mainland:
             self.assertFalse(self.can_reach_location(name), name)
         self.collect_by_name(["Mainland Access"])
@@ -1593,7 +1595,7 @@ class TestStarfishGating(WorldTestBase):
         # a package and a rampage on the island (both coordinate-verified)
         # wait for the item, and Mainland Access does not stand in for it,
         # because with Mainland Access alone both island gates stay shut.
-        starfish = ["Hidden Package - Starfish Island - 3", data.rampage_name(14)]
+        starfish = [data.hidden_package_name(51), data.rampage_name(14)]
         self.collect_by_name(["Mainland Access"])
         for name in starfish:
             self.assertFalse(self.can_reach_location(name), name)
@@ -1605,9 +1607,9 @@ class TestStarfishGating(WorldTestBase):
         # The island's west gate opens only with both area items, so Starfish
         # Island Access alone never opens a walkable route onto the mainland.
         self.collect_by_name(["Starfish Island Access"])
-        self.assertFalse(self.can_reach_location("Hidden Package - Viceport - 1"))
+        self.assertFalse(self.can_reach_location(data.hidden_package_name(3)))
         self.collect_by_name(["Mainland Access"])
-        self.assertTrue(self.can_reach_location("Hidden Package - Viceport - 1"))
+        self.assertTrue(self.can_reach_location(data.hidden_package_name(3)))
 
     def test_mansion_giver_missions_sit_on_the_island(self) -> None:
         # Diaz and Vercetti Protection give from the mansion, so their first
@@ -1647,9 +1649,9 @@ class TestHiddenPackagesGoalNeedsMainland(WorldTestBase):
         # all of them reachable, which pulls in Mainland Access and the mainland
         # locations. A mainland package location stays gated until Mainland
         # Access; the default solvability tests prove the goal seed still beats.
-        self.assertFalse(self.can_reach_location("Hidden Package - Escobar International - 1"))
+        self.assertFalse(self.can_reach_location(data.hidden_package_name(76)))
         self.collect_by_name(["Mainland Access"])
-        self.assertTrue(self.can_reach_location("Hidden Package - Escobar International - 1"))
+        self.assertTrue(self.can_reach_location(data.hidden_package_name(76)))
 
 
 class TestPropertyAccess(WorldTestBase):
@@ -1876,10 +1878,10 @@ class TestDeferredClassIslands(WorldTestBase):
         # jump (provisionally mainland) wait on Mainland Access; a start-island
         # store and chopper checkpoint do not. This closes the loop where the fill
         # could otherwise strand Mainland Access behind a mainland-only check.
-        for start_name in ["Robbable Store 01", "Ocean Beach Chopper Checkpoint",
+        for start_name in [data.robbable_store_name(1), "Ocean Beach Chopper Checkpoint",
                             "RC Bandit Race", "Cone Crazy"]:
             self.assertTrue(self.can_reach_location(start_name), start_name)
-        mainland = ["Robbable Store 03", "Hotring", "Unique Stunt Jump 01"]
+        mainland = [data.robbable_store_name(3), "Hotring", data.stunt_jump_name(1)]
         for name in mainland:
             self.assertFalse(self.can_reach_location(name), name)
         self.collect_by_name(["Mainland Access"])
@@ -2275,13 +2277,13 @@ class TestTables(WorldTestBase):
         # The ASI holds the weapon rampage icons by coordinate while this
         # table splits them by index, two hand-written mirrors of one
         # decompile fact. A rampage the RAMPAGE controller hands no weapon is
-        # named without a weapon prefix, so the two views must agree or an
-        # icon gets sunk for a check whose rule says Land Vehicles.
-        unnamed = {
+        # named for the vehicle it wants instead, so the two views must agree or
+        # an icon gets sunk for a check whose rule says Land Vehicles.
+        named_for_a_vehicle = {
             index for index in range(1, data.RAMPAGE_COUNT + 1)
-            if data.rampage_name(index).startswith("Rampage - ")
+            if data.rampage_name(index).endswith(" - Vehicle")
         }
-        self.assertEqual(unnamed, set(data.VEHICLE_RAMPAGE_INDICES))
+        self.assertEqual(named_for_a_vehicle, set(data.VEHICLE_RAMPAGE_INDICES))
         # And each side of the split carries the ability its kill frenzy needs.
         for index in range(1, data.RAMPAGE_COUNT + 1):
             expected = (data.LAND_VEHICLES_ITEM if index in data.VEHICLE_RAMPAGE_INDICES
@@ -2479,7 +2481,7 @@ class TestReservedGlobals(WorldTestBase):
             "Hyman Condo": 9423,
             "Ocean Heights Apartment": 9424,
             "1102 Washington Street": 9425,
-            "Vice Point": 9426,
+            "3321 Vice Point": 9426,
             "Skumole Shack": 9427,
         }
         for properties, items in ((businesses, data.BUSINESS_OWNERSHIP_ITEMS),
@@ -2563,6 +2565,69 @@ class TestReservedGlobals(WorldTestBase):
                         ITEM_NAME_TO_ID[item_name]]
                 }
                 self.assertEqual(stamped | covered, block, split)
+
+    def test_package_districts_stay_where_the_audit_put_them(self) -> None:
+        # A package's district decides which item releases it and which district
+        # global the ASI joins its pickup to, so a drift here moves a check to
+        # another part of town. The jump and store tables are pinned by literal
+        # because build_scm.py transcribes them; these are pinned by count plus
+        # the boundary cases, which is what actually moves: package 4 sits nine
+        # units from rampage 25 and the audit puts both in Viceport, and packages
+        # 41 and 42 are the pair inside the Film Studio walls on Prawn Island.
+        counts = collections.Counter(district_data.PACKAGE_DISTRICTS)
+        self.assertEqual(dict(counts), {
+            "Ocean Beach": 7,
+            "Washington Beach": 11,
+            "Vice Point": 21,
+            "Starfish Island": 5,
+            "Prawn Island": 5,
+            "Leaf Links": 5,
+            "Downtown": 8,
+            "Little Haiti": 8,
+            "Little Havana": 7,
+            "Viceport": 9,
+            "Escobar International": 14,
+        })
+        self.assertEqual(district_data.PACKAGE_DISTRICTS[3], "Viceport")
+        self.assertEqual(district_data.PACKAGE_DISTRICTS[40], "Prawn Island")
+        self.assertEqual(district_data.PACKAGE_DISTRICTS[41], "Prawn Island")
+
+    def test_a_location_name_names_the_district_that_releases_it(self) -> None:
+        # Every content location reads "<class> - <district> - <where>", and the
+        # district in that name has to be the one the district table puts it in,
+        # because with the locks split by district the item a player receives is
+        # named for that district too. A name disagreeing with the table would
+        # send them to the wrong side of town holding the right item, which no
+        # other check catches: the two came from one audit but are stored apart,
+        # names by class table and districts by index.
+        for accessor, count in ((data.hidden_package_name, data.HIDDEN_PACKAGE_COUNT),
+                                (data.rampage_name, data.RAMPAGE_COUNT),
+                                (data.stunt_jump_name, data.STUNT_JUMP_COUNT),
+                                (data.robbable_store_name, data.ROBBABLE_STORE_COUNT)):
+            for index in range(1, count + 1):
+                name = accessor(index)
+                with self.subTest(location=name):
+                    parts = name.split(" - ")
+                    self.assertEqual(len(parts), 3, name)
+                    # A name may say a landmark inside its district where that is
+                    # the better direction to give a player; the fold table is
+                    # the only licence for it, so an ordinary mismatch still
+                    # fails here.
+                    named = district_data.NAME_DISTRICT_FOLDS.get(parts[1], parts[1])
+                    self.assertEqual(named, data.location_district(name), name)
+
+    def test_no_two_locations_share_a_name(self) -> None:
+        # The rename replaced 186 numbered names with sentences, and the id table
+        # silently collapses a duplicate: the second one takes the first one's id
+        # and a check goes missing. Comparing the dict against itself would say
+        # nothing, since it is built from this very list, so the raw list is what
+        # is counted, and it covers the story missions too.
+        duplicates = sorted(
+            {name for name in ORDERED_LOCATION_NAMES
+             if ORDERED_LOCATION_NAMES.count(name) > 1}
+        )
+        self.assertEqual(duplicates, [])
+        self.assertEqual(len(ORDERED_LOCATION_NAMES), len(LOCATION_NAME_TO_ID))
 
     def test_district_tables_match_the_hand_written_mirrors(self) -> None:
         # build_scm.py transcribes three tables out of district_data.py, because

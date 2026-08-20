@@ -118,7 +118,7 @@ PROPERTY_PURCHASES: list[str] = [
     "Boatyard Purchase", "Pole Position Purchase", "El Swanko Casa Purchase",
     "Links View Apartment Purchase", "Hyman Condo Purchase",
     "Ocean Heights Apartment Purchase", "1102 Washington Street Purchase",
-    "Vice Point Purchase", "Skumole Shack Purchase",
+    "3321 Vice Point Purchase", "Skumole Shack Purchase",
 ]
 
 # The mission that puts the businesses up for sale. Pinned from the vanilla
@@ -552,48 +552,46 @@ RAMPAGE_COUNT = 35
 STUNT_JUMP_COUNT = 36
 
 
-# Rampage names: the weapon the RAMPAGE controller hands the player (its $1518
-# model id, read from the SCM) plus the district. Rampages 14 and 21 hand no fixed
-# weapon. The MP5 pair at Vice Point is disambiguated 1/2. Districts are
-# provisional, auto-derived from the kill-frenzy pickup coordinates, pending an
-# in-game audit. Order is fixed: index i is rampage i, so location ids and
-# completion globals stay stable across the rename.
+# Rampage names, from the hand audit of every location: the district the icon
+# stands in, then which weapon it hands and where to find it. Order is fixed:
+# index i is rampage i, so location ids and completion globals do not move when
+# a name does.
 RAMPAGE_NAMES: list[str] = [
-    "Tear Gas Rampage - Ocean Beach",
-    "Rocket Launcher Rampage - Escobar International",
-    "MP5 Rampage - Vice Point 1",
-    "Tec-9 Rampage - Vice Point",
-    "Rocket Launcher Rampage - Vice Point",
-    "Ruger Rampage - Vice Point",
-    "Flamethrower Rampage - Downtown",
-    "MP5 Rampage - Downtown",
-    "Tear Gas Rampage - Downtown",
-    "M60 Rampage - Little Haiti",
-    "Mac-10 Rampage - Little Havana",
-    "Chainsaw Rampage - Washington Beach",
-    ".308 Sniper Rampage - Ocean Beach",
-    "Rampage - Little Havana",
-    ".357 Rampage - Escobar International",
-    "Rocket Launcher Rampage - Viceport",
-    "Minigun Rampage - Little Havana",
-    "Grenade Rampage - Escobar International",
-    "Sniper Rifle Rampage - Little Havana",
-    "Katana Rampage - Washington Beach",
-    "Rampage - Ocean Beach",
-    "Pistol Rampage - Vice Point",
-    "MP5 Rampage - Vice Point 2",
-    "Chainsaw Rampage - Vice Point",
-    "Rocket Launcher Rampage - Ocean Beach",
-    "Minigun Rampage - Vice Point",
-    "Pistol Rampage - Downtown",
-    "Shotgun Rampage - Escobar International",
-    ".308 Sniper Rampage - Vice Point",
-    "Shotgun Rampage - Washington Beach",
-    "S.P.A.S. 12 Rampage - Vice Point",
-    "S.P.A.S. 12 Rampage - Little Havana",
-    "S.P.A.S. 12 Rampage - Escobar International",
-    "Tec-9 Rampage - Washington Beach",
-    "Katana Rampage - Escobar International",
+    "Rampage - Ocean Beach - Molotov",
+    "Rampage - Escobar International - RPG",
+    "Rampage - Vice Point - Uzi drive-by south",
+    "Rampage - Vice Point - M4",
+    "Rampage - Vice Point - Rocket Launcher",
+    "Rampage - Washington Beach - MP5",
+    "Rampage - Downtown - Flamethrower",
+    "Rampage - Downtown - Uzi drive-by",
+    "Rampage - Downtown - Molotov",
+    "Rampage - Downtown - M60",
+    "Rampage - Little Haiti - Tec-9",
+    "Rampage - Ocean Beach - Chainsaw",
+    "Rampage - Ocean Beach - .308 Sniper Rifle",
+    "Rampage - Starfish Island - Vehicle",
+    "Rampage - Little Havana - Ruger",
+    "Rampage - Viceport - Rocket Launcher",
+    "Rampage - Escobar International - Minigun",
+    "Rampage - Viceport - Grenade",
+    "Rampage - Little Havana - Sniper Rifle",
+    "Rampage - Ocean Beach - Katana",
+    "Rampage - Ocean Beach - Vehicle",
+    "Rampage - Vice Point - .357",
+    "Rampage - Vice Point - Uzi drive-by north",
+    "Rampage - Vice Point - Chainsaw",
+    "Rampage - Viceport - RPG",
+    "Rampage - Downtown - Minigun",
+    "Rampage - Downtown - .357",
+    "Rampage - Little Havana - Shotgun",
+    "Rampage - Vice Point - .308 Sniper",
+    "Rampage - Ocean Beach - Shotgun",
+    "Rampage - Vice Point - S.P.A.S. 12",
+    "Rampage - Little Havana - S.P.A.S. 12",
+    "Rampage - Escobar International - S.P.A.S. 12",
+    "Rampage - Ocean Beach - M4",
+    "Rampage - Little Havana - Katana",
 ]
 
 
@@ -601,8 +599,51 @@ def rampage_name(index: int) -> str:
     return RAMPAGE_NAMES[index - 1]
 
 
+# Unique stunt jump names, from the audit: the district, then the ramp itself.
+# The engine's own jump ids order this, which is the order the per-jump flags
+# $795..$830 and the district table follow, so index i is jump i everywhere.
+STUNT_JUMP_NAMES: list[str] = [
+    "Unique Stunt Jump - Escobar International - Western aircraft staircase over the airbridge east",
+    "Unique Stunt Jump - Escobar International - Vice Surf board onto the terminal roof",
+    "Unique Stunt Jump - Escobar International - Aircraft staircase east of the terminal",
+    "Unique Stunt Jump - Escobar International - Steep metal ramp at the end of the angled runway",
+    "Unique Stunt Jump - Escobar International - Western aircraft staircase over the airbridge west",
+    "Unique Stunt Jump - Escobar International - Aircraft staircase south of red radar dish",
+    "Unique Stunt Jump - Escobar International - Runway marker north of red radar dish",
+    "Unique Stunt Jump - Escobar International - Eastern aircraft staircase over the airbridge",
+    "Unique Stunt Jump - Prawn Island - To Film Studio",
+    "Unique Stunt Jump - Vice Point - Construction site",
+    "Unique Stunt Jump - Downtown - Large staircase going over Ammu-Nation",
+    "Unique Stunt Jump - Downtown - First G-spotlight jump",
+    "Unique Stunt Jump - Downtown - Second G-spotlight jump",
+    "Unique Stunt Jump - Downtown - Third G-spotlight jump",
+    "Unique Stunt Jump - Little Haiti - Wooden ramp southwest of Auntie Poulet's",
+    "Unique Stunt Jump - Little Haiti - Wooden ramp over a canal",
+    "Unique Stunt Jump - Little Haiti - East of Kaufman Cabs",
+    "Unique Stunt Jump - Little Havana - Roof of Calle Cafetaria",
+    "Unique Stunt Jump - Ocean Beach - Alley rooftop",
+    "Unique Stunt Jump - Ocean Beach - Parking Garage east of Hospital",
+    "Unique Stunt Jump - Washington Beach - Over northern bridge",
+    "Unique Stunt Jump - Ocean Beach - Cone Crazy parking lot rooftop",
+    "Unique Stunt Jump - Ocean Beach - Gas station stairs",
+    "Unique Stunt Jump - Ocean Beach - Pink roof south of Gas station",
+    "Unique Stunt Jump - Ocean Beach - Cortez's docks south",
+    "Unique Stunt Jump - Ocean Beach - Cortez's docks north",
+    "Unique Stunt Jump - Ocean Beach - Alley pallets south",
+    "Unique Stunt Jump - Ocean Beach - Alley pallets north",
+    "Unique Stunt Jump - Vice Point - Over the river near Club Malibu",
+    "Unique Stunt Jump - Washington Beach - River jump east",
+    "Unique Stunt Jump - Washington Beach - Alley stairs south",
+    "Unique Stunt Jump - Washington Beach - Alley stairs northeast",
+    "Unique Stunt Jump - Washington Beach - Alley stairs northwest",
+    "Unique Stunt Jump - Washington Beach - Ramp north of alley",
+    "Unique Stunt Jump - Washington Beach - River jump west",
+    "Unique Stunt Jump - Starfish Island - Northeast house staircase",
+]
+
+
 def stunt_jump_name(index: int) -> str:
-    return f"Unique Stunt Jump {index:02d}"
+    return STUNT_JUMP_NAMES[index - 1]
 
 
 # The canonical side-events list (14), pinned from the SCM mission table: three
@@ -641,8 +682,30 @@ def emergency_names() -> list[str]:
 ROBBABLE_STORE_COUNT = 15
 
 
+# Store names, from the audit: the district, then the shop. Ordered by the
+# add_stores_knocked_off site each one owns, which is what the completion globals
+# and the district table follow.
+ROBBABLE_STORE_NAMES: list[str] = [
+    "Store Robbery - Washington Beach - Hardware store",
+    "Store Robbery - North Point Mall - Tooled Up",
+    "Store Robbery - Little Havana - Screw This",
+    "Store Robbery - Little Havana - Calleggi Delicatessen Restaurant",
+    "Store Robbery - Downtown - The Jewelers",
+    "Store Robbery - Downtown - Dispensary",
+    "Store Robbery - Little Haiti - Hyton Aide",
+    "Store Robbery - Vice Point - The Jewelers",
+    "Store Robbery - Vice Point - Dispensary",
+    "Store Robbery - Vice Point - Corner store",
+    "Store Robbery - North Point Mall - Vinyl Countdown",
+    "Store Robbery - North Point Mall - Gash",
+    "Store Robbery - North Point Mall - Family Jewels",
+    "Store Robbery - Little Havana - Café Robina",
+    "Store Robbery - Little Havana - Laundromat",
+]
+
+
 def robbable_store_name(index: int) -> str:
-    return f"Robbable Store {index:02d}"
+    return ROBBABLE_STORE_NAMES[index - 1]
 
 
 # Optional check classes: class key -> (option attribute, ordered location
@@ -927,13 +990,21 @@ MAINLAND_SIDE_EVENTS: frozenset[str] = frozenset({
     "RC Raider Pickup", "Trial by Dirt", "Test Track",
 })
 
-# Stunt jumps are exe-native: the SCM only registers a found jump by its engine
-# id, so their per-jump islands are not readable from the decompile. All 36 count
-# as mainland provisionally until an in-game audit places each; the audit must
-# also confirm none sits on Starfish Island, since mainland gating no longer
-# covers the island (with Mainland Access alone both island gates stay shut).
+# Stunt jump islands, from the same audit the names come from. Jump 36 is the one
+# on Starfish Island: its takeoff at (-346.8, -290.7) sits inside the span the
+# five audited island packages describe, and the island needs its own item, since
+# Mainland Access alone leaves both island gates shut. Calling it mainland would
+# let the fill place Starfish Island Access on a check that needs the island to
+# reach, a loop no other check can break.
+#
+# Every other jump is mainland. That is still the coordinate-derived answer
+# rather than a per-jump audit, and it is the strict direction, so it holds until
+# the logic pass.
+STARFISH_STUNT_JUMPS: frozenset[str] = frozenset({stunt_jump_name(36)})
+
 MAINLAND_STUNT_JUMPS: frozenset[str] = frozenset(
     stunt_jump_name(index) for index in range(1, STUNT_JUMP_COUNT + 1)
+    if stunt_jump_name(index) not in STARFISH_STUNT_JUMPS
 )
 
 

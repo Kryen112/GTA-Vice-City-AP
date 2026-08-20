@@ -52,6 +52,11 @@ _ORDERED_LOCATION_NAMES: list[str] = list(STORY_MISSION_NAMES)
 for _class_key, (_option_attr, _names) in OPTIONAL_CLASSES.items():
     _ORDERED_LOCATION_NAMES.extend(_names)
 
+# The ordered names as the id table read them, so a test can see a duplicate the
+# dict below would silently collapse: the second one would take the first one's
+# id and a check would go missing.
+ORDERED_LOCATION_NAMES: list[str] = list(_ORDERED_LOCATION_NAMES)
+
 LOCATION_NAME_TO_ID: dict[str, int] = {
     name: ID_BASE + index for index, name in enumerate(_ORDERED_LOCATION_NAMES)
 }
@@ -108,6 +113,8 @@ for _name in data.MAINLAND_STORES:
     LOCATION_REGIONS[_name] = data.REGION_MAINLAND
 for _name in data.MAINLAND_SIDE_EVENTS:
     LOCATION_REGIONS[_name] = data.REGION_MAINLAND
+for _name in data.STARFISH_STUNT_JUMPS:
+    LOCATION_REGIONS[_name] = data.REGION_STARFISH
 for _name in data.MAINLAND_STUNT_JUMPS:
     LOCATION_REGIONS[_name] = data.REGION_MAINLAND
 for _name in _ORDERED_LOCATION_NAMES:

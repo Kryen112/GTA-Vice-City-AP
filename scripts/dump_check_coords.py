@@ -128,7 +128,7 @@ PROPERTY_BY_LABEL = {
     "HYCO_L": "Hyman Condo Purchase",
     "OCHE_L": "Ocean Heights Apartment Purchase",
     "WASH_L": "1102 Washington Street Purchase",
-    "VCPT_L": "Vice Point Purchase",
+    "VCPT_L": "3321 Vice Point Purchase",
     "SKUM_L": "Skumole Shack Purchase",
 }
 
