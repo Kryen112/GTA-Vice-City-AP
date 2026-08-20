@@ -15,6 +15,7 @@ hand when it starts.
 """
 from __future__ import annotations
 
+import os
 import re
 import sys
 
@@ -254,22 +255,88 @@ for i, ln in enumerate(lines):
     kept.append(ln)
 lines = kept
 
-# --- Relocate the two bulky completion watchers to CLEO ------------------------
-# APPKG (100 package checks) and APSTAT (rampage/stunt/taxi checks) are the
-# heaviest MAIN-section threads and poll only numeric globals, so they port to a
-# CLEO script unchanged. Moving them out of the MAIN script buffer makes room for
-# APMARK without overflowing VC's fixed main-script buffer. The completion globals
-# they set ($9080.. and $9180..) are unchanged, so the ASI polls them identically.
-def remove_thread(label, loop_goto):
+# --- Relocate threads out of the MAIN section to CLEO -------------------------
+# VC gives the MAIN section a fixed buffer, so a thread that does not have to
+# live there should not. Two kinds move. APPKG (100 package checks), APSTAT
+# (rampage/stunt/taxi checks) and APACT (activity and side-event flags) poll only
+# numeric globals and are rewritten into the watcher below; the completion
+# globals they set are unchanged, so the ASI polls them identically. APAREA,
+# APREWD and APRADIO do real work with objects, road switches and player state
+# and are carried across as they stand.
+def remove_thread(label):
+    """Cuts a whole thread out of MAIN and hands back its body.
+
+    A thread is its entry label and every line under it until a label that is
+    not its own, which is NOT the same as everything up to its loop goto: APAREA
+    continues past `goto @APAREA_LOOP` into the :APAREA_SHARED subroutine its own
+    branches gosub. Cutting at the loop moved the callers and left the callee, and
+    Sanny compiles a gosub to a name it cannot see as offset zero and exits zero,
+    so nothing downstream catches it.
+    """
     start = next((i for i, ln in enumerate(lines) if ln == f":{label}"), None)
     assert start is not None, f"relocate: :{label} not found"
-    end = next(i for i in range(start, len(lines)) if lines[i] == loop_goto)
-    del lines[start:end + 1]
+    end = start + 1
+    while end < len(lines):
+        match = re.fullmatch(r":(\w+)", lines[end])
+        if match and not (match.group(1) == label
+                          or match.group(1).startswith(f"{label}_")):
+            break
+        end += 1
+    body = lines[start:end]
+    # Nothing but this thread may be in the cut: a second script_name would mean
+    # the walk ran into the next thread through a label it mistook for its own.
+    intruders = [ln for ln in body[1:] if ln.startswith("script_name ")
+                 and ln != f"script_name '{label}'"]
+    assert not intruders, f"relocate: :{label} cut swallowed {intruders}"
+    del lines[start:end]
+    while body and body[-1] == "":
+        body.pop()
+    return body
 
 
-remove_thread("APPKG", "goto @APPKG_LOOP")
-remove_thread("APSTAT", "goto @APSTAT_LOOP")
-remove_thread("APACT", "goto @APACT_LOOP")
+remove_thread("APPKG")
+remove_thread("APSTAT")
+remove_thread("APACT")
+
+# Three more threads leave MAIN, and unlike the three above they are carried
+# across rather than rewritten: they do real work with objects, road switches and
+# player state, so re-expressing them by hand would be a second implementation to
+# keep in step. Each becomes its own CLEO script, because a .cs runs from its own
+# entry point and two loops in one file would fall through into each other.
+#
+# What makes these three portable and APMARK not: none of them names a label
+# outside itself, so nothing has to reach back into main.scm. APMARK starts a
+# mission launcher per managed mission, and a label belongs to the file it
+# compiles in, so it cannot follow until something else can start those threads.
+PORTABLE_THREADS = [("APAREA", "aparea"), ("APREWD", "aprewd"),
+                    ("APRADIO", "apradio")]
+ported = []
+for label, filename in PORTABLE_THREADS:
+    body = remove_thread(label)
+    # A CLEO script has no script_name and no entry label of its own; the rest of
+    # the body, including every internal label, carries over untouched.
+    carried = [ln for ln in body
+               if ln != f":{label}" and ln != f"script_name '{label}'"]
+    assert carried, f"relocate: :{label} came back empty"
+    # The whole point of the cut boundary: a carried thread may not name anything
+    # it left behind. Sanny resolves an unknown @name to offset zero and exits
+    # zero, so this is the only place the mistake is catchable.
+    defined = {match.group(1) for match in
+               (re.fullmatch(r":(\w+)", ln) for ln in carried) if match}
+    referenced = {match.group(1) for ln in carried
+                  for match in re.finditer(r"@(\w+)", ln)}
+    dangling = sorted(referenced - defined)
+    assert not dangling, (
+        f"relocate: :{label} would reference {dangling} left in main.scm")
+    ported.append((label, filename, carried))
+
+for label, _filename in PORTABLE_THREADS:
+    # Asserted rather than filtered: a start whose thread has gone would compile
+    # to a thread starting at offset zero, silently.
+    boot = f"start_new_script @{label} "
+    assert lines.count(boot) == 1, (
+        f"relocate: {boot!r} appears {lines.count(boot)} times, expected 1")
+    lines.remove(boot)
 lines = [ln for ln in lines
          if ln not in ("start_new_script @APPKG ", "start_new_script @APSTAT ",
                        "start_new_script @APACT ")]
@@ -299,6 +366,14 @@ cleo += ["goto @AW_LOOP", ""]
 if CLEO_OUT:
     with open(CLEO_OUT, "wb") as handle:
         handle.write(nl.join(cleo).encode("latin-1"))
+    # One file per carried thread, named for it, beside the watcher.
+    directory = os.path.dirname(os.path.abspath(CLEO_OUT))
+    for label, filename, carried in ported:
+        script = ["{$CLEO .cs}", "", "0000:", *carried, ""]
+        target = os.path.join(directory, f"{filename}.txt")
+        with open(target, "wb") as handle:
+            handle.write(nl.join(script).encode("latin-1"))
+        print(f"relocated {label} to {filename}.txt ({len(carried)} lines)")
 
 # --- Build the APMARK watcher --------------------------------------------------
 by_strand: dict[str, list] = {}

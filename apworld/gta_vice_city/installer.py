@@ -31,7 +31,17 @@ MAIN_SCM = "main.scm"
 # absent on purpose: it is restored from its backup, never deleted. Append every
 # newly shipped file and never remove entries; build_apworld.py refuses to stage
 # a payload that outgrows this list.
-SHIPPED_PAYLOAD_PATHS = ("GtaVcAp.VC.asi", "cleo/apwatchers.cs")
+SHIPPED_PAYLOAD_PATHS = (
+    "GtaVcAp.VC.asi",
+    "cleo/apwatchers.cs",
+    # Three threads that used to live in main.scm and now ship as their own CLEO
+    # scripts, because the MAIN script buffer is fixed and was almost full. Each
+    # runs from its own entry point, which is why they are separate files rather
+    # than one: two loops in a single .cs would fall through into each other.
+    "cleo/aparea.cs",
+    "cleo/aprewd.cs",
+    "cleo/apradio.cs",
+)
 
 # Places an earlier build put a payload file that it no longer uses. The ASI
 # loader scans both the install root and scripts, so a copy left in scripts is

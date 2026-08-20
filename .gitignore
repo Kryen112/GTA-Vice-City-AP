@@ -21,9 +21,11 @@ mod/asi/plugin/obj/
 *.obj
 *.asi
 
-# Compiled mod payloads (built from source, bundled into the .apworld)
+# Compiled mod payloads (built from source, bundled into the .apworld). Every
+# CLEO script is compiled from a .txt the build writes, so the pattern covers
+# the ones add_markers.py carries out of the MAIN section too.
 mod/scm/main.scm
-mod/cleo/apwatchers.cs
+mod/cleo/*.cs
 
 # Editor / OS
 .vscode/

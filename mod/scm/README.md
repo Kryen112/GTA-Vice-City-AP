@@ -18,14 +18,18 @@ version control.
    This makes every mission-giver marker appear only on its AP unlock, holds the
    whole marker and launcher pass until An Old Friend is done (the vanilla flag
    `$222` that mission sets), severs the vanilla story reveals and launcher
-   starts, adds the APMARK watcher, and moves
-   the three heaviest completion watchers into the CLEO script it writes to
-   `apwatchers.txt`, so the MAIN section stays under the game's script buffer.
-4. Compile both: `sanny.exe --compile built.markers.txt main.scm --game vc` and
-   `sanny.exe --compile apwatchers.txt apwatchers.cs --game vc`.
-5. Install `main.scm` into the game `data` folder and `apwatchers.cs` (plus, for
-   manual marker testing, `../cleo/aptest_markers.txt` compiled to `.cs`) into
-   the game `CLEO` folder.
+   starts, adds the APMARK watcher, and moves six threads out of the MAIN
+   section so it stays under the game's fixed script buffer. Three are rewritten
+   into the watcher it writes to `apwatchers.txt`; the other three are carried
+   across verbatim into `aparea.txt`, `aprewd.txt` and `apradio.txt` beside it,
+   one file each because a CLEO script runs from its own entry point.
+4. Compile all four, plus the script itself:
+   `sanny.exe --compile built.markers.txt main.scm --game vc`, then the same for
+   `apwatchers.txt`, `aparea.txt`, `aprewd.txt` and `apradio.txt` to `.cs`.
+   Sanny compiles headlessly only with the game folder as the working directory.
+5. Install `main.scm` into the game `data` folder and the four `.cs` files (plus,
+   for manual marker testing, `../cleo/aptest_markers.txt` compiled to `.cs`)
+   into the game `CLEO` folder.
 
 ## Notes
 
@@ -93,6 +97,16 @@ version control.
   enforces each lock per frame while its flag is set and its unlock is zero
   (input masks, the wallet pin, the vehicle-entry cancel, and the weapon
   rampage icon hold), so the script carries nothing for them.
+- What lives in MAIN and what does not: the buffer is 225,512 bytes and vanilla
+  uses 204,596, so the mod has about 20,900 to spend and spends most of it. The
+  APMARK watcher family is the largest single resident at 11,632 bytes, and it
+  cannot move: it starts a launcher thread per managed mission, and a label
+  belongs to the file it compiles in, so a CLEO script cannot name them. Anything
+  that only reads globals and acts on the world can move, which is what the six
+  relocated threads have in common. Measure with the dword in the SCM header
+  (follow the three `02 00 01` gotos from offset 0; the second target is the
+  mission segment, whose layout is goto, dword target, one pad byte, then MAIN
+  size, largest mission, mission count).
 - Content locks: `$9450..$9454` (one lock flag per content item, ASI-stamped
   from slot_data) and `$9455..$9459` (one unlock per item), in the order
   hidden packages, rampages, stunt jumps, property purchases, robbable
