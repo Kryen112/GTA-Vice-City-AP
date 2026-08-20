@@ -19,7 +19,7 @@ from test.general import gen_steps, setup_multiworld
 from worlds.AutoWorld import call_all
 
 from .. import MINIMUM_SPHERE_ZERO, GTAViceCityWorld, data, rules, scm
-from ..items import ITEM_CLASSIFICATIONS, ITEM_NAME_TO_ID
+from ..items import ITEM_CLASSIFICATIONS, ITEM_NAME_TO_ID, ORDERED_ITEM_NAMES
 from ..locations import (
     LOCATION_NAME_TO_ID,
     LOCATION_REGIONS,
@@ -2505,6 +2505,13 @@ def _rampage_only_cash() -> set[str]:
     return {data.cash_item_name(value) for value in rampage_values - other_values}
 
 
+# The cash denominations, for tests that mean "a cash item" rather than any
+# filler. Named for their amount alone, so there is no prefix to match on.
+_CASH_FILLER_NAMES: frozenset[str] = frozenset(
+    data.cash_item_name(amount) for amount in data.CASH_VALUES
+)
+
+
 class TestRewardData(WorldTestBase):
     game = "Grand Theft Auto Vice City"
 
@@ -2591,13 +2598,40 @@ class TestRewardMirror(WorldTestBase):
         placed = [item for item in self.multiworld.itempool if item.player == self.player]
         self.assertEqual(len(placed), len(self.multiworld.get_locations(self.player)))
 
+    def test_a_cash_item_is_named_for_its_amount(self) -> None:
+        # The amount alone, thousands separators kept, no prefix. The
+        # hundredth-package bonus is named the same way, which is what puts the
+        # two in one namespace.
+        self.assertEqual(data.cash_item_name(100), "$100")
+        self.assertEqual(data.cash_item_name(50_000), "$50,000")
+        self.assertEqual(data.PACKAGE_CASH_REWARD, "$100,000")
+
+    def test_no_two_items_share_a_name(self) -> None:
+        # ITEM_NAME_TO_ID and CONSUMABLE_EFFECTS are both dicts, so two items
+        # sharing a name silently become one item and every id after it shifts.
+        # data.py asserts the one collision the naming makes likely, the package
+        # bonus against a denomination; this covers every pair, and it holds in
+        # the frozen build, which compiles asserts away.
+        # Raw length against the dict's: comparing two unique counts would say
+        # nothing, since the dict is built from this very list.
+        self.assertEqual(len(ORDERED_ITEM_NAMES), len(ITEM_NAME_TO_ID))
+        duplicates = sorted({name for name in ORDERED_ITEM_NAMES
+                             if ORDERED_ITEM_NAMES.count(name) > 1})
+        self.assertEqual(duplicates, [])
+        self.assertNotIn(data.PACKAGE_CASH_REWARD, data.FILLER_ITEMS)
+        # Every one-shot amount keeps its own entry, for the same reason.
+        one_shots = [*_CASH_FILLER_NAMES, data.PACKAGE_CASH_REWARD]
+        self.assertEqual(len(set(one_shots)), len(one_shots))
+        for name in one_shots:
+            self.assertIn(name, data.CONSUMABLE_EFFECTS, name)
+
     def test_filler_cash_is_bounded_by_the_reward_mirror(self) -> None:
         # Total filler cash can never exceed the sum of every mirrored reward, and
         # sampling only ever removes entries, so money is bounded, not arbitrary.
         cash_total = sum(
             data.CONSUMABLE_EFFECTS[item.name][1]
             for item in self.multiworld.itempool
-            if item.player == self.player and item.name.startswith("Cash $")
+            if item.player == self.player and item.name in _CASH_FILLER_NAMES
         )
         self.assertGreater(cash_total, 0)
         self.assertLessEqual(cash_total, sum(data.LOCATION_REWARD.values()))

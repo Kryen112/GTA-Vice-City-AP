@@ -385,7 +385,10 @@ SEATED_SIDE_EVENTS: frozenset[str] = frozenset({"Hotring", "Bloodring"})
 
 
 def cash_item_name(amount: int) -> str:
-    return f"Cash ${amount:,}"
+    # The amount alone: an item called "$100" says everything a player needs, and
+    # the package bonus is named the same way. The two share one namespace, which
+    # FILLER_ITEMS guards.
+    return f"${amount:,}"
 
 
 # Generic filler for checks with no vanilla cash reward (properties, robbable
@@ -1072,6 +1075,17 @@ CASH_VALUES: list[int] = sorted({amount for amount in LOCATION_REWARD.values() i
 # generic consumables. items.py assigns ids from this list and classifies it
 # filler; create_items draws the actual per-seed filler from the reward mirror.
 FILLER_ITEMS: list[str] = [cash_item_name(amount) for amount in CASH_VALUES] + GENERAL_FILLER
+# A denomination and the package bonus are both named for their amount alone, so
+# a check paying exactly the bonus amount gives two items one name, and both the
+# id table and the effect table below are dicts that would silently keep one. The
+# bonus is a useful one-shot and a denomination is filler, so the collision fails
+# here rather than resolving into whichever happens to win.
+#
+# This is the fast guard, not the only one: the frozen Archipelago build compiles
+# with asserts optimized away, so test_no_two_items_share_a_name carries the
+# general invariant and covers every other pair as well.
+assert PACKAGE_CASH_REWARD not in FILLER_ITEMS, (
+    f"the package bonus {PACKAGE_CASH_REWARD} collides with a cash denomination")
 
 # One-shot consumable effects, each applied once by the ASI past the saved
 # applied-index. (item name -> (effect type, *params)); cash carries its amount.

@@ -47,6 +47,10 @@ _ORDERED_ITEM_NAMES: list[str] = (
     + data.CONTENT_ITEMS
 )
 
+# The ordered names as the id table read them, so a test can see a duplicate the
+# dict below would silently collapse.
+ORDERED_ITEM_NAMES: list[str] = list(_ORDERED_ITEM_NAMES)
+
 ITEM_NAME_TO_ID: dict[str, int] = {
     name: ID_BASE + index for index, name in enumerate(_ORDERED_ITEM_NAMES)
 }
