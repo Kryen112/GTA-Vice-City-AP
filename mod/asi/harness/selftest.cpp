@@ -144,6 +144,46 @@ int main() {
            "so both reach the server in the game after");
   }
 
+  // A send that fails hands its locations back, because draining is the only
+  // thing that can lose one: detection never finds a location twice, and a save
+  // folds its completion global into the next baseline.
+  {
+    std::vector<std::int64_t> queued;
+    RequeueChecks(queued, {542000010, 542000011});
+    Expect(queued.size() == 2 && queued[0] == 542000010 && queued[1] == 542000011,
+           "an undelivered batch goes back on an empty queue, in the order found");
+
+    std::vector<std::int64_t> found_since = {542000020};
+    RequeueChecks(found_since, {542000010, 542000011});
+    Expect(found_since.size() == 3 && found_since[0] == 542000010 &&
+               found_since[1] == 542000011 && found_since[2] == 542000020,
+           "and in front of whatever the game found while the send was failing");
+
+    std::vector<std::int64_t> already = {542000010, 542000030};
+    RequeueChecks(already, {542000010, 542000011});
+    Expect(already.size() == 3 && already[0] == 542000010 &&
+               already[1] == 542000011 && already[2] == 542000030,
+           "a location the queue already holds is not queued twice");
+
+    std::vector<std::int64_t> repeated;
+    RequeueChecks(repeated, {542000010, 542000010});
+    Expect(repeated.size() == 1,
+           "nor is one the failed batch itself repeated");
+
+    std::vector<std::int64_t> untouched = {542000040};
+    RequeueChecks(untouched, {});
+    Expect(untouched.size() == 1 && untouched[0] == 542000040,
+           "and a send that failed with nothing left to deliver changes nothing");
+
+    // The round trip: drain, fail, hand back, drain again.
+    std::vector<std::int64_t> round = {542000050, 542000051};
+    const std::vector<std::int64_t> drained = DrainChecks(round, false);
+    Expect(round.empty() && drained.size() == 2, "draining empties the queue");
+    RequeueChecks(round, drained);
+    Expect(DrainChecks(round, false).size() == 2,
+           "so a failed drain loses nothing once it hands the batch back");
+  }
+
   // Hidden-package detection: a package seen present this game and then gone is
   // collected, matched to the pickup pool by coordinate. Detection is per
   // package (by which coordinate vanished), never by collection order, and a

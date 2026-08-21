@@ -1368,6 +1368,11 @@ std::vector<std::int64_t> ScmGameState::TakeNewChecks() {
   return DrainChecks(outbound_checks_, outbound_checks_held_);
 }
 
+void ScmGameState::RequeueChecks(const std::vector<std::int64_t>& undelivered) {
+  std::lock_guard<std::mutex> lock(mutex_);
+  gtavc::RequeueChecks(outbound_checks_, undelivered);
+}
+
 bool ScmGameState::TakeGoalReached() {
   // The goal is derived client-side from the finale location check, so the ASI
   // never reports it separately.

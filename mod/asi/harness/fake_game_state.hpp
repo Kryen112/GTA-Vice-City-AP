@@ -10,6 +10,7 @@
 #include <vector>
 
 #include "../src/game_state.hpp"
+#include "../src/scm_completion.hpp"
 
 namespace gtavc {
 
@@ -86,6 +87,11 @@ class FakeGameState : public GameState {
     std::vector<std::int64_t> drained;
     drained.swap(pending_checks_);
     return drained;
+  }
+
+  void RequeueChecks(const std::vector<std::int64_t>& undelivered) override {
+    std::lock_guard<std::mutex> lock(mutex_);
+    gtavc::RequeueChecks(pending_checks_, undelivered);
   }
 
   bool TakeGoalReached() override {

@@ -2,6 +2,7 @@
 
 #include <chrono>
 #include <utility>
+#include <cstddef>
 #include <vector>
 
 #include "game_state.hpp"
@@ -263,8 +264,20 @@ void BridgeClient::HandleMessage(const json& message) {
 }
 
 void BridgeClient::PumpOutbound() {
-  for (const std::int64_t location : game_->TakeNewChecks()) {
-    SendMessage(CheckMessage(location));
+  // One at a time, and the first failure hands the rest back. Draining the
+  // queue takes the locations out of the only place they can be found again:
+  // the game state records each one as reported the moment it detects it, and a
+  // save folds its completion global into the next baseline, so a location
+  // dropped here is dropped for good and a lost progression check makes the
+  // multiworld unbeatable. The client re-sends what it has on every connect, so
+  // handing them back is all this side has to do.
+  const std::vector<std::int64_t> checks = game_->TakeNewChecks();
+  for (std::size_t index = 0; index < checks.size(); ++index) {
+    if (!SendMessage(CheckMessage(checks[index]))) {
+      game_->RequeueChecks({checks.begin() + static_cast<std::ptrdiff_t>(index),
+                            checks.end()});
+      return;
+    }
   }
   if (game_->TakeGoalReached()) {
     SendMessage(GoalReachedMessage());

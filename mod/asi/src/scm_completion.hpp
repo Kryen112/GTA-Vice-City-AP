@@ -10,6 +10,7 @@
 // main.scm from reporting every location at once.
 #pragma once
 
+#include <algorithm>
 #include <cstdint>
 #include <map>
 #include <set>
@@ -54,6 +55,34 @@ inline std::vector<std::int64_t> DrainChecks(
   std::vector<std::int64_t> leaving;
   leaving.swap(queued);
   return leaving;
+}
+
+// Puts back what a send could not deliver, which is what makes draining safe to
+// undo. A location leaves the queue before it is on the wire, and detection
+// cannot find it a second time: the reported set holds it for the life of the
+// process, and once the player saves, its completion global folds into the next
+// game's baseline and stops reading as a declared completion at all. So a
+// failed send has to hand the locations back rather than drop them.
+//
+// They go in front of whatever arrived since, so the order the game found them
+// in survives a dropped socket, and a location the queue already holds is not
+// added twice, since a detection pass can run between the failure and the
+// retry.
+inline void RequeueChecks(std::vector<std::int64_t>& queued,
+                          const std::vector<std::int64_t>& undelivered) {
+  std::vector<std::int64_t> restored;
+  restored.reserve(undelivered.size() + queued.size());
+  for (const std::int64_t location : undelivered) {
+    if (std::find(restored.begin(), restored.end(), location) == restored.end()) {
+      restored.push_back(location);
+    }
+  }
+  for (const std::int64_t location : queued) {
+    if (std::find(restored.begin(), restored.end(), location) == restored.end()) {
+      restored.push_back(location);
+    }
+  }
+  queued.swap(restored);
 }
 
 }  // namespace gtavc

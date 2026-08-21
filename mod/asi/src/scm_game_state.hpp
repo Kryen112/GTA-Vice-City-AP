@@ -58,6 +58,7 @@ class ScmGameState : public GameState {
   void SetClientConnected(bool connected) override;
   void SetClientStatus(const ClientStatus& status) override;
   std::vector<std::int64_t> TakeNewChecks() override;
+  void RequeueChecks(const std::vector<std::int64_t>& undelivered) override;
   bool TakeGoalReached() override;
   bool TakeProgressPercentage(int& percentage) override;
 

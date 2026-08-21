@@ -366,6 +366,15 @@ class GTAViceCityContext(CommonContext):
         await self._resync_bridge()
 
     async def on_bridge_check(self, location: int) -> None:
+        # Recorded in locations_checked BEFORE the send, and left there whatever
+        # the send does. CommonContext replays that set on every Connected, so a
+        # location found while the server is unreachable is reconciled on the
+        # next connection instead of being lost: send_msgs can fail or the socket
+        # can die mid-frame, and the mod cannot find the location again once its
+        # completion global is set and a save has folded it into the baseline.
+        # LocationChecks is idempotent, so replaying one the server already has
+        # costs nothing. The set doubles as the per-location dedupe.
+        self.locations_checked.add(location)
         await self.send_msgs([{"cmd": "LocationChecks", "locations": [location]}])
 
     async def on_bridge_goal(self) -> None:

@@ -49,6 +49,54 @@ def _context() -> context_module.GTAViceCityContext:
     return context_module.GTAViceCityContext(None, None, 52300, "Player1")
 
 
+class TestOutboundChecksSurviveAFailedSend(unittest.TestCase):
+    """A check the server never receives has to be recoverable.
+
+    The mod cannot find a location twice: it records the location the moment it
+    detects it, and once the player saves, the completion global folds into the
+    next baseline. So the only place a lost check can come back from is
+    CommonContext's replay of locations_checked on Connected.
+    """
+
+    def test_the_location_is_recorded_even_when_the_send_raises(self) -> None:
+        checked = set()
+
+        async def scenario() -> None:
+            context = _context()
+
+            async def failing_send(messages) -> None:
+                raise ConnectionResetError("server went away mid-frame")
+
+            context.send_msgs = failing_send
+            with self.assertRaises(ConnectionResetError):
+                await context.on_bridge_check(4242)
+            checked.update(context.locations_checked)
+
+        asyncio.run(scenario())
+        # Recorded before the send, so the framework replays it on reconnect.
+        self.assertIn(4242, checked)
+
+    def test_the_location_is_recorded_on_a_send_that_works(self) -> None:
+        sent = []
+        checked = set()
+
+        async def scenario() -> None:
+            context = _context()
+
+            async def capture(messages) -> None:
+                sent.extend(messages)
+
+            context.send_msgs = capture
+            await context.on_bridge_check(77)
+            await context.on_bridge_check(77)
+            checked.update(context.locations_checked)
+
+        asyncio.run(scenario())
+        self.assertIn(77, checked)
+        self.assertEqual(
+            sent, [{"cmd": "LocationChecks", "locations": [77]}] * 2)
+
+
 class TestLooksLikeInstall(unittest.TestCase):
     def test_true_only_when_the_exe_is_present(self) -> None:
         with _install_folder_with_exe() as folder:

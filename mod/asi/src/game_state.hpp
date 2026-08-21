@@ -155,6 +155,9 @@ class GameState {
   // Location ids newly completed in game since the last call (drains the
   // queue). Polled by the bridge each loop.
   virtual std::vector<std::int64_t> TakeNewChecks() = 0;
+  // Hands back locations a send could not deliver. Detection cannot find a
+  // location twice, so a caller that drains must return what it fails to send.
+  virtual void RequeueChecks(const std::vector<std::int64_t>& undelivered) = 0;
 
   // True once when the goal was newly reached.
   virtual bool TakeGoalReached() = 0;
