@@ -10,36 +10,51 @@
 // the game survives rather than the rate the server sends them at.
 //
 // The rate is one grant every kGrantIntervalMs and never more than
-// kGrantsPerWindow inside one window of kGrantWindowMs, which is a burst of
+// kGrantsPerWindow inside ANY window of kGrantWindowMs, which is a burst of
 // eight over two seconds and then a pause.
 //
-// The window tumbles rather than slides: it is anchored where the pacer last
-// reset it and cleared whole, not measured back from now. So the cap holds
-// per window rather than across any five seconds you care to pick, and up to
-// kGrantsPerWindow * 2 - 1 grants can fall in one span, fifteen at these
-// numbers. A caller asking once a frame gets at most one a frame.
+// The window SLIDES: each grant's time is remembered and a grant is refused
+// while kGrantsPerWindow of them are less than kGrantWindowMs old, so the cap
+// holds across any five seconds you care to pick rather than only inside the
+// window the pacer happens to be anchored on. An earlier version anchored the
+// window and cleared it whole, which let kGrantsPerWindow * 2 - 1 grants fall in
+// one span, fifteen at these numbers, because the quota refilled at the
+// boundary. The interval was the only hard cap then. A caller asking once a
+// frame still gets at most one a frame.
 //
 // PlanUnlocks below picks which unlock global goes next. Which EFFECT goes
 // next is the caller's own received order. The caller holds the pacer across
 // frames.
 #pragma once
 
+#include <array>
+#include <cstddef>
 #include <cstdint>
 #include <utility>
 #include <vector>
 
 namespace gtavc {
 
-// One grant every quarter second, eight to a five second window.
+// One grant every quarter second, eight to any five second window.
 constexpr unsigned int kGrantIntervalMs = 250;
 constexpr unsigned int kGrantWindowMs = 5000;
 constexpr int kGrantsPerWindow = 8;
 
-// What the pacer carries between frames. The caller owns one.
+// The sliding window remembers one time per grant it can admit, so it needs a
+// slot for each. Sized from the cap rather than beside it, and TakeGrantSlot
+// clamps a caller asking for more, which keeps a test free to pass a smaller
+// per_window without the ring having to know.
+constexpr std::size_t kGrantWindowSlots = static_cast<std::size_t>(kGrantsPerWindow);
+
+// What the pacer carries between frames. The caller owns one. `times` is a ring
+// of the grants inside the current window, oldest at `oldest`, `held` of them
+// live; a grant ages out when it is kGrantWindowMs old rather than when a window
+// ends.
 struct GrantPacer {
   unsigned int next_allowed_ms = 0;
-  unsigned int window_start_ms = 0;
-  int granted_in_window = 0;
+  std::array<unsigned int, kGrantWindowSlots> times{};
+  std::size_t oldest = 0;
+  int held = 0;
   bool started = false;
 };
 
@@ -53,37 +68,46 @@ inline bool TakeGrantSlot(GrantPacer& pacer, unsigned int now,
                           unsigned int interval_ms, unsigned int window_ms,
                           int per_window) {
   if (per_window <= 0) return false;
+  if (per_window > static_cast<int>(kGrantWindowSlots)) {
+    per_window = static_cast<int>(kGrantWindowSlots);
+  }
   // A clock that has gone backwards is a clock that restarted, which a game
-  // restart does. window_start_ms is always a `now` this pacer was already
-  // handed, so a negative difference means a restart or, harmlessly, a gap of
-  // more than 24.8 days between asks. Catching it here rather than at a call
-  // site is what reaches the loads no caller can watch: a load from the pause
-  // menu runs the whole restart inside a window where the game frame does not
-  // fire at all.
+  // restart does. Every time in the ring is a `now` this pacer was already
+  // handed, so a `now` below the oldest of them means a restart or, harmlessly,
+  // a gap of more than 24.8 days between asks. Catching it here rather than at a
+  // call site is what reaches the loads no caller can watch: a load from the
+  // pause menu runs the whole restart inside a window where the game frame does
+  // not fire at all.
   //
-  // It catches only the restarts that land below the last window start. One
-  // landing above it runs on the previous game's counters, which can only
-  // under-grant and never over-grant, and the stale window rolls within one
-  // window plus one interval of that start, so an undetected restart costs a
-  // few seconds of extra wait, never a stall and never a flood.
-  if (pacer.started &&
-      static_cast<int>(now - pacer.window_start_ms) < 0) {
+  // It catches only the restarts that land below the oldest time held. One
+  // landing above it runs on the previous game's times, which can only
+  // under-grant and never over-grant, and those times age out within one window
+  // of it, so an undetected restart costs a few seconds of extra wait, never a
+  // stall and never a flood.
+  if (pacer.started && pacer.held > 0 &&
+      static_cast<int>(now - pacer.times[pacer.oldest]) < 0) {
     pacer.started = false;
   }
   if (!pacer.started) {
     pacer.started = true;
     pacer.next_allowed_ms = now;
-    pacer.window_start_ms = now;
-    pacer.granted_in_window = 0;
+    pacer.oldest = 0;
+    pacer.held = 0;
   }
   if (static_cast<int>(now - pacer.next_allowed_ms) < 0) return false;
-  if (static_cast<int>(now - pacer.window_start_ms) >=
-      static_cast<int>(window_ms)) {
-    pacer.window_start_ms = now;
-    pacer.granted_in_window = 0;
+  // Age out every grant the window has left behind. This is what makes the cap
+  // hold across any window_ms rather than only inside an anchored one: nothing
+  // is cleared wholesale, each time leaves on its own.
+  while (pacer.held > 0 &&
+         static_cast<int>(now - pacer.times[pacer.oldest]) >=
+             static_cast<int>(window_ms)) {
+    pacer.oldest = (pacer.oldest + 1) % kGrantWindowSlots;
+    --pacer.held;
   }
-  if (pacer.granted_in_window >= per_window) return false;
-  ++pacer.granted_in_window;
+  if (pacer.held >= per_window) return false;
+  pacer.times[(pacer.oldest + static_cast<std::size_t>(pacer.held)) %
+              kGrantWindowSlots] = now;
+  ++pacer.held;
   pacer.next_allowed_ms = now + interval_ms;
   return true;
 }

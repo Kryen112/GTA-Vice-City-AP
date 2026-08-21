@@ -491,12 +491,58 @@ int main() {
     // Asserted rather than assumed: without this the loop above could spend no
     // grants at all and every line below would still pass, pinning the interval
     // and nothing about the window.
-    Expect(late.granted_in_window == 8,
+    Expect(late.held == 8,
            "and it really is the eighth, so the window is what fills");
     Expect(!TakeGrantSlot(late, 6248, 250, 5000, 8),
            "after which the interval still binds past the window roll");
     Expect(TakeGrantSlot(late, 6249, 250, 5000, 8),
            "so the wait is one window and one interval, never more");
+
+    // The window SLIDES, which is the whole point of remembering a time per
+    // grant. An anchored window cleared whole refills at its boundary, so eight
+    // at the end of one and eight at the start of the next put fifteen inside a
+    // single span. Here each time ages out on its own, so the ninth grant waits
+    // for the first to be a full window old however the boundary falls.
+    GrantPacer sliding;
+    unsigned int at = 1000;
+    for (int grant = 0; grant < 8; ++grant) {
+      Expect(TakeGrantSlot(sliding, at, 250, 5000, 8),
+             "eight grants fill the window");
+      at += 250;
+    }
+    Expect(!TakeGrantSlot(sliding, 5999, 250, 5000, 8),
+           "and a ninth is refused while the first is under a window old");
+    Expect(TakeGrantSlot(sliding, 6000, 250, 5000, 8),
+           "arriving only once that first grant has aged out of it");
+
+    // The guarantee itself, swept rather than reasoned about: no five second span
+    // may hold more than eight grants.
+    //
+    // The sweep asks with a QUIET GAP in the middle, which is what discriminates
+    // and what the game actually does: nothing to deliver for a while, then a
+    // backlog. Asked continuously, the anchored window this replaced also holds
+    // eight, so a continuous sweep would pass either way and pin nothing. With
+    // the gap, the anchored window let ELEVEN through, because its quota refilled
+    // on a boundary the gap had moved.
+    {
+      GrantPacer swept;
+      std::vector<unsigned int> granted;
+      for (unsigned int clock = 1000; clock <= 30000; clock += 50) {
+        if (clock > 2000 && clock < 5200) continue;  // nothing waiting to go
+        if (TakeGrantSlot(swept, clock, 250, 5000, 8)) granted.push_back(clock);
+      }
+      std::size_t worst = 0;
+      for (std::size_t first = 0; first < granted.size(); ++first) {
+        std::size_t inside = 0;
+        for (std::size_t next = first; next < granted.size(); ++next) {
+          if (granted[next] - granted[first] < 5000) ++inside;
+        }
+        if (inside > worst) worst = inside;
+      }
+      Expect(granted.size() > 20 && worst <= 8,
+             "no five second span holds more than eight grants, however the "
+             "window boundaries fall");
+    }
   }
 
   // Radio planning: the resolve map sends a locked station to the next
