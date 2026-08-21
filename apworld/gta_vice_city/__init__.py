@@ -413,7 +413,7 @@ class GTAViceCityWorld(World):
         # cannot open that island for itself.
         for mission in data.ROUTE_MISSIONS:
             event = GTAViceCityLocation(
-                self.player, f"{mission} (event)", None,
+                self.player, data.mission_event_name(mission), None,
                 by_name[LOCATION_REGIONS[mission]],
             )
             event.place_locked_item(GTAViceCityItem(
@@ -623,17 +623,6 @@ class GTAViceCityWorld(World):
             set_rule(self.multiworld.get_location(location_name, self.player), self._bind(rule))
         # An event carries the rule of the mission it stands for, so holding the
         # event means that mission was reachable.
-        for mission in data.ROUTE_MISSIONS:
-            rule = location_rules.get(mission)
-            if rule is None:
-                # An unruled event would be free, and it opens an island, so this
-                # fails rather than quietly handing the island over.
-                raise OptionError(
-                    f"{mission} opens an island and has no rule to stand on")
-            set_rule(
-                self.multiworld.get_location(f"{mission} (event)", self.player),
-                self._bind(rule),
-            )
         self.multiworld.completion_condition[self.player] = self._completion_condition()
 
     def _bind(self, rule: Callable[[CollectionState, int], bool]) -> Callable[[CollectionState], bool]:

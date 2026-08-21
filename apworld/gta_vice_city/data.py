@@ -839,6 +839,8 @@ STRAND_PREREQUISITES: dict[str, list[tuple[str, int]]] = {
 MISSION_PREREQUISITES: dict[str, list[tuple[str, int]]] = {
     "Rub Out": [("Death Row", 1)],
     "Publicity Tour": [("Big Mitch Baker", 3)],
+    # The Cubans move on the Haitians only once Auntie Poulet's last is done.
+    "Trojan Voodoo": [("Auntie Poulet", 3)],
 }
 
 # The same, for an edge into a venue strand: Cap the Collector needs the
@@ -1027,16 +1029,51 @@ MISSION_REGION_REQUIREMENTS: dict[str, list[str]] = {
 }
 
 
-# Missions whose passing is a way onto an island, as event items. Passing a
-# mission is not an item a seed can place, so each of these gets an event
-# location on the mission's own rule, and the routes below name the event.
+# Missions whose passing something else needs: a way onto an island, a vehicle
+# that spawns afterwards, or a place the mission opens up. Passing a mission is
+# not an item a seed can place, so each of these gets an event location carrying
+# what reaching the mission takes, and the tables below name the event.
+#
+# G-spotlight is a Film Studio mission, so with the properties class off its
+# progressive is not in the pool. Its event still stands: what it costs then is
+# everything the mission takes except the property and its unlocks, which is the
+# player's call on how the class-off case should read.
 ROUTE_MISSIONS: list[str] = [
-    "All Hands On Deck!",
+    "All Hands On Deck!", "Phnom Penh '86", "Rub Out", "G-spotlight",
 ]
+
+# Where the audit names a mission a check waits on, read off the sheet row by
+# row. The two vehicle cases are the ones to know: a helicopter is on the start
+# island only once Rub Out has spawned the Vice Point Sparrow, and the Downtown
+# checkpoint takes the one G-spotlight leaves behind. Where a row names a bare
+# vehicle and no mission, there is none here, because the mission the check
+# belongs to hands the vehicle over.
+CHOPPER_MISSION_REQUIREMENTS: dict[str, list[str]] = {
+    "Ocean Beach Chopper Checkpoint": ["Rub Out"],
+    "Vice Point Chopper Checkpoint": ["Rub Out"],
+    "Little Haiti Chopper Checkpoint": ["Rub Out"],
+    "Downtown Chopper Checkpoint": ["G-spotlight"],
+}
+
+
+def stunt_jump_mission_requirements() -> dict[str, list[str]]:
+    """Stunt jumps a mission opens the way to, by jump name.
+
+    The three G-spotlight jumps are the ramps that mission builds, and the two on
+    Cortez's docks are behind the boat leaving.
+    """
+    return {
+        **{stunt_jump_name(index): ["G-spotlight"] for index in (12, 13, 14)},
+        **{stunt_jump_name(index): ["All Hands On Deck!"] for index in (25, 26)},
+    }
 
 
 def mission_passed_item_name(mission: str) -> str:
     return f"{mission} Passed"
+
+
+def mission_event_name(mission: str) -> str:
+    return f"{mission} (event)"
 
 
 # Ways onto Starfish Island besides its barrier, from the audit. A roadblock
@@ -1226,12 +1263,14 @@ RAMPAGE_ABILITY_EXTRAS: dict[int, list[str]] = {
     23: [LAND_VEHICLES_ITEM],
 }
 
-# Packages a player cannot simply walk to: four need a jump and three are only
-# reachable from the air.
+# Packages a player cannot simply walk to: five need a jump, one of them over the
+# wall around the Starfish northeast pool, and three are only reachable from the
+# air.
 PACKAGE_ABILITY_REQUIREMENTS: dict[int, list[str]] = {
     18: [JUMP_ITEM],
     21: [AIR_VEHICLES_ITEM],
     40: [AIR_VEHICLES_ITEM],
+    54: [JUMP_ITEM],
     57: [JUMP_ITEM],
     74: [JUMP_ITEM],
     81: [AIR_VEHICLES_ITEM],
@@ -1295,11 +1334,79 @@ RAMPAGE_ABILITY_ALTERNATIVES: dict[int, list[list[str]]] = {
 }
 
 
+# Where a route's vehicle comes from, for the rows the audit writes it on. Those
+# are the collectible rows whose only way in is a vehicle, never a mission row:
+# a mission that needs a boat or a helicopter is handed one, which is why Dildo
+# Dodo and Checkpoint Charlie name a bare vehicle and stop there.
+#
+# A helicopter is on the mainland, or on the start island once Rub Out has
+# spawned the Vice Point Sparrow. The audit's third source, the Sea Sparrow at
+# the mansion, is the eighty-package reward and a useful item, so no rule may
+# name it. A boat comes from Cortez's last mission or Diaz's second.
+#
+# The mainland is named by whatever the seed's crossings setting puts in the
+# pool, which is why this is a function and not a table: with the crossings split
+# there is no Mainland Access item to name.
+SEA_SOURCES: list[list[str]] = [
+    [mission_passed_item_name("All Hands On Deck!")],
+    [mission_passed_item_name("Phnom Penh '86")],
+]
+SOURCED_VEHICLES: frozenset[str] = frozenset({AIR_VEHICLES_ITEM, SEA_VEHICLES_ITEM})
+
+
+def vehicle_source_groups(vehicle: str,
+                          split_mainland_access: bool) -> list[list[str]]:
+    if vehicle == SEA_VEHICLES_ITEM:
+        return [list(source) for source in SEA_SOURCES]
+    return [
+        *region_access_groups(REGION_MAINLAND, split_mainland_access,
+                              routes_allowed=False),
+        [mission_passed_item_name("Rub Out")],
+    ]
+
+
+def sourced_routes(routes: list[list[str]],
+                   split_mainland_access: bool) -> list[list[str]]:
+    """The same routes with each vehicle's sources spelled out.
+
+    One route in becomes one route per source, since a route is a set of things
+    all needed and the sources are alternatives. A route naming no vehicle comes
+    back as it went in.
+    """
+    expanded: list[list[str]] = []
+    for route in routes:
+        vehicles = [item for item in route if item in SOURCED_VEHICLES]
+        assert len(vehicles) < 2, f"{route} names two vehicles"
+        if not vehicles:
+            expanded.append(list(route))
+            continue
+        expanded.extend(
+            [*route, *source]
+            for source in vehicle_source_groups(vehicles[0], split_mainland_access))
+    return expanded
+
+
+def sourced_route_locations() -> frozenset[str]:
+    """Locations whose routes name where the vehicle comes from.
+
+    The collectible rows, which is where the audit writes the condition. A
+    mission's routes are left alone: the mission hands the vehicle over, and
+    sourcing them would put Rub Out inside Death Row's rule and Death Row is what
+    Rub Out waits on.
+    """
+    return frozenset(
+        [hidden_package_name(index) for index in PACKAGE_ABILITY_ALTERNATIVES]
+        + [rampage_name(index) for index in RAMPAGE_ABILITY_ALTERNATIVES]
+    )
+
+
 def location_ability_alternatives() -> dict[str, list[list[str]]]:
     """Every location's several-routes requirement, by location name.
 
     Built the same way as location_ability_requirements, so a rename of a
-    collectible moves its routes with it.
+    collectible moves its routes with it. The routes are the audit's own, with no
+    vehicle source spelled out: rules.py adds those, since which item names the
+    mainland depends on the seed.
     """
     alternatives: dict[str, list[list[str]]] = {
         mission: [list(route) for route in routes]
@@ -1365,6 +1472,11 @@ def location_ability_requirements() -> dict[str, list[str]]:
 
 LOCATION_ABILITY_REQUIREMENTS: dict[str, list[str]] = location_ability_requirements()
 LOCATION_ABILITY_ALTERNATIVES: dict[str, list[list[str]]] = location_ability_alternatives()
+SOURCED_ROUTE_LOCATIONS: frozenset[str] = sourced_route_locations()
+LOCATION_MISSION_REQUIREMENTS: dict[str, list[str]] = {
+    **CHOPPER_MISSION_REQUIREMENTS,
+    **stunt_jump_mission_requirements(),
+}
 
 
 def _content_class_locations() -> dict[str, list[str]]:

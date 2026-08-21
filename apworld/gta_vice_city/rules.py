@@ -183,8 +183,62 @@ def _lock_terms(location_name: str, active_items: frozenset[str],
             + _content_terms(location_name, active_items, split_content_locks))
 
 
+def _mission_terms(location_name: str) -> list[Requirement]:
+    # The missions a location waits on, as the events that stand for passing
+    # them. Not a lock and not filtered by any key: a ramp a mission builds is
+    # there or it is not.
+    return [(data.mission_passed_item_name(mission), 1)
+            for mission in data.LOCATION_MISSION_REQUIREMENTS.get(location_name, [])]
+
+
+def _event_terms(mission: str, active_items: frozenset[str],
+                 split_content_locks: int, split_mainland_access: bool,
+                 properties_enabled: bool,
+                 sale_requirements: list[Requirement],
+                 sale_thresholds: list[Threshold],
+                 ) -> tuple[list[Requirement], list[Threshold]]:
+    """What passing a mission takes, for the event that stands for it.
+
+    A venue mission's event is the awkward one. With the properties class on it
+    reads like the mission's own check, property and all. With the class off the
+    venue's progressives and its ownership item leave the pool, so those come out
+    and everything else the mission takes stays: its abilities, its island, the
+    lock terms of the missions before it, and the property-sale requirements,
+    since the property still has to be bought in game and the businesses go on
+    sale only when Shakedown passes. The item releasing the purchase icon stays
+    too, because a content lock holds the icon whether the class is checks or not.
+    """
+    giver = locations.MISSION_GIVER[mission]
+    requirements = _mission_requirements(
+        mission, giver, active_items, split_content_locks, split_mainland_access,
+        properties_enabled)
+    thresholds = _mission_thresholds(mission, giver, active_items,
+                                     split_mainland_access, properties_enabled)
+    if giver not in data.VENUE_STRANDS:
+        return requirements, thresholds
+    if properties_enabled:
+        requirements = [*requirements, (data.ownership_item_name(giver), 1)]
+    else:
+        # Every venue progressive and ownership item leaves the pool with the
+        # class, and no rule may name an item that is not in it. Filtered by the
+        # whole set rather than this venue's, so an edge into another venue
+        # strand cannot leak one through.
+        out_of_pool = {data.progressive_item_name(venue) for venue in data.VENUE_STRANDS}
+        out_of_pool |= {data.ownership_item_name(venue) for venue in data.VENUE_STRANDS}
+        requirements = [term for term in requirements if term[0] not in out_of_pool]
+    return (
+        _deduplicated([
+            *requirements, *sale_requirements,
+            *_property_content_terms(f"{giver} Purchase", active_items,
+                                     split_content_locks),
+        ]),
+        _deduplicated_thresholds([*thresholds, *sale_thresholds]),
+    )
+
+
 def _ability_alternative_thresholds(location_name: str,
-                                    active_items: frozenset[str]) -> list[Threshold]:
+                                    active_items: frozenset[str],
+                                    split_mainland_access: bool) -> list[Threshold]:
     """The audit's several-routes requirement for one location, as a one-of.
 
     Nothing at all when any route is free, since a route whose items are none of
@@ -194,11 +248,17 @@ def _ability_alternative_thresholds(location_name: str,
     one threshold over those routes.
     """
     routes = data.LOCATION_ABILITY_ALTERNATIVES.get(location_name, [])
+    if location_name in data.SOURCED_ROUTE_LOCATIONS:
+        routes = data.sourced_routes(routes, split_mainland_access)
     if not routes:
         return []
     groups: list[list[Requirement]] = []
     for route in routes:
-        needed = [item for item in route if item in active_items]
+        # Only a lock item is filtered, and only by its own key. Everything else
+        # a route names, an area item or the event standing for a mission, is
+        # there whatever the keys say.
+        needed = [item for item in route
+                  if item not in data.ABILITY_ITEMS or item in active_items]
         if not needed:
             return []
         groups.append([(item, 1) for item in needed])
@@ -307,6 +367,7 @@ def _predecessor_requirements(mission: str, giver: str,
             requirements.append((data.progressive_item_name(prerequisite_giver), count))
         requirements.extend(
             _lock_terms(earlier, active_items, split_content_locks))
+        requirements.extend(_mission_terms(earlier))
     return requirements
 
 
@@ -341,6 +402,7 @@ def _mission_requirements(mission: str, giver: str, active_items: frozenset[str]
         active_items)
     requirements.extend(region_requirements)
     requirements.extend(_lock_terms(mission, active_items, split_content_locks))
+    requirements.extend(_mission_terms(mission))
     requirements.extend(_predecessor_requirements(
         mission, giver, active_items, split_content_locks, properties_enabled))
     requirements.extend(_crossing_requirements(
@@ -412,9 +474,11 @@ def _mission_thresholds(mission: str, giver: str, active_items: frozenset[str],
     _flat, thresholds = _region_terms(
         _inherited_regions(mission, giver, properties_enabled), split_mainland_access,
         active_items)
-    thresholds.extend(_ability_alternative_thresholds(mission, active_items))
+    thresholds.extend(_ability_alternative_thresholds(mission, active_items,
+                                                      split_mainland_access))
     for earlier in _inherited_missions(mission, giver, properties_enabled):
-        thresholds.extend(_ability_alternative_thresholds(earlier, active_items))
+        thresholds.extend(_ability_alternative_thresholds(earlier, active_items,
+                                                          split_mainland_access))
     return _deduplicated_thresholds(thresholds)
 
 
@@ -621,7 +685,8 @@ def build_location_rules(
             ]
             activity_thresholds = _deduplicated_thresholds([
                 *sale_thresholds,
-                *_ability_alternative_thresholds(activity, active_items),
+                *_ability_alternative_thresholds(activity, active_items,
+                                                 split_mainland_access),
             ])
             rules[activity] = (
                 _requires_with_thresholds(activity_requirements, activity_thresholds)
@@ -637,15 +702,31 @@ def build_location_rules(
     locked_locations = (
         dict.fromkeys(data.LOCATION_ABILITY_REQUIREMENTS)
         | dict.fromkeys(data.LOCATION_ABILITY_ALTERNATIVES)
+        | dict.fromkeys(data.LOCATION_MISSION_REQUIREMENTS)
         | dict.fromkeys(data.LOCATION_CONTENT_REQUIREMENTS)
     )
     for location_name in locked_locations:
         if location_name in handled:
             continue
-        lock_terms = _lock_terms(location_name, active_items, split_content_locks)
-        thresholds = _ability_alternative_thresholds(location_name, active_items)
+        lock_terms = [*_lock_terms(location_name, active_items, split_content_locks),
+                      *_mission_terms(location_name)]
+        thresholds = _ability_alternative_thresholds(location_name, active_items,
+                                                     split_mainland_access)
         if thresholds:
             rules[location_name] = _requires_with_thresholds(lock_terms, thresholds)
         elif lock_terms:
             rules[location_name] = _requires(lock_terms)
+    # An event per mission something else waits on, ruled here so the world can
+    # set it like any other location.
+    for mission in data.ROUTE_MISSIONS:
+        event_requirements, event_thresholds = _event_terms(
+            mission, active_items, split_content_locks, split_mainland_access,
+            properties_enabled, sale_requirements, sale_thresholds)
+        if not event_requirements and not event_thresholds:
+            raise ValueError(
+                f"{mission} stands for something else and needs nothing itself; "
+                f"an event with no rule hands over whatever waits on it")
+        rules[data.mission_event_name(mission)] = (
+            _requires_with_thresholds(event_requirements, event_thresholds)
+            if event_thresholds else _requires(event_requirements))
     return rules

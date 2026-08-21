@@ -551,12 +551,19 @@ class TestAbilityLocksAll(WorldTestBase):
         self.collect_by_name([data.LAND_VEHICLES_ITEM])
         self.assertTrue(self.can_reach_location("Paramedic Level 01"))
 
-    def test_chopper_checkpoint_needs_an_air_vehicle(self) -> None:
-        # A start-island checkpoint: the helicopter is the requirement, not a
-        # land vehicle.
-        self.collect_by_name([data.LAND_VEHICLES_ITEM])
+    def test_chopper_checkpoint_needs_an_air_vehicle_and_one_to_fly(self) -> None:
+        # A start-island checkpoint: the helicopter is the requirement, not a land
+        # vehicle, and the audit adds where the helicopter is. On the start island
+        # that is the Sparrow passing Rub Out leaves in Vice Point, so the
+        # checkpoint waits on that mission as well as on the ability.
+        self.assertEqual(
+            data.LOCATION_MISSION_REQUIREMENTS["Ocean Beach Chopper Checkpoint"],
+            ["Rub Out"])
+        self.collect_by_name([data.LAND_VEHICLES_ITEM, data.AIR_VEHICLES_ITEM])
         self.assertFalse(self.can_reach_location("Ocean Beach Chopper Checkpoint"))
-        self.collect_by_name([data.AIR_VEHICLES_ITEM])
+        # Everything Rub Out takes, so its event can be swept.
+        self.collect_by_name([*_MANSION_CHAIN, *_MANSION_CHAIN_COST,
+                              "Starfish Island Access"])
         self.assertTrue(self.can_reach_location("Ocean Beach Chopper Checkpoint"))
 
     def test_every_stadium_event_needs_the_car(self) -> None:
@@ -674,7 +681,10 @@ class TestAbilityLocksAll(WorldTestBase):
         # mission of his strand inherits it: the boat is what opens the first and
         # is still required at the last, even though the last needs more besides.
         self.collect_by_name(_MANSION_CHAIN)
-        self.collect_by_name(["Progressive Umberto Robina", "Mainland Access"])
+        self.collect_by_name(["Progressive Umberto Robina", "Mainland Access",
+                              # The Cubans wait on Auntie Poulet's last as well,
+                              # which is a different strand and not the subject.
+                              "Progressive Auntie Poulet"])
         self.assertFalse(self.can_reach_location("Stunt Boat Challenge"))
         self.assertFalse(self.can_reach_location("Trojan Voodoo"))
         self.collect_by_name([data.SEA_VEHICLES_ITEM])
@@ -752,19 +762,19 @@ class TestAbilityLocksAll(WorldTestBase):
         self.assertTrue(self.can_reach_location("Vigilante Level 01"))
 
     def test_the_unwalkable_packages_need_their_ability(self) -> None:
-        # Seven packages cannot be walked to at all, four wanting a jump and
-        # three reachable only from the air, and twelve more have more than one
-        # way in. The remaining eighty-two need nothing, which is what keeps an
-        # ability-locked seed wide, so the counts are pinned here as well as the
-        # terms.
-        self.assertEqual(len(data.PACKAGE_ABILITY_REQUIREMENTS), 7)
+        # Eight packages cannot be walked to at all: five want a jump, one of
+        # those over the wall around the Starfish northeast pool, and three are
+        # reachable only from the air. Twelve more have several ways in. The
+        # remaining eighty-one need nothing, which is what keeps an ability-locked
+        # seed wide, so the counts are pinned here as well as the terms.
+        self.assertEqual(len(data.PACKAGE_ABILITY_REQUIREMENTS), 8)
         self.assertEqual(len(data.PACKAGE_ABILITY_ALTERNATIVES), 12)
         awkward = (set(data.PACKAGE_ABILITY_REQUIREMENTS)
                    | set(data.PACKAGE_ABILITY_ALTERNATIVES))
-        # Package 92 is in both tables, needing a jump and then either a car or
-        # a helicopter, so eighteen packages are awkward and not nineteen.
-        self.assertEqual(len(awkward), 18)
-        self.assertEqual(data.HIDDEN_PACKAGE_COUNT - len(awkward), 82)
+        # Package 92 is in both tables, needing a jump and then either a car or a
+        # helicopter, so nineteen packages are awkward and not twenty.
+        self.assertEqual(len(awkward), 19)
+        self.assertEqual(data.HIDDEN_PACKAGE_COUNT - len(awkward), 81)
         self.collect_by_name(["Mainland Access", "Starfish Island Access"])
         for index, items in data.PACKAGE_ABILITY_REQUIREMENTS.items():
             name = data.hidden_package_name(index)
@@ -813,7 +823,11 @@ class TestAbilityLocksAll(WorldTestBase):
                          [[data.AIR_VEHICLES_ITEM], [data.LAND_VEHICLES_ITEM]])
         name = data.hidden_package_name(7)
         self.assertFalse(self.can_reach_location(name))
+        # The helicopter route carries where the helicopter is, so the air item
+        # alone is not the route; the mainland comes with it.
         self.collect_by_name([data.AIR_VEHICLES_ITEM])
+        self.assertFalse(self.can_reach_location(name))
+        self.collect_by_name(["Mainland Access"])
         self.assertTrue(self.can_reach_location(name))
         self.remove_by_name([data.AIR_VEHICLES_ITEM])
         self.assertFalse(self.can_reach_location(name))
@@ -1003,6 +1017,41 @@ class TestAbilityLocksAll(WorldTestBase):
                             needed.add(LOCATION_REGIONS[mission])
                             self.assertNotIn(region, needed)
 
+    def test_a_venue_event_still_pays_for_its_property(self) -> None:
+        # G-spotlight is a Film Studio mission, so with the properties class off
+        # its progressives and its ownership item are not in the pool and its
+        # event cannot name them. What it must still name is the property-sale
+        # requirements: the studio has to be bought in game, and the businesses go
+        # on sale only when Shakedown passes, so without them the fill could put
+        # Starfish Island Access or the wallet behind the very stunt jumps that
+        # mission builds.
+        active_items = frozenset(
+            item for items in data.ABILITY_LOCK_ITEMS.values() for item in items)
+        for properties_enabled in (True, False):
+            requirements, thresholds = rules._event_terms(
+                "G-spotlight", active_items, data.CONTENT_SPLIT_OFF, False,
+                properties_enabled,
+                *rules._property_sale_requirements(
+                    active_items, data.CONTENT_SPLIT_OFF, False, properties_enabled),
+            )
+            # Both halves: the island has routes now, so its barrier is named in
+            # a one-of rather than flat.
+            named = {item for item, _count in requirements}
+            named.update(item for groups, _needed in thresholds
+                         for group in groups for item, _count in group)
+            with self.subTest(properties_enabled=properties_enabled):
+                # The sale requirements, whichever way the class is set.
+                self.assertIn("Starfish Island Access", named)
+                self.assertIn(data.WALLET_ITEM, named)
+                self.assertIn("Progressive Vercetti Protection", named)
+                # And the venue's own items only while the class puts them in the
+                # pool.
+                for item in ("Progressive Film Studio", "Film Studio Ownership"):
+                    if properties_enabled:
+                        self.assertIn(item, named)
+                    else:
+                        self.assertNotIn(item, named)
+
     def test_the_route_events_are_events_and_nothing_else(self) -> None:
         # Each route mission gets one event location: no address, so it is not a
         # check and no id table, reward mirror or filler count sees it, holding a
@@ -1038,15 +1087,19 @@ class TestAbilityLocksAll(WorldTestBase):
         # strand does. So its boat reaches Starfish Island for a player who has
         # crossed to the mainland, the same much the helicopter route asks for,
         # and the invariant above is what keeps a route from claiming more.
+        expected = {
+            "All Hands On Deck!": {data.REGION_MAINLAND},
+            "Phnom Penh '86": {data.REGION_STARFISH},
+            "Rub Out": {data.REGION_STARFISH, data.REGION_MAINLAND},
+            "G-spotlight": {data.REGION_VICE_CITY, data.REGION_MAINLAND},
+        }
         for mission in data.ROUTE_MISSIONS:
             giver = MISSION_GIVER[mission]
             with self.subTest(mission=mission):
                 needed = set(rules._inherited_regions(mission, giver))
                 needed.add(LOCATION_REGIONS[mission])
-                needed.discard(data.REGION_VICE_CITY)
-                self.assertEqual(needed, {
-                    "All Hands On Deck!": {data.REGION_MAINLAND},
-                }[mission])
+                self.assertEqual(needed - {data.REGION_VICE_CITY},
+                                 expected[mission] - {data.REGION_VICE_CITY})
 
     def test_neither_island_opens_without_an_area_item(self) -> None:
         # The routes reach Starfish Island from the mainland, never the mainland
@@ -1180,19 +1233,32 @@ class TestAbilityLocksOff(WorldTestBase):
         # of which the vehicles key locks, so that route is free and the other
         # two stop mattering.
         self.assertEqual(rules._ability_alternative_thresholds(
-            data.hidden_package_name(86), vehicles), [])
-        # Package 7's two routes are both vehicles, so it keeps its one-of.
+            data.hidden_package_name(86), vehicles, False), [])
+        # Package 7's routes are all vehicles, so it keeps its one-of, and each
+        # air route keeps the source it names, which no key locks.
         self.assertEqual(
             rules._ability_alternative_thresholds(data.hidden_package_name(7),
-                                                  vehicles),
-            [([[(data.AIR_VEHICLES_ITEM, 1)], [(data.LAND_VEHICLES_ITEM, 1)]], 1)])
-        # With every key selected, package 86 keeps all three routes.
+                                                  vehicles, False),
+            [([[(data.AIR_VEHICLES_ITEM, 1), ("Mainland Access", 1)],
+               [(data.AIR_VEHICLES_ITEM, 1), ("Rub Out Passed", 1)],
+               [(data.LAND_VEHICLES_ITEM, 1)]], 1)])
+        # And with the crossings split, the mainland is named by each crossing
+        # rather than by an item the seed does not have.
+        split = rules._ability_alternative_thresholds(
+            data.hidden_package_name(7), vehicles, True)
+        named = {item for groups, _needed in split
+                 for group in groups for item, _count in group}
+        self.assertNotIn("Mainland Access", named)
+        for crossing in data.MAINLAND_CROSSING_ITEMS:
+            self.assertIn(crossing, named)
+        # With every key selected, package 86 keeps all four routes: two ways to
+        # a helicopter, the car, and the running jump.
         every_item = frozenset(item for items in data.ABILITY_LOCK_ITEMS.values()
                                for item in items)
         groups, needed = rules._ability_alternative_thresholds(
-            data.hidden_package_name(86), every_item)[0]
+            data.hidden_package_name(86), every_item, False)[0]
         self.assertEqual(needed, 1)
-        self.assertEqual(len(groups), 3)
+        self.assertEqual(len(groups), 4)
 
     def test_no_ability_terms_without_the_locks(self) -> None:
         # With every key off a stunt jump needs only its region and a store
@@ -2441,8 +2507,11 @@ class TestDeferredClassIslands(WorldTestBase):
         # jump (provisionally mainland) wait on Mainland Access; a start-island
         # store and chopper checkpoint do not. This closes the loop where the fill
         # could otherwise strand Mainland Access behind a mainland-only check.
-        for start_name in [data.robbable_store_name(1), "Ocean Beach Chopper Checkpoint",
-                            "RC Bandit Race", "Cone Crazy"]:
+        # A start-island store, an RC race and an activity, all free from the
+        # start. A chopper checkpoint is not one of them: the audit puts each
+        # behind the mission whose helicopter it flies.
+        for start_name in [data.robbable_store_name(1), "RC Bandit Race",
+                           "Cone Crazy"]:
             self.assertTrue(self.can_reach_location(start_name), start_name)
         mainland = [data.robbable_store_name(3), "Hotring", data.stunt_jump_name(1)]
         for name in mainland:
@@ -2846,21 +2915,63 @@ class TestTables(WorldTestBase):
         for mission in ["No Escape?", "Recruitment Drive", "Cabmaggedon"]:
             self.assertNotIn(mission, STORY_MISSION_NAMES)
 
-    def test_every_route_names_a_locked_ability(self) -> None:
-        # A route may only name items an ability key locks. Anything else is
-        # filtered out as free, and a route filtered to nothing drops the whole
-        # several-routes requirement, so a stray name here would fail loose in
-        # exactly the direction the routes exist to fix. Crouch is excluded with
-        # the rest: it is classified useful, and a rule may not need it.
+    def test_every_route_names_something_the_seed_has(self) -> None:
+        # A route may name three kinds of thing: an ability its key locks, an area
+        # item the seed's crossings setting actually puts in the pool, or the
+        # event standing for a mission passed. Anything else is in no pool, and a
+        # route naming it is either never satisfied or, once the emitter filters
+        # it away, drops the whole several-routes requirement and fails loose.
+        # Crouch is excluded with the useful items: a rule may not need one.
+        #
+        # Checked per crossings setting, because that is what decides which item
+        # names the mainland. Baking Mainland Access into the sources was a real
+        # bug, and a check against every area item would have blessed it.
         lockable = {item for items in data.ABILITY_LOCK_ITEMS.values()
                     for item in items if item not in data.ABILITY_USEFUL_ITEMS}
-        for location, routes in data.LOCATION_ABILITY_ALTERNATIVES.items():
+        events = {data.mission_passed_item_name(mission)
+                  for mission in data.ROUTE_MISSIONS}
+        for split in (False, True):
+            area = (set(data.MAINLAND_CROSSING_ITEMS) if split
+                    else {data.AREA_ITEM_BY_REGION[data.REGION_MAINLAND]})
+            area.add(data.AREA_ITEM_BY_REGION[data.REGION_STARFISH])
+            allowed = lockable | area | events
+            for location, routes in data.LOCATION_ABILITY_ALTERNATIVES.items():
+                sourced = (data.sourced_routes(routes, split)
+                           if location in data.SOURCED_ROUTE_LOCATIONS else routes)
+                with self.subTest(location=location, split=split):
+                    self.assertGreaterEqual(len(sourced), 2)
+                    for route in sourced:
+                        self.assertTrue(route)
+                        for item in route:
+                            self.assertIn(item, allowed)
+
+    def test_a_mission_a_check_waits_on_has_an_event(self) -> None:
+        # A location naming a mission needs that mission to be one of the events,
+        # or the term would name an item nothing places. The chopper checkpoints
+        # and the five stunt jumps are the table, and nothing else is in it.
+        self.assertEqual(sorted(data.LOCATION_MISSION_REQUIREMENTS), sorted([
+            "Downtown Chopper Checkpoint", "Little Haiti Chopper Checkpoint",
+            "Ocean Beach Chopper Checkpoint", "Vice Point Chopper Checkpoint",
+            *(data.stunt_jump_name(index) for index in (12, 13, 14, 25, 26)),
+        ]))
+        for location, missions in data.LOCATION_MISSION_REQUIREMENTS.items():
             with self.subTest(location=location):
-                self.assertGreaterEqual(len(routes), 2)
-                for route in routes:
-                    self.assertTrue(route)
-                    for item in route:
-                        self.assertIn(item, lockable)
+                self.assertTrue(missions)
+                for mission in missions:
+                    self.assertIn(mission, data.ROUTE_MISSIONS)
+        # The two G-spotlight groups: the ramps that mission builds and the one
+        # checkpoint whose helicopter it leaves.
+        for index in (12, 13, 14):
+            self.assertEqual(
+                data.LOCATION_MISSION_REQUIREMENTS[data.stunt_jump_name(index)],
+                ["G-spotlight"])
+        for index in (25, 26):
+            self.assertEqual(
+                data.LOCATION_MISSION_REQUIREMENTS[data.stunt_jump_name(index)],
+                ["All Hands On Deck!"])
+        self.assertEqual(
+            data.LOCATION_MISSION_REQUIREMENTS["Downtown Chopper Checkpoint"],
+            ["G-spotlight"])
 
     def test_vehicle_rampages_are_the_unnamed_weapon_ones(self) -> None:
         # The ASI holds the weapon rampage icons by coordinate while this
