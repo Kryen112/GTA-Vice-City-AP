@@ -999,6 +999,18 @@ def _districted_region_members(districts: list[str], names: list[str],
 # Starfish, but its launcher only activates once Cap the Collector passes, and
 # that mission is on the mainland, so the finale also needs the mainland. Named
 # by region rather than by item, so the crossing split reaches it too.
+# Missions the mainland is not enough for: they need one particular crossing
+# open, whichever way the seed hands the mainland over. Death Row is the one,
+# from the runthrough: the drive it puts the player on only works across the
+# Leaf Links bridge, so a seed opening any other crossing first leaves the
+# mission uncompletable even though the mainland is reachable.
+#
+# With the crossings whole this says nothing, since the single Mainland Access
+# item removes all four roadblocks at once.
+MISSION_CROSSING_REQUIREMENTS: dict[str, str] = {
+    "Death Row": "Leaf Links Bridge",
+}
+
 MISSION_REGION_REQUIREMENTS: dict[str, list[str]] = {
     # The eight below are played on the mainland while their own region is the
     # start island or Starfish. Four of them carry Starfish Island Access

@@ -343,6 +343,8 @@ def _mission_requirements(mission: str, giver: str, active_items: frozenset[str]
     requirements.extend(_lock_terms(mission, active_items, split_content_locks))
     requirements.extend(_predecessor_requirements(
         mission, giver, active_items, split_content_locks, properties_enabled))
+    requirements.extend(_crossing_requirements(
+        mission, giver, split_mainland_access, properties_enabled))
     return _deduplicated(requirements)
 
 
@@ -376,6 +378,26 @@ def _inherited_regions(mission: str, giver: str,
             regions.append(locations.LOCATION_REGIONS[earlier])
         regions.extend(data.MISSION_REGION_REQUIREMENTS.get(earlier, []))
     return list(dict.fromkeys(regions))
+
+
+def _crossing_requirements(mission: str, giver: str, split_mainland_access: bool,
+                           properties_enabled: bool) -> list[Requirement]:
+    """The one crossing a mission needs open, its own or an inherited one.
+
+    A mission reaching the mainland is usually satisfied by any crossing, which
+    the region threshold says. One mission is not: Death Row's drive only works
+    across the Leaf Links bridge, so it names that crossing as a flat term and
+    the threshold beside it is then satisfied by the same item.
+
+    Nothing at all with the crossings whole, where one item opens all four.
+    """
+    if not split_mainland_access:
+        return []
+    crossings = [data.MISSION_CROSSING_REQUIREMENTS[name]
+                 for name in [mission, *_inherited_missions(mission, giver,
+                                                            properties_enabled)]
+                 if name in data.MISSION_CROSSING_REQUIREMENTS]
+    return [(crossing, 1) for crossing in dict.fromkeys(crossings)]
 
 
 def _mission_thresholds(mission: str, giver: str, active_items: frozenset[str],

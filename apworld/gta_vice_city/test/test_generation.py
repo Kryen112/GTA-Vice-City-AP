@@ -1968,6 +1968,22 @@ class TestSplitMainlandAccessOn(WorldTestBase):
                 self.assertTrue(self._mainland_reachable())
         self.remove_by_name(data.MAINLAND_CROSSING_ITEMS)
 
+    def test_death_row_needs_the_bridge_its_drive_uses(self) -> None:
+        # Death Row is the one mission the mainland is not enough for: its drive
+        # only works across the Leaf Links bridge, so reaching the west island by
+        # any other crossing leaves it uncompletable. Everything inheriting it
+        # carries the same term, which is most of the game.
+        self.assertEqual(data.MISSION_CROSSING_REQUIREMENTS,
+                         {"Death Row": "Leaf Links Bridge"})
+        self.collect_by_name(["Progressive Death Row", "Progressive Cortez",
+                              "Progressive Diaz", "Progressive Rosenberg",
+                              "Starfish Island Access", "Ocean Beach Bridge",
+                              "Prawn Island Bridge"])
+        self.assertTrue(self._mainland_reachable())
+        self.assertFalse(self.can_reach_location("Death Row"))
+        self.collect_by_name(["Leaf Links Bridge"])
+        self.assertTrue(self.can_reach_location("Death Row"))
+
     def test_the_causeway_needs_the_island_it_stands_on(self) -> None:
         # The west gate is on Starfish Island, so that crossing is the one
         # behind two items; holding it alone reaches nothing.
@@ -1996,7 +2012,12 @@ class TestSplitMainlandAccessOn(WorldTestBase):
         ])
         self.collect_by_name(_FINALE_ASSET_ITEMS)
         self.assertFalse(self.can_reach_location(data.FINAL_MISSION))
+        # The Leaf Links bridge in particular, since the finale inherits Death
+        # Row, whose drive only works across that one. Any other crossing reaches
+        # the mainland and still leaves the finale shut.
         self.collect_by_name(["Ocean Beach Bridge"])
+        self.assertFalse(self.can_reach_location(data.FINAL_MISSION))
+        self.collect_by_name(["Leaf Links Bridge"])
         self.assertTrue(self.can_reach_location(data.FINAL_MISSION))
 
     def test_slot_data_says_the_crossings_are_split(self) -> None:
