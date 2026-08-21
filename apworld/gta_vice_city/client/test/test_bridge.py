@@ -24,14 +24,17 @@ class Recorder:
         resync_items: list[tuple[int, int]] | None = None,
         resync_checked: list[int] | None = None,
         config: dict | None = None,
+        status: tuple[int, int, int, bool] | None = None,
     ) -> None:
         self.expected_hash = expected_hash
         self.resync_items = resync_items or []
         self.resync_checked = resync_checked or []
         self.config = config
+        self.status = status
         self.checks: list[int] = []
         self.goals = 0
         self.connected = 0
+        self.percentages: list[int] = []
 
     def seed_hash(self) -> str | None:
         return self.expected_hash
@@ -41,6 +44,9 @@ class Recorder:
 
     async def on_goal(self) -> None:
         self.goals += 1
+
+    async def on_progress(self, percentage: int) -> None:
+        self.percentages.append(percentage)
 
     async def on_connected(self, bridge: AsiBridge) -> None:
         self.connected += 1
@@ -55,6 +61,8 @@ class Recorder:
             )
         await bridge.send_items(self.resync_items)
         await bridge.send_checked(self.resync_checked)
+        if self.status is not None:
+            await bridge.send_status(*self.status)
 
 
 def _make_bridge(recorder: Recorder) -> AsiBridge:
@@ -64,6 +72,7 @@ def _make_bridge(recorder: Recorder) -> AsiBridge:
         on_check=recorder.on_check,
         on_goal_reached=recorder.on_goal,
         on_connected=recorder.on_connected,
+        on_progress=recorder.on_progress,
     )
 
 
@@ -132,6 +141,27 @@ class TestBridge(unittest.TestCase):
 
         asyncio.run(scenario())
 
+    def test_status_counts_reach_the_mod(self) -> None:
+        # The pause menu's status page shows counts only the client knows, so
+        # they ride the resync like the items and the checked locations do.
+        async def scenario() -> None:
+            recorder = Recorder("abcd1234", status=(61, 214, 43, True))
+            bridge = _make_bridge(recorder)
+            await bridge.start()
+            asi = FakeAsi(HOST, bridge.port, presented_seed_hash="abcd1234")
+            await asi.connect()
+            resync = await asi.drain_messages()
+            status = next(message for message in resync
+                          if message["type"] == protocol.STATUS)
+            self.assertEqual(status["checks_done"], 61)
+            self.assertEqual(status["checks_total"], 214)
+            self.assertEqual(status["items_received"], 43)
+            self.assertTrue(status["goal_reached"])
+            await asi.close()
+            await bridge.stop()
+
+        asyncio.run(scenario())
+
     def test_check_and_goal_are_dispatched(self) -> None:
         async def scenario() -> None:
             recorder = Recorder("abcd1234")
@@ -142,6 +172,21 @@ class TestBridge(unittest.TestCase):
             await asi.send_check(542000005)
             await asi.send_goal_reached()
             self.assertTrue(await _wait_until(lambda: recorder.checks == [542000005] and recorder.goals == 1))
+            await asi.close()
+            await bridge.stop()
+
+        asyncio.run(scenario())
+
+    def test_progress_is_dispatched(self) -> None:
+        async def scenario() -> None:
+            recorder = Recorder("abcd1234")
+            bridge = _make_bridge(recorder)
+            await bridge.start()
+            asi = FakeAsi(HOST, bridge.port, presented_seed_hash="abcd1234")
+            await asi.connect()
+            await asi.send_progress(0)
+            await asi.send_progress(93)
+            self.assertTrue(await _wait_until(lambda: recorder.percentages == [0, 93]))
             await asi.close()
             await bridge.stop()
 

@@ -51,6 +51,40 @@ class TestFraming(unittest.TestCase):
         )
         self.assertEqual(_round_trip(message), [message])
 
+    def test_progress_message_round_trip(self) -> None:
+        message = protocol.progress_message(93)
+        self.assertEqual(_round_trip(message), [message])
+        self.assertEqual(message["percentage"], 93)
+
+    def test_status_message_round_trip(self) -> None:
+        message = protocol.status_message(61, 214, 43, False)
+        self.assertEqual(_round_trip(message), [message])
+        self.assertEqual(
+            (message["checks_done"], message["checks_total"],
+             message["items_received"], message["goal_reached"]),
+            (61, 214, 43, False))
+        # The frame carries the ask on every send, so the default is the answer
+        # for every goal but the hunt: play nothing.
+        self.assertFalse(message["finale_warp"])
+
+    def test_status_message_carries_the_finale_warp_ask(self) -> None:
+        # The one thing in the frame the status page does not read: the mod
+        # raises the reserved global the script's finale watcher polls.
+        message = protocol.status_message(61, 214, 43, True, finale_warp=True)
+        self.assertEqual(_round_trip(message), [message])
+        self.assertTrue(message["finale_warp"])
+
+    def test_status_message_carries_its_rows(self) -> None:
+        # The rows are the largest thing a status frame carries, and the shape the
+        # mod parses: [label, value, done] per row, two lists.
+        message = protocol.status_message(
+            61, 214, 43, False,
+            goal_rows=[["Goal", "Package Fragments", False]],
+            strand_rows=[["Cortez", "3 of 5", False], ["Diaz", "6 of 6", True]])
+        self.assertEqual(_round_trip(message), [message])
+        self.assertEqual(message["goal_rows"], [["Goal", "Package Fragments", False]])
+        self.assertEqual(message["strand_rows"][1], ["Diaz", "6 of 6", True])
+
     def test_large_message_chunks_and_reassembles(self) -> None:
         big = protocol.items_message([(index, index * 7) for index in range(5000)])
         frames = protocol.MessageWriter().frames(big)

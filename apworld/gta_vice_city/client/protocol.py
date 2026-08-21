@@ -4,6 +4,11 @@ This module is the single source of truth for the boundary between the Python
 bridge client and the C++ ASI mod. Both sides encode and decode with it. It has
 no Archipelago dependency, so it and the bridge that uses it test headless.
 
+That last property is why one thing here is not part of the mod boundary at all:
+the AP data store key the completion percentage is published under. The
+PopTracker pack's generator reads it from this module, and this is the only
+module in the package it can import without an Archipelago checkout.
+
 Roles
 -----
 The client HOSTS a localhost TCP listener. The ASI connects to it with
@@ -61,12 +66,32 @@ Client to ASI:
     checked  {locations}      AP location ids already checked (resync), so the
                               ASI does not re-send them
     toast    {text}           a player-facing message for the in-game toast queue
+    status   {checks_done,     what only the client knows, for the pause menu's
+              checks_total,     status page: how many of this seed's locations
+              items_received,   are checked, how many it has, how many items have
+              goal_reached,     arrived, whether AP has this slot finished, and
+              goal_rows,        two lists of [label, value, done] rows, the goal's
+              strand_rows,      own progress and each mission strand's. The rows
+              finale_warp}      are the client's because the mod knows the globals
+                              it watches, not what this seed calls done nor how
+                              many missions a giver has. finale_warp asks the mod
+                              to play the story's ending: true once the
+                              hidden-packages goal is met, since a macguffin hunt
+                              ends in the finale wherever the player is standing.
+                              Sent on connect and whenever any of it moves.
+                              Optional like the config's later fields: an ASI that
+                              does not know the type ignores it and its page
+                              leaves those blocks out.
 
 ASI to client:
     hello        {seed_hash}  first frame after connect
     check        {location}   a location was completed in game
     goal_reached {}           the goal completion signal
     applied      {index}      an item index was durably applied (for logging)
+    progress     {percentage} the game's own completion percentage, as its stats
+                              menu prints it, sent whenever it changes. The
+                              client publishes it to the AP data store, where the
+                              tracker reads it.
 """
 
 from __future__ import annotations
@@ -94,9 +119,11 @@ CONFIG = "config"
 ITEMS = "items"
 CHECKED = "checked"
 TOAST = "toast"
+STATUS = "status"
 HELLO = "hello"
 CHECK = "check"
 GOAL_REACHED = "goal_reached"
+PROGRESS = "progress"
 APPLIED = "applied"
 
 # The chunk-envelope key. Distinct from the "type" key of a logical message so
@@ -106,6 +133,17 @@ _CHUNK = "chunk"
 
 class ProtocolError(Exception):
     """A frame or message that violates the protocol."""
+
+
+# The AP data store key the completion percentage is published under, one per
+# team and slot the way the server's own read-only keys are. The PopTracker
+# pack's generator reads this prefix and the assembly below out of this module,
+# so the tracker cannot end up watching a key nothing writes.
+PERCENTAGE_KEY_PREFIX = "gta_vice_city_percentage_"
+
+
+def percentage_key(team: int, slot: int) -> str:
+    return f"{PERCENTAGE_KEY_PREFIX}{team}_{slot}"
 
 
 def seed_hash(seed_name: str, slot_name: str) -> str:
@@ -158,6 +196,16 @@ def toast_message(text: str) -> dict:
     return {"type": TOAST, "text": text}
 
 
+def status_message(checks_done: int, checks_total: int, items_received: int,
+                   goal_reached: bool, goal_rows: list | None = None,
+                   strand_rows: list | None = None,
+                   finale_warp: bool = False) -> dict:
+    return {"type": STATUS, "checks_done": checks_done, "checks_total": checks_total,
+            "items_received": items_received, "goal_reached": goal_reached,
+            "goal_rows": goal_rows or [], "strand_rows": strand_rows or [],
+            "finale_warp": finale_warp}
+
+
 def hello_message(presented_seed_hash: str) -> dict:
     return {"type": HELLO, "protocol_version": PROTOCOL_VERSION,
             "seed_hash": presented_seed_hash}
@@ -169,6 +217,10 @@ def check_message(location: int) -> dict:
 
 def goal_reached_message() -> dict:
     return {"type": GOAL_REACHED}
+
+
+def progress_message(percentage: int) -> dict:
+    return {"type": PROGRESS, "percentage": percentage}
 
 
 class MessageWriter:

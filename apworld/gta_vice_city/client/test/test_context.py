@@ -538,6 +538,135 @@ def _received(item_id: int, count: int) -> list:
     return items
 
 
+class TestStatusCounts(unittest.TestCase):
+    def test_sends_the_counts_the_mod_cannot_work_out(self) -> None:
+        # The seed's location total is the client's to know: the mod is told
+        # every completion global it watches, not which of them this seed made
+        # into locations.
+        async def scenario() -> None:
+            with _fake_settings(""):
+                context = _context()
+                context.slot = 1
+                context.checked_locations = {542000000, 542000001}
+                context.missing_locations = {542000002}
+                context.items_received = [object(), object(), object()]
+                with mock.patch.object(type(context.bridge), "connected",
+                                       new_callable=mock.PropertyMock) as connected, \
+                     mock.patch.object(context.bridge, "send_status") as send_status, \
+                     mock.patch.object(context, "_goal_rows", return_value=[]), \
+                     mock.patch.object(context, "_strand_rows", return_value=[]), \
+                     mock.patch.object(context, "_goal_reached", return_value=False):
+                    connected.return_value = False
+                    await context._send_status()
+                    send_status.assert_not_called()
+                    connected.return_value = True
+                    await context._send_status()
+                    send_status.assert_awaited_once_with(2, 3, 3, False, [], [],
+                                                        False)
+                    # A room the server already has finished counts as finished
+                    # even with nothing left for the goal check to evaluate.
+                    context.finished_game = True
+                    send_status.reset_mock()
+                    await context._send_status()
+                    send_status.assert_awaited_once_with(2, 3, 3, True, [], [],
+                                                        False)
+
+        asyncio.run(scenario())
+
+    def test_nothing_is_sent_before_ap_connects(self) -> None:
+        # Zeroes would reach the page as counts and read as a seed with nothing in
+        # it, which is worse than the page saying it has heard nothing.
+        async def scenario() -> None:
+            with _fake_settings(""):
+                context = _context()
+                context.slot = None
+                with mock.patch.object(type(context.bridge), "connected",
+                                       new_callable=mock.PropertyMock) as connected, \
+                     mock.patch.object(context.bridge, "send_status") as send_status:
+                    connected.return_value = True
+                    await context._send_status()
+                    send_status.assert_not_called()
+
+        asyncio.run(scenario())
+
+    def test_received_name_counts_counts_by_name(self) -> None:
+        async def scenario() -> None:
+            with _fake_settings(""):
+                from NetUtils import NetworkItem
+                context = _context()
+                context.slot = 1
+                context.items_received = [NetworkItem(1, 1, 1, 0),
+                                          NetworkItem(1, 1, 1, 0),
+                                          NetworkItem(2, 1, 1, 0)]
+                with mock.patch.object(context.item_names, "lookup_in_slot",
+                                       side_effect=lambda item, slot:
+                                       {1: "Progressive Cortez",
+                                        2: "Progressive Diaz"}[item]):
+                    self.assertEqual(context._received_name_counts(),
+                                     {"Progressive Cortez": 2, "Progressive Diaz": 1})
+
+        asyncio.run(scenario())
+
+    def test_goal_rows_name_the_goal_and_count_what_it_counts(self) -> None:
+        async def scenario() -> None:
+            with _fake_settings(""):
+                from NetUtils import NetworkItem
+                context = _context()
+                context.slot_goal = "hidden_packages"
+                context.hunt_item_id = 900
+                context.hunt_required = 20
+                context.items_received = [NetworkItem(900, 1, 1, 0)] * 7
+                rows = context._goal_rows()
+                self.assertEqual(rows[0][:2], ["Goal", "Package Fragments"])
+                self.assertEqual(rows[1], ["Fragments", "7 of 20", False])
+                # The hundred percent goal counts what is left instead.
+                context.slot_goal = "hundred_percent"
+                context.checked_locations = {1, 2}
+                context.missing_locations = {3}
+                self.assertEqual(context._goal_rows()[1], ["Checks left", "1", False])
+
+        asyncio.run(scenario())
+
+    def test_strand_rows_count_the_progressive_items_received(self) -> None:
+        async def scenario() -> None:
+            with _fake_settings(""):
+                from ... import data
+                context = _context()
+                context.asi_config = {}
+                with mock.patch.object(context, "_received_name_counts",
+                                       return_value={"Progressive Cortez": 3}):
+                    rows = {row[0]: row[1] for row in context._strand_rows()}
+                self.assertEqual(rows["Cortez"],
+                                 f"3 of {data.progressive_item_count('Cortez')}")
+                # Every story giver is listed whether or not anything arrived yet.
+                self.assertEqual(len(rows), len(data.STORY_GIVERS))
+                self.assertTrue(rows["Diaz"].startswith("0 of "))
+                # The venue strands only exist as items when properties are on.
+                context.asi_config = {"enable_properties": True}
+                with mock.patch.object(context, "_received_name_counts",
+                                       return_value={}):
+                    with_venues = context._strand_rows()
+                self.assertEqual(len(with_venues),
+                                 len(data.STORY_GIVERS) + len(data.VENUE_STRANDS))
+
+        asyncio.run(scenario())
+
+    def test_a_room_update_pushes_a_fresh_count(self) -> None:
+        # A location checked by someone else moves the count with no item
+        # arriving, which the item resync alone would not catch.
+        async def scenario() -> None:
+            with _fake_settings(""):
+                context = _context()
+                with mock.patch.object(context, "_schedule") as schedule, \
+                     mock.patch.object(context, "_send_status",
+                                       mock.Mock(return_value="status")), \
+                     mock.patch.object(context, "_maybe_finish_goal"):
+                    context.on_package("RoomUpdate", {})
+                    schedule.assert_any_call("status")
+
+        asyncio.run(scenario())
+
+
 class TestHiddenPackagesHuntGoal(unittest.TestCase):
     def test_completes_when_enough_are_received(self) -> None:
         def configure(context):
@@ -566,6 +695,102 @@ class TestHiddenPackagesHuntGoal(unittest.TestCase):
             context.finished_game = True
 
         self.assertEqual(_run_goal(configure), (0, True))
+
+
+def _run_warp(configure) -> tuple[bool, bool]:
+    # Build a context the way _run_goal does, apply the caller's goal state, and
+    # report whether the goal is reached and whether the mod is asked for the
+    # ending. The pair is what pins the distinction: two goals reach their goal
+    # without ever asking.
+    async def scenario() -> tuple[bool, bool]:
+        with _fake_settings(""):
+            context = _context()
+            context.slot = 1
+            configure(context)
+            return context._goal_reached(), context._finale_warp()
+
+    return asyncio.run(scenario())
+
+
+class TestFinaleWarp(unittest.TestCase):
+    """The hunt goal's ending: the last Package Fragment plays the finale.
+
+    The ask rides the status frame, so it is repeated for as long as it holds
+    rather than announced once, and the mod is the one that decides when the
+    mission may start.
+    """
+
+    def test_the_hunt_asks_for_the_ending_once_it_is_met(self) -> None:
+        def configure(context):
+            context.slot_goal = "hidden_packages"
+            context.hunt_item_id = 7
+            context.hunt_required = 3
+            context.items_received = _received(7, 3)
+
+        self.assertEqual(_run_warp(configure), (True, True))
+
+    def test_the_hunt_does_not_ask_below_the_threshold(self) -> None:
+        def configure(context):
+            context.slot_goal = "hidden_packages"
+            context.hunt_item_id = 7
+            context.hunt_required = 3
+            context.items_received = _received(7, 2)
+
+        self.assertEqual(_run_warp(configure), (False, False))
+
+    def test_a_hunt_with_no_threshold_is_not_a_met_goal(self) -> None:
+        # slot_data always carries the threshold (the option's floor is one), so
+        # this pins the malformed case the fallback would otherwise clear: zero
+        # required reads as met by any count, and the goal now plays the ending
+        # rather than only reporting itself.
+        def configure(context):
+            context.slot_goal = "hidden_packages"
+            context.hunt_item_id = 7
+            context.hunt_required = 0
+            context.items_received = _received(7, 1)
+
+        self.assertEqual(_run_warp(configure), (False, False))
+
+    def test_the_finale_goal_never_asks(self) -> None:
+        # It is met by checking the finale itself, so the mission has been played
+        # by the time it completes; asking would offer to play its ending again.
+        def configure(context):
+            context.slot_goal = "final_mission"
+            context.final_location_id = 500
+            context.checked_locations = {500}
+
+        self.assertEqual(_run_warp(configure), (True, False))
+
+    def test_the_hundred_percent_goal_never_asks(self) -> None:
+        # Same reason: every location checked includes the finale's.
+        def configure(context):
+            context.slot_goal = "hundred_percent"
+            context.checked_locations = {1, 2}
+            context.missing_locations = set()
+
+        self.assertEqual(_run_warp(configure), (True, False))
+
+    def test_the_status_frame_carries_the_ask(self) -> None:
+        async def scenario() -> None:
+            with _fake_settings(""):
+                context = _context()
+                context.slot = 1
+                context.slot_goal = "hidden_packages"
+                context.hunt_item_id = 7
+                context.hunt_required = 2
+                context.items_received = _received(7, 2)
+                context.checked_locations = {1}
+                context.missing_locations = set()
+                with mock.patch.object(type(context.bridge), "connected",
+                                       new_callable=mock.PropertyMock) as connected, \
+                     mock.patch.object(context.bridge, "send_status") as send_status, \
+                     mock.patch.object(context, "_goal_rows", return_value=[]), \
+                     mock.patch.object(context, "_strand_rows", return_value=[]):
+                    connected.return_value = True
+                    await context._send_status()
+                    self.assertIs(send_status.await_args.args[-1], True)
+
+        asyncio.run(scenario())
 
 
 class TestFinalMissionGoal(unittest.TestCase):
@@ -612,6 +837,108 @@ class TestHundredPercentGoal(unittest.TestCase):
             context.missing_locations = set()
 
         self.assertEqual(_run_goal(configure), (0, False))
+
+
+class TestProgressPercentage(unittest.TestCase):
+    def test_publishes_the_percentage_to_the_data_store(self) -> None:
+        async def scenario() -> dict:
+            with _fake_settings(""):
+                context = _context()
+                context.team = 0
+                context.slot = 3
+                with mock.patch.object(
+                    context, "send_msgs", new_callable=mock.AsyncMock,
+                ) as send:
+                    await context.on_bridge_progress(93)
+                    return send.await_args.args[0][0]
+
+        message = asyncio.run(scenario())
+        self.assertEqual(message["cmd"], "Set")
+        self.assertEqual(message["key"], "gta_vice_city_percentage_0_3")
+        self.assertEqual(message["operations"],
+                         [{"operation": "replace", "value": 93}])
+
+    def test_remembers_a_report_the_server_never_saw(self) -> None:
+        # The mod reports each number once. A report arriving while AP is away
+        # goes nowhere, so the value has to survive in the context or the data
+        # store keeps the one before it until the game's percentage moves again.
+        async def scenario() -> tuple[int | None, dict]:
+            with _fake_settings(""):
+                context = _context()
+                with mock.patch.object(
+                    context, "send_msgs", new_callable=mock.AsyncMock,
+                ) as send:
+                    # No team or slot yet: this is the outage.
+                    await context.on_bridge_progress(100)
+                    self.assertEqual(send.await_count, 0)
+                    context.team = 0
+                    context.slot = 3
+                    await context._publish_percentage()
+                    return context.last_percentage, send.await_args.args[0][0]
+
+        remembered, message = asyncio.run(scenario())
+        self.assertEqual(remembered, 100)
+        self.assertEqual(message["key"], "gta_vice_city_percentage_0_3")
+        self.assertEqual(message["operations"],
+                         [{"operation": "replace", "value": 100}])
+
+    def test_connected_republishes_the_last_percentage(self) -> None:
+        async def scenario() -> list[dict]:
+            with _fake_settings(""):
+                context = _context()
+                context.team = 0
+                context.slot = 3
+                context.last_percentage = 93
+                with mock.patch.object(
+                    context, "setup_and_launch", new_callable=mock.AsyncMock,
+                ), mock.patch.object(
+                    context, "send_msgs", new_callable=mock.AsyncMock,
+                ) as send:
+                    context.on_package("Connected", {"slot_data": {}})
+                    await asyncio.gather(*list(context._background_tasks))
+                    return [call.args[0][0] for call in send.await_args_list]
+
+        messages = asyncio.run(scenario())
+        sets = [message for message in messages if message.get("cmd") == "Set"]
+        self.assertEqual(len(sets), 1)
+        self.assertEqual(sets[0]["key"], "gta_vice_city_percentage_0_3")
+        self.assertEqual(sets[0]["operations"],
+                         [{"operation": "replace", "value": 93}])
+
+    def test_connected_says_nothing_with_no_report_yet(self) -> None:
+        async def scenario() -> list[dict]:
+            with _fake_settings(""):
+                context = _context()
+                context.team = 0
+                context.slot = 3
+                with mock.patch.object(
+                    context, "setup_and_launch", new_callable=mock.AsyncMock,
+                ), mock.patch.object(
+                    context, "send_msgs", new_callable=mock.AsyncMock,
+                ) as send:
+                    context.on_package("Connected", {"slot_data": {}})
+                    await asyncio.gather(*list(context._background_tasks))
+                    return [call.args[0][0] for call in send.await_args_list]
+
+        self.assertEqual(
+            [message for message in asyncio.run(scenario())
+             if message.get("cmd") == "Set"], [])
+
+    def test_says_nothing_before_the_slot_is_known(self) -> None:
+        # The mod can report a percentage while AP has not answered yet; there is
+        # no key to write it under, so the report is dropped rather than landing
+        # somewhere another slot would read.
+        async def scenario() -> int:
+            with _fake_settings(""):
+                context = _context()
+                self.assertIsNone(context.percentage_key())
+                with mock.patch.object(
+                    context, "send_msgs", new_callable=mock.AsyncMock,
+                ) as send:
+                    await context.on_bridge_progress(50)
+                    return send.await_count
+
+        self.assertEqual(asyncio.run(scenario()), 0)
 
 
 class TestGoalDispatch(unittest.TestCase):

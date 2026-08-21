@@ -2,7 +2,8 @@
 
 Starts the real Python AsiBridge, runs the compiled C++ harness against it as a
 subprocess, and asserts the round trip: the harness receives the welcome, the
-resync items and checked locations, and its emitted check reaches the bridge.
+resync items and checked locations, and its emitted check and completion
+percentage reach the bridge.
 Windows and MSVC only (needs the built harness), so this is a dev-machine check,
 not part of the ubuntu CI. Usage:
     python scripts/asi_interop_check.py <path-to-harness.exe>
@@ -28,6 +29,7 @@ EXPECTED_HASH = "interophash01"
 RESYNC_ITEMS = [(0, 111), (1, 222), (2, 333)]
 RESYNC_CHECKED = [542000000, 542000001]
 EMITTED_CHECK = 542000042
+EMITTED_PERCENTAGE = 93
 CONFIG = {
     "item_globals": {"542100000": 9010, "542100001": 9011},
     "completion_watch": {"9035": 542000000, "9036": 542000042},
@@ -85,9 +87,20 @@ DROPPED_ROUTES = [
 ]
 
 
+# The counts a status frame carries: checks done, checks total, items received,
+# and whether AP has the slot finished, plus the two row lists only the client can
+# compose (the goal's own progress and each mission strand's) and the finale warp
+# ask, which the hunt goal raises to play the story's ending.
+STATUS = (61, 214, 43, False)
+STATUS_FINALE_WARP = True
+STATUS_GOAL_ROWS = [["Goal", "Package Fragments", False], ["Fragments", "7 of 20", False]]
+STATUS_STRAND_ROWS = [["Cortez", "3 of 5", False], ["Diaz", "6 of 6", True]]
+
+
 class Recorder:
     def __init__(self) -> None:
         self.checks: list[int] = []
+        self.percentages: list[int] = []
         self.connected = 0
 
     def seed_hash(self) -> str:
@@ -98,6 +111,9 @@ class Recorder:
 
     async def on_goal(self) -> None:
         pass
+
+    async def on_progress(self, percentage: int) -> None:
+        self.percentages.append(percentage)
 
     async def on_connected(self, bridge: AsiBridge) -> None:
         self.connected += 1
@@ -112,6 +128,8 @@ class Recorder:
         )
         await bridge.send_items(RESYNC_ITEMS)
         await bridge.send_checked(RESYNC_CHECKED)
+        await bridge.send_status(*STATUS, STATUS_GOAL_ROWS, STATUS_STRAND_ROWS,
+                                 STATUS_FINALE_WARP)
 
 
 async def run(harness: str) -> int:
@@ -122,12 +140,14 @@ async def run(harness: str) -> int:
         on_check=recorder.on_check,
         on_goal_reached=recorder.on_goal,
         on_connected=recorder.on_connected,
+        on_progress=recorder.on_progress,
     )
     await bridge.start()
     process = await asyncio.create_subprocess_exec(
         harness,
         "--host", "127.0.0.1", "--port", str(bridge.port),
-        "--seed-hash", "", "--emit-check", str(EMITTED_CHECK), "--run-ms", "1500",
+        "--seed-hash", "", "--emit-check", str(EMITTED_CHECK),
+        "--emit-percentage", str(EMITTED_PERCENTAGE), "--run-ms", "1500",
         stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
     )
     try:
@@ -145,12 +165,30 @@ async def run(harness: str) -> int:
     failures: list[str] = []
     if recorder.checks != [EMITTED_CHECK]:
         failures.append(f"bridge checks {recorder.checks} != [{EMITTED_CHECK}]")
+    if recorder.percentages != [EMITTED_PERCENTAGE]:
+        failures.append(
+            f"bridge percentages {recorder.percentages} != [{EMITTED_PERCENTAGE}]")
     if summary.get("welcome_seed_hash") != EXPECTED_HASH:
         failures.append(f"welcome hash {summary.get('welcome_seed_hash')!r} != {EXPECTED_HASH!r}")
     if summary.get("items") != [list(pair) for pair in RESYNC_ITEMS]:
         failures.append(f"items {summary.get('items')} != {RESYNC_ITEMS}")
     if summary.get("checked") != RESYNC_CHECKED:
         failures.append(f"checked {summary.get('checked')} != {RESYNC_CHECKED}")
+    if summary.get("status") != list(STATUS):
+        failures.append(f"status {summary.get('status')} != {list(STATUS)}")
+    if summary.get("status_finale_warp") is not STATUS_FINALE_WARP:
+        failures.append(
+            f"status finale warp {summary.get('status_finale_warp')} != "
+            f"{STATUS_FINALE_WARP}")
+    expected_rows = [STATUS_GOAL_ROWS, STATUS_STRAND_ROWS]
+    if summary.get("status_rows") != expected_rows:
+        failures.append(f"status rows {summary.get('status_rows')} != {expected_rows}")
+    # The welcome is what marks the client up for the pause menu's page. The live
+    # flag is false again by the time the harness prints, since the session ended,
+    # so what is asserted is that the welcome set it at all.
+    if summary.get("client_was_connected") is not True:
+        failures.append(
+            f"client_was_connected {summary.get('client_was_connected')} is not True")
     if summary.get("item_globals") != CONFIG["item_globals"]:
         failures.append(f"item_globals {summary.get('item_globals')} != {CONFIG['item_globals']}")
     if summary.get("completion_watch") != CONFIG["completion_watch"]:

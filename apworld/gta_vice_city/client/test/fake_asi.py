@@ -62,6 +62,9 @@ class FakeAsi:
     async def send_goal_reached(self) -> None:
         await self._send(protocol.goal_reached_message())
 
+    async def send_progress(self, percentage: int) -> None:
+        await self._send(protocol.progress_message(percentage))
+
     async def next_message(self, timeout: float = 2.0) -> dict | None:
         try:
             return await asyncio.wait_for(self.inbox.get(), timeout)

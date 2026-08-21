@@ -3,9 +3,9 @@
 Subclasses CommonContext to speak the real AP protocol against a hosted seed,
 and hosts the AsiBridge that the GTA: Vice City mod connects to. It bridges the
 two: AP received-items and checked-locations resync down to the mod, and mod
-check and goal events up to AP. The protocol and framing live in bridge.py and
-protocol.py, which are tested headless; this module is the live wiring, verified
-against a real server and game.
+check, goal and progress events up to AP. The protocol and framing live in
+bridge.py and protocol.py, which are tested headless; this module is the live
+wiring, verified against a real server and game.
 
 Normally launched from the Archipelago Launcher's "GTA Vice City Client"
 button. During development, from inside the Archipelago repo:
@@ -150,6 +150,10 @@ class GTAViceCityContext(CommonContext):
         self.hunt_item_id: int | None = None
         self.hunt_required = 0
         self.final_location_id: int | None = None
+        # The completion percentage the mod last reported, kept so a Connected
+        # can republish it. The mod reports each number once, so a report during
+        # a server outage is only recoverable from here.
+        self.last_percentage: int | None = None
         # Hold references to fire-and-forget tasks so they are not
         # garbage-collected mid-flight.
         self._background_tasks: set[asyncio.Task] = set()
@@ -158,6 +162,7 @@ class GTAViceCityContext(CommonContext):
             expected_seed_hash=self.expected_seed_hash,
             on_check=self.on_bridge_check,
             on_goal_reached=self.on_bridge_goal,
+            on_progress=self.on_bridge_progress,
             on_connected=self.on_bridge_connected,
             logger=logger,
         )
@@ -197,6 +202,9 @@ class GTAViceCityContext(CommonContext):
                 "content_district_globals": slot_data.get(
                     "content_district_globals", {}),
                 "content_districts": slot_data.get("content_districts", []),
+                # Not for the ASI: the status page needs to know whether the
+                # property strands exist as items at all before it lists them.
+                "enable_properties": bool(slot_data.get("enable_properties", False)),
             }
             self.slot_goal = slot_data.get("goal")
             self.final_location_id = slot_data.get("final_location_id")
@@ -204,6 +212,12 @@ class GTAViceCityContext(CommonContext):
                 self.hunt_item_id = slot_data.get("hidden_package_item_id")
                 self.hunt_required = slot_data.get("hidden_packages_required", 0)
             self._schedule(self.setup_and_launch())
+            # Publish the percentage the mod last reported. A report that landed
+            # while the server was away went nowhere, and the mod will not repeat
+            # itself until the number moves again, so the data store would keep a
+            # stale one: a game that reached a hundred through a blip would leave
+            # the tracker at ninety-nine for good.
+            self._schedule(self._publish_percentage())
         # A new Connected or a ReceivedItems update means the mod's view is
         # stale, so push a fresh resync. The bridge no-ops if the mod is not
         # connected; it also resyncs itself on every mod (re)connect.
@@ -213,6 +227,10 @@ class GTAViceCityContext(CommonContext):
         # the last check for 100 percent) can complete the goal.
         if cmd in ("Connected", "ReceivedItems", "RoomUpdate"):
             self._maybe_finish_goal()
+        # A RoomUpdate is how a checked count moves without any item arriving,
+        # which the resync above would not catch on its own.
+        if cmd == "RoomUpdate":
+            self._schedule(self._send_status())
 
     def _schedule(self, coro) -> None:
         task = asyncio.create_task(coro)
@@ -255,6 +273,80 @@ class GTAViceCityContext(CommonContext):
             return
         await self.bridge.send_items(self._received_item_pairs())
         await self.bridge.send_checked(sorted(self.checked_locations))
+        await self._send_status()
+
+    async def _send_status(self) -> None:
+        """What the pause menu's status page shows and only the client knows: the
+        seed's own check total, the goal's progress, and how far each mission
+        strand has come. The mod knows which completion globals it watches, not
+        which of them this seed turned into locations, nor what its goal asks
+        for."""
+        if not self.bridge.connected:
+            return
+        if self.slot is None:
+            # No AP connection yet, so there are no counts to send: zeroes would
+            # reach the page as counts and read as a seed with nothing in it.
+            return
+        checked = len(self.checked_locations)
+        total = checked + len(self.missing_locations)
+        # AP's own view of the slot, not ours: a session that connects to a room
+        # already finished has finished_game set with nothing left to evaluate.
+        finished = self.finished_game or self._goal_reached()
+        await self.bridge.send_status(
+            checked, total, len(self.items_received), finished,
+            self._goal_rows(), self._strand_rows(), self._finale_warp())
+
+    def _received_name_counts(self) -> dict[str, int]:
+        """How many of each item this slot has received, by name. The page shows
+        progress toward things counted in items rather than in locations, and the
+        names are what the mod has no table for."""
+        counts: dict[str, int] = {}
+        for item in self.items_received:
+            name = self.item_names.lookup_in_slot(item.item, self.slot)
+            counts[name] = counts.get(name, 0) + 1
+        return counts
+
+    def _goal_rows(self) -> list[list]:
+        """The goal's own progress, as the page's rows. One row for what this
+        seed's goal asks, plus the count when the goal is one that counts."""
+        goal = self.slot_goal or "unknown"
+        labels = {"final_mission": "Keep Your Friends Close",
+                  "hidden_packages": "Package Fragments",
+                  "hundred_percent": "Every check in the seed"}
+        rows: list[list] = [["Goal", labels.get(goal, goal), bool(self.finished_game)]]
+        if goal == "hidden_packages" and self.hunt_required:
+            have = 0
+            if self.hunt_item_id is not None:
+                have = sum(1 for item in self.items_received
+                           if item.item == self.hunt_item_id)
+            rows.append(["Fragments", f"{have} of {self.hunt_required}",
+                         have >= self.hunt_required])
+        elif goal == "hundred_percent":
+            checked = len(self.checked_locations)
+            rows.append(["Checks left", str(len(self.missing_locations)),
+                         not self.missing_locations and checked > 0])
+        return rows
+
+    def _strand_rows(self) -> list[list]:
+        """How far each giver's strand has come, as one wrapped row per strand.
+        The counts are received progressive items; the strand names and how many
+        missions each holds come from the world's own tables, which the client can
+        read directly rather than carry over the wire."""
+        from .. import data
+        counts = self._received_name_counts()
+        strands = list(data.STORY_GIVERS)
+        # The venue strands are property missions, which only exist as items when
+        # that check class is on.
+        if self.asi_config.get("enable_properties", False):
+            strands += list(data.VENUE_STRANDS)
+        rows: list[list] = []
+        for strand in strands:
+            total = data.progressive_item_count(strand)
+            if total <= 0:
+                continue
+            have = min(counts.get(data.progressive_item_name(strand), 0), total)
+            rows.append([strand, f"{have} of {total}", have >= total])
+        return rows
 
     async def on_bridge_connected(self, _bridge: AsiBridge) -> None:
         # The mod just connected and was welcomed; give it its configuration
@@ -279,6 +371,33 @@ class GTAViceCityContext(CommonContext):
     async def on_bridge_goal(self) -> None:
         await self._finish_goal()
 
+    async def on_bridge_progress(self, percentage: int) -> None:
+        # The game's own "Percentage completed" stat. Remembered first and sent
+        # second: the mod reports it once per change, so a send that goes nowhere
+        # has to be repeatable from here.
+        self.last_percentage = percentage
+        await self._publish_percentage()
+
+    async def _publish_percentage(self) -> None:
+        # Into the AP data store, where the PopTracker pack reads it. The server
+        # keeps the value, so a tracker that connects later still sees the last
+        # one and the mod never has to repeat itself.
+        key = self.percentage_key()
+        if key is None or self.last_percentage is None:
+            return
+        await self.send_msgs([{
+            "cmd": "Set", "key": key, "default": 0, "want_reply": False,
+            "operations": [{"operation": "replace", "value": self.last_percentage}],
+        }])
+
+    def percentage_key(self) -> str | None:
+        # The data store key the tracker pack reads. Team and slot are in it the
+        # way the server's own read-only keys carry them, so two slots of one
+        # multiworld never share a number. None until AP says which slot we are.
+        if self.team is None or self.slot is None:
+            return None
+        return protocol.percentage_key(self.team, self.slot)
+
     async def _finish_goal(self) -> None:
         if self.finished_game:
             return
@@ -292,11 +411,26 @@ class GTAViceCityContext(CommonContext):
         if not self.finished_game and self.slot is not None and self._goal_reached():
             self._schedule(self._finish_goal())
 
+    def _finale_warp(self) -> bool:
+        """Whether the mod should play the story's ending now.
+
+        The hunt goal alone: collecting the last Package Fragment ends the game,
+        so the mod warps into the ending cutscene of Keep Your Friends Close...
+        wherever the player is, the way every macguffin hunt ends. The other two
+        goals cannot be met before that mission has passed, so they never ask.
+        Asked on every status frame rather than announced once, so a reconnect or
+        a save loaded later re-arms it; the mod holds on the mission's own passed
+        flag, so a game that has seen the ending never plays it twice."""
+        return self.slot_goal == "hidden_packages" and self._goal_reached()
+
     def _goal_reached(self) -> bool:
         if self.slot_goal == "hidden_packages":
             # Enough Package Fragments received, wherever in the multiworld
-            # they were found.
-            if self.hunt_item_id is None:
+            # they were found. Both halves have to have arrived: a threshold
+            # missing from slot_data falls back to zero, which any count would
+            # clear, and the goal now plays the ending as well as reporting
+            # itself, so an absent option would end the game at connect.
+            if self.hunt_item_id is None or self.hunt_required < 1:
                 return False
             received = sum(1 for item in self.items_received if item.item == self.hunt_item_id)
             return received >= self.hunt_required
