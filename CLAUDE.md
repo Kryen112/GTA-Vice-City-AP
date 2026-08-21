@@ -87,7 +87,21 @@ gitignore them. Stage explicit paths only; never `git add -A` or `git add .`.
   frames, version handshake, seed-hash refusal on mismatch.
 - All item application (unlock globals, one-shot effects) and DeathLink
   defer on exactly one condition, the game's player-not-controllable flag.
-  No other deferral list exists.
+  No other deferral list exists. Beyond that one condition a fixed rate limit
+  paces how fast grants leave, since delivering a backlog at once takes the game
+  down: one grant per interval and no more than the window's count inside ANY
+  window of it, measured back from now rather than from a boundary. The limit
+  DELAYS and never drops, so every pending raise is delivered, and it may take
+  minutes on a slot holding everything at once. Three things sit outside it
+  deliberately, and each is a correctness requirement rather than a convenience:
+  lowering a global happens at once, so a stale save cannot keep an ability for
+  the seconds a pace would cost; a value the config stamp owns is neither raised
+  nor lowered by the applier, because the stamp rewrites it in the same frame and
+  a raise that cannot take would spend a slot forever ahead of everything else;
+  and the order of paced raises ROTATES rather than running lowest-first, so one
+  global that cannot hold its target cannot starve the rest. Any further
+  withholding condition is the thing this clause exists to forbid, because a
+  second one is where lost grants hide.
 - Item and location id tables freeze at the first public release. After that,
   only append and never reorder or remove entries, since existing seeds and
   trackers depend on the ids. Before release they are free to change.
