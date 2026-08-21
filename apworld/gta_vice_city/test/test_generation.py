@@ -19,7 +19,15 @@ from test.bases import WorldTestBase
 from test.general import gen_steps, setup_multiworld
 from worlds.AutoWorld import call_all
 
-from .. import MINIMUM_SPHERE_ZERO, GTAViceCityWorld, data, district_data, rules, scm
+from .. import (
+    MINIMUM_DIRECTED_SPHERE_ZERO,
+    MINIMUM_SPHERE_ZERO,
+    GTAViceCityWorld,
+    data,
+    district_data,
+    rules,
+    scm,
+)
 from ..items import DISTRICT_CONTENT_NAMES, ITEM_CLASSIFICATIONS, ITEM_NAME_TO_ID, ORDERED_ITEM_NAMES
 from ..locations import (
     LOCATION_NAME_TO_ID,
@@ -288,13 +296,13 @@ class TestRadioStationsOn(WorldTestBase):
             )
 
     def test_reserved_block_stays_below_the_marker_globals(self) -> None:
-        # $9515 up is SCM-internal (marker handles and visibility flags, whose
+        # $9516 up is SCM-internal (marker handles and visibility flags, whose
         # bases live in add_markers.py); the reserved contract must never grow
-        # into it. The district content unlocks took $9460..$9514, which is why
-        # add_markers.py's HANDLE_BASE moved with them: a reserved block growing
-        # into the marker scratch would have the ASI writing over live marker
-        # handles.
-        self.assertLess(scm.highest_reserved_global(), 9515)
+        # into it. The district content unlocks took $9460..$9514 and the finale
+        # warp flag $9515, which is why add_markers.py's HANDLE_BASE moved with
+        # them: a reserved block growing into the marker scratch would have the
+        # ASI writing over live marker handles.
+        self.assertLess(scm.highest_reserved_global(), 9516)
 
 
 class TestRadioStationsOff(WorldTestBase):
@@ -1530,6 +1538,61 @@ class TestContentLocksPerDistrict(WorldTestBase):
             )
 
 
+class TestCommonMaximalLocks(WorldTestBase):
+    # The option set a player is most likely to choose: every content key split
+    # to its finest, three ability keys, the emergency class off, both draws on
+    # and the world modifiers. Its start is one check wide, so the inherited
+    # fill test is what proves the directed opener carries the seed.
+    game = "Grand Theft Auto Vice City"
+    options: ClassVar[dict] = {
+        "goal": "hidden_packages",
+        "hidden_packages_required": 50,
+        "enable_emergency_vehicles": False,
+        "shuffle_emergency_rewards": True,
+        "randomize_radio_stations": True,
+        "split_mainland_access": True,
+        "randomize_pickups": True,
+        "ability_locks": ["vehicles", "weapon_equip", "wallet"],
+        "starting_ability_unlock": True,
+        "content_locks": _ALL_CONTENT_LOCKS,
+        "split_content_locks": "per_class",
+        "starting_content_unlock": True,
+        "trap_percentage": 15,
+        "death_link": True,
+    }
+
+    def test_the_start_is_one_check_wide(self) -> None:
+        # The premise the rest of this class rests on: nothing but the first
+        # mission is open on a new game, so the seed fills only because the
+        # opener is directed into that one check.
+        self.assertEqual(self.world._free_start_location_count(), 1)
+
+    def test_the_directed_opener_is_the_strongest_content_item(self) -> None:
+        # The selection rule rather than the item it lands on: whichever content
+        # item opens the most of the start island is the one directed, so a seed
+        # never spends its one open check on an unlock worth a check or two.
+        location_rules = self.world._location_rules()
+        state = CollectionState(self.multiworld)
+        openings = {
+            name: self.world._start_locations_opened_by(
+                name, location_rules, state)
+            for name in self.world._content_items()
+        }
+        directed = self.world.directed_opening_item
+        self.assertEqual(openings[directed], max(openings.values()))
+        self.assertGreaterEqual(openings[directed], MINIMUM_DIRECTED_SPHERE_ZERO)
+        self.assertEqual(
+            self.multiworld.local_early_items[self.player][directed], 1)
+
+    def test_the_opener_stays_a_reward_in_the_pool(self) -> None:
+        # An early item, not starting inventory: the opener is still what some
+        # check pays out, which is what separates directing it from granting it.
+        directed = self.world.directed_opening_item
+        self.assertIn(directed, [item.name for item in self.multiworld.itempool])
+        self.assertNotIn(directed, [
+            item.name for item in self.multiworld.precollected_items[self.player]])
+
+
 class TestContentLocksOff(WorldTestBase):
     game = "Grand Theft Auto Vice City"
     # Default options: content_locks is empty.
@@ -2682,17 +2745,29 @@ class TestRejections(WorldTestBase):
             self.world_setup()
         self.assertIn(because, str(raised.exception))
 
-    def test_a_starting_draw_never_rescues_a_narrow_seed(self) -> None:
-        # The option docs promise that a config refused without the draw is
-        # refused with it: the guard measures what is open with no item at all,
-        # so no seed's solvability rests on a random draw. Nothing but this test
-        # stops a later edit from teaching the guard about the draw.
-        self._assert_rejected({
+    def test_a_starting_draw_never_decides_whether_a_seed_generates(self) -> None:
+        # The option docs promise that the draws only ever loosen: the guard
+        # measures what is open with no item at all, so a config refused without
+        # a draw is refused with it and one accepted without a draw is accepted
+        # with it. Both halves need holding. The draw takes a content item out of
+        # the pool, so without the opener being reserved first it could take the
+        # very item a narrow seed is directed to place, and with heavy ability
+        # locks the held packages are often the only class that opens the start.
+        refused = dict(_TIGHTEST_OPTIONS, ability_locks=_ALL_ABILITY_LOCKS)
+        self._assert_rejected(dict(refused, starting_ability_unlock=True),
+                              "no held content class opens enough")
+        accepted = {
             "content_locks": ["hidden_packages"],
             "ability_locks": ["vehicles", "weapon_equip", "wallet"],
-            "starting_content_unlock": True,
-            "starting_ability_unlock": True,
-        }, "check is reachable on a new game")
+        }
+        for draws in ({}, {"starting_content_unlock": True,
+                           "starting_ability_unlock": True}):
+            with self.subTest(**draws):
+                self.options = dict(accepted, **draws)
+                self.world_setup()
+                self._assert_opener_carries_the_start()
+                self.assertNotEqual(self.world.starting_content_item,
+                                    self.world.directed_opening_item)
 
     def test_hundred_percent_rejects_with_a_class_off(self) -> None:
         # The 100 percent goal is a solvability contract: every stat
@@ -2759,17 +2834,20 @@ class TestRejections(WorldTestBase):
         self.assertGreaterEqual(self.world._free_start_location_count(),
                                 MINIMUM_SPHERE_ZERO)
 
-    def test_lock_combinations_that_close_the_start_island_are_refused(self) -> None:
+    def test_lock_combinations_that_close_the_start_island_are_widened(self) -> None:
         # These are measured, not derived. The first row is every key of both
-        # families; the three after it are far smaller, so refusing does not
-        # take every key. Nor does it take both families: content locks plus
-        # disabled classes close the start with no ability key at all. Hidden
-        # packages are the class the ability terms barely touch, seven of the
-        # hundred, so holding them is what tips an ability-locked seed over. The
-        # neighbouring
+        # families; the three after it are far smaller, so closing the start
+        # does not take every key. Nor does it take both families: content locks
+        # plus disabled classes close the start with no ability key at all.
+        # Hidden packages are the class the ability terms barely touch, seven of
+        # the hundred, so holding them is what tips an ability-locked seed over.
+        # The neighbouring
         # content=[hidden_packages, rampages, robbable_stores] with
-        # ability=[vehicles] is ACCEPTED at a free count of 6, so the boundary
-        # is not simply "how many keys".
+        # ability=[vehicles] leaves a free count of 6 and needs no widening, so
+        # the boundary is not simply "how many keys".
+        #
+        # Every row here holds a content class whose item clears the floor, so
+        # every row generates on a directed opener rather than being refused.
         for content, ability in (
             (_ALL_CONTENT_LOCKS, _ALL_ABILITY_LOCKS),
             (["hidden_packages"], ["vehicles", "weapon_equip", "wallet"]),
@@ -2778,10 +2856,113 @@ class TestRejections(WorldTestBase):
              ["vehicles"]),
         ):
             with self.subTest(content_locks=content, ability_locks=ability):
-                self._assert_rejected(
-                    {"content_locks": content, "ability_locks": ability},
-                    "only 1 check is reachable",
-                )
+                self.options = {"content_locks": content, "ability_locks": ability}
+                self.world_setup()
+                self.assertLess(self.world._free_start_location_count(),
+                                MINIMUM_SPHERE_ZERO)
+                self._assert_opener_carries_the_start()
+
+    def _assert_opener_carries_the_start(self) -> None:
+        # What a directed seed must hold: the opener is one of this seed's own
+        # content items, the fill is told to place it early and locally, and it
+        # opens enough of the start island on its own to clear the floor the
+        # fuzzer pinned.
+        directed = self.world.directed_opening_item
+        self.assertIsNotNone(directed)
+        self.assertIn(directed, self.world._content_items())
+        self.assertEqual(
+            self.multiworld.local_early_items[self.player][directed], 1)
+        self.assertGreaterEqual(
+            self.world._start_locations_opened_by(
+                directed, self.world._location_rules(),
+                CollectionState(self.multiworld)),
+            MINIMUM_DIRECTED_SPHERE_ZERO)
+
+    def test_the_directed_opener_is_never_an_ability_or_area_item(self) -> None:
+        # Land Vehicles opens the start island wider than most content items do,
+        # and a crossing opens the mainland whole, so both would carry a narrow
+        # seed. Neither is eligible: they are milestones a seed is meant to wait
+        # for, and the opening check must not hand one over.
+        ineligible = set(data.AREA_ITEMS)
+        for items in data.ABILITY_LOCK_ITEMS.values():
+            ineligible.update(items)
+        for options in (
+            {"content_locks": _ALL_CONTENT_LOCKS, "ability_locks": _ALL_ABILITY_LOCKS},
+            {"content_locks": _ALL_CONTENT_LOCKS, "ability_locks": ["vehicles"],
+             "split_content_locks": "per_class"},
+            dict(_STORY_ONLY_OPTIONS, enable_robbable_stores=True,
+                 content_locks=["robbable_stores"]),
+        ):
+            with self.subTest(**options):
+                self.options = options
+                self.world_setup()
+                self._assert_opener_carries_the_start()
+                self.assertNotIn(self.world.directed_opening_item, ineligible)
+
+    def test_the_opener_floor_refuses_a_key_that_opens_too_little(self) -> None:
+        # The floor's own branch. The other refusal tests never reach it: they
+        # select no content key, so there is no opener to weigh in the first
+        # place. Here a key IS selected and its item still opens too little,
+        # because an ability key ANDs a term onto the class the content key
+        # holds. Directing such an item measures WORSE than leaving the fill to
+        # choose, 31 to 33 of 60 seeds against 53, since it spends the only open
+        # check on nothing, so these are refused rather than widened.
+        #
+        # The last row is the one that pins the constant rather than merely the
+        # branch: its opener is worth exactly the two checks the 60-seed ladder
+        # measured at 31 to 33. The rows above it are worth one.
+        rows = (
+            (dict(_TIGHTEST_OPTIONS, ability_locks=_ALL_ABILITY_LOCKS,
+                  content_locks=["properties"]), 1),
+            (dict(_TIGHTEST_OPTIONS, ability_locks=_ALL_ABILITY_LOCKS,
+                  content_locks=["rampages"]), 1),
+            (dict(_TIGHTEST_OPTIONS, ability_locks=_ALL_ABILITY_LOCKS,
+                  content_locks=["robbable_stores"]), 1),
+            (dict(_STORY_ONLY_OPTIONS, enable_rampages=True,
+                  ability_locks=["weapon_equip"], content_locks=["rampages"]), 2),
+        )
+        for options, opened in rows:
+            with self.subTest(content_locks=sorted(options["content_locks"]),
+                              ability_locks=sorted(options["ability_locks"])):
+                # Only as far as the opener, since create_items is what refuses.
+                multiworld = setup_multiworld(GTAViceCityWorld, steps=(),
+                                              options=options)
+                call_all(multiworld, "generate_early")
+                opener = multiworld.worlds[1]._best_start_opener()
+                self.assertIsNotNone(opener)
+                self.assertEqual(opener[1], opened)
+                self.assertLess(opener[1], MINIMUM_DIRECTED_SPHERE_ZERO)
+                self._assert_rejected(options, "no held content class opens enough")
+
+    def test_the_opener_floor_admits_the_tightest_usable_opener(self) -> None:
+        # The accept side of the floor, and the mirror of the refusal above.
+        # Every other widened shape in the suite scores 14 or more, so without
+        # this row raising the floor would turn hundreds of narrow shapes into
+        # refusals with nothing failing. This is the tightest shape that
+        # generates: its opener is worth exactly six checks. Six is as close as
+        # the floor can be pinned from above, because no shape in the option
+        # space scores three or five, and the shapes scoring four are refused on
+        # item math before the start is ever measured.
+        self.options = dict(_STORY_ONLY_OPTIONS, enable_properties=True,
+                            content_locks=["properties"],
+                            split_content_locks="off")
+        self.world_setup()
+        self.assertEqual(self.world._free_start_location_count(), 1)
+        opener = self.world._best_start_opener()
+        self.assertEqual(opener[0], "Property Purchases")
+        self.assertEqual(opener[1], 6)
+        self._assert_opener_carries_the_start()
+        distribute_items_restrictive(self.multiworld)
+        self.assertTrue(self.multiworld.can_beat_game())
+
+    def test_a_narrow_seed_with_no_content_class_is_still_refused(self) -> None:
+        # The opener is drawn from the content items the seed's own keys put in
+        # the pool, so a start narrowed by ability keys alone has nothing to
+        # direct and the refusal is what is left.
+        self._assert_rejected(
+            dict(_TIGHTEST_OPTIONS, ability_locks=_ALL_ABILITY_LOCKS),
+            "no held content class opens enough",
+        )
 
     def test_every_class_alone_leaves_a_wide_start(self) -> None:
         # The counterpart to the lock refusals: a class whose checks all sit on
@@ -2815,6 +2996,23 @@ class TestRejections(WorldTestBase):
                 distribute_items_restrictive(multiworld)
                 self.assertTrue(multiworld.can_beat_game())
 
+    def test_a_narrow_slot_is_widened_inside_a_multiworld_too(self) -> None:
+        # The refusal is solo only, because refusing would abort everyone's
+        # generation over one slot's options. Widening is not: it costs the
+        # other worlds nothing and it closes the one case the solo-only refusal
+        # leaves open, a partner world too small to lend the fill room.
+        narrow = {"content_locks": _ALL_CONTENT_LOCKS,
+                  "ability_locks": _ALL_ABILITY_LOCKS,
+                  "split_content_locks": "per_class"}
+        multiworld = setup_multiworld([GTAViceCityWorld, GTAViceCityWorld],
+                                      seed=0, options=[narrow, narrow])
+        for player in (1, 2):
+            directed = multiworld.worlds[player].directed_opening_item
+            self.assertIsNotNone(directed)
+            self.assertEqual(multiworld.local_early_items[player][directed], 1)
+        distribute_items_restrictive(multiworld)
+        self.assertTrue(multiworld.can_beat_game())
+
     def test_a_narrow_slot_regenerates_for_the_tracker(self) -> None:
         # The Universal Tracker replays a played seed's options on its own solo
         # multiworld, so a slot that generated inside a real multiworld meets
@@ -2840,6 +3038,38 @@ class TestRejections(WorldTestBase):
             {location.name for location in tracker.get_locations(1)},
             {location.name for location in played.get_locations(1)},
         )
+
+    def test_a_replay_never_rolls_a_draw_the_seed_did_not_make(self) -> None:
+        # The opener is kept out of the content draw, so a seed can draw NOTHING
+        # with the option on and a key selected: the opener was the only content
+        # item there was. slot_data then carries null, which reads the same as a
+        # field it never carried, and rolling on either hands the tracker an item
+        # the played seed left in its pool, showing every check of that class in
+        # logic from the first frame. Only the replay flag separates the two, and
+        # only this test holds it: put the draw back on "restored is not None"
+        # and everything else still passes.
+        options = {"content_locks": ["hidden_packages"],
+                   "ability_locks": ["vehicles", "weapon_equip", "wallet"],
+                   "starting_content_unlock": True}
+        played = setup_multiworld(GTAViceCityWorld, gen_steps, seed=0,
+                                 options=options)
+        world = played.worlds[1]
+        self.assertIsNone(world.starting_content_item)
+        self.assertEqual(world.directed_opening_item, "Hidden Packages")
+        self.assertIn("Hidden Packages",
+                      [item.name for item in played.itempool])
+
+        slot_data = GTAViceCityWorld.interpret_slot_data(world.fill_slot_data())
+        self.assertIsNone(slot_data["starting_content_item"])
+        tracker = setup_multiworld(GTAViceCityWorld, steps=())
+        tracker.re_gen_passthrough = {GTAViceCityWorld.game: slot_data}
+        for step in gen_steps:
+            call_all(tracker, step)
+        self.assertIsNone(tracker.worlds[1].starting_content_item)
+        self.assertNotIn("Hidden Packages",
+                         [item.name for item in tracker.precollected_items[1]])
+        self.assertIn("Hidden Packages",
+                      [item.name for item in tracker.itempool])
 
     def test_packages_keep_a_locked_seed_wide(self) -> None:
         # The counterpart to the refusals above: an ability term touches only
@@ -2879,6 +3109,50 @@ class TestTables(WorldTestBase):
                     split_mainland_access=split,
                 )
                 self.assertNotIn(opening, built, (properties, split))
+
+    def test_the_in_game_passed_gates_cannot_outrun_logic(self) -> None:
+        # build_scm.py and add_markers.py gate the strands in this table on a
+        # vanilla mission having PASSED, not on the items that open it: the
+        # protection strand gives from the estate Rub Out hands over, and on the
+        # unlock alone its markers stand in Diaz's mansion while he still owns
+        # it. Logic never names a pass, it holds the progressive stand-in, so
+        # such a gate is only safe while every mission of the strand inherits
+        # the named mission, since inheriting it is what puts everything passing
+        # it takes into the strand's own rule. Without that a seed could call a
+        # protection mission reachable while Rub Out is not yet passable, and
+        # the marker the mod holds back would never come.
+        active_items = frozenset(
+            item for items in data.ABILITY_LOCK_ITEMS.values() for item in items)
+        for strand, prerequisite in data.IN_GAME_PASSED_PREREQUISITES.items():
+            self.assertIn(strand, STRAND_MISSIONS)
+            self.assertIn(prerequisite, STORY_MISSION_NAMES)
+            giver = MISSION_GIVER[prerequisite]
+            for mission in STRAND_MISSIONS[strand]:
+                for split in (False, True):
+                    for properties in (True, False):
+                        with self.subTest(mission=mission, split=split,
+                                          properties=properties):
+                            self.assertIn(prerequisite, rules._inherited_missions(
+                                mission, strand, properties))
+                            carried = dict(rules._mission_requirements(
+                                mission, strand, active_items,
+                                data.CONTENT_SPLIT_OFF, split, properties))
+                            for item, count in rules._mission_requirements(
+                                    prerequisite, giver, active_items,
+                                    data.CONTENT_SPLIT_OFF, split, properties):
+                                self.assertGreaterEqual(
+                                    carried.get(item, 0), count,
+                                    f"{mission} misses {item} from {prerequisite}")
+                            # And the one-of half, which a split seed puts the
+                            # mainland in and which propagates the same way.
+                            thresholds = rules._mission_thresholds(
+                                mission, strand, active_items, split, properties)
+                            for threshold in rules._mission_thresholds(
+                                    prerequisite, giver, active_items, split,
+                                    properties):
+                                self.assertIn(threshold, thresholds,
+                                              f"{mission} misses a route "
+                                              f"from {prerequisite}")
 
     def test_ids_are_unique(self) -> None:
         self.assertEqual(len(ITEM_NAME_TO_ID), len(set(ITEM_NAME_TO_ID.values())))
@@ -3044,6 +3318,7 @@ class TestReservedGlobals(WorldTestBase):
                   scm.MINIMAP_SHUFFLED_GLOBAL}
         ownership = {scm.ownership_global(key) for key in scm.OWNERSHIP_KEYS}
         minimap = {scm.MINIMAP_UNLOCK_GLOBAL}
+        finale = {scm.FINALE_WARP_GLOBAL}
         ability = (
             {scm.ability_lock_flag_global(name) for name in scm.ABILITY_KEYS}
             | {scm.ability_unlock_global(name) for name in scm.ABILITY_KEYS}
@@ -3068,7 +3343,11 @@ class TestReservedGlobals(WorldTestBase):
         self.assertTrue(ability.isdisjoint(
             seed_hash | unlocks | completions | rewards | config | ownership | minimap
         ))
-        for global_index in rewards | config | ownership | minimap | ability:
+        self.assertTrue(finale.isdisjoint(
+            seed_hash | unlocks | completions | rewards | config | ownership
+            | minimap | ability
+        ))
+        for global_index in rewards | config | ownership | minimap | ability | finale:
             self.assertLessEqual(global_index, scm.highest_reserved_global())
         self.assertNotIn(scm.APPLIED_INDEX_GLOBAL, unlocks | completions | rewards | config)
 
@@ -3135,7 +3414,13 @@ class TestReservedGlobals(WorldTestBase):
         # class-major stride by literal, so a shift here has to move with it.
         self.assertEqual(scm.DISTRICT_UNLOCK_BASE, 9460)
         self.assertEqual(scm.DISTRICT_UNLOCK_COUNT, 55)
-        self.assertEqual(scm.highest_reserved_global(), 9514)
+        # The finale warp flag, hard-coded in the ASI (scm_game_state.cpp) and in
+        # build_scm.py, which reads it in the APFIN watcher and in the mission
+        # branch that jumps to the ending cutscene. It is also the foundation's
+        # sizing line, which add_markers.py anchors on, so a shift here moves
+        # four files at once.
+        self.assertEqual(scm.FINALE_WARP_GLOBAL, 9515)
+        self.assertEqual(scm.highest_reserved_global(), 9515)
         self.assertEqual(scm.ABILITY_KEYS, data.ABILITY_ITEMS)
         self.assertEqual(scm.CONTENT_KEYS, data.CONTENT_ITEMS)
 
@@ -3272,7 +3557,7 @@ class TestReservedGlobals(WorldTestBase):
         # The same accounting for whole classes and for district-wide items. A
         # class-district pair holding no content is covered by the stamp in every
         # mode, since no item names it: 13 of the 55, which the ASI would
-        # otherwise read as a class held forever on the status key.
+        # otherwise read as a class held forever on the status page.
         block = {scm.DISTRICT_UNLOCK_BASE + offset
                  for offset in range(scm.DISTRICT_UNLOCK_COUNT)}
         every = frozenset(data.CONTENT_LOCK_ITEMS)
@@ -3488,11 +3773,11 @@ class TestReservedGlobals(WorldTestBase):
         effect_ids = set(scm.item_effects().keys())
         count_ids = set(scm.item_globals().keys())
         self.assertTrue(effect_ids.isdisjoint(count_ids))
-        # Every effect names a known type: the five consumables plus the seven
+        # Every effect names a known type: the five consumables plus the six
         # trap types the ASI knows how to apply.
         known_types = {
             "cash", "weapon", "health", "armor", "clear_wanted",
-            "trap_wanted", "trap_explode_cars", "trap_hostile_peds",
+            "trap_wanted", "trap_hostile_peds",
             "trap_weather", "trap_speed_up", "trap_slow_down", "trap_drunk",
         }
         for effect in scm.item_effects().values():
@@ -3592,7 +3877,7 @@ class TestTraps(WorldTestBase):
     def test_effects_carry_every_trap_type(self) -> None:
         # The item-effect contract sent to the ASI names every trap effect type.
         types = {effect[0] for effect in scm.item_effects().values()}
-        for trap_type in ("trap_wanted", "trap_explode_cars", "trap_hostile_peds",
+        for trap_type in ("trap_wanted", "trap_hostile_peds",
                           "trap_weather", "trap_speed_up", "trap_slow_down",
                           "trap_drunk"):
             self.assertIn(trap_type, types)

@@ -554,14 +554,13 @@ PERSISTENT_REWARD_ITEMS: list[str] = (
 # all item application they wait for the player to be controllable (the one
 # deferral condition the design allows). Hostile pedestrians, sped-up time,
 # slowed time, and drunk vision last a fixed duration then revert. Most effect
-# types mirror the cheat each imitates: wanted level
-# like YOUWONTTAKEMEALIVE, exploding cars like BIGBANG, hostile peds like
-# NOBODYLIKESME, stormy weather like CATSANDDOGS, foggy weather like
-# CANTSEEATHING, speed up like ONSPEED, and slow down like BOOOOOORING. Drunk
-# vision has no cheat: it imitates the Boomshine Saigon drunk drive. Unlike the
-# cheats, which pin the forced weather until a script changes it, a weather trap
-# releases immediately after forcing, so the game's own hourly weather cycle
-# resumes and blends the trap weather away naturally.
+# types mirror the cheat each imitates: wanted level like YOUWONTTAKEMEALIVE,
+# hostile peds like NOBODYLIKESME, stormy weather like CATSANDDOGS, foggy
+# weather like CANTSEEATHING, speed up like ONSPEED, and slow down like
+# BOOOOOORING. Drunk vision has no cheat: it imitates the Boomshine Saigon
+# drunk drive. Unlike the cheats, which pin the forced weather until a script
+# changes it, a weather trap releases immediately after forcing, so the game's
+# own hourly weather cycle resumes and blends the trap weather away naturally.
 TRAP_DURATION_SECONDS = 30
 TRAP_WANTED_STARS = 3
 
@@ -571,7 +570,6 @@ WEATHER_FOGGY = 3
 
 TRAP_EFFECTS: dict[str, tuple] = {
     "Wanted Level Trap": ("trap_wanted", TRAP_WANTED_STARS),
-    "Exploding Cars Trap": ("trap_explode_cars",),
     "Hostile Pedestrians Trap": ("trap_hostile_peds", TRAP_DURATION_SECONDS),
     "Stormy Weather Trap": ("trap_weather", WEATHER_RAINY),
     "Speed Up Trap": ("trap_speed_up", TRAP_DURATION_SECONDS),
@@ -831,6 +829,23 @@ STRAND_PREREQUISITES: dict[str, list[tuple[str, int]]] = {
     # Diaz's fifth and last.
     "Vercetti Protection": [("Diaz", 5)],
     "Vercetti Finale": [("Vercetti Protection", 3)],
+}
+
+# Where a strand's in-game gate waits on a vanilla mission having PASSED, and
+# not just on the items that open it. One entry: the protection strand gives
+# from the estate Rub Out takes off Diaz, and vanilla reveals its marker in that
+# mission's own pass block, so on the unlock alone its beam and blip stand
+# inside the mansion while Diaz still owns it. The mod reads the mission's
+# vanilla passed flag, the way the finale gate reads Cop Land and Hit the
+# Courier.
+#
+# Logic keeps the progressive stand-in above and is not tightened: a protection
+# mission inherits Rub Out, so its rule already carries everything passing Rub
+# Out takes, and a gate on the pass can never hold a mission the rules call
+# reachable. Only the strands named here wait on a pass; every other strand
+# opens on its own unlocks, which is the independent-strand-starts decision.
+IN_GAME_PASSED_PREREQUISITES: dict[str, str] = {
+    "Vercetti Protection": "Rub Out",
 }
 
 # Cross-giver edges that gate a single mission rather than a whole strand. Rub

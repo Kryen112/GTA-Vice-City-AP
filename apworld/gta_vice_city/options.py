@@ -194,13 +194,21 @@ class ContentLocks(OptionSet):
     robbable_stores: aiming at a shopkeeper starts no robbery until Robbable
     Stores arrives.
 
-    Locking a class removes it from the start of the game, and a solo seed with
-    nothing open at the start is refused at generation. With every check class
-    enabled all five keys together are still fine, but they stop being fine as
-    soon as anything else narrows the start: turning check classes off does, and
-    so does ability_locks. Holding the hidden packages, the one class no ability
-    term touches, is what usually tips a seed over. The error names what to
-    change."""
+    Locking a class removes it from the start of the game. With every check
+    class enabled all five keys together still leave a wide start, but anything
+    else that narrows it can close the start down to the first mission alone:
+    turning check classes off does, and so does ability_locks. Holding the
+    hidden packages, the one class no ability term touches, is what usually
+    keeps such a seed open.
+
+    A start that closes down to one check is widened rather than refused: the
+    held content item opening the most of the start island becomes the reward
+    for that one check, so the seed has somewhere to go from the first mission.
+    A solo seed is refused only when no held class opens enough of the start
+    island to carry it. That is every seed holding no content class at all, and
+    also one whose keys hold only classes an ability_locks key already gates or
+    a disabled class, since such an item opens too little on its own. The error
+    names what to change."""
     display_name = "Content locks"
     valid_keys = frozenset({
         "hidden_packages", "rampages", "stunt_jumps", "properties",
@@ -246,18 +254,21 @@ class StartingContentUnlock(Toggle):
     so it leaves the pool rather than adding to it. Nothing happens when
     content_locks is empty.
 
-    A released class widens the start of the game, but generation cannot count
-    on it: the narrow-start refusal measures what is open with no item at all,
-    so a seed refused without this option is refused with it."""
+    A released class widens the start of the game, but generation never counts
+    on it: the narrow-start measure reads what is open with no item at all, so
+    this option cannot decide whether a seed generates. A seed narrow enough to
+    need one item directed into its opening check keeps that item in the pool and
+    out of this draw, so the draw takes one of the others, or nothing at all
+    where that item was the only one the keys produced."""
     display_name = "Starting content unlock"
 
 
 class TrapPercentage(NamedRange):
-    """Percentage of filler items replaced by traps (0 disables). The eight
-    trap types share the slice equally: raised wanted level, exploding cars,
-    hostile pedestrians, stormy weather, foggy weather, sped-up time, slowed
-    time, and drunk vision. Traps only ever replace filler, so they never
-    crowd out progression."""
+    """Percentage of filler items replaced by traps (0 disables). The seven
+    trap types share the slice equally: raised wanted level, hostile
+    pedestrians, stormy weather, foggy weather, sped-up time, slowed time, and
+    drunk vision. Traps only ever replace filler, so they never crowd out
+    progression."""
     display_name = "Trap percentage"
     range_start = 0
     range_end = 100

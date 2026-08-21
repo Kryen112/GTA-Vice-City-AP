@@ -49,10 +49,9 @@ CONFIGURATIONS: list[tuple[str, dict]] = [
         "enable_stunt_jumps": False, "enable_emergency_vehicles": False,
         "enable_properties": False, "enable_robbable_stores": False,
     }),
-    # Every stunt jump sits on the mainland, so a seed carrying them as its
-    # only collectible class opens nothing at the start but the first mission,
-    # with no lock selected at all.
-    ("story plus stunt jumps EXPECT reject", {
+    # Nineteen of the 36 unique stunt jumps sit on the start island, so the
+    # class carries the story pool on its own the way the stores do.
+    ("story plus stunt jumps", {
         "enable_hidden_packages": False, "enable_rampages": False,
         "enable_emergency_vehicles": False, "enable_properties": False,
         "enable_robbable_stores": False, "enable_side_events": False,
@@ -199,26 +198,41 @@ CONFIGURATIONS: list[tuple[str, dict]] = [
         "starting_ability_unlock": True,
     }),
     # With every check class enabled, all five content keys and no ability key
-    # still measure a free count of 35. What refuses a seed is content locks
-    # plus something else that narrows the start: ability_locks here, disabled
-    # check classes in the packages-only row further down. Hidden packages are
-    # the one class no ability term touches, so holding them is what tips a
-    # seed over, and combinations well short of every key are refused; the
-    # matrix carries a minimal one beside the full corner.
-    ("content and ability locks, all keys EXPECT reject", {
+    # still measure a free count of 35. Content locks plus something else that
+    # narrows the start close it down to the first mission alone: ability_locks
+    # here, disabled check classes in the packages-only row further down. These
+    # are the shapes the directed opener widens, so they generate rather than
+    # refuse, and each row is here to hold that.
+    ("content and ability locks, all keys", {
         "content_locks": ["hidden_packages", "rampages", "stunt_jumps",
                           "properties", "robbable_stores"],
         "ability_locks": ["sprint", "jump", "crouch", "vehicles",
                           "weapon_equip", "wallet"],
     }),
-    ("packages held plus three ability keys EXPECT reject", {
+    ("packages held plus three ability keys", {
         "content_locks": ["hidden_packages"],
         "ability_locks": ["vehicles", "weapon_equip", "wallet"],
     }),
-    # The narrow-start guard measures what is open with no item at all, so a
-    # starting draw cannot rescue a refused shape. Deliberate: no seed's
-    # solvability may rest on a random draw.
-    ("packages held plus three ability keys, both draws EXPECT reject", {
+    # The shape a player is most likely to ask for: every content key split to
+    # its finest, three ability keys, one class off and both draws on. The
+    # narrowest start any option set produces, and the one the directed opener
+    # exists for.
+    ("every content key per class, three ability keys, both draws", {
+        "goal": "hidden_packages", "enable_emergency_vehicles": False,
+        "content_locks": ["hidden_packages", "rampages", "stunt_jumps",
+                          "properties", "robbable_stores"],
+        "split_content_locks": "per_class",
+        "ability_locks": ["vehicles", "weapon_equip", "wallet"],
+        "starting_content_unlock": True, "starting_ability_unlock": True,
+        "randomize_radio_stations": True, "split_mainland_access": True,
+        "randomize_pickups": True, "death_link": True,
+    }),
+    # "packages held plus three ability keys" with both draws on, and it must
+    # come out the same way. A draw takes a content item into starting
+    # inventory, so a draw free to take the packages would leave this shape with
+    # nothing left to direct and refuse it. The opener is reserved ahead of the
+    # draws for exactly that reason, and this row is what holds it.
+    ("packages held plus three ability keys, both draws", {
         "content_locks": ["hidden_packages"],
         "ability_locks": ["vehicles", "weapon_equip", "wallet"],
         "starting_content_unlock": True,
@@ -228,9 +242,9 @@ CONFIGURATIONS: list[tuple[str, dict]] = [
         "enable_properties": False, "content_locks": ["properties"],
     }),
     # Holding the packages leaves the first mission alone reachable, since
-    # every other start-island class is off. Same shape as a heavy ability
-    # lock, refused for the same reason.
-    ("content lock, packages only EXPECT reject", {
+    # every other start-island class is off. The one held class is what the
+    # opener is drawn from, so the seed generates on a directed Hidden Packages.
+    ("content lock, packages only", {
         "content_locks": ["hidden_packages"],
         "enable_rampages": False, "enable_stunt_jumps": False,
         "enable_emergency_vehicles": False, "enable_properties": False,
@@ -247,8 +261,6 @@ REFUSAL_GUARDS: dict[str, str] = {
         "progression and useful items",
     "story only (all optional classes off) EXPECT reject":
         "progression and useful items",
-    "story plus stunt jumps EXPECT reject":
-        "check is reachable on a new game",
     "100 percent, one class off EXPECT reject":
         "100 percent goal requires every check class",
     "ability locks, all keys, story plus stores EXPECT reject":
@@ -257,17 +269,9 @@ REFUSAL_GUARDS: dict[str, str] = {
         "check is reachable on a new game",
     "ability locks, all keys, story plus stunt jumps EXPECT reject":
         "check is reachable on a new game",
-    "packages held plus three ability keys, both draws EXPECT reject":
-        "check is reachable on a new game",
     "ability locks, all keys, story plus side events EXPECT reject":
         "check is reachable on a new game",
     "ability locks, all keys, packages off EXPECT reject":
-        "check is reachable on a new game",
-    "content lock, packages only EXPECT reject":
-        "check is reachable on a new game",
-    "content and ability locks, all keys EXPECT reject":
-        "check is reachable on a new game",
-    "packages held plus three ability keys EXPECT reject":
         "check is reachable on a new game",
 }
 

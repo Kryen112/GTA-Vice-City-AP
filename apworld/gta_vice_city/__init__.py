@@ -14,6 +14,7 @@ registered as a launcher component below.
 from __future__ import annotations
 
 import typing
+from collections import Counter
 from collections.abc import Callable
 
 import settings
@@ -35,13 +36,24 @@ from .items import (
 from .locations import CLASS_TOGGLE, LOCATION_GROUPS, LOCATION_NAME_TO_ID, LOCATION_REGIONS, LOCATION_TOGGLE
 from .options import CHECK_CLASS_OPTIONS, Goal, GTAViceCityOptions
 
-# How many checks a solo seed must leave reachable on a new game. Nothing is
-# granted at the start to widen a narrow seed, so a sphere 0 of one check would
-# leave the fill chaining strictly through that check, which it survives only
-# by luck of the seed. Nothing else about the pool predicts which narrow seeds
-# fill, so the count itself is the guard. Measured against
-# scripts/fuzz_fill.py, which generates solo.
+# How many checks a seed must leave reachable on a new game before it needs no
+# help. Nothing is granted at the start to widen a narrow seed, so a sphere 0 of
+# one check would leave the fill chaining strictly through that check, which it
+# survives only by luck of the seed. Nothing about the pool predicts which narrow
+# seeds fill, so the count is what decides that a seed needs an opening item
+# directed into it, and, for a solo seed with no opener to direct, the refusal.
+# Measured against scripts/fuzz_fill.py, which generates solo.
 MINIMUM_SPHERE_ZERO = 2
+
+# How many checks the directed opening item must leave reachable before a narrow
+# seed is widened instead of refused. Directing spends the fill's own choice of
+# what goes in the only open check, so a weak opener is worse than none at all.
+# Measured on the widest lock configuration at 60 seeds: leaving the fill alone
+# fills 53 seeds, an opener leaving two checks open fills 31 to 33, and one
+# leaving this many or more fills 60. This is the lowest value the ladder
+# validates; three was never measured, so the test below it holds the refusal
+# down to two and no further. Measured against scripts/fuzz_fill.py.
+MINIMUM_DIRECTED_SPHERE_ZERO = 4
 
 
 def launch_client(*args: str) -> None:
@@ -134,6 +146,13 @@ class GTAViceCityWorld(World):
     starting_ability_item: str | None = None
     starting_content_item: str | None = None
 
+    # The content item the fill is told to place in a check a new game reaches,
+    # chosen in generate_early and ahead of the starting draws so they cannot
+    # take it. None when the start is wide enough to chain through on its own,
+    # and None as well when it is not but no held class opens enough of the
+    # start island to be worth directing, which is the case the refusal covers.
+    directed_opening_item: str | None = None
+
     # The ambient pickup layout as a permutation of data.PICKUP_SLOTS indices:
     # slot i shows the model and ammo of vanilla slot pickup_permutation[i].
     # Rolled in generate_early when randomize_pickups is on; None when off.
@@ -208,6 +227,7 @@ class GTAViceCityWorld(World):
         options = self.options
         self._choose_radio_start(None)
         self._choose_pickup_permutation(None)
+        self._choose_directed_opener()
         self._choose_starting_unlocks(None)
         if options.goal == Goal.option_hundred_percent:
             missing = [name for name in CHECK_CLASS_OPTIONS
@@ -243,27 +263,42 @@ class GTAViceCityWorld(World):
         # draw instead of rerolling. A restored name that the restored keys no
         # longer offer is dropped, so mismatched slot_data cannot ask create_items
         # for an item that is not in the pool.
+        replaying = passthrough is not None
         self.starting_ability_item = self._draw_starting_unlock(
             bool(self.options.starting_ability_unlock.value),
             [item for key in sorted(self.options.ability_locks.value)
              for item in data.ABILITY_LOCK_ITEMS[key]],
             (passthrough or {}).get("starting_ability_item"),
+            replaying,
         )
+        # The directed opener is left out of the draw. A narrow seed needs it
+        # in the pool for the fill to place, and with heavy ability locks the
+        # held packages are often the only class that opens the start at all, so
+        # a draw free to take it would decide whether the seed generates.
         self.starting_content_item = self._draw_starting_unlock(
             bool(self.options.starting_content_unlock.value),
-            self._content_items(),
+            [name for name in self._content_items()
+             if name != self.directed_opening_item],
             (passthrough or {}).get("starting_content_item"),
+            replaying,
         )
 
     def _draw_starting_unlock(
         self, enabled: bool, eligible: list[str], restored: str | None,
+        replaying: bool,
     ) -> str | None:
         # One item out of those the seed's own lock keys put in the pool. The
         # draw is over items, not keys, so the vehicles key hands over one of
         # land, sea, or air rather than all three.
+        #
+        # A replay never rolls. The played seed can have drawn nothing with the
+        # option on and a key selected, since the item a narrow seed directs is
+        # kept out of the draw and can be the only one there is, and a restored
+        # None reads the same as a field the slot_data never carried. Rolling on
+        # either would hand the tracker an item the seed left in its pool.
         if not enabled or not eligible:
             return None
-        if restored is not None:
+        if replaying:
             return restored if restored in eligible else None
         return self.random.choice(eligible)
 
@@ -572,34 +607,53 @@ class GTAViceCityWorld(World):
         # A new game opens the sphere-zero giver's first mission plus whatever
         # start-region check the seed's classes leave unruled. A class narrows
         # the start two ways: a lock puts its checks behind an item, and a class
-        # whose checks all sit on the mainland (every stunt jump does) puts none
-        # in the start region to begin with.
+        # whose checks all sit on the mainland puts none in the start region to
+        # begin with.
         #
-        # Only a solo seed is refused for it. Other worlds lend the fill their
-        # locations to place this world's items into and their items to fill
-        # this world's one open check with, and refusing there would abort
-        # everyone's generation over one slot's options. The residual risk is a
-        # partner too small to lend much, a world of a few locations, which
-        # fails as a fill error rather than an unbeatable seed, since the fill
-        # enforces logic either way.
-        if self.multiworld.players > 1:
-            return
+        # A narrow start is widened wherever a held content class can widen it:
+        # the content item opening the most start-region checks is directed into
+        # the one open check, so the fill chains through it by construction
+        # rather than by luck of the seed. Refusal is what is left when no held
+        # class opens enough, and it stays solo only.
+        #
         # A Universal Tracker regeneration replays a played seed's options on
         # its own solo multiworld, so a slot that generated inside a real
         # multiworld would meet this guard on the way back. That seed already
         # exists and its fill already happened, so there is nothing left to
-        # protect and refusing would only break the tracker.
+        # widen or to refuse.
         if self._tracker_passthrough() is not None:
             return
+        if self.directed_opening_item is not None:
+            # An early item rather than starting inventory: the opener stays
+            # in the pool and stays the reward for a check, and the fill puts it
+            # in a location a new game reaches. Which one is the fill's to
+            # choose, since its own sphere 0 counts the starting draws and is
+            # never narrower than the count here. Directed at every player count,
+            # since widening one slot costs the others nothing, but only a solo
+            # seed gets a guarantee out of it: Fill places the pooled early items
+            # of every world before it places this world's local ones, so a
+            # partner's early item can take the only check this slot can reach
+            # and leave the opener to the ordinary pool.
+            self.multiworld.local_early_items[
+                self.player][self.directed_opening_item] = 1
+            return
         free_start_locations = self._free_start_location_count()
-        if free_start_locations < MINIMUM_SPHERE_ZERO:
-            raise OptionError(
-                f"{self.game}: only {free_start_locations} check is reachable on "
-                "a new game with these options, too narrow for the fill to chain "
-                "through. Enable a class with unlocked checks on the start "
-                "island, hidden packages being the one no ability term touches, "
-                "or drop a lock key."
-            )
+        if free_start_locations >= MINIMUM_SPHERE_ZERO:
+            return
+        # Only a solo seed is refused. Other worlds lend the fill their
+        # locations to place this world's items into and their items to fill
+        # this world's one open check with, and refusing there would abort
+        # everyone's generation over one slot's options.
+        if self.multiworld.players > 1:
+            return
+        raise OptionError(
+            f"{self.game}: only {free_start_locations} check is reachable on a "
+            "new game with these options, and no held content class opens enough "
+            "of the start island to widen it, too narrow for the fill to chain "
+            "through. Enable a class with unlocked checks on the start island, "
+            "hidden packages being the one no ability term touches, or drop a "
+            "lock key."
+        )
 
     def _free_start_location_count(self) -> int:
         # Locations reachable on a new game with no item: enabled start-region
@@ -612,6 +666,75 @@ class GTAViceCityWorld(World):
             if region == data.REGION_VICE_CITY
             and self._location_enabled(name)
             and name not in location_rules
+        )
+
+    def _choose_directed_opener(self) -> None:
+        # The item the fill is told to put in a check a new game reaches, fixed
+        # here so it is settled before the starting draws pick from the same
+        # list. A start wide enough to chain through on its own directs
+        # nothing, and neither does one whose best opener is too weak to help:
+        # spending the only open check on an unlock worth a check or two fills
+        # worse than leaving the fill to choose, which is what the floor is for.
+        if self._free_start_location_count() >= MINIMUM_SPHERE_ZERO:
+            return
+        opener = self._best_start_opener()
+        if opener is not None and opener[1] >= MINIMUM_DIRECTED_SPHERE_ZERO:
+            self.directed_opening_item = opener[0]
+
+    def _best_start_opener(self) -> tuple[str, int] | None:
+        """The content item opening the most start-region checks, with how many.
+
+        None when the seed holds no content class at all, so a narrow start has
+        nothing to direct.
+        """
+        # Content items only. An ability or area item opens the start too, but
+        # Land Vehicles and the crossings are milestones a seed is meant to wait
+        # for, and spending one on the opening check hands them over at the
+        # first mission.
+        #
+        # One state serves every candidate. Building one per candidate would run
+        # every other world's collect override once per candidate, since
+        # CollectionState replays the precollected items as it is built, and a
+        # partner world whose override reads state it only builds later would
+        # abort the whole generation from in here.
+        location_rules = self._location_rules()
+        state = CollectionState(self.multiworld)
+        best: tuple[str, int] | None = None
+        for name in self._content_items():
+            # Progression only. The count is written into the state rather than
+            # collected, which skips the classification check collecting would
+            # have made, and an item logic cannot honour would score as an
+            # opener the fill then cannot chain through. Every content item is
+            # progression today, so this is a belt on that staying true.
+            if not ItemClassification.progression & ITEM_CLASSIFICATIONS[name]:
+                continue
+            opened = self._start_locations_opened_by(name, location_rules, state)
+            if best is None or opened > best[1]:
+                best = (name, opened)
+        return best
+
+    def _start_locations_opened_by(
+        self, item_name: str, location_rules: dict[str, rules.RulePredicate],
+        state: CollectionState,
+    ) -> int:
+        """How many start-region checks this one item opens by itself.
+
+        CONSUMES state: its item counts are overwritten, so pass a scratch
+        CollectionState and never self.multiworld.state.
+        """
+        # The count is written straight into the state rather than collected,
+        # which is what lets one state serve every candidate: an access rule
+        # reads item counts and nothing else, never reachability, so there is no
+        # other field to keep in step. Anything already precollected is
+        # overwritten deliberately, the way _free_start_location_count counts no
+        # item at all, so what a seed directs rests on its options alone.
+        state.prog_items[self.player] = Counter({item_name: 1})
+        return sum(
+            1 for name, region in LOCATION_REGIONS.items()
+            if region == data.REGION_VICE_CITY
+            and self._location_enabled(name)
+            and (name not in location_rules
+                 or location_rules[name](state, self.player))
         )
 
     def set_rules(self) -> None:
