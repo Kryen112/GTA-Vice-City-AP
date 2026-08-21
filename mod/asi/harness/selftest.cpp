@@ -1250,17 +1250,38 @@ int main() {
            "the package tally is the game's own count of them");
     Expect(own.rows[1].value == "7/12" && own.rows[2].value == "none",
            "and an emergency activity reads its level or says it has none");
-    // The taxi and the pizza boy keep no level in the game's stats, so the page
-    // turns their fares and deliveries into the levels the checks are placed on.
+    // The taxi and the pizza boy keep no level in the game's stats, and they do
+    // not count alike: the taxi divides its career fares, while the pizza boy is
+    // read from the level its mission is working on, because that mission hands
+    // out one pizza per level number and a delivery total divides into nothing.
     StatusPanelState jobs = state;
     jobs.taxi_fares = 37;
-    jobs.pizza_deliveries = 100;
+    jobs.pizza_level_in_progress = 4;
     const StatusSection counted = ComposeRewardSection(jobs);
     Expect(counted.rows[4].label == "Taxi" && counted.rows[4].value == "3/10",
-           "every tenth fare is a taxi level");
-    Expect(counted.rows[5].label == "Pizza" && counted.rows[5].value == "10/10" &&
-               counted.rows[5].tone == StatusTone::kOpen,
-           "and the last pizza level reads as done rather than as eleven");
+           "every tenth career fare is a taxi level");
+    Expect(counted.rows[5].label == "Pizza" && counted.rows[5].value == "3/10",
+           "and the pizza level in progress is not one the player has finished");
+
+    jobs.pizza_level_in_progress = 1;
+    Expect(ComposeRewardSection(jobs).rows[5].value == "none",
+           "the first level being unfinished reads as none rather than as zero");
+
+    // Level ten stays replayable, so the mission steps its level back to nine
+    // and the win flag is the only thing that says the tenth is done.
+    jobs.pizza_level_in_progress = 9;
+    jobs.pizza_finished = true;
+    const StatusSection won = ComposeRewardSection(jobs);
+    Expect(won.rows[5].value == "10/10" && won.rows[5].tone == StatusTone::kOpen,
+           "the win flag reads as all ten done however far the level has stepped back");
+
+    jobs.taxi_fares = 999;
+    jobs.pizza_finished = false;
+    jobs.pizza_level_in_progress = 10;
+    const StatusSection capped = ComposeRewardSection(jobs);
+    Expect(capped.rows[4].value == "10/10" && capped.rows[5].value == "9/10",
+           "fares past the last level do not read as an eleventh, and nor does "
+           "standing on the tenth without having finished it");
 
     // One selected ability key and one unselected: only the selected one is
     // listed, since an unselected key is fully vanilla.

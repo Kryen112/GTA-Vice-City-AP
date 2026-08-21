@@ -93,6 +93,24 @@ constexpr int kMinimapUnlockGlobal = 9429;
 // cutscene. When the mission may start is the script's business, exactly as it
 // is for every vanilla launcher, so the mod only carries the ask across.
 constexpr int kFinaleWarpGlobal = 9515;
+
+// The three VANILLA globals the taxi and pizza rows read, the only vanilla
+// globals this file names. Every other constant here is a reserved global this
+// mod owns; these belong to the 1.0 script and are pinned like any other 1.0
+// fact, because they are what the checks for those two activities are placed on.
+// Reading them is what keeps the status page from disagreeing with the checks:
+// a stat that merely resembles the count can drift from it, and for the pizza
+// boy no stat corresponds at all.
+//
+// $369 is the taxi's persistent career fare count, which its checks compare
+// against every tenth. $7994 is the pizza mission's own level, one-based, and
+// the level completes just before it advances, so the finished count is one
+// less. $389 is that mission's win flag for the last level, which is also why
+// the mission drops $7994 back to nine afterwards: level ten stays replayable,
+// so the flag rather than the level is what says it is done.
+constexpr int kTaxiCareerFaresGlobal = 369;
+constexpr int kPizzaLevelGlobal = 7994;
+constexpr int kPizzaWonGlobal = 389;
 // The game's pickup pool size, matching plugin-sdk's CPickup (&aPickUps)[336].
 constexpr int kPickupPoolSize = 336;
 // The enforcement frame on which a still-unmatched layout slot is logged:
@@ -1356,10 +1374,14 @@ StatusPanelState ScmGameState::BuildStatusPanelState() {
   state.paramedic_level = CStats::HighestLevelAmbulanceMission;
   state.vigilante_level = CStats::HighestLevelVigilanteMission;
   state.firefighter_level = CStats::HighestLevelFireMission;
-  // The taxi and the pizza boy keep no level: the game counts fares and
-  // deliveries, and the page turns those into levels the way the checks do.
-  state.taxi_fares = CStats::PassengersDroppedOffWithTaxi;
-  state.pizza_deliveries = static_cast<int>(CStats::PizzasDelivered);
+  // The taxi and the pizza boy keep no level, so each row reads the variable its
+  // own checks fire on rather than a stat that resembles it. The taxi's checks
+  // read the career fare count; the pizza boy's read the mission's level and, for
+  // the last one, its win flag. Reading these means the page cannot disagree with
+  // the checks, which a stat and a divisor could.
+  state.taxi_fares = GetGlobal(kTaxiCareerFaresGlobal);
+  state.pizza_level_in_progress = GetGlobal(kPizzaLevelGlobal);
+  state.pizza_finished = GetGlobal(kPizzaWonGlobal) != 0;
   return state;
 }
 

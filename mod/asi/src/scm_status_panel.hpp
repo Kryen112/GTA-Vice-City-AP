@@ -52,7 +52,9 @@ constexpr const char* kDistrictNames[kDistrictCount] = {
 // ten fares or deliveries.
 constexpr int kEmergencyLevels = 12;
 constexpr int kSideJobLevels = 10;
-constexpr int kSideJobPerLevel = 10;
+// The taxi's own cadence, and only the taxi's: its checks fire on career fares
+// at every tenth. The pizza boy has no such number, see the state fields below.
+constexpr int kTaxiFaresPerLevel = 10;
 
 // Player-facing names for the radio stations, in the station-byte order the
 // unlock globals follow. The MP3 player and the police scanner are not stations
@@ -136,10 +138,19 @@ struct StatusPanelState {
   int paramedic_level = 0;
   int vigilante_level = 0;
   int firefighter_level = 0;
-  // The taxi and the pizza boy have no level of their own in the game's stats:
-  // they count fares and deliveries, and every tenth one is a level.
+  // The taxi and the pizza boy have no level of their own in the game's stats,
+  // and the two do not count the same way, so each is read from the variable its
+  // own checks fire on rather than from a stat and a shared divisor.
+  //
+  // The taxi's checks fire on career fares at every tenth, so ten fares are a
+  // level. The pizza boy's do not: its mission hands out one pizza per level
+  // number, so level N takes N deliveries and a delivery total divides into
+  // nothing (level ten lands at 55 deliveries, not 100). What the mission keeps
+  // instead is the level it is working on, and a win flag for the last one,
+  // which is also why it steps back to nine afterwards so ten can be replayed.
   int taxi_fares = 0;
-  int pizza_deliveries = 0;
+  int pizza_level_in_progress = 0;
+  bool pizza_finished = false;
 
   // Lines the client composed, because only it knows what this seed's goal asks
   // for and how far each mission strand has come. Empty until a client says.
@@ -358,10 +369,15 @@ inline StatusSection ComposeRewardSection(const StatusPanelState& state) {
                                 std::to_string(state.packages_total),
                             done ? StatusTone::kOpen : StatusTone::kPlain});
   }
-  // Every tenth fare and every tenth delivery is a level, so the level is what
-  // the row shows: it is what the checks are placed on.
-  const int taxi_level = state.taxi_fares / kSideJobPerLevel;
-  const int pizza_level = state.pizza_deliveries / kSideJobPerLevel;
+  // Each row shows the level its own checks are placed on. The taxi divides its
+  // fares; the pizza boy cannot, so its finished levels are the level it is
+  // working on less the one it has not finished, and the win flag stands for the
+  // tenth on its own.
+  const int taxi_level = state.taxi_fares / kTaxiFaresPerLevel;
+  const int pizza_level =
+      state.pizza_finished
+          ? kSideJobLevels
+          : (state.pizza_level_in_progress > 1 ? state.pizza_level_in_progress - 1 : 0);
   const std::pair<const char*, std::pair<int, int>> activities[] = {
       {"Paramedic", {state.paramedic_level, kEmergencyLevels}},
       {"Vigilante", {state.vigilante_level, kEmergencyLevels}},
