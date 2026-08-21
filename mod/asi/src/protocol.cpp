@@ -172,6 +172,10 @@ json CheckMessage(std::int64_t location) {
 
 json GoalReachedMessage() { return json{{"type", msg::kGoalReached}}; }
 
+json ProgressMessage(int percentage) {
+  return json{{"type", msg::kProgress}, {"percentage", percentage}};
+}
+
 json AppliedMessage(std::int64_t index) {
   return json{{"type", msg::kApplied}, {"index", index}};
 }

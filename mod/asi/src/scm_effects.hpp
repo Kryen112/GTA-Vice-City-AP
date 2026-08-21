@@ -27,10 +27,23 @@ struct EffectPlan {
   int new_applied_index = 0;
 };
 
+// How many effects one frame applies. One, because an effect can do work the
+// game expects to own a frame by itself: a weapon streams its model in with a
+// blocking load, and several of those in one frame stall it. One a frame is
+// the ceiling; what a backlog actually arrives at is whatever the caller's
+// grant pacing allows, which is slower again.
+//
+// The cap is what a frame costs, whatever the backlog behind it. The index the
+// caller saves is a script global, which reaches disk only when the player
+// saves, so a crash resumes from the last saved index and not from the last
+// applied effect: an effect that faults every time it runs is not something
+// the index can step over.
+constexpr int kEffectsPerFrame = 1;
+
 inline EffectPlan PlanEffects(
     const std::vector<std::pair<std::int64_t, std::int64_t>>& items,
     const std::map<std::int64_t, ItemEffect>& item_effects,
-    int applied_index, bool controllable) {
+    int applied_index, bool controllable, int max_per_frame) {
   EffectPlan plan;
   plan.new_applied_index = applied_index;
   // Without control nothing applies and the index holds, so no effect is
@@ -45,6 +58,10 @@ inline EffectPlan PlanEffects(
       ++effect_index;
       continue;
     }
+    // A frame with no room left applies nothing and holds the index where it
+    // is, so the rest keep their place in the list and arrive on the frames
+    // after this one, in the same received order.
+    if (static_cast<int>(plan.to_apply.size()) >= max_per_frame) break;
     plan.to_apply.push_back(it->second);
     ++effect_index;
     plan.new_applied_index = effect_index;

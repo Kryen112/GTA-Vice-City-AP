@@ -15,6 +15,7 @@
 #include <vector>
 
 #include "game_state.hpp"
+#include "scm_grant_pacing.hpp"
 #include "scm_ability_locks.hpp"
 #include "scm_completion.hpp"
 #include "scm_content_locks.hpp"
@@ -22,7 +23,9 @@
 #include "scm_crossings.hpp"
 #include "scm_minimap.hpp"
 #include "scm_pickup_layout.hpp"
+#include "scm_progress.hpp"
 #include "scm_radio.hpp"
+#include "scm_status_panel.hpp"
 #include "scm_toasts.hpp"
 
 class CVehicle;
@@ -52,8 +55,11 @@ class ScmGameState : public GameState {
   void MarkChecked(const std::vector<std::int64_t>& locations) override;
   void ShowToast(const std::string& text) override;
   void ShowStickyToast(const std::string& text) override;
+  void SetClientConnected(bool connected) override;
+  void SetClientStatus(const ClientStatus& status) override;
   std::vector<std::int64_t> TakeNewChecks() override;
   bool TakeGoalReached() override;
+  bool TakeProgressPercentage(int& percentage) override;
 
   // Called from the game frame. All SCM memory access is here.
   void OnGameFrame();
@@ -61,6 +67,12 @@ class ScmGameState : public GameState {
   // Called from the pre-world-process hook, before the player ped reads the
   // pad this frame. Applies only the ability locks that constrain input.
   void OnBeforeWorldProcess();
+
+  // Everything the pause menu's status page shows. Called from the menu's own
+  // draw hook, which runs on the game thread with the game frame stopped: the
+  // globals are read directly, like the frame reads them, and the lock covers
+  // what the bridge thread writes.
+  StatusPanelState BuildStatusPanelState();
 
  private:
   static int GetGlobal(int index);
@@ -105,8 +117,6 @@ class ScmGameState : public GameState {
   // The pause-mode millisecond clock, which advances in real time regardless of
   // any time-scale trap, so a trap's own effect cannot distort its own timer.
   static unsigned int RealTimeMs();
-  // The BIGBANG-style trap: blow up every loaded vehicle, the player's included.
-  static void ExplodeAllVehicles();
   // The NOBODYLIKESME-style trap: set every loaded pedestrian to attack the
   // player. Re-asserted each frame of the window so freshly spawned peds join.
   static void MakePedestriansHostile();
@@ -131,8 +141,8 @@ class ScmGameState : public GameState {
   // Enforces the locks of both families that belong on the game frame, after
   // the world has processed: pins the wallet balance to zero, cancels a
   // player-initiated entry into a locked vehicle class, holds the pickups of
-  // every held content class, announces a class that has just been released,
-  // and answers the status key with the seed's lock status.
+  // every held content class, and announces a class that has just been
+  // released.
   void EnforceLocks();
   // Masks the locked inputs and holds the current weapon on the fists. Runs
   // from the pre-world-process hook, the one point in the frame where a pad
@@ -179,15 +189,6 @@ class ScmGameState : public GameState {
   void ReportOpenedRoutes();
   // Shows the blocked-attempt toast for one ability, rate-limited per ability.
   void ToastAbilityBlocked(int ability);
-  // Shows this seed's whole lock status on the status key, as ONE message:
-  // which configured abilities are locked or unlocked and which configured
-  // content classes are held or available. Queued messages play in sequence, so
-  // splitting the status across several would hold the screen for a multiple of
-  // a message's time.
-  void ToastLockStatus(const AbilityLocks& locked,
-                       const std::array<int, kAbilityCount>& ability_flags,
-                       const ContentLocks& held,
-                       const std::array<int, kContentCount>& content_flags);
   // Keeps the ambient pickup pool on the configured layout: matches each
   // layout slot to a pool entry by position and type and rewrites the model
   // and quantity where they differ, dropping the stale visible objects so the
@@ -223,6 +224,23 @@ class ScmGameState : public GameState {
   std::string pending_stamp_;
   std::string cached_seed_hash_;
   bool items_dirty_ = false;
+  // Grants leave at a rate the game survives rather than the rate the server
+  // sends them at. What a global HOLDS is never remembered: every frame reads
+  // it from the game, so a load, a reconnect and a script clearing a global
+  // are all the same question. What is remembered is only which global was
+  // handed over last, so the next raise starts past it. The targets are cached
+  // to keep the tally off frames with no new items to tally.
+  // The pacer and the rotation cursor, together because a game boundary takes
+  // both and nothing else.
+  GameScopedGrants grants_;
+  std::map<int, int> unlock_targets_;
+  // Refilled each frame from the targets and the live globals, kept as a
+  // member so a frame that changes nothing allocates nothing.
+  std::vector<UnlockObservation> unlock_observations_;
+  // Completions are found on every frame and reported only once the player
+  // has control. Finding and sending are separate so that a mission writing
+  // one during its end cutscene is still seen, and only its delivery waits.
+  bool outbound_checks_held_ = true;
   bool stamp_pending_ = false;
   bool baseline_captured_ = false;
   // Timed-trap state, reverted once each deadline (in real milliseconds) passes.
@@ -241,11 +259,10 @@ class ScmGameState : public GameState {
   // Whether the minimap enforcement is holding the radar-hide flag, so the
   // unlock releases it exactly once and then leaves the flag to the game.
   bool minimap_forcing_hidden_ = false;
-  // Blocked-attempt toast rate limiting, one slot per ability, and the
-  // status-key edge detector. Reset on the game boundary.
+  // Blocked-attempt toast rate limiting, one slot per ability. Reset on the
+  // game boundary.
   std::array<bool, kAbilityCount> ability_toast_shown_{};
   std::array<unsigned int, kAbilityCount> ability_toast_last_ms_{};
-  bool ability_status_key_was_down_ = false;
   // The stunt jump dump key's edge detector, so one press writes one file.
   bool stunt_jump_key_was_down_ = false;
   // The kill-frenzy skull model, resolved by name and latched on the first
@@ -258,7 +275,7 @@ class ScmGameState : public GameState {
   // released before a reload does not announce itself again.
   ContentLocks content_was_held_{};
   // The mainland routes this seed made, and what each was doing when last seen,
-  // so an opened route is announced once and the status key can list them.
+  // so an opened route is announced once and the status page can list them.
   std::vector<MainlandRoute> mainland_routes_;
   std::vector<RouteState> route_was_;
   // The last pool action logged per held pickup class, so the log names which
@@ -279,6 +296,19 @@ class ScmGameState : public GameState {
   // unmatched-slot diagnostic fires once, past the init mission's pickup
   // creation window. Reset on the game boundary and on a fresh config.
   int pickup_enforce_frames_ = 0;
+  // The game's completion percentage: the one the bridge has already sent, and
+  // the one waiting to go. Negative means neither, so the first frame of a
+  // loaded game reports what it reads and a frame that reads the same number as
+  // the last one sends nothing.
+  int reported_percentage_ = -1;
+  int pending_percentage_ = -1;
+  // What the client says about itself and about AP's own counts, for the status
+  // page. Written by the bridge thread, read by the menu draw. Not known until
+  // a client says so, which is why the page can say "not connected" rather than
+  // showing zeroes as if they were counts.
+  bool client_connected_ = false;
+  bool client_status_known_ = false;
+  ClientStatus client_status_;
 };
 
 }  // namespace gtavc

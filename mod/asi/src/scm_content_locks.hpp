@@ -12,7 +12,7 @@
 // A class the seed does not lock arrives with all eleven of its districts
 // already released, stamped by the client at config time, which is why holding
 // needs no lock flag: at zero locks nothing is ever held. The per-class lock
-// flags remain, read only to decide which classes the status key lists.
+// flags remain, read only to decide which classes the status page lists.
 //
 // Enforcement splits by whether the content has an icon. Three classes are
 // pickups and are held here, by sinking them out of reach. The other two, the
@@ -44,7 +44,7 @@ enum ContentIndex {
 // The content contract, matching apworld scm.py: one lock-flag global per
 // item from the flag base, then one unlock global per item from the unlock
 // base, both in ContentIndex order.
-// Only the flags are read, to decide which classes the status key lists. The
+// Only the flags are read, to decide which classes the status page lists. The
 // five per-class unlocks above them are written by item_globals and read by
 // nothing here: what is held comes from the district block below.
 constexpr int kContentLockFlagBase = 9450;

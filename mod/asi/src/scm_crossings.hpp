@@ -79,29 +79,4 @@ inline RouteReportPlan PlanRouteReports(const std::vector<MainlandRoute>& routes
   return plan;
 }
 
-// The open and shut routes as two comma-joined lists, for the status key. A
-// route still waiting on its second item reads as shut, because it is.
-struct RouteStatusLists {
-  std::string open;
-  std::string shut;
-};
-
-inline RouteStatusLists ComposeRouteStatus(
-    const std::vector<MainlandRoute>& routes,
-    const std::vector<int>& unlock_values, const std::vector<int>& needs_values) {
-  RouteStatusLists lists;
-  if (routes.size() != unlock_values.size() ||
-      routes.size() != needs_values.size()) {
-    return lists;
-  }
-  for (std::size_t index = 0; index < routes.size(); ++index) {
-    const RouteState state =
-        RouteStateOf(routes[index], unlock_values[index], needs_values[index]);
-    std::string& list = state == RouteState::kOpen ? lists.open : lists.shut;
-    if (!list.empty()) list += ", ";
-    list += routes[index].label;
-  }
-  return lists;
-}
-
 }  // namespace gtavc

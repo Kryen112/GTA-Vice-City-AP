@@ -1,6 +1,7 @@
 // The ASI entry point. Starts the bridge on a background thread (it connects to
-// the client's localhost listener with retry) and drives the game-state on the
-// game frame, so all SCM memory access stays on the game thread. Received item
+// the client's localhost listener with retry), drives the game-state on the
+// game frame, so all SCM memory access stays on the game thread, and draws the
+// pause menu's status page from the menu's own draw event. Received item
 // unlocks reach the script and completed checks flow back, both keyed by the
 // reserved-globals contract in the client's config. Logs one greppable line per
 // event next to gta-vc.exe.
@@ -16,6 +17,7 @@
 #include "bridge.hpp"
 #include "game_addresses.hpp"
 #include "scm_game_state.hpp"
+#include "status_page.hpp"
 
 using namespace plugin;
 
@@ -57,10 +59,12 @@ void LogLine(const std::string& line) {
 
 struct AsiMain {
   gtavc::ScmGameState game;
+  gtavc::StatusPage status_page;
   gtavc::BridgeClient bridge;
 
   AsiMain()
       : game([](const std::string& line) { LogLine("game: " + line); }),
+        status_page([](const std::string& line) { LogLine("page: " + line); }),
         bridge("127.0.0.1", 52300, &game,
                [](const std::string& line) { LogLine("bridge: " + line); }) {
     LogLine("loaded");
@@ -68,6 +72,10 @@ struct AsiMain {
     // thread is priming the seed-hash cache by the time the bridge presents it.
     Events::gameProcessEvent += [] { instance.OnGameProcess(); };
     beforeWorldProcessEvent += [] { instance.OnBeforeWorldProcess(); };
+    // The pause menu is drawn without a game frame, so the panel has its own
+    // event: plugin-sdk's menu draw, which fires after the menu itself has
+    // drawn and only while the menu is up.
+    Events::menuDrawingEvent += [] { instance.OnMenuDraw(); };
     bridge.Start();
   }
 
@@ -76,6 +84,18 @@ struct AsiMain {
   void OnGameProcess() { game.OnGameFrame(); }
 
   void OnBeforeWorldProcess() { game.OnBeforeWorldProcess(); }
+
+  void OnMenuDraw() {
+    // The claim runs here rather than in the constructor: the menu table is the
+    // game's, and the text table it checks is not loaded when an ASI is loaded.
+    // It acts once and returns immediately afterwards.
+    status_page.Install();
+    // Every menu frame, because the row the player stands on is what tells the
+    // borrowed page whether the panel's entry opened it. The same answer says
+    // whether the panel draws, so the menu is read once.
+    if (!status_page.Follow().draw) return;
+    status_page.Draw(gtavc::ComposeStatusPanel(game.BuildStatusPanelState()));
+  }
 
   static AsiMain instance;
 };

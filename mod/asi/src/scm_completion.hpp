@@ -35,4 +35,25 @@ inline std::vector<std::int64_t> DetectCompletedLocations(
   return completed;
 }
 
+// The checks that leave for the server now, taken out of the queue. Holding
+// while the player has no control is what keeps a check from arriving in the
+// middle of a cutscene, on a frame the player could not have earned it.
+//
+// Holding costs a delay and never a check. The queue is not emptied, not
+// trimmed and not dropped at a game boundary: a location is a permanent fact
+// about the slot rather than about the game it was found in, and there is one
+// game per seed, so sending a stale one costs nothing while dropping one
+// costs it forever. DetectCompletedLocations writes the global into `reported`
+// the moment it finds it and nothing ever takes it back out, so a check
+// dropped here cannot be found a second time; and a save made with that
+// global set hands the next game a baseline that reads it as never having
+// been a completion global at all.
+inline std::vector<std::int64_t> DrainChecks(
+    std::vector<std::int64_t>& queued, bool held) {
+  if (held) return {};
+  std::vector<std::int64_t> leaving;
+  leaving.swap(queued);
+  return leaving;
+}
+
 }  // namespace gtavc

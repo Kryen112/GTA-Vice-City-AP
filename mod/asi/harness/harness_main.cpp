@@ -32,6 +32,7 @@ int main(int argc, char** argv) {
   const int port = std::stoi(ArgValue(argc, argv, "--port", "52300"));
   const std::string seed_hash = ArgValue(argc, argv, "--seed-hash", "");
   const long long emit_check = std::stoll(ArgValue(argc, argv, "--emit-check", "-1"));
+  const int emit_percentage = std::stoi(ArgValue(argc, argv, "--emit-percentage", "-1"));
   const int run_ms = std::stoi(ArgValue(argc, argv, "--run-ms", "1500"));
 
   FakeGameState game(seed_hash);
@@ -42,6 +43,7 @@ int main(int argc, char** argv) {
   // Let the handshake and resync complete, then emit a check upward.
   std::this_thread::sleep_for(std::chrono::milliseconds(400));
   if (emit_check >= 0) game.QueueCheck(emit_check);
+  if (emit_percentage >= 0) game.QueuePercentage(emit_percentage);
   std::this_thread::sleep_for(std::chrono::milliseconds(run_ms > 400 ? run_ms - 400 : 100));
 
   bridge.Stop();
@@ -81,6 +83,24 @@ int main(int argc, char** argv) {
   for (const auto& route : game.MainlandRoutes()) {
     summary["mainland_routes"].push_back(json::array(
         {route.unlock_global, route.label, route.needs_global, route.needs_label}));
+  }
+  // The status frame: the counts the page reads, whether the welcome ever marked
+  // the client up, and the finale warp ask, which is the one thing in the frame
+  // the page does not read (it raises a reserved global the script watches). The
+  // live connected flag is false by now, since the session is over before this
+  // prints.
+  const gtavc::ClientStatus status = game.Status();
+  summary["client_was_connected"] = game.ClientWasConnected();
+  summary["status"] = json::array({status.checks_done, status.checks_total,
+                                   status.items_received, status.goal_reached});
+  summary["status_finale_warp"] = status.finale_warp;
+  summary["status_rows"] = json::array();
+  for (const auto& rows : {status.goal_rows, status.strand_rows}) {
+    json list = json::array();
+    for (const gtavc::ClientRow& row : rows) {
+      list.push_back(json::array({row.label, row.value, row.done}));
+    }
+    summary["status_rows"].push_back(std::move(list));
   }
   std::cout << summary.dump() << "\n";
   return 0;

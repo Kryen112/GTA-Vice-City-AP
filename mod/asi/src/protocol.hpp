@@ -32,9 +32,11 @@ constexpr const char* kConfig = "config";
 constexpr const char* kItems = "items";
 constexpr const char* kChecked = "checked";
 constexpr const char* kToast = "toast";
+constexpr const char* kStatus = "status";
 constexpr const char* kHello = "hello";
 constexpr const char* kCheck = "check";
 constexpr const char* kGoalReached = "goal_reached";
+constexpr const char* kProgress = "progress";
 constexpr const char* kApplied = "applied";
 }  // namespace msg
 
@@ -76,6 +78,7 @@ class MessageReader {
 json HelloMessage(const std::string& presented_seed_hash);
 json CheckMessage(std::int64_t location);
 json GoalReachedMessage();
+json ProgressMessage(int percentage);
 json AppliedMessage(std::int64_t index);
 
 }  // namespace gtavc

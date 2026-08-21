@@ -132,6 +132,7 @@ if exist "$(GTA_VC_DIR)\scripts\$(TargetFileName)" del /Q "$(GTA_VC_DIR)\scripts
   <ItemGroup>
     <ClCompile Include="..\src\asi_main.cpp" />
     <ClCompile Include="..\src\scm_game_state.cpp" />
+    <ClCompile Include="..\src\status_page.cpp" />
     <ClCompile Include="..\src\bridge.cpp" />
     <ClCompile Include="..\src\net.cpp" />
     <ClCompile Include="..\src\protocol.cpp" />

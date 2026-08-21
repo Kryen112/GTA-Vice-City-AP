@@ -68,6 +68,19 @@ class FakeGameState : public GameState {
 
   void ShowStickyToast(const std::string& text) override { ShowToast(text); }
 
+  void SetClientConnected(bool connected) override {
+    std::lock_guard<std::mutex> lock(mutex_);
+    client_connected_ = connected;
+    // Kept as well as the live flag, because a session always ends
+    // disconnected: this is what says the welcome ever marked it up.
+    client_was_connected_ = client_was_connected_ || connected;
+  }
+
+  void SetClientStatus(const ClientStatus& status) override {
+    std::lock_guard<std::mutex> lock(mutex_);
+    client_status_ = status;
+  }
+
   std::vector<std::int64_t> TakeNewChecks() override {
     std::lock_guard<std::mutex> lock(mutex_);
     std::vector<std::int64_t> drained;
@@ -82,10 +95,23 @@ class FakeGameState : public GameState {
     return reached;
   }
 
+  bool TakeProgressPercentage(int& percentage) override {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (pending_percentage_ < 0) return false;
+    percentage = pending_percentage_;
+    pending_percentage_ = -1;
+    return true;
+  }
+
   // Harness controls and accessors.
   void QueueCheck(std::int64_t location) {
     std::lock_guard<std::mutex> lock(mutex_);
     pending_checks_.push_back(location);
+  }
+
+  void QueuePercentage(int percentage) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    pending_percentage_ = percentage;
   }
 
   std::string StampedSeedHash() {
@@ -138,6 +164,21 @@ class FakeGameState : public GameState {
     return mainland_routes_;
   }
 
+  bool ClientConnected() {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return client_connected_;
+  }
+
+  bool ClientWasConnected() {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return client_was_connected_;
+  }
+
+  ClientStatus Status() {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return client_status_;
+  }
+
  private:
   std::mutex mutex_;
   std::string presented_seed_hash_;
@@ -156,6 +197,10 @@ class FakeGameState : public GameState {
   std::vector<std::string> toasts_;
   std::vector<std::int64_t> pending_checks_;
   bool goal_pending_ = false;
+  int pending_percentage_ = -1;
+  bool client_connected_ = false;
+  bool client_was_connected_ = false;
+  ClientStatus client_status_;
 };
 
 }  // namespace gtavc

@@ -39,6 +39,9 @@ void BridgeClient::RunLoop() {
     logger_("connected to the client listener");
     reader_ = MessageReader();
     RunSession();
+    // The page says "not connected" from here until the next welcome, which is
+    // the truth for the whole retry wait as well as for a dropped session.
+    game_->SetClientConnected(false);
     client_.Close();
     if (!stop_) SleepInterruptible(kRetryDelayMs);
   }
@@ -79,6 +82,7 @@ bool BridgeClient::RunSession() {
           }
           game_->StampSeedHash(message.value("seed_hash", std::string()));
           welcomed = true;
+          game_->SetClientConnected(true);
           logger_("welcomed by client");
         }
       } catch (const std::exception& error) {
@@ -228,6 +232,30 @@ void BridgeClient::HandleMessage(const json& message) {
       game_->MarkChecked(locations);
     } else if (type == msg::kToast) {
       game_->ShowToast(message.value("text", std::string()));
+    } else if (type == msg::kStatus) {
+      ClientStatus status;
+      status.checks_done = message.value("checks_done", 0);
+      status.checks_total = message.value("checks_total", 0);
+      status.items_received = message.value("items_received", 0);
+      status.goal_reached = message.value("goal_reached", false);
+      status.finale_warp = message.value("finale_warp", false);
+      // Both row lists are optional, so a client and a mod one field apart still
+      // talk and the page simply leaves those blocks out.
+      for (const char* field : {"goal_rows", "strand_rows"}) {
+        if (!message.contains(field)) continue;
+        std::vector<ClientRow>& rows = std::string(field) == "goal_rows"
+                                           ? status.goal_rows
+                                           : status.strand_rows;
+        for (const json& entry : message.at(field)) {
+          if (!entry.is_array() || entry.size() < 2) continue;
+          ClientRow row;
+          row.label = entry.at(0).get<std::string>();
+          row.value = entry.at(1).get<std::string>();
+          row.done = entry.size() > 2 && entry.at(2).get<bool>();
+          rows.push_back(std::move(row));
+        }
+      }
+      game_->SetClientStatus(status);
     }
   } catch (const json::exception& error) {
     logger_(std::string("ignoring malformed message: ") + error.what());
@@ -240,6 +268,10 @@ void BridgeClient::PumpOutbound() {
   }
   if (game_->TakeGoalReached()) {
     SendMessage(GoalReachedMessage());
+  }
+  int percentage = 0;
+  if (game_->TakeProgressPercentage(percentage)) {
+    SendMessage(ProgressMessage(percentage));
   }
 }
 

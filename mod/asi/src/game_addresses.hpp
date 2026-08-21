@@ -71,4 +71,23 @@ constexpr unsigned int kMoneyPrintCallee10 = 0x551040;
 //   per-frame point; it also precedes this call.
 constexpr unsigned int kBeforeWorldProcessCallSite10 = 0x4A45C3;
 
+// The buffer CText::Get returns for a key its table does not carry, classic 1.0
+// executable only. The status page needs to know whether its own key resolved,
+// and a missing key is not an error the game reports: it formats a placeholder
+// into one static buffer and returns that, so the test is the pointer.
+//
+// Pinned from the executable: CText::Get (0x584F30, plugin-sdk's own address)
+// calls its key search and, when the search returns null, writes the formatted
+// placeholder five wide characters at a time into 0xA10A74 and up, then loads
+// exactly that address into eax and returns (0x584FD5, mov eax, 0xA10A74). The
+// hit path returns the value pointer out of the table instead, which is inside
+// the loaded text data and can never be this address.
+//
+// What that buffer holds in this build is an EMPTY string, not the "key missing"
+// text the debug builds and the decompilation show: the call site formats with
+// the string at 0x69A478, which is four zero bytes, and passes no argument
+// besides the buffer. So a page whose key is missing draws nothing rather than a
+// placeholder, which is what lets the status page paint over the gap.
+constexpr unsigned int kMissingTextBuffer10 = 0xA10A74;
+
 }  // namespace gtavc

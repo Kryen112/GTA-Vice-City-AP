@@ -22,8 +22,8 @@ namespace gtavc {
 //
 // Consumables: "cash" (amount is the value), "weapon", "health", "armor",
 // "clear_wanted" (drops the wanted level to zero, like the LEAVEMEALONE cheat).
-// Traps: "trap_wanted" (amount is stars to add), "trap_explode_cars",
-// "trap_hostile_peds" / "trap_speed_up" / "trap_slow_down" / "trap_drunk"
+// Traps: "trap_wanted" (amount is stars to add), "trap_hostile_peds" /
+// "trap_speed_up" / "trap_slow_down" / "trap_drunk"
 // (amount is the duration in seconds), and "trap_weather" (amount is the
 // eWeather id to force). Like all item application, every effect waits until
 // the player is controllable. has_amount records whether the descriptor
@@ -57,6 +57,33 @@ struct PickupTarget {
   int pickup_type = 0;
   int model = 0;
   int quantity = 0;
+};
+
+// One line the client composed for the status page, because only the client knows
+// what it says: the seed's goal and how far each mission strand has come are AP
+// state, not anything the game's own memory holds.
+struct ClientRow {
+  std::string label;
+  std::string value;
+  // Whether the thing this row names is finished, which is all the colour the
+  // page needs from the client.
+  bool done = false;
+};
+
+// Everything the client tells the status page. The counts are AP's own; the rows
+// are what only AP can answer.
+struct ClientStatus {
+  int checks_done = 0;
+  int checks_total = 0;
+  int items_received = 0;
+  bool goal_reached = false;
+  std::vector<ClientRow> goal_rows;
+  std::vector<ClientRow> strand_rows;
+  // The client asking for the story's ending, which only it can know: the
+  // hidden-packages goal is a macguffin hunt, and the last fragment ends the
+  // game wherever the player is standing. The mod raises the finale warp flag
+  // from it and the script's own watcher launches the finale.
+  bool finale_warp = false;
 };
 
 class GameState {
@@ -113,12 +140,29 @@ class GameState {
   // nothing in the game will work.
   virtual void ShowStickyToast(const std::string& text) = 0;
 
+  // Whether the client's socket is up, for the pause menu's status page. The
+  // page is drawn while the game frame does not run, so it cannot infer this
+  // from anything the frame does.
+  virtual void SetClientConnected(bool connected) = 0;
+
+  // What only the client knows, for that same page: how many of this seed's
+  // locations are checked, how many it has, how many items have arrived, whether
+  // AP has this slot finished, and the goal and mission-strand lines. The mod
+  // knows which completion globals it watches, but not which of them this seed
+  // turned into locations, nor what its goal asks for.
+  virtual void SetClientStatus(const ClientStatus& status) = 0;
+
   // Location ids newly completed in game since the last call (drains the
   // queue). Polled by the bridge each loop.
   virtual std::vector<std::int64_t> TakeNewChecks() = 0;
 
   // True once when the goal was newly reached.
   virtual bool TakeGoalReached() = 0;
+
+  // The game's completion percentage, as its stats menu prints it, when it has
+  // changed since the last call. False when there is nothing new to report, so
+  // the bridge sends a frame per change rather than one per frame.
+  virtual bool TakeProgressPercentage(int& percentage) = 0;
 };
 
 }  // namespace gtavc

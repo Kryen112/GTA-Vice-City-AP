@@ -1,0 +1,593 @@
+// The status panel's text, free of any game headers so the console self-test can
+// exercise it without plugin-sdk or the game.
+//
+// The panel is what the pause menu's ARCHIPELAGO page shows: every fact about
+// this seed a player cannot read anywhere else in game. It replaces the status
+// key, whose one game-text message had to fit a length bound and left the screen
+// on a timer. Here nothing is truncated and nothing expires, so the lists are
+// one row per thing rather than comma-joined lines.
+//
+// Only what this seed configured appears. An unselected lock key is fully
+// vanilla and listing it would mislead, and an option that is off has no state
+// worth a row.
+#pragma once
+
+#include <array>
+#include <cstddef>
+#include <utility>
+#include <string>
+#include <vector>
+
+#include "scm_ability_locks.hpp"
+#include "scm_content_locks.hpp"
+#include "scm_crossings.hpp"
+#include "scm_radio.hpp"
+
+namespace gtavc {
+
+// Player-facing names for the abilities, AbilityIndex order. Shared with the
+// blocked-attempt toast's own text, which is a sentence per ability rather than
+// a name and so lives beside that toast.
+constexpr const char* kAbilityNames[kAbilityCount] = {
+    "Sprint", "Jump", "Crouch", "Land Vehicles", "Sea Vehicles",
+    "Air Vehicles", "Weapon Equip", "Wallet",
+};
+// Player-facing names for the content classes, ContentIndex order. Plural so
+// the release toast reads as a sentence: "Hidden Packages are now available."
+constexpr const char* kContentNames[kContentCount] = {
+    "Hidden Packages", "Rampages", "Stunt Jumps", "Property Purchases",
+    "Robbable Stores",
+};
+// Player-facing district names, in the apworld district_data.DISTRICTS order the
+// unlock block indexes by. The page lists the districts a class is still held in,
+// so a wrong name here misnames a place rather than holding the wrong content.
+constexpr const char* kDistrictNames[kDistrictCount] = {
+    "Ocean Beach", "Washington Beach", "Vice Point", "Starfish Island",
+    "Prawn Island", "Leaf Links", "Downtown", "Little Haiti", "Little Havana",
+    "Viceport", "Escobar International",
+};
+// The emergency and side-job activities the seed turns into checks, with how many
+// levels each one has, matching data.EMERGENCY_LEVELS: the three emergency
+// vehicles count twelve levels, and the taxi and the pizza boy count ten, one per
+// ten fares or deliveries.
+constexpr int kEmergencyLevels = 12;
+constexpr int kSideJobLevels = 10;
+constexpr int kSideJobPerLevel = 10;
+
+// Player-facing names for the radio stations, in the station-byte order the
+// unlock globals follow. The MP3 player and the police scanner are not stations
+// here, so the list is the nine music stations.
+constexpr const char* kRadioStationNames[kRadioStationCount] = {
+    "Wildstyle", "Flash FM", "K-Chat", "Fever 105", "V-Rock", "VCPR",
+    "Radio Espantoso", "Emotion 98.3", "Wave 103",
+};
+
+// What a row's value means, so the drawing can colour it without reading the
+// text back: held is what the player is waiting on, open is what they have, and
+// plain is a count or a name that is neither.
+enum class StatusTone { kPlain, kHeld, kOpen };
+
+// One line of the panel: what it names, and what that thing is doing. A row with
+// no value is a line of its own rather than a pair; a row with no LABEL is a
+// wrapped line, drawn across the whole column, which is how a list of names
+// reads as a sentence instead of taking a row each.
+struct StatusRow {
+  std::string label;
+  std::string value;
+  StatusTone tone = StatusTone::kPlain;
+};
+
+// A titled block of rows. The first block carries no heading: it is the seed's
+// own summary, and a heading over four lines that name themselves would only
+// cost a row.
+struct StatusSection {
+  std::string heading;
+  std::vector<StatusRow> rows;
+};
+
+// Everything the panel draws, read from the globals and from the client on the
+// frame the panel is drawn. Every "known" flag exists because the panel is
+// reachable before the answer is: a player can pause before the client has
+// connected, and a game that has never been started has no seed hash.
+struct StatusPanelState {
+  bool client_connected = false;
+  // The seed hash the running game stamped, empty when no game has started.
+  std::string seed_hash;
+  // Whether the client has sent its counts yet. The client owns them: the mod
+  // knows which completion globals it watches but not which of them this seed
+  // turned into locations.
+  bool counts_known = false;
+  int checks_done = 0;
+  int checks_total = 0;
+  int items_received = 0;
+  bool goal_reached = false;
+  // The game's own completion percentage, as its stats menu prints it. Negative
+  // before a game is running, when the stat reads as nothing.
+  int percentage = -1;
+
+  // Whether the lock state below was read at all. The globals only mean anything
+  // once a stamped game is running, so a page drawn before that says it does not
+  // know rather than reporting a seed that locks nothing.
+  bool locks_known = false;
+  // Which ability keys this seed selected, and which of them are locked now.
+  std::array<int, kAbilityCount> ability_flags{};
+  AbilityLocks ability_locked{};
+  // Which content keys this seed selected, how many districts of each are still
+  // held, and which ones: a count says how far along a split seed is, the names
+  // say where the player still cannot collect.
+  std::array<int, kContentCount> content_flags{};
+  std::array<int, kContentCount> content_districts_held{};
+  std::array<bool, kContentCount * kDistrictCount> content_held{};
+  // The ways to the mainland, one entry when Mainland Access opens them all and
+  // one per crossing when the seed split them, each with what it is doing.
+  std::vector<std::string> route_labels;
+  std::vector<RouteState> route_states;
+
+  bool radio_randomized = false;
+  std::array<bool, kRadioStationCount> radio_unlocked{};
+  bool minimap_shuffled = false;
+  bool minimap_unlocked = false;
+
+  // What the game counts for itself, which is the progress toward the checks
+  // those classes carry: nothing outside the game knows how close the next one
+  // is, since the client only ever sees a location checked or not.
+  int packages_collected = 0;
+  int packages_total = 0;
+  int paramedic_level = 0;
+  int vigilante_level = 0;
+  int firefighter_level = 0;
+  // The taxi and the pizza boy have no level of their own in the game's stats:
+  // they count fares and deliveries, and every tenth one is a level.
+  int taxi_fares = 0;
+  int pizza_deliveries = 0;
+
+  // Lines the client composed, because only it knows what this seed's goal asks
+  // for and how far each mission strand has come. Empty until a client says.
+  std::vector<StatusRow> goal_rows;
+  std::vector<StatusRow> strand_rows;
+};
+
+// How many characters a wrapped line may carry. A column is 188 of the
+// frontend's own units and a proportional character averages a little over five
+// of them at the page's own text scale, so twenty-eight characters is about 150
+// units: a column's width with room to spare. It is a count standing in for a
+// width, which the drawing backs up by folding a line at the column's right edge
+// rather than letting it cross the gutter.
+constexpr std::size_t kWrappedLineChars = 28;
+
+// A prefixed list of names, wrapped into as many lines as it takes. Every line
+// is label-less, so every line is drawn from the column's own left edge: the
+// prefix rides inline on the first one and the continuations are indented by as
+// many spaces as the prefix has characters, which sets them in from the column
+// edge so the list reads as one block. The font is proportional and a space is
+// narrower than an average character, so they sit a little left of the names
+// above rather than exactly under them. That every line starts at the column
+// edge is also what makes the character budget honest, since the budget is
+// measured against the width the whole column has.
+//
+// An empty list produces nothing at all, so a seed with no station of one kind
+// has no line about it.
+inline std::vector<StatusRow> WrapNameList(const std::string& prefix,
+                                           const std::vector<std::string>& names,
+                                           StatusTone tone,
+                                           std::size_t max_chars) {
+  std::vector<StatusRow> rows;
+  if (names.empty()) return rows;
+  const std::string opening = prefix + ": ";
+  std::string line = opening;
+  for (std::size_t index = 0; index < names.size(); ++index) {
+    const bool last = index + 1 == names.size();
+    const std::string piece = names[index] + (last ? "" : ",");
+    // The first piece of a line always goes on it, however long it is: a name
+    // wider than the column has to be somewhere, and truncating it would hide
+    // which station or class it names.
+    if (line.size() > opening.size() && line.size() + 1 + piece.size() > max_chars) {
+      rows.push_back({"", line, tone});
+      line = std::string(opening.size(), ' ');
+    } else if (line.size() > opening.size()) {
+      line += " ";
+    }
+    line += piece;
+  }
+  rows.push_back({"", line, tone});
+  return rows;
+}
+
+// The summary block: what the mod and the client are doing, and how far along
+// this seed is.
+inline StatusSection ComposeSummarySection(const StatusPanelState& state) {
+  StatusSection section;
+  section.rows.push_back({"Client",
+                          state.client_connected ? "connected" : "not connected",
+                          state.client_connected ? StatusTone::kOpen : StatusTone::kHeld});
+  section.rows.push_back(
+      {"Seed", state.seed_hash.empty() ? "no game started" : state.seed_hash});
+  if (state.counts_known) {
+    section.rows.push_back({"Checks", std::to_string(state.checks_done) + "/" +
+                                          std::to_string(state.checks_total)});
+    section.rows.push_back({"Items", std::to_string(state.items_received)});
+  }
+  if (state.percentage >= 0) {
+    section.rows.push_back({"Completion", std::to_string(state.percentage) + "%"});
+  }
+  if (state.goal_reached) {
+    section.rows.push_back({"Goal", "reached", StatusTone::kOpen});
+  }
+  return section;
+}
+
+// The abilities as two wrapped lists, the locked ones and the ones the player
+// has. Wrapped rather than a row each because eight rows of a name and one word
+// is most of a column, and which list a name is in says everything a row would.
+//
+// The block is here for every seed, including one that locks nothing, so that a
+// missing block never has to be told apart from a vanilla seed.
+inline StatusSection ComposeAbilitySection(const StatusPanelState& state) {
+  StatusSection section;
+  section.heading = "ABILITIES";
+  std::vector<std::string> locked;
+  std::vector<std::string> held;
+  for (int index = 0; index < kAbilityCount; ++index) {
+    if (state.ability_flags[index] == 0) continue;
+    (state.ability_locked[index] ? locked : held).push_back(kAbilityNames[index]);
+  }
+  if (locked.empty() && held.empty()) {
+    section.rows.push_back({"", state.locks_known ? "This seed locks no ability."
+                                                 : "No game started.",
+                            StatusTone::kPlain});
+    return section;
+  }
+  for (const StatusRow& row :
+       WrapNameList("Locked", locked, StatusTone::kHeld, kWrappedLineChars)) {
+    section.rows.push_back(row);
+  }
+  for (const StatusRow& row :
+       WrapNameList("Yours", held, StatusTone::kOpen, kWrappedLineChars)) {
+    section.rows.push_back(row);
+  }
+  return section;
+}
+
+// One block per selected content key: what the class is doing, and for a class
+// held in some districts but not others, which districts those are. The names are
+// the useful half of that state, because they say where the player still cannot
+// collect; a count alone only says how far along the seed is.
+inline StatusSection ComposeContentSection(const StatusPanelState& state) {
+  StatusSection section;
+  section.heading = "CONTENT";
+  bool any_configured = false;
+  for (int index = 0; index < kContentCount; ++index) {
+    any_configured = any_configured || state.content_flags[index] != 0;
+  }
+  if (!any_configured) {
+    // Said rather than left out, for the same reason the abilities block says it.
+    section.rows.push_back({"", state.locks_known ? "This seed holds no content."
+                                                  : "No game started.",
+                            StatusTone::kPlain});
+    return section;
+  }
+  for (int index = 0; index < kContentCount; ++index) {
+    if (state.content_flags[index] == 0) continue;
+    const int held = state.content_districts_held[index];
+    if (held <= 0) {
+      section.rows.push_back({kContentNames[index], "available", StatusTone::kOpen});
+      continue;
+    }
+    if (held >= kDistrictCount) {
+      section.rows.push_back({kContentNames[index], "HELD", StatusTone::kHeld});
+      continue;
+    }
+    // Part of the city only: the class is named on its own line and the districts
+    // are wrapped under it, since eleven names never fit beside a label.
+    //
+    // Whichever list is shorter is the one shown, and its prefix says which it
+    // is: a class held nearly everywhere is better read as the two districts it
+    // is free in than as the nine it is not. Either way it is at most half the
+    // city's names.
+    section.rows.push_back({kContentNames[index],
+                            "HELD " + std::to_string(held) + "/" +
+                                std::to_string(kDistrictCount),
+                            StatusTone::kHeld});
+    const bool name_the_held = held * 2 <= kDistrictCount;
+    std::vector<std::string> districts;
+    for (int district = 0; district < kDistrictCount; ++district) {
+      const std::size_t slot =
+          static_cast<std::size_t>(index) * kDistrictCount + district;
+      const bool district_held = slot < state.content_held.size() &&
+                                 state.content_held[slot];
+      if (district_held == name_the_held) districts.push_back(kDistrictNames[district]);
+    }
+    for (const StatusRow& row :
+         WrapNameList(name_the_held ? "held in" : "free in", districts,
+                      name_the_held ? StatusTone::kHeld : StatusTone::kOpen,
+                      kWrappedLineChars)) {
+      section.rows.push_back(row);
+    }
+  }
+  return section;
+}
+
+// What the seed's goal asks for and how close it is, composed by the client and
+// only rendered here: the mod knows the completion globals it watches, not what
+// this seed calls done.
+inline StatusSection ComposeGoalSection(const StatusPanelState& state) {
+  StatusSection section;
+  if (state.goal_rows.empty()) return section;
+  section.heading = "GOAL";
+  section.rows = state.goal_rows;
+  return section;
+}
+
+// How far each giver's strand has come, from the client: the counts live in the
+// unlock globals the mod writes, but the strand names and how many missions each
+// one holds are the world's.
+//
+// A row each, not a wrapped list. A strand is a name and a count, and a name like
+// Vercetti Protection fills a line on its own, so wrapping them costs as many
+// lines as rows and reads worse. What makes twenty of them fit is the page having
+// three columns rather than two.
+inline StatusSection ComposeStrandSection(const StatusPanelState& state) {
+  StatusSection section;
+  if (state.strand_rows.empty()) return section;
+  section.heading = "MISSION STRANDS";
+  for (const StatusRow& row : state.strand_rows) {
+    // "3 of 5" reads as "3/5" in a column this narrow, where the words would be
+    // most of the width.
+    std::string count = row.value;
+    const std::size_t of = count.find(" of ");
+    if (of != std::string::npos) {
+      count = count.substr(0, of) + "/" + count.substr(of + 4);
+    }
+    section.rows.push_back({row.label, count, row.tone});
+  }
+  return section;
+}
+
+// The progress the game itself counts toward the checks those classes carry: the
+// hidden package tally the HUD shows, the level each emergency vehicle has
+// reached, and the taxi and pizza levels, which the game keeps as fares and
+// deliveries rather than as levels. Nothing outside the game knows any of it,
+// since the client only ever sees a location checked or not.
+inline StatusSection ComposeRewardSection(const StatusPanelState& state) {
+  StatusSection section;
+  section.heading = "THE GAME COUNTS";
+  if (state.packages_total > 0) {
+    const bool done = state.packages_collected >= state.packages_total;
+    section.rows.push_back({"Hidden Packages",
+                            std::to_string(state.packages_collected) + "/" +
+                                std::to_string(state.packages_total),
+                            done ? StatusTone::kOpen : StatusTone::kPlain});
+  }
+  // Every tenth fare and every tenth delivery is a level, so the level is what
+  // the row shows: it is what the checks are placed on.
+  const int taxi_level = state.taxi_fares / kSideJobPerLevel;
+  const int pizza_level = state.pizza_deliveries / kSideJobPerLevel;
+  const std::pair<const char*, std::pair<int, int>> activities[] = {
+      {"Paramedic", {state.paramedic_level, kEmergencyLevels}},
+      {"Vigilante", {state.vigilante_level, kEmergencyLevels}},
+      {"Firefighter", {state.firefighter_level, kEmergencyLevels}},
+      {"Taxi", {taxi_level < kSideJobLevels ? taxi_level : kSideJobLevels,
+                kSideJobLevels}},
+      {"Pizza", {pizza_level < kSideJobLevels ? pizza_level : kSideJobLevels,
+                 kSideJobLevels}},
+  };
+  for (const auto& [name, progress] : activities) {
+    const auto [level, levels] = progress;
+    section.rows.push_back(
+        {name,
+         level > 0 ? std::to_string(level) + "/" + std::to_string(levels) : "none",
+         level >= levels ? StatusTone::kOpen
+                         : (level > 0 ? StatusTone::kPlain : StatusTone::kPlain)});
+  }
+  return section;
+}
+
+// One row per way to the mainland. A route whose item arrived while the second
+// item its route needs is missing says so rather than reading as plainly shut,
+// since that is the one state a player can act on.
+inline StatusSection ComposeRouteSection(const StatusPanelState& state) {
+  StatusSection section;
+  section.heading = "TO THE MAINLAND";
+  const std::size_t count = state.route_labels.size() < state.route_states.size()
+                                ? state.route_labels.size()
+                                : state.route_states.size();
+  for (std::size_t index = 0; index < count; ++index) {
+    const char* value = "shut";
+    if (state.route_states[index] == RouteState::kOpen) {
+      value = "open";
+    } else if (state.route_states[index] == RouteState::kWaiting) {
+      value = "needs its island";
+    }
+    section.rows.push_back({state.route_labels[index], value,
+                            state.route_states[index] == RouteState::kOpen
+                                ? StatusTone::kOpen
+                                : StatusTone::kHeld});
+  }
+  return section;
+}
+
+// One row per station while the radio is randomized, and one for the minimap
+// while it is shuffled. Both options hold something the player can see is
+// missing without being told why, which is what these rows answer.
+inline StatusSection ComposeRadioSection(const StatusPanelState& state) {
+  StatusSection section;
+  if (!state.radio_randomized) return section;
+  section.heading = "RADIO";
+  // Wrapped lists rather than a row per station: nine rows of a name and one
+  // word is most of a column spent on the least of the seed's state, and the
+  // stations have nothing to say beyond which side they are on.
+  std::vector<std::string> unlocked;
+  std::vector<std::string> locked;
+  for (int station = 0; station < kRadioStationCount; ++station) {
+    (state.radio_unlocked[station] ? unlocked : locked)
+        .push_back(kRadioStationNames[station]);
+  }
+  for (const StatusRow& row :
+       WrapNameList("Yours", unlocked, StatusTone::kOpen, kWrappedLineChars)) {
+    section.rows.push_back(row);
+  }
+  for (const StatusRow& row :
+       WrapNameList("Locked", locked, StatusTone::kHeld, kWrappedLineChars)) {
+    section.rows.push_back(row);
+  }
+  return section;
+}
+
+inline StatusSection ComposeMinimapSection(const StatusPanelState& state) {
+  StatusSection section;
+  if (!state.minimap_shuffled) return section;
+  section.heading = "MINIMAP";
+  section.rows.push_back({"Radar", state.minimap_unlocked ? "shown" : "HIDDEN",
+                          state.minimap_unlocked ? StatusTone::kOpen
+                                                 : StatusTone::kHeld});
+  return section;
+}
+
+// The whole panel, in reading order. A block with no rows is dropped rather than
+// drawn as a heading over nothing: a seed that locks no ability has no abilities
+// block at all.
+inline std::vector<StatusSection> ComposeStatusPanel(const StatusPanelState& state) {
+  std::vector<StatusSection> sections;
+  for (const StatusSection& section :
+       {ComposeSummarySection(state), ComposeGoalSection(state),
+        ComposeStrandSection(state), ComposeAbilitySection(state),
+        ComposeContentSection(state), ComposeRewardSection(state),
+        ComposeRouteSection(state), ComposeRadioSection(state),
+        ComposeMinimapSection(state)}) {
+    if (!section.rows.empty()) sections.push_back(section);
+  }
+  return sections;
+}
+
+// What the menu looks like on one frame, as far as the panel cares: everything
+// the decision below reads, so the decision itself can be exercised without a
+// game. The page and entry numbers are the game's own, passed in rather than
+// named here, because this header carries no game headers.
+struct PanelMenuState {
+  // Whether the pause menu carries the panel's entry at all.
+  bool owns_entry = false;
+  bool game_loaded = false;
+  int page = -1;
+  int highlighted_entry = -1;
+  int pause_page = -1;
+  int host_page = -1;
+  // The pause-menu row the panel's entry sits on.
+  int panel_entry = -1;
+  // Whether the row under the highlight carries the borrowed page as its target,
+  // which is true of the panel's own entry and of that page's vanilla entry. The
+  // caller leaves highlighted_entry negative for a row outside the page's own
+  // table, so nothing here can name a row the game does not have.
+  bool highlighted_entry_targets_host = false;
+};
+
+// What the panel does with a menu frame: whether the borrowed page should now
+// show the panel rather than its own content, whether to draw it this frame, and
+// what to write into the borrowed page's parent entry so going back lands on the
+// row the player came from.
+//
+// The arming is a latch rather than a test, because by the time the borrowed page
+// is showing, the game has already reset the highlight to its first row: the row
+// that opened it is only knowable from the frame before.
+struct PanelFrame {
+  bool armed = false;
+  bool draw = false;
+  // Negative when nothing should be written this frame.
+  int parent_entry = -1;
+};
+
+inline PanelFrame PlanPanelFrame(const PanelMenuState& state, bool armed_was) {
+  PanelFrame frame;
+  frame.armed = armed_was;
+  if (!state.owns_entry) {
+    frame.armed = false;
+    return frame;
+  }
+  if (state.page == state.pause_page) {
+    frame.armed = state.highlighted_entry == state.panel_entry;
+    // Only a row carrying the borrowed page belongs in that page's parent entry.
+    // The pause menu's other rows lead elsewhere, and writing one of those would
+    // leave the field naming a row that cannot come back from there.
+    if (state.highlighted_entry_targets_host && state.highlighted_entry >= 0) {
+      frame.parent_entry = state.highlighted_entry;
+    }
+    return frame;
+  }
+  frame.draw = frame.armed && state.game_loaded && state.page == state.host_page;
+  return frame;
+}
+
+// One drawn line of the panel. The blocks are flattened into lines before they
+// are laid out, so a block taller than a column continues in the next one instead
+// of setting the row height for the whole page: twenty mission strands are a
+// column and a half on their own, and keeping them whole shrank everything else
+// to fit them.
+struct PanelLine {
+  std::string label;
+  std::string value;
+  StatusTone tone = StatusTone::kPlain;
+  // A heading is drawn in the heading face; a blank line separates blocks and
+  // never opens a column.
+  bool heading = false;
+  bool blank = false;
+};
+
+inline std::vector<PanelLine> FlattenPanel(const std::vector<StatusSection>& sections) {
+  std::vector<PanelLine> lines;
+  for (const StatusSection& section : sections) {
+    if (!lines.empty()) lines.push_back({"", "", StatusTone::kPlain, false, true});
+    if (!section.heading.empty()) {
+      lines.push_back({section.heading, "", StatusTone::kPlain, true, false});
+    }
+    for (const StatusRow& row : section.rows) {
+      lines.push_back({row.label, row.value, row.tone, false, false});
+    }
+  }
+  return lines;
+}
+
+// The panel's lines dealt into columns of even height, in reading order: down one
+// column and on to the next. A column never opens with a blank line and never
+// ends with a heading, so a block's title always sits above at least one of its
+// own lines.
+inline std::vector<std::vector<PanelLine>> PlanPanelColumns(
+    const std::vector<PanelLine>& lines, int column_count) {
+  std::vector<std::vector<PanelLine>> columns;
+  if (column_count < 1) return columns;
+  columns.resize(static_cast<std::size_t>(column_count));
+  if (lines.empty()) return columns;
+  const int total = static_cast<int>(lines.size());
+  std::size_t next = 0;
+  for (int column = 0; column < column_count && next < lines.size(); ++column) {
+    const int columns_left = column_count - column;
+    const int remaining = total - static_cast<int>(next);
+    const int share = (remaining + columns_left - 1) / columns_left;
+    // A blank line at the head of a column is dropped: the column edge already
+    // separates it from what came before.
+    while (next < lines.size() && lines[next].blank) ++next;
+    std::vector<PanelLine>& target = columns[static_cast<std::size_t>(column)];
+    while (next < lines.size() &&
+           (column + 1 == column_count || static_cast<int>(target.size()) < share)) {
+      target.push_back(lines[next]);
+      ++next;
+    }
+    // A heading last in a column would title lines that are not there; it moves
+    // to the next column with them.
+    while (!target.empty() && target.back().heading && next <= lines.size()) {
+      --next;
+      target.pop_back();
+    }
+  }
+  return columns;
+}
+
+// The tallest column, which is what the row height has to fit.
+inline int TallestColumn(const std::vector<std::vector<PanelLine>>& columns) {
+  int tallest = 0;
+  for (const std::vector<PanelLine>& column : columns) {
+    const int rows = static_cast<int>(column.size());
+    if (rows > tallest) tallest = rows;
+  }
+  return tallest;
+}
+
+}  // namespace gtavc

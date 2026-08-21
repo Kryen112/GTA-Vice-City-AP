@@ -8,6 +8,7 @@
 #include <cstring>
 
 #include "game_addresses.hpp"
+#include "scm_finale_warp.hpp"
 #include "scm_packages.hpp"
 #include "scm_stunt_jumps.hpp"
 
@@ -86,6 +87,12 @@ constexpr int kRadioAmbientRequest = 9;
 // enforcement keeps working offline from a save.
 constexpr int kMinimapShuffledGlobal = 9428;
 constexpr int kMinimapUnlockGlobal = 9429;
+// The finale warp flag, the top of the reserved block in apworld scm.py. The
+// client raises it once the hidden-packages goal is met; the script's APFIN
+// watcher launches Keep Your Friends Close... from it, straight into the ending
+// cutscene. When the mission may start is the script's business, exactly as it
+// is for every vanilla launcher, so the mod only carries the ask across.
+constexpr int kFinaleWarpGlobal = 9515;
 // The game's pickup pool size, matching plugin-sdk's CPickup (&aPickUps)[336].
 constexpr int kPickupPoolSize = 336;
 // The enforcement frame on which a still-unmatched layout slot is logged:
@@ -160,35 +167,13 @@ unsigned int TrapDurationMs(const ItemEffect& effect) {
   return static_cast<unsigned int>(seconds) * 1000u;
 }
 
-// Player-facing names for the ability status list, AbilityIndex order.
-constexpr const char* kAbilityNames[kAbilityCount] = {
-    "Sprint", "Jump", "Crouch", "Land Vehicles", "Sea Vehicles",
-    "Air Vehicles", "Weapon Equip", "Wallet",
-};
-// The blocked-attempt toast per ability. The wallet has no blockable input,
-// so it never toasts; the status key and the client window carry its state.
+// The blocked-attempt toast per ability. The wallet has no blockable input, so
+// it never toasts; the status page and the client window carry its state.
 constexpr const char* kAbilityBlockedText[kAbilityCount] = {
     "Sprinting is locked.", "Jumping is locked.", "Crouching is locked.",
     "Land vehicles are locked.", "Sea vehicles are locked.",
     "Air vehicles are locked.", "Weapons are locked.", nullptr,
 };
-// Player-facing names for the content status list, ContentIndex order. Plural
-// so the toast reads as a sentence: "Hidden Packages are now available."
-constexpr const char* kContentNames[kContentCount] = {
-    "Hidden Packages", "Rampages", "Stunt Jumps", "Property Purchases",
-    "Robbable Stores",
-};
-// Player-facing district names, in the apworld district_data.DISTRICTS order the
-// unlock block indexes by. Only the toasts read these, so a wrong one misnames a
-// message rather than holding the wrong content.
-constexpr const char* kDistrictNames[kDistrictCount] = {
-    "Ocean Beach", "Washington Beach", "Vice Point", "Starfish Island",
-    "Prawn Island", "Leaf Links", "Downtown", "Little Haiti", "Little Havana",
-    "Viceport", "Escobar International",
-};
-// The key listing every configured ability's locked or unlocked state and
-// every configured content class's held or available state.
-constexpr int kAbilityStatusKey = VK_F6;
 // The key writing the unique stunt jump table beside the executable.
 constexpr int kStuntJumpDumpKey = VK_F7;
 constexpr const char* kStuntJumpDumpFile = "gtavc_ap_stuntjumps.txt";
@@ -206,10 +191,19 @@ static_assert(std::size(kHeldClassNames) == kHeldPickupClassCount,
 // that never moves. Capitals because the counter draws in FONT_HEADING, whose
 // glyphs are capitals.
 //
-// Nine characters, which is exactly what the amount occupies: the counter draws
-// with proportional spacing off, so every glyph takes one cell, and the vanilla
-// format pads to "$00000000". The replacement therefore cannot reach anything
-// the amount does not already reach.
+// The text prints with proportional spacing, so every letter takes its own
+// width rather than the counter's fixed cell. That cell is a digit's, 20 units
+// in the heading face, and this text's W is 32, so letters spaced by the cell
+// overlap the letter after them.
+//
+// What bounds the text is the sum of its own glyph widths against the nine cells
+// the vanilla "$00000000" occupies, 180 units. "NO WALLET" sums to 172, eight
+// units under, so it reaches nothing the amount does not. Measure that sum for
+// any new wording rather than counting its characters, and measure it in the
+// right block: FONT_HEADING sets the heading flag as well as style 1, and both
+// the width query and the print then remap uppercase into the heading glyphs, so
+// reading the Latin widths for a string the game draws from the heading block
+// gives a number six units the other side of the bound.
 //
 // Deliberately not const: CFont::PrintString writes a terminator over a trailing
 // space in the buffer it is handed, so a buffer in writable storage cannot fault
@@ -226,10 +220,21 @@ std::atomic<bool> g_money_reads_locked{false};
 // the position, font, scale, colour and justification for the amount, so this
 // prints the replacement into all of it and passes anything else through.
 void __cdecl PrintMoneyCounter(float x, float y, const wchar_t* text) {
-  CFont::PrintString(x, y,
-                     g_money_reads_locked.load(std::memory_order_relaxed)
-                         ? kMoneyLockedText
-                         : text);
+  if (!g_money_reads_locked.load(std::memory_order_relaxed)) {
+    CFont::PrintString(x, y, text);
+    return;
+  }
+  // Proportional spacing goes on for this one print and straight back off. The
+  // call site turns it off twice ahead of this print and no branch enters
+  // between, so off is what restoring it means here rather than a guess;
+  // CFont::Details carries the flag for a later edit that would rather save and
+  // restore it than write a constant. Right justification is the site's too, so
+  // the text grows leftward from the counter's right edge. The print buffers
+  // rather than renders and snapshots this flag into the buffered entry, so the
+  // bracket still decides how these glyphs are spaced at flush time.
+  CFont::SetProportional(true);
+  CFont::PrintString(x, y, kMoneyLockedText);
+  CFont::SetProportional(false);
 }
 
 // Posts one brief message with text the mod owns for as long as the game can
@@ -400,12 +405,20 @@ void ScmGameState::ApplyConfig(const std::map<std::int64_t, int>& item_globals,
   pickup_targets_ = pickup_targets;
   content_district_globals_ = content_district_globals;
   pickup_districts_ = pickup_districts;
+  // The unlock targets were tallied against the tables this call just
+  // replaced, so they are answers to a question that no longer exists.
+  // Marking them stale here rather than relying on an item resync following
+  // is what keeps the tally from outliving the config it was built from.
+  items_dirty_ = true;
   // A fresh route set is a fresh baseline: the next observation records what
   // this seed already holds instead of announcing it.
   mainland_routes_ = routes;
   route_was_.clear();
   route_baseline_ready_ = false;
   pickup_enforce_frames_ = 0;
+  // A fresh connection is a fresh client, which may never have been told this
+  // game's percentage, so the next frame reports it again.
+  reported_percentage_ = -1;
   location_to_global_.clear();
   for (const auto& [global_index, location] : completion_watch_) {
     location_to_global_[location] = global_index;
@@ -465,16 +478,6 @@ bool ScmGameState::PlayerIsControllable() {
 
 unsigned int ScmGameState::RealTimeMs() {
   return static_cast<unsigned int>(CTimer::m_snTimeInMillisecondsPauseMode);
-}
-
-void ScmGameState::ExplodeAllVehicles() {
-  CPlayerPed* player = FindPlayerPed();
-  CPool<CVehicle, CAutomobile>* pool = CPools::ms_pVehiclePool;
-  if (pool == nullptr) return;
-  for (int index = 0; index < pool->m_nSize; ++index) {
-    CVehicle* vehicle = pool->GetAt(index);
-    if (vehicle != nullptr) vehicle->BlowUpCar(player);
-  }
 }
 
 void ScmGameState::MakePedestriansHostile() {
@@ -605,52 +608,6 @@ void ScmGameState::ToastAbilityBlocked(int ability) {
   pending_toasts_.push_back(text);
 }
 
-void ScmGameState::ToastLockStatus(
-    const AbilityLocks& locked, const std::array<int, kAbilityCount>& ability_flags,
-    const ContentLocks& held, const std::array<int, kContentCount>& content_flags) {
-  // One message for the whole status, never one per list: the game renders every
-  // queued message from one shared text buffer, so several at once all show the
-  // last text and hold the screen for a multiple of a message's time.
-  //
-  // Only what this seed configured appears; an unselected key is fully vanilla
-  // and listing it would mislead.
-  std::string locked_list;
-  std::string unlocked_list;
-  for (int index = 0; index < kAbilityCount; ++index) {
-    if (ability_flags[index] == 0) continue;
-    std::string& list = locked[index] ? locked_list : unlocked_list;
-    if (!list.empty()) list += ", ";
-    list += kAbilityNames[index];
-  }
-  std::string held_list;
-  std::string available_list;
-  for (int index = 0; index < kContentCount; ++index) {
-    if (content_flags[index] == 0) continue;
-    const int districts_held = ContentDistrictsHeld(held, index);
-    std::string& list = districts_held > 0 ? held_list : available_list;
-    if (!list.empty()) list += ", ";
-    list += kContentNames[index];
-    // A split seed releases a class a district at a time, so the count is the
-    // only thing that says how far along it is. A whole class goes at once, so
-    // its count is every district and saying so would be noise.
-    if (districts_held > 0 && districts_held < kDistrictCount) {
-      list += " (" + std::to_string(districts_held) + " of " +
-              std::to_string(kDistrictCount) + " districts)";
-    }
-  }
-  pending_toasts_.push_back(
-      ComposeLockStatus(locked_list, unlocked_list, held_list, available_list));
-  // The routes are listed whether or not this seed split them: which way over
-  // the water is open has no other in-game answer. They queue as their own line
-  // rather than joining the one above, which a fully locked seed fills to the
-  // message cap: appended there they would be the part truncated away.
-  const RouteStatusLists routes =
-      ComposeRouteStatus(mainland_routes_, RouteUnlockValues(), RouteNeedsValues());
-  const std::string route_status =
-      ComposeRouteStatusLine(routes.open, routes.shut);
-  if (!route_status.empty()) pending_toasts_.push_back(route_status);
-}
-
 void ScmGameState::EnforceHeldPickups(const AbilityLocks& locked,
                                       const ContentLocks& held) {
   // Resolve the kill-frenzy skull model by name; the SCM creates every
@@ -727,7 +684,7 @@ void ScmGameState::EnforceHeldPickups(const AbilityLocks& locked,
 ContentLocks ScmGameState::ReadContentLocks(
     std::array<int, kContentCount>& lock_flags) {
   // The lock flags say which classes this seed configured, which is what the
-  // status key lists. What is held comes from the district block alone: a class
+  // status page lists. What is held comes from the district block alone: a class
   // the seed does not lock arrives with every district already released, so a
   // flag test here would only repeat what the globals say.
   std::array<int, kContentCount * kDistrictCount> district_unlocks{};
@@ -897,17 +854,6 @@ void ScmGameState::EnforceLocks() {
   // both halves of reporting one sit above the early return. A seed selecting no
   // lock key at all is the default, and its routes still open and still list.
   ReportOpenedRoutes();
-
-  // The status key lists every configured ability and content class, held or
-  // released, and every route, on its press edge, and only while this game owns
-  // the keyboard, so a press meant for another application never reaches the
-  // queue.
-  const bool status_key_down = GameWindowHasFocus() &&
-      (GetAsyncKeyState(kAbilityStatusKey) & 0x8000) != 0;
-  if (status_key_down && !ability_status_key_was_down_) {
-    ToastLockStatus(locked, lock_flags, held, content_flags);
-  }
-  ability_status_key_was_down_ = status_key_down;
 
   // No key of either family selected this seed: fully vanilla, nothing to
   // enforce.
@@ -1220,8 +1166,6 @@ void ScmGameState::ApplyTrap(const ItemEffect& effect) {
                          (effect.has_amount ? effect.amount : 1);
       player->m_pWanted->SetWantedLevelNoDrop(std::min(kMaxWantedLevel, raised));
     }
-  } else if (effect.type == "trap_explode_cars") {
-    ExplodeAllVehicles();
   } else if (effect.type == "trap_weather") {
     // Weather applies any time, so it is fired here with no control gate. The
     // param is the eWeather id to force. Forcing pins the weather until it is
@@ -1336,17 +1280,107 @@ void ScmGameState::ShowStickyToast(const std::string& text) {
   sticky_toasts_.push_back(text);
 }
 
+void ScmGameState::SetClientConnected(bool connected) {
+  std::lock_guard<std::mutex> lock(mutex_);
+  client_connected_ = connected;
+}
+
+void ScmGameState::SetClientStatus(const ClientStatus& status) {
+  std::lock_guard<std::mutex> lock(mutex_);
+  // Known from the first status frame onward, so the page can tell "nothing sent
+  // yet" apart from "no client has ever said".
+  client_status_known_ = true;
+  client_status_ = status;
+}
+
+StatusPanelState ScmGameState::BuildStatusPanelState() {
+  std::lock_guard<std::mutex> lock(mutex_);
+  StatusPanelState state;
+  state.client_connected = client_connected_;
+  state.counts_known = client_status_known_;
+  state.checks_done = client_status_.checks_done;
+  state.checks_total = client_status_.checks_total;
+  state.items_received = client_status_.items_received;
+  state.goal_reached = client_status_.goal_reached;
+  for (const ClientRow& row : client_status_.goal_rows) {
+    state.goal_rows.push_back({row.label, row.value,
+                               row.done ? StatusTone::kOpen : StatusTone::kPlain});
+  }
+  for (const ClientRow& row : client_status_.strand_rows) {
+    state.strand_rows.push_back({row.label, row.value,
+                                 row.done ? StatusTone::kOpen : StatusTone::kPlain});
+  }
+  state.seed_hash = cached_seed_hash_;
+  // Only touch the game's script memory once a stamped game is actually
+  // running, the same rule the frame and the input hook follow: in the frontend
+  // ScriptSpace holds no meaningful state, and a page listing locks read from it
+  // would be inventing them. The summary is answered either way, and it says
+  // there is no game.
+  if (cached_seed_hash_.empty()) return state;
+
+  // The rest is read out of the globals here and now, the way the frame reads
+  // it. The page is drawn with the game frame stopped, so a snapshot taken on
+  // the last frame would be no fresher and one more thing to keep in step.
+  state.locks_known = true;
+  state.ability_locked = ReadAbilityLocks(state.ability_flags);
+  const ContentLocks held = ReadContentLocks(state.content_flags);
+  for (int index = 0; index < kContentCount; ++index) {
+    state.content_districts_held[index] = ContentDistrictsHeld(held, index);
+    for (int district = 0; district < kDistrictCount; ++district) {
+      const std::size_t slot = ContentDistrictSlot(index, district);
+      state.content_held[slot] = held[slot];
+    }
+  }
+  const std::vector<int> unlock_values = RouteUnlockValues();
+  const std::vector<int> needs_values = RouteNeedsValues();
+  for (std::size_t index = 0; index < mainland_routes_.size(); ++index) {
+    state.route_labels.push_back(mainland_routes_[index].label);
+    state.route_states.push_back(RouteStateOf(
+        mainland_routes_[index], unlock_values[index], needs_values[index]));
+  }
+  state.radio_randomized = GetGlobal(kRadioRandomizedGlobal) != 0;
+  for (int station = 0; station < kRadioStationCount; ++station) {
+    state.radio_unlocked[station] = GetGlobal(kRadioUnlockBase + station) >= 1;
+  }
+  state.minimap_shuffled = GetGlobal(kMinimapShuffledGlobal) != 0;
+  state.minimap_unlocked = GetGlobal(kMinimapUnlockGlobal) != 0;
+  // The stat the game's own menu prints, truncated the way that menu truncates
+  // it, so the two lines never disagree by a rounding.
+  state.percentage = DisplayedPercentage(CStats::GetPercentageProgress());
+  // What the game counts for itself. The hidden package tally and the emergency
+  // levels are the game's own progress toward the checks those classes carry, and
+  // nothing outside the game knows them: the client sees a location checked, not
+  // how close the next one is.
+  state.packages_collected = CWorld::Players[0].m_nCollectablesCollected;
+  state.packages_total = CWorld::Players[0].m_nCollectablesTotal;
+  state.paramedic_level = CStats::HighestLevelAmbulanceMission;
+  state.vigilante_level = CStats::HighestLevelVigilanteMission;
+  state.firefighter_level = CStats::HighestLevelFireMission;
+  // The taxi and the pizza boy keep no level: the game counts fares and
+  // deliveries, and the page turns those into levels the way the checks do.
+  state.taxi_fares = CStats::PassengersDroppedOffWithTaxi;
+  state.pizza_deliveries = static_cast<int>(CStats::PizzasDelivered);
+  return state;
+}
+
 std::vector<std::int64_t> ScmGameState::TakeNewChecks() {
   std::lock_guard<std::mutex> lock(mutex_);
-  std::vector<std::int64_t> drained;
-  drained.swap(outbound_checks_);
-  return drained;
+  return DrainChecks(outbound_checks_, outbound_checks_held_);
 }
 
 bool ScmGameState::TakeGoalReached() {
   // The goal is derived client-side from the finale location check, so the ASI
   // never reports it separately.
   return false;
+}
+
+bool ScmGameState::TakeProgressPercentage(int& percentage) {
+  std::lock_guard<std::mutex> lock(mutex_);
+  if (pending_percentage_ < 0) return false;
+  percentage = pending_percentage_;
+  reported_percentage_ = pending_percentage_;
+  pending_percentage_ = -1;
+  return true;
 }
 
 void ScmGameState::EnforcePickupLayout() {
@@ -1448,9 +1482,9 @@ void ScmGameState::OnGameFrame() {
   std::lock_guard<std::mutex> lock(mutex_);
 
   // The stunt jump dump reads the world, not the seed, so it runs on any loaded
-  // game rather than waiting for a stamped one. Its key is handled here for the
-  // same reason the ability status key is not: that handler returns early when
-  // no lock is configured.
+  // game rather than waiting for a stamped one. Its key is handled here rather
+  // than inside the lock enforcement below, which returns early when the seed
+  // configures no lock at all.
   const bool stunt_jump_key_down = GameWindowHasFocus() &&
       (GetAsyncKeyState(kStuntJumpDumpKey) & 0x8000) != 0;
   if (stunt_jump_key_down && !stunt_jump_key_was_down_ && FindPlayerPed() != nullptr) {
@@ -1482,11 +1516,10 @@ void ScmGameState::OnGameFrame() {
     // The minimap forcing memory belongs to the game that set it; the next
     // game re-derives it from its own globals on the first frame.
     minimap_forcing_hidden_ = false;
-    // Ability toast pacing and the status-key edge belong to the game too;
-    // the locks themselves re-derive from the globals every frame.
+    // Ability toast pacing belongs to the game too; the locks themselves
+    // re-derive from the globals every frame.
     ability_toast_shown_.fill(false);
     ability_toast_last_ms_.fill(0);
-    ability_status_key_was_down_ = false;
     // The stunt jump dump key's edge stays where it is. Its handler runs above
     // this branch and its latch belongs to the keyboard rather than to a game,
     // so clearing it here would unlatch it on every frame the dump runs in.
@@ -1516,6 +1549,34 @@ void ScmGameState::OnGameFrame() {
     // The unmatched-slot diagnostic counts frames per game, so a fresh game
     // gets its own creation window and its own single report.
     pickup_enforce_frames_ = 0;
+    // The percentage belongs to the game that earned it, so the next loaded
+    // frame reports its own reading whatever this one was. A value already read
+    // and not yet pumped stays queued, exactly as the outbound checks do: the
+    // frame runs many times per bridge poll, so quitting right after the last
+    // point of a game would otherwise drop the hundred it just reached. The cost
+    // is that a queued number can go out while the frontend is up, so a tracker
+    // can show the save just left for as long as one poll of the next game.
+    reported_percentage_ = -1;
+    // The pacer and what it has handed over belong to the game that received
+    // them. A fresh game reads its own globals as the starting point, so a
+    // load whose unlocks are already saved hands over nothing, and a new game
+    // hands the whole list over at the pace below.
+    // Takes the pacer and the rotation cursor, and leaves the queued checks.
+    ResetGrantsForNewGame(grants_, outbound_checks_);
+    // Emptied and marked stale together: an empty cache that reads clean is
+    // one no frame rebuilds, and the next game would apply no unlock at all.
+    unlock_targets_.clear();
+    items_dirty_ = true;
+    outbound_checks_held_ = true;
+    // Queued checks are deliberately NOT dropped here. A location is a
+    // permanent fact about the slot rather than about the game it was found
+    // in, and there is one game per seed, so sending a stale one costs
+    // nothing while dropping one costs it forever: DetectCompletedLocations
+    // records the location in reported_ the moment it finds it and nothing
+    // ever clears that, and a save made with the global set hands the next
+    // game a baseline that reads it as never having been a completion global
+    // at all. Quitting from an end cutscene would silently un-check the
+    // mission that just passed.
     return;
   }
 
@@ -1527,6 +1588,13 @@ void ScmGameState::OnGameFrame() {
   // controllable frame.
   const bool controllable = PlayerIsControllable();
 
+  // The hunt goal's ending, raised for as long as the client asks for it, so a
+  // load or a reconnect re-arms it in the game it landed in. The deferral is the
+  // predicate's, so the self-test holds it rather than a reader.
+  if (ShouldRaiseFinaleWarp(client_status_.finale_warp, controllable)) {
+    SetGlobal(kFinaleWarpGlobal, 1);
+  }
+
   // A world that has just come up (a new game, or a save loaded mid-session)
   // carries whatever unlock globals its save file held, which for an item
   // received after that save was made would take the ability back. Re-derive
@@ -1535,6 +1603,13 @@ void ScmGameState::OnGameFrame() {
   const bool world_loaded = FindPlayerPed() != nullptr;
   if (ShouldReDeriveUnlocks(world_loaded, world_was_loaded_, !items_.empty())) {
     items_dirty_ = true;
+    // The pacer is not touched here. A world coming up can mean the clock
+    // restarted behind it, but TakeGrantSlot answers that itself from the
+    // only evidence there is, a `now` earlier than one it was already handed,
+    // and it reaches loads this edge cannot: the edge needs a frame that
+    // saw no player, and a pause-menu load runs the whole restart inside a
+    // window where the game frame does not fire at all. What it catches is
+    // bounded, and the bound is stated where the check lives.
     if (logger_) logger_("world loaded, re-deriving unlock globals");
   }
   world_was_loaded_ = world_loaded;
@@ -1546,27 +1621,65 @@ void ScmGameState::OnGameFrame() {
   // until the resync lands, which the locks make loud (a hundred packages and
   // fifteen property icons sink and rise again, and each class announces
   // itself). The same guard ShouldReDeriveUnlocks already applies.
-  if (items_dirty_ && controllable && !items_.empty()) {
+  bool granted_this_frame = false;
+  if (controllable && !items_.empty()) {
     // Re-derive every unlock global from the full item list: zero each distinct
-    // unlock global, then tally received copies per global.
-    std::map<int, int> counts;
-    for (const auto& [item_id, global_index] : item_globals_) counts[global_index] = 0;
-    for (const auto& [item_id, global_indices] : content_district_globals_) {
-      for (const int global_index : global_indices) counts[global_index] = 0;
-    }
-    for (const auto& [received_index, item_id] : items_) {
-      const auto it = item_globals_.find(item_id);
-      if (it != item_globals_.end()) ++counts[it->second];
-      // A content item also releases every district it covers, which is one
-      // global for a split item and eleven for a whole class.
-      const auto districts = content_district_globals_.find(item_id);
-      if (districts != content_district_globals_.end()) {
-        for (const int global_index : districts->second) ++counts[global_index];
+    // unlock global, then tally received copies per global. This is the target,
+    // and it is the server's answer rather than the game's, so it is rebuilt
+    // whenever the item list moves and read from the cache on every frame
+    // between. What the GAME holds is read fresh below, every frame.
+    if (items_dirty_) {
+      std::map<int, int> counts;
+      for (const auto& [item_id, global_index] : item_globals_) counts[global_index] = 0;
+      for (const auto& [item_id, global_indices] : content_district_globals_) {
+        for (const int global_index : global_indices) counts[global_index] = 0;
       }
+      for (const auto& [received_index, item_id] : items_) {
+        const auto it = item_globals_.find(item_id);
+        if (it != item_globals_.end()) ++counts[it->second];
+        // A content item also releases every district it covers, which is one
+        // global for a split item and eleven for a whole class.
+        const auto districts = content_district_globals_.find(item_id);
+        if (districts != content_district_globals_.end()) {
+          for (const int global_index : districts->second) ++counts[global_index];
+        }
+      }
+      unlock_targets_.swap(counts);
+      items_dirty_ = false;
+      if (logger_) logger_("re-derived the unlock targets");
     }
-    for (const auto& [global_index, count] : counts) SetGlobal(global_index, count);
-    items_dirty_ = false;
-    if (logger_) logger_("applied items to unlock globals");
+
+    // Every global is answered against what the game itself holds, never
+    // against a memory of what was written. That is what carries the load edge:
+    // a save restores its own values and the next frame reads them, so an
+    // unlock the save predates is handed over again and one it already has
+    // costs nothing. It is also what heals a global a script clears.
+    // Observed first, planned second, so the choosing is a pure function the
+    // harness can hold: which globals come back at once, and which single one
+    // is worth a grant this frame. The vector is a member so a frame that
+    // changes nothing allocates nothing.
+    unlock_observations_.clear();
+    for (const auto& [global_index, target] : unlock_targets_) {
+      unlock_observations_.push_back(
+          {global_index, target, GetGlobal(global_index),
+           config_globals_.find(global_index) != config_globals_.end()});
+    }
+    const UnlockPlan plan = PlanUnlocks(unlock_observations_, grants_.last_raised_index);
+    for (const auto& [global_index, value] : plan.to_lower) {
+      SetGlobal(global_index, value);
+    }
+
+    // Handing one global over is one grant. A global taking a new value is what
+    // the SCM reacts to, and those reactions are what a flood costs: package
+    // rewards spawning vehicles, content classes releasing their pickups, area
+    // gates opening. One per slot keeps a backlog of them off a single frame.
+    if (plan.has_raise &&
+        TakeGrantSlot(grants_.pacer, RealTimeMs(), kGrantIntervalMs,
+                      kGrantWindowMs, kGrantsPerWindow)) {
+      SetGlobal(plan.raise_index, plan.raise_value);
+      grants_.last_raised_index = plan.raise_index;
+      granted_this_frame = true;
+    }
   }
 
   // Stamp the config flags every frame so the SCM knows which reward groups are
@@ -1588,12 +1701,19 @@ void ScmGameState::OnGameFrame() {
   // persists in the save. Every effect waits for the same control flag as the
   // unlock globals: planning returns nothing while the player is not
   // controllable, the index holds, and the effects land on a later frame.
-  if (FindPlayerPed() != nullptr) {
+  // An effect is a grant too, and shares the pacer with the unlock globals: a
+  // frame that already handed one over hands over nothing else, so a backlog of
+  // both kinds still arrives at one thing at a time. A weapon does a blocking
+  // load and a trap can touch every vehicle in the world, so this is the half
+  // that stalls hardest.
+  if (FindPlayerPed() != nullptr && !granted_this_frame) {
     const int applied = GetGlobal(kAppliedIndexGlobal);
-    const EffectPlan plan =
-        PlanEffects(items_, item_effects_, applied, controllable);
-    for (const ItemEffect& effect : plan.to_apply) ApplyOneShot(effect);
-    if (plan.new_applied_index != applied) {
+    const EffectPlan plan = PlanEffects(items_, item_effects_, applied,
+                                        controllable, kEffectsPerFrame);
+    if (!plan.to_apply.empty() &&
+        TakeGrantSlot(grants_.pacer, RealTimeMs(), kGrantIntervalMs,
+                      kGrantWindowMs, kGrantsPerWindow)) {
+      for (const ItemEffect& effect : plan.to_apply) ApplyOneShot(effect);
       SetGlobal(kAppliedIndexGlobal, plan.new_applied_index);
       if (logger_) logger_("applied one-shot effects");
     }
@@ -1646,9 +1766,28 @@ void ScmGameState::OnGameFrame() {
     baseline_captured_ = true;
     if (logger_) logger_("captured completion baseline");
   }
+  // Found on every frame, whether or not the player has control. Detection is a
+  // live read of a global going nonzero, not a latch, so a completion written
+  // and cleared again inside a cutscene is only ever seen by the frame it is
+  // written on. What waits for control is the SENDING, below.
   for (const std::int64_t location :
        DetectCompletedLocations(completion_watch_, baseline_, current, reported_)) {
     outbound_checks_.push_back(location);
+  }
+  // Checks leave only once the player has Tommy back, the same condition every
+  // grant waits on. They queue meanwhile and are never dropped, including
+  // across a game boundary. Written without a guard of its own: this frame
+  // already holds mutex_, taken on the first line of the handler, and mutex_
+  // is not recursive.
+  outbound_checks_held_ = !controllable;
+
+  // Read the game's own completion percentage and queue it when it has moved.
+  // Only with the world loaded: in a game still coming up the stats hold
+  // whatever the last one left behind, and the tracker would show that. The
+  // stat is the game's, not the seed's, so nothing here writes it.
+  if (world_loaded) {
+    const int percentage = DisplayedPercentage(CStats::GetPercentageProgress());
+    if (percentage != reported_percentage_) pending_percentage_ = percentage;
   }
 
   // A game is running, so anything that was waiting for one joins the queue at

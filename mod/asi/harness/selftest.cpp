@@ -15,10 +15,14 @@
 #include "../src/scm_content_locks.hpp"
 #include "../src/scm_crossings.hpp"
 #include "../src/scm_effects.hpp"
+#include "../src/scm_finale_warp.hpp"
+#include "../src/scm_grant_pacing.hpp"
 #include "../src/scm_minimap.hpp"
 #include "../src/scm_packages.hpp"
 #include "../src/scm_pickup_layout.hpp"
+#include "../src/scm_progress.hpp"
 #include "../src/scm_radio.hpp"
+#include "../src/scm_status_panel.hpp"
 #include "../src/scm_stunt_jumps.hpp"
 #include "../src/scm_toasts.hpp"
 
@@ -102,6 +106,42 @@ int main() {
     current[9032] = 4;
     auto later = DetectCompletedLocations(watch, baseline, current, reported);
     Expect(later.size() == 1 && later[0] == 542000001, "reports a later completion");
+
+    // Draining: held while the player has no control, and holding must cost a
+    // delay and never a check. The queue survives being held, survives a game
+    // boundary, and leaves in the order it was found.
+    std::vector<std::int64_t> queued = {542000001, 542000002};
+    Expect(DrainChecks(queued, true).empty(),
+           "nothing leaves while the player has no control");
+    Expect(queued.size() == 2,
+           "and what was found stays queued rather than being dropped");
+
+    // Found while held, then control returns: everything leaves, once, in
+    // order. This is the whole contract, since a check dropped here can never
+    // be found again.
+    queued.push_back(542000003);
+    const std::vector<std::int64_t> released = DrainChecks(queued, false);
+    Expect(released.size() == 3 && released[0] == 542000001 &&
+               released[1] == 542000002 && released[2] == 542000003,
+           "held then released sends every check, in the order found");
+    Expect(queued.empty(), "and the queue is empty behind them");
+    Expect(DrainChecks(queued, false).empty(),
+           "a second drain sends nothing, so no check is sent twice");
+
+    // A check found in a game the player abandons survives the boundary. This
+    // is the rule that already shipped broken once, so it is pinned against
+    // the function the boundary actually calls rather than against a drain.
+    std::vector<std::int64_t> across = {542000004, 542000005};
+    GameScopedGrants grants;
+    grants.last_raised_index = 9042;
+    TakeGrantSlot(grants.pacer, 1000, 250, 5000, 8);
+    ResetGrantsForNewGame(grants, across);
+    Expect(across.size() == 2 && across[0] == 542000004 && across[1] == 542000005,
+           "a game boundary leaves every queued check where it is");
+    Expect(grants.last_raised_index == -1 && !grants.pacer.started,
+           "and takes the pacer and the rotation cursor with it");
+    Expect(DrainChecks(across, false).size() == 2,
+           "so both reach the server in the game after");
   }
 
   // Hidden-package detection: a package seen present this game and then gone is
@@ -152,6 +192,18 @@ int main() {
            "a pickup beyond two units leaves the package collected");
   }
 
+  // The hunt goal's ending: the flag rises only while the client asks AND the
+  // player is controllable, the same deferral point every item application
+  // waits on. An ask that outran control would raise it inside the intro or a
+  // cutscene, where the script's own launch conditions cannot hold anyway.
+  {
+    Expect(ShouldRaiseFinaleWarp(true, true), "the ending is asked for and free to play");
+    Expect(!ShouldRaiseFinaleWarp(true, false),
+           "the ending waits while the player is not controllable");
+    Expect(!ShouldRaiseFinaleWarp(false, true), "no ask, no ending");
+    Expect(!ShouldRaiseFinaleWarp(false, false), "no ask and no control, no ending");
+  }
+
   // One-shot effect planning: effects apply in received order past the applied
   // index; nothing applies while the player is not controllable, and the index
   // holds there so no effect is ever skipped.
@@ -172,13 +224,13 @@ int main() {
     const std::vector<std::pair<std::int64_t, std::int64_t>> items = {
         {0, 10}, {1, 99}, {2, 11}, {3, 12}, {4, 13}};
 
-    auto blocked = PlanEffects(items, effects, 0, false);
+    auto blocked = PlanEffects(items, effects, 0, false, kEffectsPerFrame);
     Expect(blocked.to_apply.empty(),
            "nothing applies while the player is not controllable");
     Expect(blocked.new_applied_index == 0,
            "the index holds while the player is not controllable");
 
-    auto freed = PlanEffects(items, effects, 0, true);
+    auto freed = PlanEffects(items, effects, 0, true, 4);
     Expect(freed.to_apply.size() == 4 && freed.to_apply[0].type == "cash" &&
                freed.to_apply[1].type == "trap_weather" &&
                freed.to_apply[2].type == "trap_wanted" &&
@@ -186,15 +238,225 @@ int main() {
            "every pending effect applies in received order once controllable");
     Expect(freed.new_applied_index == 4, "the index reaches the last effect item");
 
-    auto resumed = PlanEffects(items, effects, 2, true);
+    auto resumed = PlanEffects(items, effects, 2, true, 4);
     Expect(resumed.to_apply.size() == 2 &&
                resumed.to_apply[0].type == "trap_wanted" &&
                resumed.to_apply[1].type == "trap_speed_up",
            "a saved index resumes past the already-applied effects");
 
-    auto done = PlanEffects(items, effects, 4, true);
+    auto done = PlanEffects(items, effects, 4, true, 4);
     Expect(done.to_apply.empty() && done.new_applied_index == 4,
            "a fully applied list repeats nothing");
+
+    // The per-frame cap: a backlog arrives at the cap's rate, in received
+    // order, and the index moves only as far as the frame actually applied, so
+    // the next frame resumes exactly where this one stopped.
+    auto capped = PlanEffects(items, effects, 0, true, 1);
+    Expect(capped.to_apply.size() == 1 && capped.to_apply[0].type == "cash",
+           "the cap holds a frame to its share of a backlog");
+    Expect(capped.new_applied_index == 1,
+           "the index counts what the frame applied, not what was pending");
+
+    auto next_frame = PlanEffects(items, effects, capped.new_applied_index, true, 1);
+    Expect(next_frame.to_apply.size() == 1 &&
+               next_frame.to_apply[0].type == "trap_weather",
+           "the frame after resumes at the next effect in received order");
+
+    // Draining the whole list one frame at a time reaches every effect exactly
+    // once, in received order, however many frames that takes.
+    int index = 0;
+    std::vector<std::string> drained;
+    for (int frame = 0; frame < 10; ++frame) {
+      const EffectPlan step = PlanEffects(items, effects, index, true, 1);
+      if (step.to_apply.empty()) break;
+      for (const ItemEffect& effect : step.to_apply) drained.push_back(effect.type);
+      index = step.new_applied_index;
+    }
+    const std::vector<std::string> expected = {"cash", "trap_weather",
+                                               "trap_wanted", "trap_speed_up"};
+    Expect(drained == expected && index == 4,
+           "a capped drain applies every effect once, in order");
+
+    // A cap of nothing applies nothing and holds the index, the same contract
+    // the toast planner keeps for a zero cap.
+    auto none = PlanEffects(items, effects, 0, true, 0);
+    Expect(none.to_apply.empty() && none.new_applied_index == 0,
+           "a zero cap applies nothing and holds the index");
+  }
+
+  // Grant pacing: a grant leaves at the interval, eight to a window, and a
+  // burst that empties the window waits for the next one. The unlock steps
+  // pick the next global to raise and every global to lower.
+  {
+    GrantPacer pacer;
+    // The first ask is always allowed and starts both the interval and the
+    // window at that moment.
+    Expect(TakeGrantSlot(pacer, 1000, 250, 5000, 8), "the first grant goes now");
+    Expect(!TakeGrantSlot(pacer, 1100, 250, 5000, 8),
+           "a second grant inside the interval waits");
+    Expect(TakeGrantSlot(pacer, 1250, 250, 5000, 8),
+           "a grant one interval later goes");
+
+    // Eight to a window: asking every interval for one whole window grants
+    // eight and then refuses, and the window rolling opens it again.
+    GrantPacer window;
+    unsigned int now = 0;
+    int granted = 0;
+    for (int step = 0; step * 250 < 5000; ++step) {
+      if (TakeGrantSlot(window, now, 250, 5000, 8)) ++granted;
+      now += 250;
+    }
+    Expect(granted == 8, "a window holds a burst to eight grants");
+    Expect(!TakeGrantSlot(window, 4999, 250, 5000, 8),
+           "the ninth grant waits for the window to roll");
+    Expect(TakeGrantSlot(window, 5000, 250, 5000, 8),
+           "the window rolling opens the next burst");
+
+    // A pacer of nothing never grants, the same shape the effect cap keeps.
+    GrantPacer refused;
+    Expect(!TakeGrantSlot(refused, 1000, 250, 5000, 0),
+           "a window of nothing never grants");
+
+    // One global at a time: a target above what the game holds is a grant, a
+    // target below it comes back at once, and a target it already holds does
+    // nothing. Reading the game rather than a memory is what carries a load,
+    // where the save brings its own values, and what heals a global a script
+    // cleared behind the mod's back.
+    Expect(PlanUnlock(5, 3, false) == UnlockAction::kRaiseAsGrant,
+           "a global short of its target is handed over as a grant");
+    Expect(PlanUnlock(3, 3, false) == UnlockAction::kNone,
+           "a global already holding its target is left alone");
+    Expect(PlanUnlock(2, 4, false) == UnlockAction::kLowerNow,
+           "a global above its target comes back at once, unpaced");
+    Expect(PlanUnlock(0, 3, false) == UnlockAction::kLowerNow,
+           "what a stale save restored is taken back at once");
+    Expect(PlanUnlock(3, 0, false) == UnlockAction::kRaiseAsGrant,
+           "a global a script cleared is handed over again");
+
+    // A global the config flags stamp every frame is theirs: lowering one would
+    // fight the stamp for as long as the game runs, so it is left alone. Raising
+    // one is still a grant, since the stamp never sits below an item target.
+    Expect(PlanUnlock(0, 1, true) == UnlockAction::kNone,
+           "a stamped global above its target is left to the stamp");
+    Expect(PlanUnlock(2, 1, true) == UnlockAction::kNone,
+           "a stamped global below its target is left alone too, since the "
+           "stamp would take the raise straight back");
+
+    // The rotation. Three pending globals, one of them stuck: something else
+    // in the game rewrites 9010 every frame, so it never reaches its target.
+    // Always taking the lowest pending index would spend every slot on it and
+    // no other unlock would ever arrive.
+    // Indices are deliberately not consecutive, so "the next above the cursor"
+    // cannot pass by behaving as "the cursor plus one" or "the next position".
+    const std::vector<UnlockObservation> pending = {
+        {9010, 3, 0, false}, {9017, 5, 1, false}, {9026, 2, 0, false}};
+    const UnlockPlan from_start = PlanUnlocks(pending, -1);
+    Expect(from_start.has_raise && from_start.raise_index == 9010 &&
+               from_start.raise_value == 3,
+           "the first raise of a pass is the lowest pending global");
+    Expect(PlanUnlocks(pending, 9010).raise_index == 9017 &&
+               PlanUnlocks(pending, 9010).raise_value == 5,
+           "the next starts past the one just handed over");
+    Expect(PlanUnlocks(pending, 9017).raise_index == 9026 &&
+               PlanUnlocks(pending, 9017).raise_value == 2,
+           "and the next past that, so a stuck global costs one slot a pass");
+    // The wrap carries the TARGET, not what the global already holds: a wrap
+    // that wrote the current value would spin forever on the same global and
+    // its item would never apply.
+    Expect(PlanUnlocks(pending, 9026).raise_index == 9010 &&
+               PlanUnlocks(pending, 9026).raise_value == 3,
+           "a pass that runs out wraps to the lowest pending global again");
+    Expect(PlanUnlocks(pending, 9999).raise_index == 9010 &&
+               PlanUnlocks(pending, 9999).raise_value == 3,
+           "a cursor above every pending global wraps rather than stalling");
+
+    // One pending global that keeps needing the same raise is served every
+    // pass rather than skipped for being the one just handed over.
+    const std::vector<UnlockObservation> alone = {{9010, 4, 1, false}};
+    Expect(PlanUnlocks(alone, 9010).has_raise &&
+               PlanUnlocks(alone, 9010).raise_index == 9010 &&
+               PlanUnlocks(alone, 9010).raise_value == 4,
+           "a single pending global is retried, at its target, not starved");
+
+    // Lowering is not paced and not rationed: every global above its target
+    // comes back in one plan, alongside whichever single raise was chosen.
+    const std::vector<UnlockObservation> mixed = {
+        {9010, 0, 3, false}, {9011, 2, 0, false}, {9012, 1, 4, false},
+        {9013, 0, 2, true}};
+    const UnlockPlan both = PlanUnlocks(mixed, -1);
+    Expect(both.to_lower.size() == 2 && both.to_lower[0].first == 9010 &&
+               both.to_lower[0].second == 0 && both.to_lower[1].first == 9012 &&
+               both.to_lower[1].second == 1,
+           "every global above its target is lowered in one plan");
+    Expect(both.has_raise && both.raise_index == 9011 && both.raise_value == 2,
+           "and exactly one raise is chosen alongside them");
+    Expect(!PlanUnlocks({{9013, 0, 2, true}}, -1).has_raise &&
+               PlanUnlocks({{9013, 0, 2, true}}, -1).to_lower.empty(),
+           "a stamped global is neither raised nor lowered");
+
+    Expect(!PlanUnlocks({}, -1).has_raise,
+           "nothing pending is nothing planned");
+
+    // A clock that restarts is caught by the pacer itself, on the only
+    // evidence there is: a `now` earlier than one it was already handed. The
+    // game restart that does this happens where no caller has a frame to
+    // watch, so a pacer holding pre-restart timestamps would otherwise refuse
+    // every grant until real time passed them.
+    GrantPacer restarted;
+    Expect(TakeGrantSlot(restarted, 3'000'000, 250, 5000, 8),
+           "a grant goes on a long-running clock");
+    Expect(!TakeGrantSlot(restarted, 3'000'100, 250, 5000, 8),
+           "and the interval still holds on that clock");
+    Expect(TakeGrantSlot(restarted, 1, 250, 5000, 8),
+           "a clock that restarted grants at once rather than stalling");
+    Expect(!TakeGrantSlot(restarted, 100, 250, 5000, 8),
+           "and the interval applies again from the new clock");
+
+    // The restart the guard CANNOT see, and why it costs nothing. A game that
+    // handed its backlog over early leaves the window start low, so a restart
+    // hours later can land above it: the difference is positive and the pacer
+    // carries the old counters. It can only under-grant, and the stale window
+    // rolls within one window plus one interval of that start, so the whole
+    // cost is a few seconds of extra wait.
+    GrantPacer carried;
+    unsigned int early = 1000;
+    for (int grant = 0; grant < 8; ++grant) {
+      TakeGrantSlot(carried, early, 250, 5000, 8);
+      early += 250;
+    }
+    // Probed at the interval rather than inside it, so what refuses is the
+    // full window and not the spacing: at 3000 the interval is satisfied
+    // exactly and the window has not rolled, so only the count of eight can
+    // say no. That also asserts the loop above really did fill the window.
+    Expect(!TakeGrantSlot(carried, 3000, 250, 5000, 8),
+           "a window handed over early refuses on its count, not its spacing");
+    Expect(!TakeGrantSlot(carried, 1200, 250, 5000, 8),
+           "a restart landing above the last window start goes unseen");
+    Expect(TakeGrantSlot(carried, 6000, 250, 5000, 8),
+           "and costs only the roll of the stale window, not a stall");
+
+    // The worst case of that bound is one window AND one interval, which the
+    // fixture above cannot reach: handing eight over early leaves the next
+    // allowed time behind the roll, so the interval never binds. Spending the
+    // eighth grant late, just inside the window, is what puts the two terms
+    // in the other order and pins the sum.
+    GrantPacer late;
+    unsigned int spent = 1000;
+    for (int grant = 0; grant < 7; ++grant) {
+      TakeGrantSlot(late, spent, 250, 5000, 8);
+      spent += 250;
+    }
+    Expect(TakeGrantSlot(late, 5999, 250, 5000, 8),
+           "the eighth grant of a window can land at the end of it");
+    // Asserted rather than assumed: without this the loop above could spend no
+    // grants at all and every line below would still pass, pinning the interval
+    // and nothing about the window.
+    Expect(late.granted_in_window == 8,
+           "and it really is the eighth, so the window is what fills");
+    Expect(!TakeGrantSlot(late, 6248, 250, 5000, 8),
+           "after which the interval still binds past the window roll");
+    Expect(TakeGrantSlot(late, 6249, 250, 5000, 8),
+           "so the wait is one window and one interval, never more");
   }
 
   // Radio planning: the resolve map sends a locked station to the next
@@ -804,22 +1066,6 @@ int main() {
            "a zero cap posts nothing and consumes nothing");
   }
 
-  // The status line the status key shows. Only configured keys reach it, so a
-  // seed that locks nothing must still say something.
-  {
-    Expect(ComposeLockStatus("", "", "", "") == "This seed locks nothing.",
-           "a seed with no lock configured says so");
-    Expect(ComposeLockStatus("Sprint", "", "", "") == "Locked: Sprint",
-           "one list carries its own label alone");
-    const std::string full =
-        ComposeLockStatus("Sprint", "Jump", "Rampages", "Hidden Packages");
-    Expect(full == std::string("Locked: Sprint") + std::string(kToastSeparator) +
-                       "Unlocked: Jump" + std::string(kToastSeparator) +
-                       "Held: Rampages" + std::string(kToastSeparator) +
-                       "Available: Hidden Packages",
-           "every non-empty list appears once, in order, separated");
-  }
-
   // The mainland routes. One item opening every crossing and one item per
   // crossing are the same reporting problem, so the world sends whichever it
   // made and this only renders it. A route with a second requirement is the
@@ -873,36 +1119,418 @@ int main() {
     Expect(plan.announce.empty(),
            "a save already carrying the routes does not re-announce");
 
-    // The status key lists every route by state, waiting counted as shut.
-    RouteStatusLists lists = ComposeRouteStatus(routes, {1, 1}, {0, 0});
-    Expect(lists.open == "Prawn Island Bridge" &&
-               lists.shut == "Starfish Island Causeway",
-           "the status lists a waiting route as shut");
-    lists = ComposeRouteStatus(routes, {0, 0}, {0, 0});
-    Expect(lists.open.empty() && lists.shut.find("Prawn Island Bridge") == 0,
-           "and lists both as shut before anything arrives");
-
     // Mismatched inputs are a caller error, not a crash: nothing is announced
     // and nothing is recorded, so a half-applied config cannot speak.
     plan = PlanRouteReports(routes, {1}, nothing, was, true);
     Expect(plan.announce.empty() && plan.next_was.empty(),
            "a route list out of step with its values reports nothing");
+  }
 
-    // The status line is the routes' own message, so a seed that locks nothing
-    // still answers the status key with them, and a seed with no routes at all
-    // produces no line to post rather than an empty one.
-    Expect(ComposeRouteStatusLine("Prawn Island Bridge",
-                                  "Leaf Links Bridge, Ocean Beach Bridge") ==
-               std::string("Open: Prawn Island Bridge") +
-                   std::string(kToastSeparator) +
-                   "Shut: Leaf Links Bridge, Ocean Beach Bridge",
-           "the route status labels both lists, separated");
-    Expect(ComposeRouteStatusLine("The mainland", "") == "Open: The mainland",
-           "and labels one alone when the crossings are whole");
-    Expect(ComposeRouteStatusLine("", "").empty(),
-           "with no routes there is no line to post");
-    Expect(ComposeLockStatus("", "", "", "") == "This seed locks nothing.",
-           "and the lock status is unchanged by the routes having their own line");
+  // The pause menu's status page. Sections are found by heading rather than by
+  // index, so adding a block never silently moves what an assertion is aiming at.
+  {
+    auto Section = [](const std::vector<StatusSection>& sections,
+                      const std::string& heading) {
+      for (const StatusSection& section : sections) {
+        if (section.heading == heading) return section;
+      }
+      return StatusSection{};
+    };
+
+    StatusPanelState state;
+    std::vector<StatusSection> sections = ComposeStatusPanel(state);
+    Expect(!sections.empty() && sections[0].heading.empty() &&
+               sections[0].rows.size() == 2 &&
+               sections[0].rows[0].value == "not connected" &&
+               sections[0].rows[1].value == "no game started",
+           "with no client and no game the summary says exactly that");
+    // The lock blocks are there for every seed, so a missing block never has to
+    // be told apart from a vanilla seed. Before a stamped game they say they do
+    // not know, because the globals they would read mean nothing yet.
+    Expect(Section(sections, "ABILITIES").rows.size() == 1 &&
+               Section(sections, "ABILITIES").rows[0].value == "No game started." &&
+               Section(sections, "CONTENT").rows[0].value == "No game started.",
+           "without a stamped game the lock blocks claim nothing about the seed");
+    StatusPanelState read_state;
+    read_state.locks_known = true;
+    Expect(Section(ComposeStatusPanel(read_state), "ABILITIES").rows[0].value ==
+               "This seed locks no ability." &&
+           Section(ComposeStatusPanel(read_state), "CONTENT").rows[0].value ==
+               "This seed holds no content.",
+           "and once the globals are read they say the seed locks nothing");
+    // The client's own blocks stay out until a client has said something.
+    Expect(Section(sections, "GOAL").rows.empty() &&
+               Section(sections, "MISSION STRANDS").rows.empty(),
+           "the goal and strand blocks wait for the client");
+
+    state.client_connected = true;
+    state.seed_hash = "8F3C1A2B";
+    state.counts_known = true;
+    state.checks_done = 61;
+    state.checks_total = 214;
+    state.items_received = 43;
+    state.percentage = 34;
+    sections = ComposeStatusPanel(state);
+    Expect(sections[0].rows.size() == 5 &&
+               sections[0].rows[2].value == "61/214" &&
+               sections[0].rows[3].value == "43" &&
+               sections[0].rows[4].value == "34%",
+           "a connected client's counts and the game's own percentage read out");
+
+    // What the client composes, rendered as its own blocks in reading order.
+    state.locks_known = true;
+    state.goal_rows = {{"Goal", "Package Fragments", StatusTone::kPlain},
+                       {"Fragments", "7 of 20", StatusTone::kPlain}};
+    state.strand_rows = {{"Cortez", "3 of 5", StatusTone::kPlain},
+                         {"Diaz", "6 of 6", StatusTone::kOpen}};
+    sections = ComposeStatusPanel(state);
+    Expect(Section(sections, "GOAL").rows.size() == 2 &&
+               Section(sections, "GOAL").rows[1].value == "7 of 20",
+           "the goal block is the client's rows verbatim");
+    // A row per strand, with the count made terse: a name and a count is what a
+    // row is for, and a name like Vercetti Protection fills a wrapped line on its
+    // own, so wrapping them would cost as many lines as rows.
+    const StatusSection strands = Section(sections, "MISSION STRANDS");
+    Expect(strands.rows.size() == 2 && strands.rows[0].label == "Cortez" &&
+               strands.rows[0].value == "3/5",
+           "each strand is a row of its name and its count");
+    Expect(strands.rows[1].value == "6/6" &&
+               strands.rows[1].tone == StatusTone::kOpen,
+           "and a finished strand carries the tone the client gave it");
+
+    // The game's own counts, which no client can answer: the package tally and
+    // the level each emergency activity has reached.
+    state.packages_collected = 37;
+    state.packages_total = 100;
+    state.paramedic_level = 7;
+    sections = ComposeStatusPanel(state);
+    const StatusSection own = Section(sections, "THE GAME COUNTS");
+    Expect(own.rows.size() == 6 && own.rows[0].label == "Hidden Packages" &&
+               own.rows[0].value == "37/100",
+           "the package tally is the game's own count of them");
+    Expect(own.rows[1].value == "7/12" && own.rows[2].value == "none",
+           "and an emergency activity reads its level or says it has none");
+    // The taxi and the pizza boy keep no level in the game's stats, so the page
+    // turns their fares and deliveries into the levels the checks are placed on.
+    StatusPanelState jobs = state;
+    jobs.taxi_fares = 37;
+    jobs.pizza_deliveries = 100;
+    const StatusSection counted = ComposeRewardSection(jobs);
+    Expect(counted.rows[4].label == "Taxi" && counted.rows[4].value == "3/10",
+           "every tenth fare is a taxi level");
+    Expect(counted.rows[5].label == "Pizza" && counted.rows[5].value == "10/10" &&
+               counted.rows[5].tone == StatusTone::kOpen,
+           "and the last pizza level reads as done rather than as eleven");
+
+    // One selected ability key and one unselected: only the selected one is
+    // listed, since an unselected key is fully vanilla.
+    state.ability_flags[kAbilitySprint] = 1;
+    state.ability_flags[kAbilityWallet] = 1;
+    state.ability_locked[kAbilityWallet] = true;
+    sections = ComposeStatusPanel(state);
+    const StatusSection abilities = Section(sections, "ABILITIES");
+    Expect(abilities.rows.size() == 2 &&
+               abilities.rows[0].value == "Locked: Wallet" &&
+               abilities.rows[0].tone == StatusTone::kHeld &&
+               abilities.rows[1].value == "Yours: Sprint" &&
+               abilities.rows[1].tone == StatusTone::kOpen,
+           "the abilities read as a locked list and a list you have");
+
+    // A content class held in some districts reports the count; one held
+    // everywhere does not, since eleven of eleven is what held already means.
+    state.content_flags[kContentRampages] = 1;
+    state.content_flags[kContentRobbableStores] = 1;
+    state.content_districts_held[kContentRampages] = 7;
+    state.content_districts_held[kContentRobbableStores] = kDistrictCount;
+    sections = ComposeStatusPanel(state);
+    // A class held in part of the city names the districts, and it names whichever
+    // list is shorter: seven of eleven held reads as the four it is free in.
+    for (int district = 0; district < 7; ++district) {
+      state.content_held[static_cast<std::size_t>(kContentRampages) * kDistrictCount +
+                         district] = true;
+    }
+    sections = ComposeStatusPanel(state);
+    const StatusSection content = Section(sections, "CONTENT");
+    Expect(content.rows.size() > 2 && content.rows[0].value == "HELD 7/11",
+           "a class held in part of the city carries its district count");
+    Expect(content.rows[1].label.empty() &&
+               content.rows[1].value.rfind("free in:", 0) == 0 &&
+               content.rows[1].tone == StatusTone::kOpen,
+           "and names the districts it is free in, being the shorter list");
+    Expect(content.rows.back().label == "Robbable Stores" &&
+               content.rows.back().value == "HELD",
+           "a class held everywhere needs no district list at all");
+    // Held in three of eleven, and the held list is the shorter one.
+    StatusPanelState few = state;
+    few.content_districts_held[kContentRampages] = 3;
+    few.content_held.fill(false);
+    for (int district = 0; district < 3; ++district) {
+      few.content_held[static_cast<std::size_t>(kContentRampages) * kDistrictCount +
+                       district] = true;
+    }
+    const StatusSection fewer = ComposeContentSection(few);
+    Expect(fewer.rows[1].value.rfind("held in:", 0) == 0 &&
+               fewer.rows[1].value.find("Ocean Beach") != std::string::npos,
+           "a class held in a few districts names those instead");
+
+    state.content_districts_held[kContentRampages] = 0;
+    state.content_held.fill(false);
+    sections = ComposeStatusPanel(state);
+    Expect(Section(sections, "CONTENT").rows[0].value == "available" &&
+               Section(sections, "CONTENT").rows[0].tone == StatusTone::kOpen,
+           "and a released class reads as available");
+
+    // A route waiting on its second item is neither open nor plainly shut, and
+    // the row is the one place a player can read that.
+    state.route_labels = {"Prawn Island Bridge", "Starfish Island Causeway"};
+    state.route_states = {RouteState::kOpen, RouteState::kWaiting};
+    sections = ComposeStatusPanel(state);
+    const StatusSection routes = Section(sections, "TO THE MAINLAND");
+    Expect(routes.rows.size() == 2 && routes.rows[0].value == "open" &&
+               routes.rows[1].value == "needs its island",
+           "each route reads out what it is doing");
+
+    // A route list out of step with its states is a caller error, not a crash:
+    // the rows stop at the shorter of the two.
+    state.route_states = {RouteState::kOpen};
+    Expect(Section(ComposeStatusPanel(state), "TO THE MAINLAND").rows.size() == 1,
+           "a route list out of step with its states stops at the shorter one");
+    state.route_states = {RouteState::kOpen, RouteState::kWaiting};
+
+    // The radio and the minimap only have rows while their options are on.
+    Expect(Section(ComposeStatusPanel(state), "RADIO").rows.empty() &&
+               Section(ComposeStatusPanel(state), "MINIMAP").rows.empty(),
+           "the radio and minimap blocks stay away while their options are off");
+    state.radio_randomized = true;
+    state.radio_unlocked[0] = true;
+    state.minimap_shuffled = true;
+    sections = ComposeStatusPanel(state);
+    const StatusSection radio = Section(sections, "RADIO");
+    Expect(radio.rows.size() < static_cast<std::size_t>(kRadioStationCount) &&
+               radio.rows[0].value == "Yours: Wildstyle" &&
+               radio.rows[0].tone == StatusTone::kOpen,
+           "the stations you have read as one wrapped list");
+    bool locked_listed = false;
+    for (const StatusRow& row : radio.rows) {
+      if (row.value.rfind("Locked:", 0) == 0 && row.tone == StatusTone::kHeld) {
+        locked_listed = true;
+      }
+    }
+    Expect(locked_listed, "and the locked ones as another");
+    Expect(Section(sections, "MINIMAP").rows.size() == 1 &&
+               Section(sections, "MINIMAP").rows[0].value == "HIDDEN",
+           "and the radar says whether the item has arrived");
+
+    // Every wrapped line is drawn from the column's own left edge, so what it has
+    // to fit is the whole column; a line carrying a label would start a third of
+    // the way in and this bound would not cover it. Checked over every
+    // combination of unlocked stations, since which names share a line is what
+    // decides the widest one, and over the abilities for the same reason.
+    bool every_line_fits = true;
+    for (int combination = 0; combination < (1 << kRadioStationCount);
+         ++combination) {
+      StatusPanelState radio_state = state;
+      for (int station = 0; station < kRadioStationCount; ++station) {
+        radio_state.radio_unlocked[station] = (combination & (1 << station)) != 0;
+      }
+      for (const StatusRow& row : ComposeRadioSection(radio_state).rows) {
+        if (!row.label.empty() || row.value.size() > kWrappedLineChars) {
+          every_line_fits = false;
+        }
+      }
+    }
+    for (int combination = 0; combination < (1 << kAbilityCount); ++combination) {
+      StatusPanelState ability_state = state;
+      for (int index = 0; index < kAbilityCount; ++index) {
+        ability_state.ability_flags[index] = 1;
+        ability_state.ability_locked[index] = (combination & (1 << index)) != 0;
+      }
+      for (const StatusRow& row : ComposeAbilitySection(ability_state).rows) {
+        if (!row.label.empty() || row.value.size() > kWrappedLineChars) {
+          every_line_fits = false;
+        }
+      }
+    }
+    Expect(every_line_fits,
+           "no wrapped line carries a label or outgrows a column, whichever "
+           "stations and abilities the seed handed out");
+
+    // The page is flattened into lines and dealt into columns of even height, so
+    // one tall block continues in the next column instead of setting the row
+    // height for the whole page.
+    const std::vector<PanelLine> lines = FlattenPanel(sections);
+    const std::vector<std::vector<PanelLine>> columns = PlanPanelColumns(lines, 4);
+    Expect(columns.size() == 4, "the plan has a column for every column asked for");
+    std::size_t placed = 0;
+    for (const std::vector<PanelLine>& column : columns) placed += column.size();
+    Expect(placed <= lines.size(),
+           "no line is dealt twice, and a blank at a column head is dropped");
+    // Reading order survives the dealing: the labels come out in the order they
+    // went in, blanks aside.
+    std::vector<std::string> flowed;
+    for (const std::vector<PanelLine>& column : columns) {
+      for (const PanelLine& line : column) {
+        if (!line.blank) flowed.push_back(line.label + "|" + line.value);
+      }
+    }
+    std::vector<std::string> composed;
+    for (const PanelLine& line : lines) {
+      if (!line.blank) composed.push_back(line.label + "|" + line.value);
+    }
+    Expect(flowed == composed, "and every line is dealt exactly once, in order");
+    // No column opens with a blank line or ends with a heading, so a title always
+    // sits above lines of its own.
+    bool well_formed = true;
+    for (const std::vector<PanelLine>& column : columns) {
+      if (column.empty()) continue;
+      if (column.front().blank || column.back().heading) well_formed = false;
+    }
+    Expect(well_formed, "no column opens on a blank line or ends on a heading");
+    // Even to within one line, which is what keeps the text at its full size.
+    int tallest = TallestColumn(columns);
+    int shortest = tallest;
+    for (const std::vector<PanelLine>& column : columns) {
+      shortest = static_cast<int>(column.size()) < shortest
+                     ? static_cast<int>(column.size())
+                     : shortest;
+    }
+    Expect(tallest - shortest <= 3, "the columns come out within a few lines of each other");
+    Expect(PlanPanelColumns(lines, 0).empty(), "asking for no columns plans none");
+    Expect(PlanPanelColumns({}, 4).size() == 4 && PlanPanelColumns({}, 4)[0].empty(),
+           "an empty panel plans empty columns");
+
+    // The busiest page any seed can produce still fits the room the cover leaves:
+    // 226 of the frontend's units, and a row is 13 at the design size, so
+    // seventeen lines is full size and anything up to about twenty-six is legible.
+    StatusPanelState full = state;
+    full.locks_known = true;
+    for (int index = 0; index < kAbilityCount; ++index) full.ability_flags[index] = 1;
+    for (int index = 0; index < kContentCount; ++index) {
+      full.content_flags[index] = 1;
+      full.content_districts_held[index] = 5;
+      for (int district = 0; district < 5; ++district) {
+        full.content_held[static_cast<std::size_t>(index) * kDistrictCount +
+                          district] = true;
+      }
+    }
+    full.strand_rows.clear();
+    for (int index = 0; index < 20; ++index) {
+      full.strand_rows.push_back({"Vercetti Protection", "1/6", StatusTone::kPlain});
+    }
+    full.route_labels = {"Prawn Island Bridge", "Leaf Links Bridge",
+                         "Ocean Beach Bridge", "Starfish Island Causeway"};
+    full.route_states = {RouteState::kOpen, RouteState::kAbsent,
+                         RouteState::kAbsent, RouteState::kWaiting};
+    full.packages_total = 100;
+    const std::vector<PanelLine> worst = FlattenPanel(ComposeStatusPanel(full));
+    Expect(TallestColumn(PlanPanelColumns(worst, 4)) <= 26,
+           "the busiest seed stays inside twenty-six lines a column");
+
+    // A list of one needs no wrapping, a list of none produces no line at all,
+    // and a name wider than the column still gets drawn rather than truncated.
+    Expect(WrapNameList("Locked", {}, StatusTone::kHeld, kWrappedLineChars).empty(),
+           "an empty list produces no line");
+    const std::vector<StatusRow> one =
+        WrapNameList("Yours", {"Wave 103"}, StatusTone::kOpen, kWrappedLineChars);
+    Expect(one.size() == 1 && one[0].value == "Yours: Wave 103",
+           "a list of one is one line, prefix and all");
+    const std::vector<StatusRow> wide =
+        WrapNameList("Yours", {"A Station Name Longer Than Any Column"},
+                     StatusTone::kOpen, 10);
+    Expect(wide.size() == 1 &&
+               wide[0].value == "Yours: A Station Name Longer Than Any Column",
+           "a name wider than the column is drawn whole rather than cut");
+    // Continuations line up under the prefix, so a list reads as one block.
+    const std::vector<StatusRow> several =
+        WrapNameList("Locked", {"Flash FM", "K-Chat", "Fever 105", "V-Rock", "VCPR"},
+                     StatusTone::kHeld, 24);
+    Expect(several.size() > 1 && several[0].value == "Locked: Flash FM,",
+           "the first line carries the prefix and as much as fits");
+    Expect(several[1].value.rfind("        ", 0) == 0,
+           "and every line after it is indented under that prefix");
+  }
+
+  // What the panel does with a menu frame. The borrowed page has no idea which
+  // row opened it, since the game resets the highlight when the page changes, so
+  // the decision is a latch taken on the pause menu. This is the part that failed
+  // in game when the panel had a page of its own.
+  {
+    PanelMenuState menu;
+    menu.owns_entry = true;
+    menu.game_loaded = true;
+    menu.pause_page = 32;
+    menu.host_page = 2;
+    menu.panel_entry = 6;
+
+    // Standing on the panel's row arms it, and that row goes into the borrowed
+    // page's parent entry so going back lands there.
+    menu.page = 32;
+    menu.highlighted_entry = 6;
+    menu.highlighted_entry_targets_host = true;
+    PanelFrame frame = PlanPanelFrame(menu, false);
+    Expect(frame.armed && !frame.draw && frame.parent_entry == 6,
+           "the panel's own row arms the borrowed page");
+
+    // The page opens with the highlight reset to its first row, and the latch is
+    // what carries the answer across.
+    menu.page = 2;
+    menu.highlighted_entry = 0;
+    menu.highlighted_entry_targets_host = false;
+    frame = PlanPanelFrame(menu, true);
+    Expect(frame.draw && frame.armed && frame.parent_entry < 0,
+           "and the panel draws on the borrowed page while it holds");
+
+    // The borrowed page's own row disarms it, so its vanilla content still opens.
+    menu.page = 32;
+    menu.highlighted_entry = 4;
+    menu.highlighted_entry_targets_host = true;
+    frame = PlanPanelFrame(menu, true);
+    Expect(!frame.armed && frame.parent_entry == 4,
+           "the page's own row disarms the panel and takes the parent entry");
+    menu.page = 2;
+    menu.highlighted_entry = 0;
+    menu.highlighted_entry_targets_host = false;
+    Expect(!PlanPanelFrame(menu, false).draw,
+           "so the borrowed page shows its own content");
+
+    // A row opening some other page never reaches that page's parent entry: the
+    // field would name a row that cannot lead there.
+    menu.page = 32;
+    menu.highlighted_entry = 0;
+    menu.highlighted_entry_targets_host = false;
+    frame = PlanPanelFrame(menu, true);
+    Expect(!frame.armed && frame.parent_entry < 0,
+           "another page's row is not written into the borrowed page");
+
+    // A page that is neither the pause menu nor the borrowed one leaves the latch
+    // alone: the player is somewhere else in the menu and will come back through
+    // the pause page, which is the only place the answer is set.
+    menu.page = 27;
+    menu.highlighted_entry = 0;
+    menu.highlighted_entry_targets_host = false;
+    Expect(PlanPanelFrame(menu, true).armed && !PlanPanelFrame(menu, true).draw,
+           "another page neither arms nor disarms the panel");
+    Expect(!PlanPanelFrame(menu, false).armed,
+           "and cannot arm it either");
+
+    // A row outside the pause page's own entries reads as no row at all.
+    menu.page = 32;
+    menu.highlighted_entry = -1;
+    menu.highlighted_entry_targets_host = true;
+    PanelFrame stray = PlanPanelFrame(menu, true);
+    Expect(!stray.armed && stray.parent_entry < 0,
+           "a row the page does not have arms nothing and is never written back");
+
+    // No entry, no panel, whatever the latch says; and no game, no panel either,
+    // since the borrowed page is reachable from the frontend's own menu too.
+    menu.owns_entry = false;
+    menu.page = 2;
+    Expect(!PlanPanelFrame(menu, true).armed && !PlanPanelFrame(menu, true).draw,
+           "without the entry there is nothing to draw");
+    menu.owns_entry = true;
+    menu.game_loaded = false;
+    Expect(!PlanPanelFrame(menu, true).draw,
+           "and the panel stays off the frontend's own menu");
   }
 
   // Recovering the stunt jump table from a block of memory. The game builds it
@@ -1101,6 +1729,25 @@ int main() {
           "zeroed memory holds no stunt jump table");
     }
   }
+
+  // The completion percentage as the stats menu prints it. The menu converts
+  // with the rounding mode set to round-toward-zero, so a player two thirds of
+  // the way into a point reads the point below, and the tracker has to agree
+  // with that screen digit for digit.
+  Expect(DisplayedPercentage(0.0f) == 0, "no progress reads zero");
+  Expect(DisplayedPercentage(93.5f) == 93, "the menu truncates rather than rounds");
+  Expect(DisplayedPercentage(99.9f) == 99, "a hair short of the end is not the end");
+  Expect(DisplayedPercentage(100.0f) == 100, "a finished game reads a hundred");
+  Expect(DisplayedPercentage(-1.0f) == 0, "a negative stat reads zero");
+  Expect(DisplayedPercentage(120.0f) == 100, "nothing reads past a hundred");
+  Expect(DisplayedPercentage(std::numeric_limits<float>::quiet_NaN()) == 0,
+         "a not-a-number stat reads zero");
+  Expect(DisplayedPercentage(std::numeric_limits<float>::infinity()) == 100,
+         "an infinite stat reads a hundred");
+  const json progress = ProgressMessage(93);
+  const std::vector<json> progress_result = RoundTrip(progress);
+  Expect(progress_result.size() == 1 && progress_result[0] == progress,
+         "progress round-trip");
 
   if (failures == 0) {
     std::cout << "OK: protocol self-test passed\n";
