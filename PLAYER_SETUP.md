@@ -46,6 +46,8 @@ This is the standard Archipelago flow. If you have played Archipelago before, it
 3. **First connection only:** a folder picker opens. Choose the folder that holds `gta-vc.exe`. The choice is saved, so later connections skip this.
 4. The client installs the in-game mod into that folder and launches the game for you. Start a **New Game** to begin the seed.
 
+If your goal is the hidden-package hunt, the last Package Fragment you receive ends the game for you: whatever you are doing at the time, Tommy goes straight into the ending of *Keep Your Friends Close...*, credits and all.
+
 ### Client commands
 
 Type these in the client console:
@@ -57,11 +59,15 @@ Type these in the client console:
 | `/installmod` | Reinstall or update the bundled mod. Close the game first. |
 | `/restore` | Restore your normal saves and stop Archipelago save isolation. Close the game first. |
 
-## In-game keys
+## The Archipelago page
 
-- **F6**: shows which way to the mainland is open, and, with ability or content
-  locks enabled in your YAML, which of those are still locked or held and which
-  have arrived.
+Pause the game and pick **ARCHIPELAGO**, above Quit Game. The page shows
+everything about your seed the game cannot tell you anywhere else: whether the
+client is connected, how many checks you have sent of how many, how many items
+have arrived, the game's own completion percentage, which way to the mainland is
+open, and, for whatever your YAML enabled, which abilities are locked, which
+content classes are still held, which radio stations you have, and whether the
+radar is hidden.
 
 ## Saves are kept separate
 
