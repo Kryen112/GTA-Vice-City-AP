@@ -28,6 +28,27 @@ UNLOCK_FIRST, UNLOCK_LAST = 9010, 9029
 MAINLAND_ANY = "any mainland crossing"
 MAINLAND_UNLOCKS = [9030, 9032, 9033, 9034, 9035]
 
+# A gate term meaning "this vanilla mission has passed", written as the launcher
+# whose guard flag records the pass. Mirrors data.IN_GAME_PASSED_PREREQUISITES,
+# which is where the world says which strand waits on which mission. The flag is
+# read out of the source at build time, so no vanilla flag number is copied by
+# hand, and reading the vanilla flag does not depend on that launcher's own
+# thread still running to have noticed the pass. Only a mission gate understands
+# the term: gate_term is its one emitter, so it belongs in MISSIONS here and in
+# add_markers.py STRANDS, and nowhere else (ACTIVITIES unpacks every term as a
+# global and a count).
+MISSION_PASSED = "mission passed"
+# Each passed term's flag, filled by resolve_passed_flags before any gate is
+# written. Spelled the same way in add_markers.py, since the two tables are
+# mirrors and a reader compares them line by line.
+PASSED_FLAGS = {}
+
+
+def mission_passed(launcher):
+    """The gate term for the mission `launcher` starts having been passed."""
+    return (MISSION_PASSED, launcher)
+
+
 # The fifteen property purchases in purchase order: (buy cutscene, the purchase
 # completion global written at that cutscene). Each purchase is an AP location,
 # and the property itself is an AP item whose ownership global sits at the same
@@ -99,10 +120,14 @@ MISSIONS = [
     ("SER1", [(9014, 1)], 9052), ("SER2", [(9014, 2)], 9053), ("SER3", [(9014, 3)], 9054),
     # Phil Cassidy (9015)
     ("PHI1", [(9015, 1)], 9055), ("PHI2", [(9015, 2)], 9056),
-    # Vercetti Protection (9016)
-    ("PRO1", [(9016, 1)], 9057),
-    ("PRO2", [(9016, 2)], 9058),
-    ("PRO3", [(9016, 3)], 9059),
+    # Vercetti Protection (9016). The strand gives from the estate, so every
+    # mission of it also waits on Rub Out having passed and handed the mansion
+    # over. That term subsumes the strand's Diaz unlock count: Rub Out cannot
+    # pass before its own gate opens on $9012 >= 5, so the count is not repeated
+    # here.
+    ("PRO1", [(9016, 1), mission_passed("BAR5")], 9057),
+    ("PRO2", [(9016, 2), mission_passed("BAR5")], 9058),
+    ("PRO3", [(9016, 3), mission_passed("BAR5")], 9059),
     # Big Mitch Baker (9017)
     ("BIK1", [(9017, 1)], 9060), ("BIK2", [(9017, 2)], 9061), ("BIK3", [(9017, 3)], 9062),
     # Umberto Robina (9018)
@@ -157,7 +182,35 @@ with open(SRC, "rb") as handle:
     raw = handle.read()
 nl = "\r\n" if b"\r\n" in raw else "\n"
 lines = raw.decode("latin-1").split(nl)
+# The source as it arrived, for the guards that ask what the GAME writes rather
+# than what this script has written since. Checking those against `lines` would
+# let an earlier transform's own output answer for the decompile.
+SOURCE_LINES = frozenset(lines)
 edits = []
+
+# The game's own completion percentage is these lines over set_progress_total,
+# and the stats menu prints it, so a suppression that swallows one costs the
+# player a percentage point with nothing to notice it by. Two things can do that:
+# deleting the line, which the count below catches, and wrapping it in one of the
+# guards this script inserts, which leaves the count alone and still stops it
+# running. Every guarded span records its skip label as it goes in, so the check
+# before the write can say exactly what each guard covers.
+PROGRESS_LINE = "player_made_progress 1"
+source_progress_points = sum(1 for line in lines if line == PROGRESS_LINE)
+guard_labels = []
+
+# What the game itself says the points add up to, so a PROGRESS_LINE that stops
+# matching (a decompile spelling it differently, or a step other than one) reads
+# as zero points and fails here rather than leaving both checks below passing
+# over nothing.
+_progress_totals = [line for line in lines if line.startswith("set_progress_total ")]
+assert len(_progress_totals) == 1, \
+    f"expected one set_progress_total, found {len(_progress_totals)}"
+declared_progress_total = int(_progress_totals[0].split()[1])
+assert source_progress_points == declared_progress_total, (
+    f"the decompile has {source_progress_points} completion points against a "
+    f"declared total of {declared_progress_total}; the percentage the stats menu "
+    "shows is not these lines, so the checks before the write mean nothing")
 
 
 def insert_after(anchor, new, description):
@@ -218,13 +271,51 @@ def derive(launcher):
 
 def gate_term(term, loopback):
     # One gate condition as script lines. MAINLAND_ANY becomes an if-or over
-    # every mainland unlock, so the gate holds under either setting; everything
-    # else is a single global at a count.
+    # every mainland unlock, so the gate holds under either setting; a passed
+    # term becomes the named launcher's own vanilla guard flag, read from the
+    # source; everything else is a single global at a count.
     if term == MAINLAND_ANY:
         return ["if or", *[f"  ${unlock} >= 1" for unlock in MAINLAND_UNLOCKS],
                 f"goto_if_false @{loopback}"]
+    if term[0] == MISSION_PASSED:
+        return ["if ", f"  {PASSED_FLAGS[term[1]]} == 1",
+                f"goto_if_false @{loopback}"]
     global_index, count = term
     return ["if ", f"  ${global_index} >= {count}", f"goto_if_false @{loopback}"]
+
+
+def resolve_passed_flags():
+    # Every passed term's flag, read from its launcher's own guard before a
+    # single gate is written. Resolved here and not inside gate_term because the
+    # wiring loop turns a NonStandard into a printed skip line, so a lazy read
+    # could leave a mission carrying its completion write and no gate at all,
+    # reported only in that printout.
+    #
+    # Each flag must also be written at exactly one site AND that write must sit
+    # inside the block of the mission the launcher launches, both halves of the
+    # guard add_markers.check_an_old_friend_flag applies to $222 and for the same
+    # reason. A gate on a flag nothing sets holds its content forever, and one on
+    # a flag written from somewhere other than the mission's own pass records
+    # something else; either way the strand hides while logic calls it reachable.
+    spans = mission_blocks()
+    for _launcher, gate_conditions, _completion in MISSIONS:
+        for term in gate_conditions:
+            if term == MAINLAND_ANY or term[0] != MISSION_PASSED:
+                continue
+            if term[1] in PASSED_FLAGS:
+                continue
+            flag, _gate_block, _loopback = derive(term[1])
+            write = f"{flag} = 1"
+            sites = [i for i, ln in enumerate(lines) if ln == write]
+            assert len(sites) == 1, (
+                f"passed gate: {write} appears at {len(sites)} sites, not one, "
+                f"so the gate cannot name the write that records the pass")
+            start, end = spans[launcher_mission_number(term[1])]
+            assert start < sites[0] < end, (
+                f"passed gate: {write} is at line {sites[0] + 1}, outside the "
+                f"block of the mission {term[1]} launches")
+            PASSED_FLAGS[term[1]] = flag
+    print(f"resolved passed gate flags for {len(PASSED_FLAGS)} launchers")
 
 
 def check_gate_mainland_terms():
@@ -232,7 +323,7 @@ def check_gate_mainland_terms():
     # setting that never writes it, so every mainland term must be MAINLAND_ANY.
     for launcher, gate_conditions, _completion in MISSIONS:
         for term in gate_conditions:
-            if term == MAINLAND_ANY:
+            if term == MAINLAND_ANY or term[0] == MISSION_PASSED:
                 continue
             assert term[0] not in MAINLAND_UNLOCKS, (
                 f"gate {launcher} names mainland unlock ${term[0]} directly; "
@@ -959,6 +1050,7 @@ def guard_replay(index, span, completion, flag):
     lines[index + span:index + span] = [f":{label}"]
     lines[index:index] = ["if or", f"  ${flag} == 0",
                           f"  ${completion} == 1", f"goto_if_false @{label}"]
+    guard_labels.append(label)
 
 
 def mission_blocks():
@@ -991,7 +1083,15 @@ def check_play_order():
     for launcher, gate_conditions, _ in MISSIONS:
         if not gate_conditions:
             continue
-        unlock, count = gate_conditions[0]
+        # A gated mission's first term is its own strand unlock, which is what
+        # groups this table by strand. Asserted rather than assumed, because a
+        # mainland or passed term first is a (global, count) unpack away from a
+        # TypeError that names neither the launcher nor the rule it broke.
+        first = gate_conditions[0]
+        assert first != MAINLAND_ANY and first[0] != MISSION_PASSED, (
+            f"play order: {launcher}'s first gate term is {first}, not its "
+            f"strand unlock")
+        unlock, count = first
         if UNLOCK_FIRST <= unlock <= UNLOCK_LAST:
             strands.setdefault(unlock, []).append((count, launcher))
     for unlock, entries in sorted(strands.items()):
@@ -1004,6 +1104,181 @@ def check_play_order():
             f"play order: strand ${unlock} gates {ordered} launch missions "
             f"{missions}, which is not the vanilla order")
     print(f"verified play order across {len(strands)} strands")
+
+
+# The finale, which the hunt goal's warp borrows two facts from: the mission its
+# launcher launches, and the vanilla flag that records its pass. Both are read
+# out of the source at build time, so neither a mission number nor a vanilla flag
+# is written down here.
+FINALE_LAUNCHER = "FIN2"
+FINALE_FACTS = {}
+
+# What the finale's ending path does with a handle, read off the source rather
+# than trusted: every opcode in that path taking one global and nothing else
+# must be one of these, so a decompile that releases a handle some other way
+# fails the build instead of leaving that handle unstamped. The writer is in the
+# list because it shares the shape: it fills a global rather than reading one.
+FINALE_RELEASES = ("delete_char", "remove_char_elegantly", "remove_blip",
+                   "remove_pickup")
+FINALE_ENDING_WRITERS = ("get_game_timer",)
+# What the skipped body creates and the ending path releases: thirteen chars
+# (two actors and eleven car passengers), three blips and three pickups. The
+# nine gang member slots the ending releases beside them are not here because
+# the setup already holds them at the sentinel.
+FINALE_HANDLE_COUNT = 19
+# The launch conditions, spelled the way the source spells them. Asserted to
+# appear in the decompile before they are emitted, because a condition Sanny
+# does not recognize as the game's own reads as a fresh always-zero global and
+# the watcher would launch the finale in the middle of another mission.
+FINALE_LAUNCH_CONDITIONS = ("  $onmission == 0",
+                            "  is_player_playing $player_char",
+                            "  can_player_start_mission $player_char")
+
+
+def resolve_finale_facts():
+    # Read before a single gate is written, for the reason resolve_passed_flags
+    # reads its flags there: the wiring loop turns a NonStandard into a printed
+    # skip line, so a lazy read could leave the watcher on a flag nothing sets,
+    # and it would then launch the finale again after every ending it plays.
+    flag, _gate_block, _loopback = derive(FINALE_LAUNCHER)
+    number = launcher_mission_number(FINALE_LAUNCHER)
+    write = f"{flag} = 1"
+    sites = [i for i, ln in enumerate(lines) if ln == write]
+    assert len(sites) == 1, (
+        f"finale warp: {write} appears at {len(sites)} sites, not one, so the "
+        f"watcher cannot tell an ending already played from one still to play")
+    start, end = mission_blocks()[number]
+    assert start < sites[0] < end, (
+        f"finale warp: {write} is at line {sites[0] + 1}, outside the block of "
+        f"the mission {FINALE_LAUNCHER} launches")
+    FINALE_FACTS["passed_flag"] = flag
+    FINALE_FACTS["mission"] = number
+    print(f"resolved finale facts: mission {number}, passed flag {flag}")
+
+
+def add_finale_warp():
+    # A macguffin hunt ends in the story's ending, so the last Package Fragment
+    # plays it: the ASI raises the warp flag and this watcher launches the finale
+    # wherever the player is standing, on the conditions every vanilla launcher
+    # waits for and no others. No position, no money, no asset count and none of
+    # the AP gate, since the goal is already met by then. The mission's own
+    # passed flag is what keeps an ending from playing twice, and it is what lets
+    # the watcher keep polling a flag the ASI raises on every frame the client
+    # asks for the ending.
+    #
+    # Inside the mission, one branch past the setup jumps to the block that plays
+    # the ending cutscene, so what the player gets is the vanilla ending, its
+    # credits, its mission pass and its completion point, and none of the fight.
+    # That block opens with make_player_safe_for_cutscene, which is what makes
+    # "in whatever state" the mission's own business rather than this script's.
+    #
+    # The body the branch skips is what creates the actors, blips and pickups the
+    # ending path then releases, so each of those handles is stamped with the
+    # sentinel the setup already uses for the rest. Handles the ending releases
+    # and the mission never creates belong to other threads, and stamping one of
+    # those would leak a live blip onto the radar for good, so ownership decides
+    # which are stamped: created in the skipped body, and not already initialized
+    # by the setup.
+    number = FINALE_FACTS["mission"]
+    start, end = mission_blocks()[number]
+    cutscenes = [i for i in range(start, end) if lines[i] == "load_cutscene 'FINALE'"]
+    assert len(cutscenes) == 1, (
+        f"finale warp: mission {number} loads the ending cutscene "
+        f"{len(cutscenes)} times, not once")
+    safe = [i for i in range(start, cutscenes[0])
+            if lines[i].startswith("make_player_safe_for_cutscene ")]
+    assert safe, (
+        "finale warp: nothing makes the player safe before the ending cutscene, "
+        "so a warp into it would land in whatever state the player was in")
+    entry = safe[-1]
+    assert lines[entry - 1].startswith(":"), (
+        "finale warp: the ending block does not open on a label, so there is "
+        "nothing to jump to")
+    target = lines[entry - 1][1:]
+    anchors = [i for i in range(start, entry)
+               if lines[i].startswith("load_special_character ")]
+    assert anchors, "finale warp: the mission setup loads no cutscene character"
+    branch = anchors[0]
+    # The jump has to stay at the gosub depth it starts at, or the return that
+    # ends the ending path returns from the wrong call. The mission's entry block
+    # gosubs its body and the branch goes in that body's own straight run, which
+    # is what these two assert: the body's label comes first, and nothing between
+    # it and the branch calls or returns.
+    entry_gosubs = [lines[i] for i in range(start, branch)
+                    if lines[i].startswith("gosub @")]
+    assert entry_gosubs, "finale warp: the mission does not gosub its own body"
+    body_label = f":{entry_gosubs[0].split('@', 1)[1].strip()}"
+    body_start = [i for i in range(start, branch) if lines[i] == body_label]
+    assert len(body_start) == 1, (
+        f"finale warp: {body_label} is the body the mission gosubs and it "
+        f"appears {len(body_start)} times before the branch, not once")
+    assert not any(lines[i].startswith("gosub @") or lines[i].strip() == "return"
+                   for i in range(body_start[0], branch)), (
+        "finale warp: the branch would go inside a nested subroutine of the "
+        "mission body, where a jump out leaves the return stack dirty")
+    # What the ending path does with a global it names alone, derived from the
+    # source: everything must be a release this transform knows how to stamp for
+    # or the writer that fills its own global. A verb outside both is a handle
+    # released in a way ownership cannot be reasoned about, so it fails here.
+    verbs = re.compile(r"^([a-z_0-9]+) \$(\d+)$")
+    unknown = sorted({match.group(1) for i in range(entry - 1, end)
+                      if (match := verbs.match(lines[i]))
+                      and match.group(1) not in FINALE_RELEASES
+                      and match.group(1) not in FINALE_ENDING_WRITERS})
+    assert not unknown, (
+        f"finale warp: the ending path uses {unknown} on a global of its own, "
+        f"which is neither a release this stamps for nor a known writer")
+    # Only the sentinel counts as already initialized. A setup that zeroed a
+    # handle instead would otherwise leave it unstamped, and the ending path
+    # would release handle zero.
+    sentinel = re.compile(r"^\$(\d+) = -1$")
+    # Ownership is any opcode filling the global, not only the creations, so a
+    # creation spelled some other way cannot read as a handle another thread
+    # owns. Stamping is still confined to what the ending releases.
+    created = re.compile(r"^[a-z_0-9]+ \$(\d+) = ")
+    released = re.compile(rf"^(?:{'|'.join(FINALE_RELEASES)}) \$(\d+)$")
+    initialized = {int(match.group(1)) for i in range(start, branch)
+                   if (match := sentinel.match(lines[i]))}
+    owned = {int(match.group(1)) for i in range(branch, entry - 1)
+             if (match := created.match(lines[i]))}
+    handles = sorted({int(match.group(1)) for i in range(entry - 1, end)
+                      if (match := released.match(lines[i]))} & owned - initialized)
+    assert len(handles) == FINALE_HANDLE_COUNT, (
+        f"finale warp: {len(handles)} handles to stamp, expected "
+        f"{FINALE_HANDLE_COUNT}; the ending path or the body it skips has moved, "
+        f"so re-derive which handles the warp has to account for: {handles}")
+    # The one thing a jump over a mission body can quietly cost the player is a
+    # completion point, the percentage the stats menu shows. The warp has to skip
+    # none of them and still reach the mission's own.
+    assert PROGRESS_LINE not in lines[branch:entry - 1], (
+        "finale warp: the body the warp skips holds a completion point")
+    assert PROGRESS_LINE in lines[entry - 1:end], (
+        "finale warp: the ending path reaches no completion point, so the warp "
+        "would cost the player the finale's percentage")
+    skip = "APFINWARP"
+    lines[branch:branch] = [
+        "if ", f"  ${FINALE_WARP} == 1", f"goto_if_false @{skip}",
+        *[f"${handle} = -1" for handle in handles],
+        f"goto @{target}",
+        f":{skip}",
+    ]
+    for condition in FINALE_LAUNCH_CONDITIONS:
+        assert condition in SOURCE_LINES, (
+            f"finale warp: the source never writes {condition!r}, so the "
+            f"watcher would be emitting a condition this game does not use")
+    body = ["", ":APFIN", "script_name 'APFIN'", "",
+            ":APFIN_LOOP", "wait 500",
+            "if and", f"  ${FINALE_WARP} == 1",
+            f"  {FINALE_FACTS['passed_flag']} == 0",
+            *FINALE_LAUNCH_CONDITIONS,
+            "goto_if_false @APFIN_LOOP",
+            f"load_and_launch_mission_internal {number}",
+            "goto @APFIN_LOOP"]
+    insert_before(":GEN1", body, "APFIN finale warp watcher")
+    insert_after("start_new_script @HOT ", ["start_new_script @APFIN "],
+                 "boot start @APFIN")
+    edits.append(f"finale warp: mission {number} branches to @{target}, "
+                 f"{len(handles)} handles stamped")
 
 
 def suppress_mission_rewards():
@@ -1447,6 +1722,13 @@ STUNT_JUMPS_CLASS = 2
 ROBBABLE_STORES_CLASS = 4
 DISTRICT_TOP = DISTRICT_UNLOCK_BASE + len(CONTENT_KEYS_ORDER) * len(DISTRICTS) - 1
 
+# The finale warp flag, the top of the reserved block and so the foundation's
+# sizing line. The ASI raises it once the hidden-packages goal is met and the
+# APFIN watcher launches the finale from it (resolve_finale_facts and
+# add_finale_warp above, which read it from here because it tops this block).
+# Mirrors scm.FINALE_WARP_GLOBAL, pinned by a world test.
+FINALE_WARP = DISTRICT_TOP + 1
+
 
 def district_unlock(class_index, district):
     assert district in DISTRICTS, f"unknown district {district!r}"
@@ -1493,14 +1775,22 @@ PACKAGE_REWARD_APPLY = [
     (9385, "switch_car_generator $1979 cars_to_generate_to 101"),
 ]
 
-# The vanilla :PACKAGE grant blocks: label -> lines after it (progress + help +
-# grant) to gate out when packages are shuffled. The hunter block covers both
-# safehouse branches.
+# The vanilla :PACKAGE grant blocks: label -> (the lines left to run, the count
+# gated out behind them) when packages are shuffled. Every block opens with
+# player_made_progress, one of the game's 154 completion points, and that point
+# belongs to reaching ten more packages rather than to the reward, so it runs
+# whoever owns the reward and the stats menu still reads a hundred percent on a
+# finished seed. What follows is the help text and the reward itself, which AP
+# owns. The hunter block covers both safehouse branches, and the tenth block
+# sleeps before its point, so a shuffled seed runs that wait as well: five
+# seconds in a thread that goes on to wait again either way.
 PACKAGE_BLOCKS = [
-    ("PACKAGE_55", 3), ("PACKAGE_111", 3), ("PACKAGE_167", 3),
-    ("PACKAGE_223", 3), ("PACKAGE_279", 3), ("PACKAGE_335", 3),
-    ("PACKAGE_391", 3), ("PACKAGE_447", 3), ("PACKAGE_503", 3),
-    ("PACKAGE_559", 12),
+    ("PACKAGE_55", [PROGRESS_LINE], 2), ("PACKAGE_111", [PROGRESS_LINE], 2),
+    ("PACKAGE_167", [PROGRESS_LINE], 2), ("PACKAGE_223", [PROGRESS_LINE], 2),
+    ("PACKAGE_279", [PROGRESS_LINE], 2), ("PACKAGE_335", [PROGRESS_LINE], 2),
+    ("PACKAGE_391", [PROGRESS_LINE], 2), ("PACKAGE_447", [PROGRESS_LINE], 2),
+    ("PACKAGE_503", [PROGRESS_LINE], 2),
+    ("PACKAGE_559", ["wait 5000", PROGRESS_LINE], 10),
 ]
 
 
@@ -1510,13 +1800,18 @@ def guard_span(index, span, flag, label):
     # the guard insert does not shift it).
     lines[index + span:index + span] = [f":{label}"]
     lines[index:index] = ["if ", f"  ${flag} == 0", f"goto_if_false @{label}"]
+    guard_labels.append(label)
 
 
 def suppress_package_grants():
-    for label, span in PACKAGE_BLOCKS:
+    for label, kept, span in PACKAGE_BLOCKS:
         hits = [i for i, ln in enumerate(lines) if ln == f":{label}"]
         assert len(hits) == 1, f"package suppress: :{label} matched {len(hits)}"
-        guard_span(hits[0] + 1, span, PACKAGES_SHUFFLED, f"{label}_APGATE")
+        start = hits[0] + 1
+        assert lines[start:start + len(kept)] == kept, (
+            f"package suppress: :{label} opens with "
+            f"{lines[start:start + len(kept)]}, not {kept}")
+        guard_span(start + len(kept), span, PACKAGES_SHUFFLED, f"{label}_APGATE")
     edits.append(f"suppress {len(PACKAGE_BLOCKS)} package grant blocks")
 
 
@@ -1620,18 +1915,20 @@ def add_reward_applier():
 # Foundation: initialize the radio resolve map to identity (vanilla until the
 # ASI overwrites it) and reference the highest reserved global once so Sanny
 # sizes the whole $9000..N block as real zero-initialized globals. The last
-# line must equal scm.highest_reserved_global() (now the top district content
-# unlock $9514: 26 unlocks + 340 completions + 15 reward globals + 3 config
-# flags + 19 radio globals + 15 ownership globals + the minimap flag and unlock
-# + 4 class-cash flags + 16 ability globals + 10 content globals + 55 district
-# content globals, 505 in all, from $9010 up; the ten below that are the seed
-# hash and the bookkeeping scratch).
+# line must equal scm.highest_reserved_global() (now the finale warp flag
+# $9515: 26 unlocks + 340 completions + 15 reward globals + 3 config flags + 19
+# radio globals + 15 ownership globals + the minimap flag and unlock + 4
+# class-cash flags + 16 ability globals + 10 content globals + 55 district
+# content globals + the warp flag, 506 in all, from $9010 up; the ten below
+# that are the seed hash and the bookkeeping scratch).
 # add_markers.py anchors on that line.
 foundation = [f"${RADIO_RESOLVE_BASE + station} = {station}" for station in range(9)]
-foundation += [f"${RADIO_REQUEST} = 0", f"${PROPERTIES_ENABLED} = 0", f"${DISTRICT_TOP} = 0"]
-insert_after("script_name 'HOT'", foundation, f"foundation radio identity + ${DISTRICT_TOP} = 0")
+foundation += [f"${RADIO_REQUEST} = 0", f"${PROPERTIES_ENABLED} = 0", f"${FINALE_WARP} = 0"]
+insert_after("script_name 'HOT'", foundation, f"foundation radio identity + ${FINALE_WARP} = 0")
 check_play_order()
 check_gate_mainland_terms()
+resolve_passed_flags()
+resolve_finale_facts()
 for launcher, gate_conditions, completion_global in MISSIONS:
     try:
         wire(launcher, gate_conditions, completion_global)
@@ -1641,6 +1938,7 @@ mainland_shared, mainland_crossings, west_gate_open = relocate_mainland_open()
 add_area_watcher(mainland_shared, mainland_crossings,
                  sever_starfish_east_open(), west_gate_open)
 add_package_watcher()
+add_finale_warp()
 add_purchase_completions()
 defer_safehouse_grants()
 check_property_saves()
@@ -1667,6 +1965,31 @@ add_reward_applier()
 add_radio_watcher()
 redirect_scripted_stations()
 audit_cash_sites()
+
+built_progress_points = sum(1 for line in lines if line == PROGRESS_LINE)
+assert built_progress_points == source_progress_points, (
+    f"the build carries {built_progress_points} completion points where the "
+    f"decompile has {source_progress_points}; a suppression is deleting the "
+    "percentage the stats menu shows")
+guard_line_positions = {}
+for index, line in enumerate(lines):
+    if line.startswith("goto_if_false @") or line.startswith(":"):
+        guard_line_positions.setdefault(line, index)
+guarded_points = []
+for guard_label in guard_labels:
+    opens = guard_line_positions.get(f"goto_if_false @{guard_label}")
+    closes = guard_line_positions.get(f":{guard_label}")
+    # A guard whose own lines have gone is not an exemption from the one check
+    # that catches silent suppression: it means the build no longer reads the way
+    # this check assumes, which is exactly when it must speak up.
+    assert opens is not None and closes is not None, (
+        f"guard {guard_label} has no goto and label pair left in the build, so "
+        "what it covers cannot be checked")
+    if PROGRESS_LINE in lines[opens:closes]:
+        guarded_points.append(guard_label)
+assert not guarded_points, (
+    f"these guards cover a completion point, so the percentage the stats menu "
+    f"shows can no longer reach a hundred: {guarded_points}")
 
 with open(DST, "wb") as handle:
     handle.write(nl.join(lines).encode("latin-1"))

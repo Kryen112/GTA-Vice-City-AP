@@ -63,6 +63,10 @@ def main() -> int:
           "vanilla collapse. The SCM gates venue missions, the safehouse and "
           "business save threads, and the Pole Position and Sunshine Autos "
           "asset-completion recognitions on them)")
+    print(f"- Finale warp:    ${scm.FINALE_WARP_GLOBAL}  (ASI writes 1 while the "
+          "client asks for the story's ending, which the hidden-packages goal does "
+          "once it is met; the SCM's APFIN watcher launches the finale from it and "
+          "the mission jumps straight to its ending cutscene)")
     print(f"- Highest reserved global: ${scm.highest_reserved_global()} "
           "(reference it once so Sanny grows the global space to cover the block)")
     print()
@@ -134,6 +138,13 @@ def main() -> int:
                 parts.append(f"${scm.completion_global(purchase)} >= 1 (property bought)")
                 ownership = data.ownership_item_name(strand)
                 parts.append(f"${scm.ownership_global(ownership)} >= 1 (property owned)")
+            passed_gate = data.IN_GAME_PASSED_PREREQUISITES.get(strand)
+            if passed_gate is not None:
+                # Not a logic term and not a reserved global: the shipped gate
+                # reads the vanilla passed flag of that mission, so the strand's
+                # markers wait for what the mission hands over. Logic holds the
+                # progressive stand-in instead, which is already printed above.
+                parts.append(f"{passed_gate} passed (vanilla flag)")
             if mission == "Cap the Collector":
                 parts.append(f"${data.FINALE_COP_LAND_FLAG} >= 1 (Cop Land passed)")
                 parts.append(f"${data.FINALE_HIT_THE_COURIER_FLAG} >= 1 (Hit the Courier passed)")

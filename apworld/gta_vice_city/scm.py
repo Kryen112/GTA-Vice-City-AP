@@ -158,6 +158,17 @@ DISTRICT_KEYS: list[str] = list(district_data.DISTRICTS)
 DISTRICT_UNLOCK_BASE = CONTENT_UNLOCK_BASE + len(CONTENT_KEYS)
 DISTRICT_UNLOCK_COUNT = len(CONTENT_KEYS) * len(DISTRICT_KEYS)
 
+# The finale warp flag tops the reserved block. The client sets it in the status
+# frame once the hidden-packages goal is met and the ASI writes it here; the
+# main.scm's APFIN watcher reads it and launches Keep Your Friends Close...
+# straight into its ending cutscene, wherever the player is standing. A hunt goal
+# ends the story the way the story ends, so the last fragment plays the ending
+# rather than leaving the finale to be walked into. Nothing else reads it: the
+# other two goals cannot be met before that mission has passed, and the watcher
+# holds on the mission's own passed flag, so a game that has seen the ending
+# never sees it again.
+FINALE_WARP_GLOBAL = DISTRICT_UNLOCK_BASE + DISTRICT_UNLOCK_COUNT
+
 
 def unlock_global(key: str) -> int:
     return UNLOCK_BASE + UNLOCK_KEYS.index(key)
@@ -244,7 +255,7 @@ def unlocked_district_globals(selected_keys: frozenset[str]) -> dict[int, int]:
     at all, in any seed: 13 of the 55 pairs, since Leaf Links has only packages
     and Escobar International no properties. Those get no item either, so
     leaving them zero would read as permanently held, which the ASI's own
-    accounting believes: a class would report as part-held on the status key
+    accounting believes: a class would report as part-held on the status page
     forever, and a pickup the district table failed to place would never be
     released by anything.
     """
@@ -289,7 +300,7 @@ def content_districts() -> list[dict]:
 
 
 def highest_reserved_global() -> int:
-    return DISTRICT_UNLOCK_BASE + DISTRICT_UNLOCK_COUNT - 1
+    return FINALE_WARP_GLOBAL
 
 
 def mainland_routes(split_mainland_access: bool) -> list[dict]:

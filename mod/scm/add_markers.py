@@ -28,6 +28,19 @@ CLEO_OUT = sys.argv[3] if len(sys.argv) > 3 else None
 MAINLAND_ANY = "any mainland crossing"
 MAINLAND_UNLOCKS = [9030, 9032, 9033, 9034, 9035]
 
+# A gate term meaning "this vanilla mission has passed", mirroring
+# build_scm.MISSION_PASSED and, behind it, data.IN_GAME_PASSED_PREREQUISITES.
+# Written as the launcher whose guard flag records the pass; the flag itself is
+# read out of the source, the way this pass reads every marker coordinate. Only
+# strand_block emits it, so the term belongs in STRANDS and nowhere else.
+MISSION_PASSED = "mission passed"
+
+
+def mission_passed(launcher):
+    """The gate term for the mission `launcher` starts having been passed."""
+    return (MISSION_PASSED, launcher)
+
+
 # The vanilla flag An Old Friend sets as it ends, which is the game's own record
 # that the opening mission is done. Read rather than mirrored into a reserved
 # global, the way the finale gate reads vanilla $273, $268 and $1175: it is a
@@ -53,9 +66,14 @@ STRANDS = {
     "DeathRow": [("KEN1", [(9013, 1)])],
     "Avery": [("SER1", [(9014, 1)]), ("SER2", [(9014, 2)]), ("SER3", [(9014, 3)])],
     "Phil": [("PHI1", [(9015, 1)]), ("PHI2", [(9015, 2)])],
-    "VercettiProtection": [("PRO1", [(9016, 1)]),
-                           ("PRO2", [(9016, 2)]),
-                           ("PRO3", [(9016, 3)])],
+    # The protection strand gives from the estate, so its markers also wait on
+    # Rub Out having passed and handed the mansion over: on the unlock alone
+    # they stand inside the mansion while Diaz still owns it. The term subsumes
+    # the strand's Diaz unlock count, since Rub Out cannot pass before its own
+    # gate opens on that count.
+    "VercettiProtection": [("PRO1", [(9016, 1), mission_passed("BAR5")]),
+                           ("PRO2", [(9016, 2), mission_passed("BAR5")]),
+                           ("PRO3", [(9016, 3), mission_passed("BAR5")])],
     "Baker": [("BIK1", [(9017, 1)]), ("BIK2", [(9017, 2)]), ("BIK3", [(9017, 3)])],
     "Umberto": [("CUB1", [(9018, 1)]), ("CUB2", [(9018, 2)]),
                 ("CUB3", [(9018, 3)]), ("CUB4", [(9018, 4)])],
@@ -90,12 +108,15 @@ STRANDS = {
                     ("TWAR3", [(9026, 3), (9340, 1), (9417, 1)])],
 }
 
-# Fresh scratch globals, all above the ASI-written block (its top is the highest
-# district content unlock, $9514). One handle, one started-flag, one shown-flag
-# per managed mission.
-HANDLE_BASE = 9515
-STARTED_BASE = 9575
-SHOWN_BASE = 9635
+# Fresh scratch globals, all above the ASI-written block, whose top is the
+# finale warp flag: build_scm's foundation sizes the reserved block by writing
+# that global once, and this scratch starts one above it. Both halves of that
+# relation live here so they move together, and the write before DST is checked
+# against it. One handle, one started-flag, one shown-flag per managed mission.
+SIZING_GLOBAL = 9515
+HANDLE_BASE = SIZING_GLOBAL + 1
+STARTED_BASE = HANDLE_BASE + 60
+SHOWN_BASE = STARTED_BASE + 60
 MARKER_SPRITE_DEFAULT = "34"  # generic mission-attempt sprite; overridden per giver
 
 with open(SRC, "rb") as handle:
@@ -129,6 +150,22 @@ for i, ln in enumerate(lines):
         label_at[ln[1:]] = i
 
 check_an_old_friend_flag()
+
+MISSION_HEADER = re.compile(r"^//-------------Mission (\d+)---------------$")
+
+
+def mission_blocks():
+    # Mission number -> (start, end) line span, from the decompile's own header
+    # comments. Mirrors build_scm.mission_blocks; build_scm leaves the comments
+    # in place, so they are still here to read.
+    found = [(int(MISSION_HEADER.match(ln).group(1)), i)
+             for i, ln in enumerate(lines) if MISSION_HEADER.match(ln)]
+    spans = {}
+    for position, (number, start) in enumerate(found):
+        end = found[position + 1][1] if position + 1 < len(found) else len(lines)
+        spans[number] = (start, end)
+    return spans
+
 
 create_re = re.compile(
     r"^add_sprite_blip_for_contact_point (\$\d+) = create_icon_marker_and_sphere (\S+) at (\S+) (\S+) (\S+)$")
@@ -195,6 +232,13 @@ def check_play_order():
     # APMARK's in-strand ordinal while the gate count drives the unlock, so both
     # orderings are checked and each must agree with the other.
     for strand, missions in STRANDS.items():
+        # Same assumption as build_scm.check_play_order, asserted for the same
+        # reason: a mainland or passed term first would be read as a count.
+        for launcher, gate in missions:
+            first = gate[0]
+            assert first != MAINLAND_ANY and first[0] != MISSION_PASSED, (
+                f"play order: {launcher}'s first gate term is {first}, not its "
+                f"strand unlock")
         counts = [gate[0][1] for _, gate in missions]
         assert counts == list(range(1, len(counts) + 1)), (
             f"play order: strand {strand} gate counts {counts} are not 1..N in "
@@ -206,6 +250,47 @@ def check_play_order():
 
 
 check_play_order()
+
+# Every passed term's flag, resolved here and not where the watcher is written.
+# passed_flag indexes into the source through label_at, which is built once at
+# load, so a flag read after the severing and the thread relocation below would
+# index lines that have moved.
+#
+# Each flag must also be written at exactly one site AND that write must sit
+# inside the block of the mission the launcher launches, both halves of the
+# guard check_an_old_friend_flag applies to $222 and for the same reason. A gate
+# on a flag nothing sets never opens, and one on a flag written from somewhere
+# other than the mission's own pass records something else; either way the
+# strand's markers stay off the map while logic calls its missions reachable.
+# build_scm.py asserts the same two things over its own table, each file reading
+# the flag for itself: two writes in one block would satisfy both, so this narrows
+# the two picks to the same block rather than proving them one flag.
+PASSED_FLAGS = {}
+mission_spans = mission_blocks()
+for strand_missions in STRANDS.values():
+    for _launcher, gate in strand_missions:
+        for term in gate:
+            if term == MAINLAND_ANY or term[0] != MISSION_PASSED:
+                continue
+            if term[1] in PASSED_FLAGS:
+                continue
+            resolved = passed_flag(term[1])
+            assert resolved is not None, (
+                f"passed gate: launcher {term[1]} has no guard flag to gate on")
+            write = f"{resolved} = 1"
+            sites = [i for i, ln in enumerate(lines) if ln == write]
+            assert len(sites) == 1, (
+                f"passed gate: {write} appears at {len(sites)} sites, not one, "
+                f"so the gate cannot name the write that records the pass")
+            number = launched_mission(term[1])
+            assert number in mission_spans, (
+                f"passed gate: mission {number}, which {term[1]} launches, has "
+                f"no header comment to read a block from")
+            block_start, block_end = mission_spans[number]
+            assert block_start < sites[0] < block_end, (
+                f"passed gate: {write} is at line {sites[0] + 1}, outside the "
+                f"block of the mission {term[1]} launches")
+            PASSED_FLAGS[term[1]] = resolved
 
 # Resolve every managed mission to a marker spec. Missions with no locate marker
 # (none found) are dropped from marker management and reported.
@@ -400,6 +485,9 @@ def strand_block(strand, missions):
             if term == MAINLAND_ANY:
                 out += ["if or", *[f"  ${unlock} >= 1" for unlock in MAINLAND_UNLOCKS],
                         f"goto_if_false {hide}"]
+            elif term[0] == MISSION_PASSED:
+                out += ["if ", f"  {PASSED_FLAGS[term[1]]} == 1",
+                        f"goto_if_false {hide}"]
             else:
                 global_index, count = term
                 out += ["if ", f"  ${global_index} >= {count}", f"goto_if_false {hide}"]
@@ -464,9 +552,18 @@ boot = next(i for i, ln in enumerate(lines) if ln == "start_new_script @HOT ")
 lines[boot + 1:boot + 1] = ["start_new_script @APMARK "]
 
 # Grow the reserved block to cover the new scratch globals. The anchor is the
-# foundation's sizing line, the highest ASI-written global (the top district
-# content unlock).
-found = next(i for i, ln in enumerate(lines) if ln == "$9514 = 0")
+# foundation's sizing line, the highest ASI-written global (the finale warp
+# flag).
+SIZING_LINE = f"${SIZING_GLOBAL} = 0"
+sizing = [i for i, ln in enumerate(lines) if ln == SIZING_LINE]
+# Said rather than raised: a reserved global added anywhere moves the top, the
+# foundation then sizes a global this script does not name, and these writes
+# would land on top of the ASI's. Zero hits and a duplicate both fail here.
+assert len(sizing) == 1, (
+    f"the foundation's sizing line {SIZING_LINE} appears {len(sizing)} times, "
+    f"so the reserved block no longer tops out where the marker scratch starts; "
+    f"move SIZING_GLOBAL with scm.py's own highest reserved global")
+found = sizing[0]
 lines[found + 1:found + 1] = [f"${highest_global} = 0"]
 
 with open(DST, "wb") as handle:
