@@ -136,7 +136,7 @@ PICKUP_MODEL_NAMES: dict[int, str] = {
     272: "Molotov Cocktails",
     274: "Colt .45",
     275: ".357",
-    276: "Ruger",
+    276: "Kruger",
     277: "Chrome Shotgun",
     278: "S.P.A.S. 12",
     279: "Stubby Shotgun",

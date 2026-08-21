@@ -2973,6 +2973,19 @@ class TestTables(WorldTestBase):
             data.LOCATION_MISSION_REQUIREMENTS["Downtown Chopper Checkpoint"],
             ["G-spotlight"])
 
+    def test_a_weapon_is_called_what_the_pc_game_calls_it(self) -> None:
+        # The two names a rename got wrong by reaching for the common spelling.
+        # american.gxt on the PC lists the weapons as ".357, Uz-1, Tec 9, M4,
+        # Mac, MP, Kruger, Sniper rifle", so there is no Ruger and no MP5; those
+        # are the other platform's names. Pinned by literal, since the game text
+        # is not on hand here and a location name is what a player reads.
+        self.assertEqual(data.rampage_name(6), "Rampage - Washington Beach - MP")
+        self.assertEqual(data.rampage_name(15), "Rampage - Little Havana - Kruger")
+        self.assertEqual(data.PICKUP_MODEL_NAMES[276], "Kruger")
+        for name in list(data.RAMPAGE_NAMES) + list(data.PICKUP_MODEL_NAMES.values()):
+            self.assertNotIn("Ruger", name)
+            self.assertNotIn("MP5", name)
+
     def test_vehicle_rampages_are_the_unnamed_weapon_ones(self) -> None:
         # The ASI holds the weapon rampage icons by coordinate while this
         # table splits them by index, two hand-written mirrors of one
