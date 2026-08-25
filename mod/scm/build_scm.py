@@ -8,6 +8,7 @@ from its uniform structure, and the cash/banner reward is auto-detected near the
 mission's passed-flag assignment. Every anchor is asserted, so a bad match fails
 loudly. Reads SRC, writes DST; line endings preserved.
 """
+import math
 import re
 import sys
 
@@ -75,7 +76,7 @@ PURCHASES = [
 # test_property_ownership_globals_match_the_hand_written_mirrors pins all
 # fifteen ownership globals against the world's own layout, which is what
 # catches a location added anywhere earlier shifting the block.
-OWNERSHIP_BASE = 9413
+OWNERSHIP_BASE = 9555
 
 
 def purchase_index(buy_thread):
@@ -712,6 +713,8 @@ def _hold_condition(class_index, district):
     # One condition, "this district of this class is released", to add to a test
     # the vanilla script already makes. A single condition rather than a pair is
     # what config_globals buys: an unlocked class arrives already released.
+    # ">= 1" and not "== 1": released is 1 and a pair holding no content of this
+    # class at all is 2, and content has to pass in both cases.
     return f"  ${district_unlock(class_index, district)} >= 1"
 
 
@@ -865,6 +868,387 @@ def add_store_completions():
     for k in range(len(sites) - 1, -1, -1):
         lines[sites[k] + 1:sites[k] + 1] = [f"${9321 + k} = 1"]
     edits.append(f"stores: {len(sites)} completions $9321..$9335")
+
+
+# The weapon shops. Six threads sell 32 things between them, and each sale is a
+# stand-near test, an affordability test, a grant and a charge. The completion
+# globals are contiguous from here in the world's shop_data order, because the
+# shop class is appended last in the registry and completion globals follow
+# location id order.
+SHOP_COMPLETION_BASE = 9486
+
+# Whether a pending shop item hides what it sells: the wall wears the AP marker
+# in place of the item and the purchase hands over nothing until the check comes
+# back from the server.
+#
+# Two things have to hold for this to be on, and both are load-bearing rather
+# than incidental. The game loads MAIN into a fixed 225512 byte buffer, and the
+# withholding, the model swap and the rebuild on purchase together cost a few
+# thousand bytes that only exist because add_markers.py moves the six shop
+# threads out; over that line the tail of the script, which is where the audio
+# threads live, is simply not there in game. And every gate this emits carries a
+# term for SHOPS_ENABLED as well as the completion global, because a disabled
+# class behaves fully vanilla: reading the completion global alone would hand a
+# seed with shuffle_shops off nothing on a first purchase, since that global is
+# allocated either way.
+SHOP_WITHHOLD = True
+
+# The AP check marker's model, the same one a pending pickup wears. A shop puts
+# this on the wall in place of what it sells until that check is taken.
+SHOP_MARKER_MODEL = 376
+
+# One while the shuffle_shops class is on, stamped by the ASI from slot_data.
+# Mirrors scm.SHOPS_ENABLED_GLOBAL, pinned by check_scm_mirrors. Every piece of
+# the withholding asks this first, so a seed without the class leaves the shops
+# exactly as the game wrote them: the wall wears its own model and a purchase
+# pays out. Without it the script would act on the completion global alone,
+# which is allocated for every seed, and a class that is off would still change
+# the world.
+SHOPS_ENABLED = 9576
+
+# (thread, script global, what it hands over, its own model) per shop item,
+# mirroring shop_data.SHOP_ITEMS in order. The third element is a weapon type,
+# or "armour" for the body armour every Ammu-Nation sells, which grants armour
+# rather than a weapon. A weapon type appears at most once per thread, which is
+# what lets a grant identify which item is being bought, and the script global
+# is what identifies which object on the wall is that item.
+SHOP_ITEM_GRANTS = [
+    ("AMMU1", 889, 17, 274), ("AMMU1", 890, 24, 283), ("AMMU1", 891, 19, 277),
+    ("AMMU1", 892, 27, 276), ("AMMU1", 893, "armour", 368),
+    ("AMMU2", 889, 17, 274), ("AMMU2", 890, 23, 282), ("AMMU2", 891, 21, 279),
+    ("AMMU2", 892, 28, 285), ("AMMU2", 893, 12, 270),
+    ("AMMU2", 895, "armour", 368),
+    ("AMMU3", 889, 18, 275), ("AMMU3", 890, 25, 284), ("AMMU3", 891, 20, 278),
+    ("AMMU3", 892, 26, 280), ("AMMU3", 893, 29, 286),
+    ("AMMU3", 894, "armour", 368),
+    ("HARD1", 875, 2, 260), ("HARD1", 876, 7, 265), ("HARD1", 877, 8, 266),
+    ("HARD1", 878, 6, 264), ("HARD1", 879, 9, 267),
+    ("HARD2", 875, 2, 260), ("HARD2", 876, 7, 265), ("HARD2", 877, 8, 266),
+    ("HARD2", 878, 5, 263), ("HARD2", 879, 10, 268),
+    ("HARD3", 875, 2, 260), ("HARD3", 876, 7, 265), ("HARD3", 877, 8, 266),
+    ("HARD3", 878, 9, 267), ("HARD3", 879, 11, 269),
+]
+
+
+def shop_marker_heading(item_positions, shopkeeper):
+    """The heading that aims a shop's markers out of its display wall."""
+    # A shop's items hang in a line on one wall, so the coordinate they vary
+    # along is the wall and the other one is its normal. Which WAY along that
+    # normal the room lies is what the vanilla item orientation does not say: a
+    # weapon lies on its rack, so its own yaw tracks the wall rather than the
+    # room. Taking that yaw and turning it 180 degrees was right in three shops
+    # and 180 out in the other three. The shopkeeper stands IN the room, so the
+    # sign of the offset from the wall to them is the answer, and it comes from
+    # the same script.
+    spread_x = max(x for x, _y in item_positions) - min(
+        x for x, _y in item_positions)
+    spread_y = max(y for _x, y in item_positions) - min(
+        y for _x, y in item_positions)
+    count = len(item_positions)
+    middle_x = sum(x for x, _y in item_positions) / count
+    middle_y = sum(y for _x, y in item_positions) / count
+    # Both inputs are separated by an order of magnitude in every real shop, the
+    # narrowest being a 0.2 wobble along a 4.1 line and a keeper 1.5 out. Close
+    # to either boundary the geometry no longer says which wall or which side,
+    # and copysign answers +1 for a zero rather than admitting it cannot tell.
+    wall, across = sorted((spread_x, spread_y))
+    assert across > 4.0 * max(wall, 0.05), (
+        f"shops: item spreads {spread_x} by {spread_y} do not pick out a wall")
+    offset = (shopkeeper[1] - middle_y if spread_x >= spread_y
+              else shopkeeper[0] - middle_x)
+    assert abs(offset) > 1.0, (
+        f"shops: the shopkeeper stands {offset} from the display wall, too "
+        "close to say which side of it the room is on")
+    normal = ((0.0, math.copysign(1.0, offset)) if spread_x >= spread_y
+              else (math.copysign(1.0, offset), 0.0))
+    # Heading 180 faces +Y and 90 faces +X, the mapping every one of the six
+    # measured shops agrees with.
+    return math.degrees(math.atan2(normal[0], -normal[1])) % 360.0
+
+
+def marker_orientation(handle, block, heading):
+    """The marker stands upright and faces the room, whatever the item did."""
+    # The vanilla lines orient a WEAPON on a rack, so a marker box wearing
+    # them shows the player its unlit back, or for the flat-laid tools its
+    # underside. The box takes the shop's own facing instead, and no tilt,
+    # because a display box stands up straight.
+    carried = [line for line in block[1:]
+               if line.startswith(("set_object_dynamic ",
+                                   "set_object_collision "))]
+    # Every line in the block is either carried over or deliberately replaced
+    # by the facing. A kind this does not know would vanish from the marker
+    # branch without a word, so it stops the build instead.
+    known = ("set_object_dynamic ", "set_object_collision ",
+             "set_object_rotation ", "set_object_heading ")
+    unknown = [line for line in block[1:] if not line.startswith(known)]
+    assert not unknown, (
+        f"shops: the marker branch would drop {unknown}; decide whether the "
+        "marker carries it or is oriented by it")
+    return [*carried, f"set_object_heading ${handle} z_angle_to {heading}"]
+
+
+def add_shop_completions():
+    # Buying a thing for the first time is the check, so every purchase writes
+    # its completion global right after the money leaves.
+    #
+    # The CHARGE is the anchor, not the grant. A weapon purchase grants twice,
+    # once with the ammo it gives and once with a cap on a branch for a player
+    # who already owns it, and it charges once per branch; anchoring on the grant
+    # would write the completion for a sale that never happened. Anchoring on the
+    # charge and naming the item by the grant that precedes it marks exactly what
+    # was paid for, and a thread's top-up branch writes the same global again,
+    # which costs nothing.
+    completion = {}
+    handle_of = {}
+    by_object = {}
+    for index, (thread, handle, grant, model) in enumerate(SHOP_ITEM_GRANTS):
+        key = (thread, grant)
+        assert key not in completion, f"shops: {key} listed twice"
+        completion[key] = SHOP_COMPLETION_BASE + index
+        handle_of[key] = handle
+        assert (thread, handle) not in by_object, (
+            f"shops: {thread} ${handle} listed twice")
+        by_object[(thread, handle)] = (SHOP_COMPLETION_BASE + index, model)
+
+    threads = {}
+    for thread in ("AMMU1", "AMMU2", "AMMU3", "HARD1", "HARD2", "HARD3"):
+        starts = [i for i, ln in enumerate(lines) if ln == f"script_name '{thread}'"]
+        assert len(starts) == 1, f"shops: {thread} appears {len(starts)} times"
+        start = starts[0]
+        after = [i for i, ln in enumerate(lines)
+                 if i > start and ln.startswith("script_name '")]
+        threads[thread] = (start, after[0] if after else len(lines))
+
+    # How each item's object is built in vanilla: the create_object line and the
+    # set_object lines that follow it for the same handle. Captured before
+    # anything is rewritten, so a purchase can put the real item back by
+    # replaying exactly what the shop would have built.
+    vanilla_block = {}
+    for thread, (start, end) in threads.items():
+        for index in range(start, end):
+            line = lines[index]
+            if not line.startswith("create_object $"):
+                continue
+            handle = int(line.split("create_object $")[1].split(" ")[0])
+            if (thread, handle) not in by_object:
+                continue
+            block = [line]
+            for follow in range(index + 1, end):
+                if lines[follow].startswith("set_object") and \
+                        f"${handle} " in lines[follow]:
+                    block.append(lines[follow])
+                else:
+                    break
+            vanilla_block[(thread, handle)] = block
+
+    # One facing per shop, derived from the shop itself. Read before any
+    # rewriting, from the same create lines the blocks above came from.
+    marker_heading = {}
+    for thread, (start, end) in threads.items():
+        item_positions = []
+        keepers = []
+        for index in range(start, end):
+            line = lines[index]
+            if line.startswith("create_object $"):
+                handle = int(line.split("create_object $")[1].split(" ")[0])
+                if (thread, handle) in by_object:
+                    position = line.split(" at ")[1].split()
+                    item_positions.append((float(position[0]),
+                                           float(position[1])))
+            elif line.startswith("create_char $"):
+                position = line.split(" at ")[1].split()
+                keepers.append((float(position[0]), float(position[1])))
+        if not item_positions:
+            continue
+        # One char per shop thread, so the keeper is not merely the first: it is
+        # the only one, and a position driving a player-visible facing is not
+        # picked by ordering.
+        assert len(keepers) == 1, (
+            f"shops: {thread} creates {len(keepers)} chars, so which one stands "
+            "in the room is a choice this cannot make")
+        marker_heading[thread] = shop_marker_heading(item_positions, keepers[0])
+
+    # Every shop's facing was measured in game, so every shop's facing is pinned
+    # here, and the set is pinned too rather than each entry being optional.
+    # Pinning only the three whose rooms lie toward +Y would leave the X
+    # handedness free, and the flip that passes those three is exactly the one
+    # that put Downtown and Little Havana 180 degrees out.
+    verified_in_game = {"AMMU1": 180.0, "AMMU2": 180.0, "AMMU3": 90.0,
+                        "HARD1": 0.0, "HARD2": 180.0, "HARD3": 270.0}
+    assert set(marker_heading) == set(verified_in_game), (
+        "shops: the shops with derived facings and the shops measured in game "
+        f"differ by {sorted(set(marker_heading) ^ set(verified_in_game))}, so a "
+        "facing would ship unverified")
+    for thread, expected in verified_in_game.items():
+        assert marker_heading[thread] == expected, (
+            f"shops: {thread} derives {marker_heading[thread]} where {expected} "
+            "was verified in game")
+
+    # Three kinds of edit, all collected first and applied back to front so an
+    # insertion cannot move a site that has not been rewritten yet.
+    replacements = {}
+    # How many lines each replacement consumes. The creation sites take the whole
+    # vanilla block, because the orientation lines trail the create and would
+    # otherwise apply to whichever object the branch built.
+    replaced_span = {}
+    charges = []
+    seen = set()
+    label = 0
+    marker_requests = []
+    for thread, (start, end) in threads.items():
+        pending = None
+        first_object = None
+        for index in range(start, end):
+            line = lines[index]
+            if line.startswith("create_object $"):
+                if first_object is None:
+                    first_object = index
+                if not SHOP_WITHHOLD:
+                    continue
+                handle = int(line.split("create_object $")[1].split(" ")[0])
+                entry = by_object.get((thread, handle))
+                if entry is not None:
+                    global_index, model = entry
+                    # The model is a number for a weapon and a NAME for the body
+                    # armour, so the token is read out of the line rather than
+                    # matched against the number this table carries.
+                    head, _, tail = line.rpartition(" = create_object ")
+                    token, _, position = tail.partition(" at ")
+                    assert head and position, (
+                        f"shops: {thread} ${handle} is not a create_object line")
+                    assert token == str(model) or token.startswith("#"), (
+                        f"shops: {thread} ${handle} creates {token}, not {model}")
+                    label += 1
+                    # Named after the thread they sit in. A relocation cuts
+                    # a thread at the first label that is not its own, so a
+                    # label named anything else ends the cut early and takes
+                    # the rest of the thread with it.
+                    own = f"{thread}_APSHOP_OWN_{label}"
+                    made = f"{thread}_APSHOP_MADE_{label}"
+                    # The wall wears the marker until the check is taken.
+                    # Each branch carries its own orientation: the marker stands
+                    # up and faces out, the item keeps exactly what the shop gave
+                    # it.
+                    block = vanilla_block[(thread, handle)]
+                    replacements[index] = [
+                        "if and", f"  ${SHOPS_ENABLED} == 1",
+                        f"  ${global_index} == 0", f"goto_if_false @{own}",
+                        f"{head} = create_object {SHOP_MARKER_MODEL} at {position}",
+                        *marker_orientation(handle, block,
+                                            marker_heading[thread]),
+                        f"goto @{made}",
+                        f":{own}",
+                        *block,
+                        f":{made}",
+                    ]
+                    replaced_span[index] = len(block)
+            elif line.startswith("give_weapon_to_player $player_char weapon "):
+                pending = int(line.split("weapon ")[1].split(" ")[0])
+                if not SHOP_WITHHOLD:
+                    continue
+                key = (thread, pending)
+                assert key in completion, f"shops: {thread} grants unlisted {pending}"
+                label += 1
+                done = f"{thread}_APSHOP_DONE_{label}"
+                # Nothing is handed over while the check is still to be taken.
+                replacements[index] = [
+                    "if or", f"  ${SHOPS_ENABLED} == 0",
+                    f"  ${completion[key]} == 1", f"goto_if_false @{done}",
+                    line, f":{done}",
+                ]
+            elif line.startswith("add_armour_to_player "):
+                pending = "armour"
+                if not SHOP_WITHHOLD:
+                    continue
+                key = (thread, pending)
+                assert key in completion, f"shops: {thread} grants unlisted armour"
+                label += 1
+                done = f"{thread}_APSHOP_DONE_{label}"
+                replacements[index] = [
+                    "if or", f"  ${SHOPS_ENABLED} == 0",
+                    f"  ${completion[key]} == 1", f"goto_if_false @{done}",
+                    line, f":{done}",
+                ]
+            elif line.startswith("add_score $player_char money += -"):
+                assert pending is not None, (
+                    f"shops: {thread} charges at line {index} with no grant before it")
+                key = (thread, pending)
+                assert key in completion, f"shops: {thread} sells unlisted {pending}"
+                label += 1
+                charges.append((index, completion[key], (thread, handle_of[key]),
+                                label))
+                seen.add(key)
+                pending = None
+        assert first_object is not None, f"shops: {thread} creates no stock"
+        if SHOP_WITHHOLD and thread in marker_heading:
+            marker_requests.append((first_object, thread))
+
+    missing = [key for key in completion if key not in seen]
+    assert not missing, f"shops: no purchase site found for {missing}"
+
+    sites = ([(index, None, body) for index, body in replacements.items()]
+             + [(index, (global_index, object_key, tag), None)
+                for index, global_index, object_key, tag in charges]
+             + [(index, ("request", thread), None)
+                for index, thread in marker_requests])
+    # A thread's first create IS the first item it sells in all six, so the
+    # request insertion lands on the same index as that item's creation span and
+    # the two are ordered only by sorted() being stable over the concatenation
+    # above. Replacement first, then the request inserting ahead of it. The other
+    # way round, the span would eat the inserted request and strand the tail of
+    # the vanilla block, so the order is pinned here rather than left to be
+    # noticed.
+    request_indices = {index for index, _thread in marker_requests}
+    for index in request_indices & set(replacements):
+        replacement_position = next(
+            position for position, site in enumerate(sites)
+            if site[0] == index and site[2] is not None)
+        request_position = next(
+            position for position, site in enumerate(sites)
+            if site[0] == index and site[1] is not None
+            and site[1][0] == "request")
+        assert replacement_position < request_position, (
+            f"shops: the request at line {index} would be applied before the "
+            "creation span that shares its index and be eaten by it")
+    for index, kind, body in sorted(sites, key=lambda s: s[0], reverse=True):
+        if body is not None:
+            lines[index:index + replaced_span.get(index, 1)] = body
+        elif isinstance(kind, tuple) and kind[0] == "request":
+            # The marker has to be in memory before the wall can wear it, and a
+            # shop is where nothing else needs it. Asked for only when the class
+            # is on: a blocking stream flush on every shop entry is not what a
+            # seed without the class should be paying.
+            skip = f"{kind[1]}_APSHOP_NOMODEL"
+            lines[index:index] = [
+                "if ", f"  ${SHOPS_ENABLED} == 1", f"goto_if_false @{skip}",
+                f"request_model {SHOP_MARKER_MODEL}", "load_all_models_now ",
+                f":{skip}"]
+        else:
+            global_index, object_key, tag = kind
+            # The check is taken, so the wall stops advertising it. The object is
+            # rebuilt here rather than left for the shop to rebuild on the next
+            # visit, so what is bought turns back into itself while the player is
+            # still standing at it. Replays the shop's own build, so the item
+            # keeps the facing and the moving-list flag it was given.
+            handle = object_key[1]
+            if SHOP_WITHHOLD:
+                # Named after its thread, like the others: a relocation
+                # cuts a thread at the first label that is not its own.
+                # Keyed on the site, not the item: three items charge at two
+                # branches each, so an item-keyed label is defined twice.
+                kept = f"{object_key[0]}_APSHOP_KEPT_{tag}"
+                lines[index + 1:index + 1] = (
+                    [f"${global_index} = 1",
+                     "if ", f"  ${SHOPS_ENABLED} == 1", f"goto_if_false @{kept}",
+                     f"delete_object ${handle}"]
+                    + vanilla_block[object_key] + [f":{kept}"])
+            else:
+                lines[index + 1:index + 1] = [f"${global_index} = 1"]
+    edits.append(
+        f"shops: {len(charges)} purchase sites across {len(threads)} threads, "
+        f"{len(completion)} completions "
+        f"${SHOP_COMPLETION_BASE}..${SHOP_COMPLETION_BASE + len(completion) - 1}, "
+        f"{len(replacements)} lines gated on the check")
 
 
 def add_package_watcher():
@@ -1154,6 +1538,56 @@ def resolve_finale_facts():
     FINALE_FACTS["passed_flag"] = flag
     FINALE_FACTS["mission"] = number
     print(f"resolved finale facts: mission {number}, passed flag {flag}")
+
+
+def add_finale_flag():
+    # Raised on the mission's first line and dropped on its last, so the ASI can
+    # tell the mansion siege is on and leave the pickup pool alone for it.
+    #
+    # One write each because the mission has one entry label and one
+    # terminate_this_script: every path through it, passed or failed, converges
+    # on that terminate, which is what makes a single drop cover them all. Both
+    # counts are asserted rather than assumed, since a structure that grew a
+    # second exit would leave the flag raised for the rest of the session. The
+    # ASI drops it too if it ever sees it raised with no mission running, so a
+    # thread killed from outside cannot strand it either.
+    number = FINALE_FACTS["mission"]
+    start, end = mission_blocks()[number]
+    # The entry is read off the source rather than named: the mission's first
+    # label is where its thread begins, so the raise lands on the one line every
+    # run of it reaches, once.
+    entries = [i for i in range(start, end) if lines[i].startswith(":")]
+    assert entries, f"finale flag: mission {number} opens on no label"
+    entry = entries[0]
+    exits = [i for i in range(start, end)
+             if lines[i].strip() == "terminate_this_script"]
+    assert len(exits) == 1, (
+        f"finale flag: mission {number} has {len(exits)} terminate_this_script, "
+        "not one, so one drop cannot cover every way out")
+    assert exits[0] > entry, (
+        f"finale flag: mission {number} terminates at line {exits[0] + 1}, before "
+        f"its own first label at {entry + 1}, so inserting the later index first "
+        "would move the earlier one")
+    # Later index first, so inserting does not move the earlier one.
+    lines.insert(exits[0], f"${FINALE_ACTIVE} = 0")
+    lines.insert(entry + 1, f"${FINALE_ACTIVE} = 1")
+    # The only two writers, asserted. The globals below the unlock block look
+    # unused and are all taken for scratch, and this flag has to survive a whole
+    # mission: a second writer would clear it under the ASI, which reads it every
+    # frame to decide whether to touch the pool at all.
+    writers = [i for i, line in enumerate(lines)
+               if line.strip().startswith(f"${FINALE_ACTIVE} =")]
+    assert len(writers) == 3, (
+        f"finale flag: ${FINALE_ACTIVE} is written at {len(writers)} sites, not "
+        "the three expected, the foundation's sizing and initialising line plus "
+        "the raise and drop this adds, so something else uses it")
+    reads = [i for i, line in enumerate(lines)
+             if f"${FINALE_ACTIVE}" in line and i not in writers]
+    assert not reads, (
+        f"finale flag: ${FINALE_ACTIVE} is read at {len(reads)} sites in the "
+        "script, and only the ASI is meant to read it")
+    print(f"finale flag: ${FINALE_ACTIVE} raised in mission {number} and dropped "
+          "at its exit")
 
 
 def add_finale_warp():
@@ -1644,10 +2078,16 @@ def add_emergency_instrumentation():
 # Persistent-reward re-gating (Phase 3). When a reward group is shuffled (the
 # ASI stamps its config flag from slot_data), the vanilla grant is suppressed and
 # the APREWD applier drives it from the AP reward global instead. Indices match
-# scm.py: rewards $9376..$9390, packages_shuffled $9391, emergency_shuffled $9392.
+# scm.py: rewards $9518..$9532, packages_shuffled $9533, emergency_shuffled $9534.
 # $9008/$9009 are reserved once-guards for the two additive stat rewards.
-PACKAGES_SHUFFLED = 9391
-EMERGENCY_SHUFFLED = 9392
+# The finale active flag, which tops the reserved block and so is the
+# foundation's sizing line: Sanny allocates script space up to the highest global
+# written, so the top of the block has to be written once or the flag itself
+# lands outside it. That same write initialises it, which a new game needs, since
+# the layout must be live before any finale runs.
+FINALE_ACTIVE = 9659
+PACKAGES_SHUFFLED = 9533
+EMERGENCY_SHUFFLED = 9534
 
 # Radio randomization, indices matching scm.py. The ASI writes the nine resolve
 # globals (station -> itself when its item is owned, else the next unlocked
@@ -1656,36 +2096,36 @@ EMERGENCY_SHUFFLED = 9392
 # which is vanilla until the ASI overwrites it. The request global carries an
 # ASI-posted retune to the APRADIO watcher, encoded station id plus one so the
 # zero-initialized global idles.
-RADIO_RESOLVE_BASE = 9403
-RADIO_REQUEST = 9412
+RADIO_RESOLVE_BASE = 9545
+RADIO_REQUEST = 9554
 
 # The minimap unlock global, index matching scm.py. ASI-facing only (its
-# shuffled flag sits at $9428 and this unlock at $9429; no gate reads either):
+# shuffled flag sits at $9570 and this unlock at $9571; no gate reads either):
 # the ASI hides the radar disc while the flag is set and this global is zero.
-MINIMAP_UNLOCK = 9429
+MINIMAP_UNLOCK = 9571
 
 # Class-cash config flags, indices matching scm.py. The ASI stamps each to one
 # when its check class is enabled, so the class's one-time completion cash is
 # suppressed (the AP check is the reward); at zero everything pays vanilla.
 # The properties flag gates the venue mission pass cash and Checkpoint
 # Charlie's first run.
-SIDE_EVENTS_ENABLED = 9430
-STUNT_JUMPS_ENABLED = 9431
-RAMPAGES_ENABLED = 9432
-PROPERTIES_ENABLED = 9433
+SIDE_EVENTS_ENABLED = 9572
+STUNT_JUMPS_ENABLED = 9573
+RAMPAGES_ENABLED = 9574
+PROPERTIES_ENABLED = 9575
 
 # The ability lock block, indices matching scm.py: eight lock flags at
-# $9434..$9441 then eight unlock globals at $9442..$9449, all ASI-facing only
+# $9576..$9583 then eight unlock globals at $9584..$9591, all ASI-facing only
 # (no gate reads them; the ASI enforces the locks per frame and they persist
 # inside saves), so the script names none of them.
 #
 # The content lock block follows it in the same shape: five lock flags at
-# $9450..$9454 then five unlock globals at $9455..$9459, in scm.CONTENT_KEYS
+# $9592..$9596 then five unlock globals at $9597..$9601, in scm.CONTENT_KEYS
 # order (hidden packages, rampages, stunt jumps, property purchases, robbable
 # stores). No gate reads these either: a whole-class release reaches the script
 # through the district block below, which is what a gate reads.
-CONTENT_LOCK_FLAG_BASE = 9450
-CONTENT_UNLOCK_BASE = 9455
+CONTENT_LOCK_FLAG_BASE = 9593
+CONTENT_UNLOCK_BASE = 9598
 
 # The district content unlock block follows: one global per class per district,
 # a uniform five by eleven grid indexed class-major, so a class and a district
@@ -1697,11 +2137,13 @@ CONTENT_UNLOCK_BASE = 9455
 # A class the seed does not lock has its eleven stamped to 1 at config time (the
 # client's config_globals), which is what lets each gate be a single condition
 # rather than "not locked OR released", and keeps the toggle invariant: at zero
-# locks every gate falls through.
+# locks every gate falls through. A class-district pair holding no content at all
+# is stamped 2 instead, which _hold_condition passes just the same: the two are
+# apart for the status page, not for any gate.
 # Three of the five classes are pickups, so holding them belongs to the ASI and
 # the script needs nothing for them. The other two have no icon to hold, so
 # their gates belong to the script, and these are the globals those gates read.
-DISTRICT_UNLOCK_BASE = 9460
+DISTRICT_UNLOCK_BASE = 9603
 DISTRICTS = [
     "Ocean Beach", "Washington Beach",
     "Vice Point", "Starfish Island",
@@ -1722,11 +2164,9 @@ STUNT_JUMPS_CLASS = 2
 ROBBABLE_STORES_CLASS = 4
 DISTRICT_TOP = DISTRICT_UNLOCK_BASE + len(CONTENT_KEYS_ORDER) * len(DISTRICTS) - 1
 
-# The finale warp flag, the top of the reserved block and so the foundation's
-# sizing line. The ASI raises it once the hidden-packages goal is met and the
-# APFIN watcher launches the finale from it (resolve_finale_facts and
-# add_finale_warp above, which read it from here because it tops this block).
-# Mirrors scm.FINALE_WARP_GLOBAL, pinned by a world test.
+# The finale warp flag. The ASI raises it once the hidden-packages goal is met
+# and the APFIN watcher launches the finale from it (resolve_finale_facts and
+# add_finale_warp above). Mirrors scm.FINALE_WARP_GLOBAL, pinned by a world test.
 FINALE_WARP = DISTRICT_TOP + 1
 
 
@@ -1767,12 +2207,12 @@ STORE_DISTRICTS = [
 # reward-global order (body armor, chainsaw, .357, flamethrower, sniper, minigun,
 # rocket launcher, sea sparrow, rhino, hunter).
 PACKAGE_REWARD_APPLY = [
-    (9376, "$1309 = 1"), (9377, "$1310 = 1"), (9378, "$1308 = 1"),
-    (9379, "$1311 = 1"), (9380, "$1312 = 1"), (9381, "$1313 = 1"),
-    (9382, "$1314 = 1"),
-    (9383, "switch_car_generator $1977 cars_to_generate_to 101"),
-    (9384, "switch_car_generator $1978 cars_to_generate_to 101"),
-    (9385, "switch_car_generator $1979 cars_to_generate_to 101"),
+    (9518, "$1309 = 1"), (9519, "$1310 = 1"), (9520, "$1308 = 1"),
+    (9521, "$1311 = 1"), (9522, "$1312 = 1"), (9523, "$1313 = 1"),
+    (9524, "$1314 = 1"),
+    (9525, "switch_car_generator $1977 cars_to_generate_to 101"),
+    (9526, "switch_car_generator $1978 cars_to_generate_to 101"),
+    (9527, "switch_car_generator $1979 cars_to_generate_to 101"),
 ]
 
 # The vanilla :PACKAGE grant blocks: label -> (the lines left to run, the count
@@ -1891,19 +2331,19 @@ def add_reward_applier():
     body += ["", ":APREWD_EMERGENCY",
              "if ", f"  ${EMERGENCY_SHUFFLED} == 1", "goto_if_false @APREWD_LOOP"]
     booleans = [
-        (9386, "set_player_never_gets_tired $player_char infinite_run_to True"),
-        (9387, "make_player_fire_proof $player_char fireproof 1"),
-        (9389, "set_all_taxis_have_nitro 1"),
+        (9528, "set_player_never_gets_tired $player_char infinite_run_to True"),
+        (9529, "make_player_fire_proof $player_char fireproof 1"),
+        (9531, "set_all_taxis_have_nitro 1"),
     ]
     for index, (reward, grant) in enumerate(booleans):
         body += ["if ", f"  ${reward} >= 1", f"goto_if_false @APREWD_ABIL_{index}",
                  grant, f":APREWD_ABIL_{index}"]
-    body += ["if ", "  $9388 >= 1", "goto_if_false @APREWD_ARMOUR",
+    body += ["if ", "  $9530 >= 1", "goto_if_false @APREWD_ARMOUR",
              "if ", "  $9008 == 0", "goto_if_false @APREWD_ARMOUR",
              "increase_player_max_armour $player_char max_armour += 50",
              "add_armour_to_char $player_actor armour_to 150",
              "$9008 = 1", ":APREWD_ARMOUR"]
-    body += ["if ", "  $9390 >= 1", "goto_if_false @APREWD_HEALTH",
+    body += ["if ", "  $9532 >= 1", "goto_if_false @APREWD_HEALTH",
              "if ", "  $9009 == 0", "goto_if_false @APREWD_HEALTH",
              "increase_player_max_health $player_char max_health += 50",
              "$9009 = 1", ":APREWD_HEALTH"]
@@ -1915,16 +2355,23 @@ def add_reward_applier():
 # Foundation: initialize the radio resolve map to identity (vanilla until the
 # ASI overwrites it) and reference the highest reserved global once so Sanny
 # sizes the whole $9000..N block as real zero-initialized globals. The last
-# line must equal scm.highest_reserved_global() (now the finale warp flag
-# $9515: 26 unlocks + 340 completions + 15 reward globals + 3 config flags + 19
+# line must equal scm.highest_reserved_global() (now the finale active flag
+# $9658: 26 unlocks + 482 completions + 15 reward globals + 3 config flags + 19
 # radio globals + 15 ownership globals + the minimap flag and unlock + 4
 # class-cash flags + 16 ability globals + 10 content globals + 55 district
-# content globals + the warp flag, 506 in all, from $9010 up; the ten below
-# that are the seed hash and the bookkeeping scratch).
+# content globals + the warp flag + the active flag, 649 in all, from $9010 up;
+# the ten below that are the seed hash and the bookkeeping scratch).
+#
+# That last line does double duty for the active flag, which is the top: it is
+# also the flag's initialization, so a new game starts with the ambient pickup
+# layout live. It sits above the boot thread's own loop label, so it runs once
+# when the thread starts and cannot clear a flag a running finale has raised.
 # add_markers.py anchors on that line.
 foundation = [f"${RADIO_RESOLVE_BASE + station} = {station}" for station in range(9)]
-foundation += [f"${RADIO_REQUEST} = 0", f"${PROPERTIES_ENABLED} = 0", f"${FINALE_WARP} = 0"]
-insert_after("script_name 'HOT'", foundation, f"foundation radio identity + ${FINALE_WARP} = 0")
+foundation += [f"${RADIO_REQUEST} = 0", f"${PROPERTIES_ENABLED} = 0",
+               f"${FINALE_WARP} = 0", f"${FINALE_ACTIVE} = 0"]
+insert_after("script_name 'HOT'", foundation,
+             f"foundation radio identity + ${FINALE_WARP} = 0 + ${FINALE_ACTIVE} = 0")
 check_play_order()
 check_gate_mainland_terms()
 resolve_passed_flags()
@@ -1938,6 +2385,7 @@ mainland_shared, mainland_crossings, west_gate_open = relocate_mainland_open()
 add_area_watcher(mainland_shared, mainland_crossings,
                  sever_starfish_east_open(), west_gate_open)
 add_package_watcher()
+add_finale_flag()
 add_finale_warp()
 add_purchase_completions()
 defer_safehouse_grants()
@@ -1946,6 +2394,7 @@ defer_business_saves()
 gate_pole_position_completion()
 gate_sunshine_import_lists()
 add_store_completions()
+add_shop_completions()
 # Content-lock gates.
 gate_stunt_jumps()
 gate_store_robberies()

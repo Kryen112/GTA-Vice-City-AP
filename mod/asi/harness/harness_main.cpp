@@ -76,8 +76,13 @@ int main(int argc, char** argv) {
   }
   summary["pickup_layout"] = json::array();
   for (const auto& target : game.PickupTargets()) {
+    // Seven elements, the last being the completion global of the check on this
+    // slot. Echoed so the round trip proves the decode carried it; a row that
+    // arrived with six is echoed as a check global of zero, which is what the
+    // decode makes of it.
     summary["pickup_layout"].push_back(json::array(
-        {target.x, target.y, target.z, target.pickup_type, target.model, target.quantity}));
+        {target.x, target.y, target.z, target.pickup_type, target.model,
+         target.quantity, target.check_global}));
   }
   summary["mainland_routes"] = json::array();
   for (const auto& route : game.MainlandRoutes()) {

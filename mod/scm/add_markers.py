@@ -19,6 +19,15 @@ import os
 import re
 import sys
 
+# The world's own ambient pickup table, for the handles the pickup watcher polls.
+# A leaf module with no Archipelago imports, so this stays a standalone script.
+# Appended rather than inserted: that directory holds a dozen generically
+# named modules (data, items, options, regions, rules, scm) and putting it
+# first would shadow them for the rest of the process.
+sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                             "..", "..", "apworld", "gta_vice_city"))
+import pickup_data
+
 SRC, DST = sys.argv[1], sys.argv[2]
 CLEO_OUT = sys.argv[3] if len(sys.argv) > 3 else None
 
@@ -93,27 +102,44 @@ STRANDS = {
     # completion global) and owned (the ownership global its AP item drives),
     # so the beam and blip stay hidden and the launcher stays unstarted until
     # the progressive, the purchase, and the ownership item all exist.
-    "Malibu": [("BANK1", [(9023, 1), (9341, 1), (9418, 1)]),
-               ("BANK2", [(9023, 2), (9341, 1), (9418, 1)]),
-               ("BANK3", [(9023, 3), (9341, 1), (9418, 1)]),
-               ("BANK4", [(9023, 4), (9341, 1), (9418, 1)])],
-    "FilmStudio": [("PORN1", [(9024, 1), (9338, 1), (9415, 1)]),
-                   ("PORN2", [(9024, 2), (9338, 1), (9415, 1)]),
-                   ("PORN3", [(9024, 3), (9338, 1), (9415, 1)]),
-                   ("PORN4", [(9024, 4), (9338, 1), (9415, 1)])],
-    "Printworks": [("COU1", [(9025, 1), (9336, 1), (9413, 1)]),
-                   ("COU2", [(9025, 2), (9336, 1), (9413, 1)])],
-    "KaufmanCabs": [("TWAR1", [(9026, 1), (9340, 1), (9417, 1)]),
-                    ("TWAR2", [(9026, 2), (9340, 1), (9417, 1)]),
-                    ("TWAR3", [(9026, 3), (9340, 1), (9417, 1)])],
+    "Malibu": [("BANK1", [(9023, 1), (9341, 1), (9560, 1)]),
+               ("BANK2", [(9023, 2), (9341, 1), (9560, 1)]),
+               ("BANK3", [(9023, 3), (9341, 1), (9560, 1)]),
+               ("BANK4", [(9023, 4), (9341, 1), (9560, 1)])],
+    "FilmStudio": [("PORN1", [(9024, 1), (9338, 1), (9557, 1)]),
+                   ("PORN2", [(9024, 2), (9338, 1), (9557, 1)]),
+                   ("PORN3", [(9024, 3), (9338, 1), (9557, 1)]),
+                   ("PORN4", [(9024, 4), (9338, 1), (9557, 1)])],
+    "Printworks": [("COU1", [(9025, 1), (9336, 1), (9555, 1)]),
+                   ("COU2", [(9025, 2), (9336, 1), (9555, 1)])],
+    "KaufmanCabs": [("TWAR1", [(9026, 1), (9340, 1), (9559, 1)]),
+                    ("TWAR2", [(9026, 2), (9340, 1), (9559, 1)]),
+                    ("TWAR3", [(9026, 3), (9340, 1), (9559, 1)])],
 }
 
-# Fresh scratch globals, all above the ASI-written block, whose top is the
-# finale warp flag: build_scm's foundation sizes the reserved block by writing
-# that global once, and this scratch starts one above it. Both halves of that
+# Fresh scratch globals, all above the reserved block, whose top is the finale
+# active flag: build_scm's foundation sizes the reserved block by writing that
+# global once, and this scratch starts one above it. Both halves of that
 # relation live here so they move together, and the write before DST is checked
 # against it. One handle, one started-flag, one shown-flag per managed mission.
-SIZING_GLOBAL = 9515
+SIZING_GLOBAL = 9659
+
+# The ambient pickup checks. Their completion globals are contiguous from
+# here, one per slot in pickup_data order, because the pickup class is the
+# last one in the world's registry and completion globals follow location id
+# order. The handles come from pickup_data itself rather than from a copy.
+PICKUP_COMPLETION_BASE = 9376
+
+# The first of the four globals the ASI packs the seed hash into. Non-zero means
+# the ASI has stamped this seed, which is what the pickup watcher waits for
+# before latching anything.
+#
+# Zero is a safe test for "not stamped yet", which is not obvious: the ASI packs
+# the hash's ASCII CHARACTERS four to a global, not its hex nibbles, so a hash
+# beginning 0000 lands as 0x30303030 rather than as zero. Every character is a
+# hex digit, all below 0x80, so the packed value is positive whenever a hash has
+# been written and zero only when none has.
+SEED_HASH_GLOBAL = 9000
 HANDLE_BASE = SIZING_GLOBAL + 1
 STARTED_BASE = HANDLE_BASE + 60
 SHOWN_BASE = STARTED_BASE + 60
@@ -415,6 +441,53 @@ for label, filename in PORTABLE_THREADS:
         f"relocate: :{label} would reference {dangling} left in main.scm")
     ported.append((label, filename, carried))
 
+# The six weapon shops leave MAIN, one file each, the same shape as the three
+# above and for the same reason: a CLEO script runs from its own entry point.
+#
+# One file for all six was tried and does not work. Starting the other five from
+# inside the .cs needs start_new_script, and CLEO for VC does not override that
+# opcode: the game's own handler stores the operand as the new thread's
+# instruction pointer without the negative-label transform that goto, jf and
+# gosub all apply, so a label local to a .cs becomes an address below script
+# space and the thread runs whatever is there. Only the thread the file itself
+# becomes would have run.
+#
+# What makes one-file-each possible is duplication. Every shop gosubs shared
+# subroutines that live inside HARD3's label space, so each file carries its own
+# copy of HARD3's body; the copies are inert except through those gosubs, since
+# the file's own thread loops and never falls into them. Duplicating is safe
+# because a gosub runs in its CALLER's thread, before the move and after it, so
+# a copied subroutine sees the same state either way. That includes the till
+# ladder's TIMERA, which is per thread and was always the calling shop's.
+#
+# They are worth moving because they are what grew: the shop check transform in
+# build_scm.py adds to exactly these threads, and MAIN had a few hundred bytes
+# left. Out here the transform costs MAIN nothing.
+SHOP_THREADS = ["AMMU1", "AMMU2", "AMMU3", "HARD1", "HARD2", "HARD3"]
+SHOP_SHARED = "HARD3"
+shop_carried = []
+for label in SHOP_THREADS:
+    body = remove_thread(label)
+    assert body, f"relocate: :{label} came back empty"
+    shop_carried.append((label, body))
+
+# The set has to be closed: every label any of the six names must be defined by
+# one of the six. Sanny resolves an unknown @name to offset zero and exits zero,
+# so this is the only place the mistake is catchable.
+shop_defined = {match.group(1) for _label, body in shop_carried
+                for match in (re.fullmatch(r":(\w+)", ln) for ln in body) if match}
+shop_referenced = {match.group(1) for _label, body in shop_carried
+                   for ln in body for match in re.finditer(r"@(\w+)", ln)}
+shop_dangling = sorted(shop_referenced - shop_defined)
+assert not shop_dangling, (
+    f"relocate: the shop threads would reference {shop_dangling} left in main.scm")
+
+for label in SHOP_THREADS:
+    boot = f"start_new_script @{label} "
+    assert lines.count(boot) == 1, (
+        f"relocate: {boot!r} appears {lines.count(boot)} times, expected 1")
+    lines.remove(boot)
+
 for label, _filename in PORTABLE_THREADS:
     # Asserted rather than filtered: a start whose thread has gone would compile
     # to a thread starting at offset zero, silently.
@@ -448,13 +521,130 @@ activity_flags = ([(607, 9365)]
 for idx, (flag, comp) in enumerate(activity_flags):
     cleo += ["if ", f"  ${flag} == 1", f"goto_if_false @AW_E{idx}", f"${comp} = 1", f":AW_E{idx}"]
 cleo += ["goto @AW_LOOP", ""]
+
+# --- Build the APPICK watcher -------------------------------------------------
+# One pass per frame over all 110 ambient slots, asking the game whether each
+# has been collected and latching its completion global when it has. The ASI
+# already polls every completion global, so this is the whole of pickup
+# detection: nothing else has to learn what a pickup is.
+#
+# wait 0 rather than a slower pass because the flag is not a latch: an in-shop
+# slot respawns instantly and a normal one respawns on a timer, and once it is
+# back the flag reads false again. Vanilla polls this same opcode on the 13
+# bribe handles from a wait 0 loop, which is the only cadence the game itself
+# demonstrates.
+#
+# Its own file because a CLEO script runs from its own entry point and two
+# loops in one file would fall through into each other.
+pickup_cleo = ["{$CLEO .cs}", "", "0000:", "", ":APPICK_LOOP", "wait 0"]
+# Poll nothing until the seed hash is stamped. This script starts at frame
+# zero whatever the client is doing, and the ASI takes its baseline of the
+# completion globals on the first frame it has a hash: anything already
+# latched is in that baseline, and a global that starts non-zero is skipped
+# forever. So a player who starts a new game before connecting and walks
+# over a pickup would lose that check permanently. The hash global is the
+# one thing that says the ASI has seen this seed.
+pickup_cleo += ["if ", f"  ${SEED_HASH_GLOBAL} > 0",
+                "goto_if_false @APPICK_LOOP"]
+for slot, handle in enumerate(pickup_data.PICKUP_HANDLE_GLOBALS):
+    completion = PICKUP_COMPLETION_BASE + slot
+    # Set unconditionally while collected rather than testing the global
+    # first: the write is idempotent, the ASI reads it as a latch, and one
+    # condition per slot keeps the pass cheap.
+    pickup_cleo += ["if ", f"  has_pickup_been_collected ${handle}",
+                    f"goto_if_false @APPICK_{slot}",
+                    f"${completion} = 1", f":APPICK_{slot}"]
+pickup_cleo += ["goto @APPICK_LOOP", ""]
+if CLEO_OUT:
+    target = os.path.join(os.path.dirname(os.path.abspath(CLEO_OUT)),
+                          "appickup.txt")
+    with open(target, "wb") as handle_out:
+        handle_out.write(nl.join(pickup_cleo).encode("latin-1"))
+    print(f"wrote appickup.txt, {len(pickup_data.PICKUP_HANDLE_GLOBALS)} "
+          f"slots polled into ${PICKUP_COMPLETION_BASE}.."
+          f"${PICKUP_COMPLETION_BASE + len(pickup_data.PICKUP_HANDLE_GLOBALS) - 1}")
+# A relocated thread may not name a model with #NAME. That syntax compiles to a
+# NEGATIVE number, and the game's create_object handler reads it as an index into
+# the model-name table the running script owns, then dereferences the result
+# straight into the model info array. The table belongs to main.scm, so in a
+# CLEO script the index means nothing and the game reads a wild pointer and dies
+# where the object would have been created. Every name a carried thread uses is
+# therefore resolved to its numeric model id here, from the game's own IDE files,
+# and an assertion refuses a name that has no entry rather than shipping a crash.
+MODEL_NAME_IDS = {
+    "#BODYARMOUR": 368,      # generic.ide, the three Ammu-Nations' armour
+    "#COMGATE1OPEN": 2444,   # starisl.ide, the Starfish Island gates
+    "#COMGATE2OPEN": 2443,
+}
+
+
+def numeric_models(carried, where):
+    """Turns every #NAME model reference into its numeric id."""
+    def numbered(match):
+        name = match.group(0)
+        model = MODEL_NAME_IDS.get(name.upper())
+        assert model is not None, (
+            f"relocate: {where} names {name} and would crash the game where "
+            "the object is created; add its model id to MODEL_NAME_IDS")
+        return str(model)
+
+    # Matched whole, so a name that is a prefix of a longer one cannot be
+    # rewritten in place of it, and every name is checked rather than only
+    # the ones this table happens to hold.
+    return [re.sub(r"#[A-Za-z0-9_]+", numbered, line) for line in carried]
+
+
 if CLEO_OUT:
     with open(CLEO_OUT, "wb") as handle:
         handle.write(nl.join(cleo).encode("latin-1"))
     # One file per carried thread, named for it, beside the watcher.
     directory = os.path.dirname(os.path.abspath(CLEO_OUT))
     for label, filename, carried in ported:
-        script = ["{$CLEO .cs}", "", "0000:", *carried, ""]
+        lines_out = numeric_models(carried, f"{filename}.cs")
+        script = ["{$CLEO .cs}", "", "0000:", *lines_out, ""]
+        target = os.path.join(directory, f"{filename}.txt")
+        with open(target, "wb") as handle:
+            handle.write(nl.join(script).encode("latin-1"))
+        print(f"relocated {label} to {filename}.txt ({len(carried)} lines)")
+
+    # The six shops, one file each. Every file is its own thread's body followed
+    # by a copy of the shared subroutine block, which is HARD3's body; HARD3's
+    # own file is just that body. The entry label and script_name come off, the
+    # way the three relocations above take them off, because a CLEO script runs
+    # from its start and CLEO names it from the filename.
+    shared = dict(shop_carried)[SHOP_SHARED]
+    shared_copy = [ln for ln in shared if ln != f"script_name '{SHOP_SHARED}'"]
+    for label, body in shop_carried:
+        own = [ln for ln in body
+               if ln != f":{label}" and ln != f"script_name '{label}'"]
+        assert own, f"relocate: :{label} has no body of its own"
+        carried = own if label == SHOP_SHARED else own + shared_copy
+        # Each file has to be closed on its own: whatever it names, it defines.
+        defined = {match.group(1) for match in
+                   (re.fullmatch(r":(\w+)", ln) for ln in carried) if match}
+        referenced = {match.group(1) for ln in carried
+                      for match in re.finditer(r"@(\w+)", ln)}
+        dangling = sorted(referenced - defined)
+        assert not dangling, (
+            f"relocate: {label.lower()}.cs would reference {dangling}")
+        # Unique, not just present. Sanny binds a repeated label's references to
+        # the first definition and compiles clean, so a duplicate is a jump to
+        # the wrong place rather than a build failure.
+        label_lines = [ln for ln in carried if re.fullmatch(r":\w+", ln)]
+        assert len(label_lines) == len(set(label_lines)), (
+            f"relocate: {label.lower()}.cs defines a label twice: "
+            f"{sorted({ln for ln in label_lines if label_lines.count(ln) > 1})}")
+        # The appended copy is only reachable by gosub, which holds because the
+        # thread's OWN body ends by transferring away rather than running on into
+        # it. Tested on that body, not on `carried`: the copy's own tail is a
+        # return, so asserting after the append tests the copy every time and the
+        # boundary never.
+        assert own[-1].startswith(("goto @", "return")), (
+            f"relocate: {label.lower()}.cs's own body ends on {own[-1]!r}, so it "
+            "would fall into the copied subroutines")
+        filename = f"ap{label.lower()}"
+        lines_out = numeric_models(carried, f"{filename}.cs")
+        script = ["{$CLEO .cs}", "", "0000:", *lines_out, ""]
         target = os.path.join(directory, f"{filename}.txt")
         with open(target, "wb") as handle:
             handle.write(nl.join(script).encode("latin-1"))
@@ -552,17 +742,25 @@ boot = next(i for i, ln in enumerate(lines) if ln == "start_new_script @HOT ")
 lines[boot + 1:boot + 1] = ["start_new_script @APMARK "]
 
 # Grow the reserved block to cover the new scratch globals. The anchor is the
-# foundation's sizing line, the highest ASI-written global (the finale warp
-# flag).
+# foundation's sizing line, which writes the highest reserved global, the finale
+# active flag.
 SIZING_LINE = f"${SIZING_GLOBAL} = 0"
-sizing = [i for i, ln in enumerate(lines) if ln == SIZING_LINE]
+# Found inside the foundation rather than anywhere in the script, because the top
+# of the block is also a flag a mission writes, so the same line appears again in
+# that mission's body. The foundation is the run of writes after the boot
+# thread's own name, and the sizing line is the one there.
+foundation_start = next(i for i, ln in enumerate(lines)
+                        if ln == "script_name 'HOT'")
+foundation_window = range(foundation_start, min(foundation_start + 40, len(lines)))
+sizing = [i for i in foundation_window if lines[i] == SIZING_LINE]
 # Said rather than raised: a reserved global added anywhere moves the top, the
 # foundation then sizes a global this script does not name, and these writes
 # would land on top of the ASI's. Zero hits and a duplicate both fail here.
 assert len(sizing) == 1, (
-    f"the foundation's sizing line {SIZING_LINE} appears {len(sizing)} times, "
-    f"so the reserved block no longer tops out where the marker scratch starts; "
-    f"move SIZING_GLOBAL with scm.py's own highest reserved global")
+    f"the foundation's sizing line {SIZING_LINE} appears {len(sizing)} times in "
+    f"the foundation, so the reserved block no longer tops out where the marker "
+    f"scratch starts; move SIZING_GLOBAL with scm.py's own highest reserved "
+    f"global")
 found = sizing[0]
 lines[found + 1:found + 1] = [f"${highest_global} = 0"]
 

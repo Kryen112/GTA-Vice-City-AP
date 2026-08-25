@@ -71,10 +71,26 @@ struct AsiMain {
     // Register the frame handlers before starting the bridge, so the game
     // thread is priming the seed-hash cache by the time the bridge presents it.
     Events::gameProcessEvent += [] { instance.OnGameProcess(); };
+    // The world being replaced, which is what tells the world-scoped state it is
+    // naming objects that no longer exist. It takes BOTH events, because each
+    // covers a path the other does not: starting a game runs the initialise path,
+    // and a load runs the restart path, which a load from the frontend reaches
+    // after the initialise one. Handling it twice is free, since the handler does
+    // nothing when there is nothing to forget. An in-game restart with no load
+    // may reach neither, which costs only a stale swap reference, and those are
+    // refused by the pool reference and the model they must still be wearing.
+    //
+    // No frame condition says it. The frame keeps running with the pause menu
+    // open, and the player ped survives death, arrest and a cutscene, so nothing
+    // a frame can see separates the frame before a load from the frame after.
+    Events::initGameEvent += [] { instance.OnGameStarted(); };
+    Events::restartGameEvent += [] { instance.OnGameStarted(); };
     beforeWorldProcessEvent += [] { instance.OnBeforeWorldProcess(); };
-    // The pause menu is drawn without a game frame, so the panel has its own
-    // event: plugin-sdk's menu draw, which fires after the menu itself has
-    // drawn and only while the menu is up.
+    // The panel has its own event, plugin-sdk's menu draw, which fires after the
+    // menu itself has drawn and only while the menu is up. The in-game pause menu
+    // is drawn inside a game frame, later in the same frame as the game process
+    // hook above, which is why the panel cannot ride on that one; the frontend is
+    // the case drawn with no game frame at all.
     Events::menuDrawingEvent += [] { instance.OnMenuDraw(); };
     bridge.Start();
   }
@@ -82,6 +98,7 @@ struct AsiMain {
   ~AsiMain() { bridge.Stop(); }
 
   void OnGameProcess() { game.OnGameFrame(); }
+  void OnGameStarted() { game.OnGameStarted(); }
 
   void OnBeforeWorldProcess() { game.OnBeforeWorldProcess(); }
 

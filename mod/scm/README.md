@@ -18,18 +18,32 @@ version control.
    This makes every mission-giver marker appear only on its AP unlock, holds the
    whole marker and launcher pass until An Old Friend is done (the vanilla flag
    `$222` that mission sets), severs the vanilla story reveals and launcher
-   starts, adds the APMARK watcher, and moves six threads out of the MAIN
+   starts, adds the APMARK watcher, and moves TWELVE threads out of the MAIN
    section so it stays under the game's fixed script buffer. Three are rewritten
-   into the watcher it writes to `apwatchers.txt`; the other three are carried
-   across verbatim into `aparea.txt`, `aprewd.txt` and `apradio.txt` beside it,
-   one file each because a CLEO script runs from its own entry point.
-4. Compile all four, plus the script itself:
+   into the watcher it writes to `apwatchers.txt`; three more are carried across
+   verbatim into `aparea.txt`, `aprewd.txt` and `apradio.txt`; and the six weapon
+   shops are carried into `apammu1.txt`, `apammu2.txt`, `apammu3.txt`,
+   `aphard1.txt`, `aphard2.txt` and `aphard3.txt`. One file each throughout,
+   because a CLEO script runs from its own entry point.
+
+   The shops are the one set that cannot be split by cutting alone: each gosubs
+   subroutines living inside HARD3's label space, so every shop file carries a
+   copy of HARD3's body, reachable only through those gosubs. Duplicating is safe
+   because a gosub runs in its caller's thread either way, which is what the till ladder's TIMERA depends on. One file for
+   all six was tried and does NOT work: starting the other five would need
+   `start_new_script` at a label inside a `.cs`, and CLEO for VC does not
+   override that opcode, so the game's handler takes the local label as a raw
+   instruction pointer and the thread runs memory below script space.
+4. Compile all eleven, plus the script itself:
    `sanny.exe --compile built.markers.txt main.scm --game vc`, then the same for
-   `apwatchers.txt`, `aparea.txt`, `aprewd.txt` and `apradio.txt` to `.cs`.
-   Sanny compiles headlessly only with the game folder as the working directory.
-5. Install `main.scm` into the game `data` folder and the four `.cs` files (plus,
-   for manual marker testing, `../cleo/aptest_markers.txt` compiled to `.cs`)
-   into the game `CLEO` folder.
+   `apwatchers.txt`, `aparea.txt`, `aprewd.txt`, `apradio.txt`, `appickup.txt`
+   and the six shop files to `.cs`. Sanny compiles headlessly only with the game
+   folder as the working directory, and it lingers: compile ONE at a time and
+   check the output file's timestamp, because a run that writes nothing still
+   exits zero.
+5. Install `main.scm` into the game `data` folder and every `.cs` (plus, for
+   manual marker testing, `../cleo/aptest_markers.txt` compiled to `.cs`) into
+   the game `CLEO` folder.
 
 ## Notes
 
@@ -37,7 +51,7 @@ version control.
   (`scm.py`, `data.py`, `rules.py`). `scripts/dump_scm_spec.py` prints the same
   spec derived directly from those tables; keep the two in agreement.
 - Venue mission gates (launch and marker) additionally require the venue
-  purchase's completion global and its ownership global (`$9413..$9427`, one
+  purchase's completion global and its ownership global (`$9555..$9569`, one
   per purchasable property in purchase order, ASI-written from the ownership
   items), so a venue strand stays hidden and unstartable until the property is
   bought and owned. In logic the purchase's stand-in is the items to pass
@@ -79,7 +93,7 @@ version control.
   vanilla flag `$847` it sets (which is also what stocks Ammu-Nation's sniper
   rifle): reaching it through the west gate is what stops a causeway item held
   without the island from flipping the mainland open before any route exists.
-- Class-cash flags `$9430..$9433` (side events, stunt jumps, rampages,
+- Class-cash flags `$9572..$9575` (side events, stunt jumps, rampages,
   properties; ASI-stamped from slot_data) gate the vanilla cash suppression:
   while a flag is one, the class's one-time completion cash and its on-screen
   amount are skipped (the AP check is the reward, mirrored back as filler);
@@ -92,34 +106,44 @@ version control.
   Repeatable earnings (emergency pay, till cash, race replay prizes, in-mission
   bonuses) are never touched, and a build-time audit pins every remaining
   payout so a new site fails the build instead of leaking. Reserved globals
-  above `$9515` are SCM-internal: `$9516` up are marker handles and
+  above `$9659` are SCM-internal: `$9660` up are marker handles and
   visibility flags. `$9004`, `$9006`, `$9007`, `$9008`, and `$9009` in the
-  bookkeeping gap below `$9392` are SCM-internal scratch (the two island-gate
+  bookkeeping gap below `$9010` are SCM-internal scratch (the two island-gate
   once-guards, a package counter, and two reward once-guards). The ASI never
   reads or writes any of these.
-- Ability locks: `$9434..$9441` (one lock flag per ability item, ASI-stamped
-  from slot_data) and `$9442..$9449` (one unlock per item, ASI-written from
+- Shop class flag: `$9576`, one while shuffle_shops is on, stamped by the
+  ASI from slot_data. The six relocated shop threads read it before they
+  put the AP marker on a wall or withhold what a purchase hands over, so a
+  seed without the class leaves every shop exactly vanilla.
+- Ability locks: `$9577..$9584` (one lock flag per ability item, ASI-stamped
+  from slot_data) and `$9585..$9592` (one unlock per item, ASI-written from
   the received items) are ASI-facing only; no gate reads them. The ASI
   enforces each lock per frame while its flag is set and its unlock is zero
   (input masks, the wallet pin, the vehicle-entry cancel, and the weapon
   rampage icon hold), so the script carries nothing for them.
 - What lives in MAIN and what does not: the buffer is 225,512 bytes and vanilla
-  uses 204,596, so the mod has about 20,900 to spend and spends most of it. The
-  APMARK watcher family is the largest single resident at 11,632 bytes, and it
-  cannot move: it starts a launcher thread per managed mission, and a label
-  belongs to the file it compiles in, so a CLEO script cannot name them. Anything
-  that only reads globals and acts on the world can move, which is what the six
-  relocated threads have in common. Measure with the dword in the SCM header
+  uses 204,596. The mod spent almost all of that headroom until the six weapon
+  shops moved out, which freed about 24,000 bytes and is what made the shop
+  withholding fit at all. The APMARK watcher family is the largest single
+  resident at 11,632 bytes, and it cannot move: it starts a launcher thread per
+  managed mission, and a label belongs to the file it compiles in, so a CLEO
+  script cannot name them. Anything that only reads globals and acts on the world
+  can move, which is what the twelve relocated threads have in common.
+
+  Measure it, do not assume it. Compiling an over-size MAIN succeeds, and the
+  game then loads what fits and drops the tail, which is where the audio threads
+  live. `scripts/build_apworld.py` refuses to package one, after a build went
+  3,471 bytes over and passed every other gate. Measure with the dword in the SCM header
   (follow the three `02 00 01` gotos from offset 0; the second target is the
   mission segment, whose layout is goto, dword target, one pad byte, then MAIN
   size, largest mission, mission count).
-- Content locks: `$9450..$9454` (one lock flag per content item, ASI-stamped
-  from slot_data) and `$9455..$9459` (one unlock per item), in the order
+- Content locks: `$9593..$9597` (one lock flag per content item, ASI-stamped
+  from slot_data) and `$9598..$9602` (one unlock per item), in the order
   hidden packages, rampages, stunt jumps, property purchases, robbable
   stores. No gate reads either range: the flags only tell the ASI which classes
   to list on its status page, and a whole-class release reaches the script
   through the district block below.
-- District content locks: `$9460..$9514`, one unlock per content class per
+- District content locks: `$9603..$9657`, one unlock per content class per
   district, class-major over eleven districts in the apworld's
   `district_data.DISTRICTS` order. This is the block every content gate and
   every content hold reads, whatever `split_content_locks` is set to, because
@@ -127,11 +151,20 @@ version control.
   item, all eleven for a whole-class item. So the script needs no idea which
   granularity a seed chose.
 
-  Every global no item covers, which is an unlocked class's eleven plus the
-  thirteen class-district pairs holding no content at all, is stamped to 1 at
-  config time. That is what lets each gate be a single condition, since the
-  script cannot express "not locked OR released" in one, and it is the whole of
-  the toggle invariant: at zero keys the entire block is stamped and every gate
+  Every global no item covers is stamped at config time, and which value says
+  why. A class-district pair holding no content of that class at all is stamped
+  2, absent, whether or not the seed locks the class, and there are thirteen of
+  those. Every other global no item covers, which is an unlocked class's
+  remaining districts, is stamped 1, released. So an unlocked Robbable Stores is
+  five ones and six twos rather than eleven of either.
+
+  Every gate asks ">= 1", so both values let content through. They are apart for
+  the status page alone, which must not offer a district holding none of a class
+  as somewhere that class just became available.
+
+  Stamping is also what lets each gate be a single condition, since the script
+  cannot express "not locked OR released" in one, and it is the whole of the
+  toggle invariant: at zero keys the entire block is stamped and every gate
   falls through.
 
   Three of the classes are pickups, so holding them belongs to the ASI, which
@@ -139,9 +172,18 @@ version control.
   their gates belong to the script and are per site: each of the 36 stunt jumps
   gates at its own takeoff test (38 sites, since ids 25 and 26 each have two
   definitions) and each of the 15 stores at its own entry into the shared
-  robbery handler. The top of this block is one below the highest reserved
-  global, the finale warp flag `$9515`, which is what the foundation's sizing
-  line references.
+  robbery handler. The top of this block is two below the highest reserved
+  global, which is the finale active flag `$9659` and is what the foundation's
+  sizing line references; the finale warp flag `$9658` sits between them.
+- Finale active: `$9659`, the top of the reserved block and so the foundation's
+  sizing line, with the marker scratch starting one above it. The finale raises
+  it on its own first line and drops it at its single exit, and the ASI keeps the
+  ambient pickup layout off the pool while it is raised: the mansion siege places
+  its own pickups to be survived with, and one ambient slot stands in the same
+  grounds. The foundation's write is also its initialization, so a new game
+  starts with the layout live, and it sits above the boot thread's loop label so
+  it runs once. The ASI drops it itself if it ever sees it raised with
+  `$onmission` at zero, which is what a thread killed from outside would leave.
 - Stunt jump dump: F7 in a loaded game writes `gtavc_ap_stuntjumps.txt` beside
   the executable. Vice City defines its 36 unique stunt jumps nowhere a build
   step can read, neither in the SCM nor as a static table in the executable;
@@ -153,28 +195,40 @@ version control.
   global, and writes nothing into the world beyond its own result toast.
   `scripts/dump_check_coords.py` takes the file as its third argument and
   folds the jumps into the tracker pack's coordinate table.
-- Finale warp: `$9515`, the top of the reserved block and so the foundation's
-  sizing line, with the marker scratch starting one above it. The
-  hidden-packages goal is a macguffin hunt, so its last fragment plays the
-  story's ending: the client asks for it on every status frame, the ASI raises
-  this flag, and the boot-started APFIN watcher launches the finale on the
-  conditions every vanilla launcher waits for and no others, so no marker, no
-  money, no asset count and none of the AP gate. The mission it launches, and
-  the vanilla flag that records its pass and so stops a second ending, are both
-  read out of the source. Inside the mission the build inserts one branch past
-  the setup that jumps to the block opening with
+- Pickup pool dump: F8 in a loaded 1.0 game with a player writes
+  `ap_pickup_pool.txt` beside the executable, one row per live pickup, in the
+  order the file's own header names: pool index, type, model, position, quantity,
+  weapon type, price, distance from the player, and whether it is collected and
+  awaiting respawn. The weapon type and price are computed for every row but only
+  mean anything for the in-shop types, since only those charge. Price reads `-1`
+  wherever the weapon type falls outside the cost table, and the weapon type
+  itself reads `-1` only when no model info supplied one, so a model whose field
+  holds a LOD parent instead prints that pointer.
+  There are only 14 in-shop pickups in the game, the ten ambient pay stands and
+  the four at Phil's, all of them created by the script: no engine call that
+  creates a pickup passes the in-shop type, and F8 inside an Ammu-Nation returns
+  the ten stands and nothing else. So a shop's counter guns are not pickups, and
+  nothing in this file reaches what they cost.
+- Finale warp: `$9658`. The hidden-packages goal is a macguffin hunt, so its
+  last fragment plays the story's ending: the client asks for it on every
+  status frame, the ASI raises this flag, and the boot-started APFIN watcher
+  launches the finale on the conditions every vanilla launcher waits for and no
+  others, so no marker, no money, no asset count and none of the AP gate. The
+  mission it launches, and the vanilla flag that records its pass and so stops
+  a second ending, are both read out of the source. Inside the mission the
+  build inserts one branch past the setup that jumps to the block opening with
   `make_player_safe_for_cutscene` before the ending cutscene, which is what
   makes the player's state the mission's own business; on the way it stamps the
   sentinel over every handle the ending releases and the skipped body would
   have created, and nothing else, since the handles it does not own belong to
-  other threads or are recreated past the jump. The build refuses a jump
-  that skips a completion point or lands on a path reaching none.
-- Minimap shuffle: `$9428` (the shuffled flag) and `$9429` (the Minimap item
+  other threads or are recreated past the jump. The build refuses a jump that
+  skips a completion point or lands on a path reaching none.
+- Minimap shuffle: `$9570` (the shuffled flag) and `$9571` (the Minimap item
   unlock) are ASI-facing only; no gate reads them. The ASI hides the radar
   disc while the flag is set and the unlock is zero, so the script carries
   nothing for them.
 - Radio randomization: the foundation initializes the resolve map
-  `$9403..$9411` to identity and the scripted `set_radio_channel` sites read it,
+  `$9545..$9553` to identity and the scripted `set_radio_channel` sites read it,
   so the script is vanilla until the ASI overwrites the map from the station
-  unlocks. The APRADIO watcher consumes the `$9412` retune request the ASI
+  unlocks. The APRADIO watcher consumes the `$9554` retune request the ASI
   posts (station id plus one, zero idle).

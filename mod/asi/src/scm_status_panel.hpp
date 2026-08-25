@@ -120,8 +120,14 @@ struct StatusPanelState {
   std::array<int, kContentCount> content_flags{};
   std::array<int, kContentCount> content_districts_held{};
   std::array<bool, kContentCount * kDistrictCount> content_held{};
-  // The ways to the mainland, one entry when Mainland Access opens them all and
-  // one per crossing when the seed split them, each with what it is doing.
+  // And where each class has no content at all. A district holding none of a
+  // class is neither held nor free there, so it is named as neither: saying a
+  // class is free somewhere it does not exist sends the player looking for
+  // nothing.
+  std::array<bool, kContentCount * kDistrictCount> content_absent{};
+  // Every crossing off the start island, each with what it is doing: the
+  // mainland ways, one entry when Mainland Access opens them all and one per
+  // crossing when the seed split them, and Starfish Island last.
   std::vector<std::string> route_labels;
   std::vector<RouteState> route_states;
 
@@ -280,11 +286,19 @@ inline StatusSection ComposeContentSection(const StatusPanelState& state) {
   for (int index = 0; index < kContentCount; ++index) {
     if (state.content_flags[index] == 0) continue;
     const int held = state.content_districts_held[index];
-    if (held <= 0) {
+    // Counted against the districts that hold any of this class, not against all
+    // eleven. There are robbable stores in five districts, so a seed holding
+    // every one of them read as five of eleven, which says a little under half
+    // when it means all of it.
+    //
+    // Through the helper rather than counting here, so the page and the header
+    // cannot come to disagree about what present means.
+    const int present = ContentDistrictsPresent(state.content_absent, index);
+    if (held <= 0 || present <= 0) {
       section.rows.push_back({kContentNames[index], "available", StatusTone::kOpen});
       continue;
     }
-    if (held >= kDistrictCount) {
+    if (held >= present) {
       section.rows.push_back({kContentNames[index], "HELD", StatusTone::kHeld});
       continue;
     }
@@ -297,13 +311,17 @@ inline StatusSection ComposeContentSection(const StatusPanelState& state) {
     // city's names.
     section.rows.push_back({kContentNames[index],
                             "HELD " + std::to_string(held) + "/" +
-                                std::to_string(kDistrictCount),
+                                std::to_string(present),
                             StatusTone::kHeld});
-    const bool name_the_held = held * 2 <= kDistrictCount;
+    const bool name_the_held = held * 2 <= present;
     std::vector<std::string> districts;
     for (int district = 0; district < kDistrictCount; ++district) {
-      const std::size_t slot =
-          static_cast<std::size_t>(index) * kDistrictCount + district;
+      const std::size_t slot = ContentDistrictSlot(index, district);
+      // A district with none of this class is skipped whichever list is being
+      // named. It is not free there in any sense the player can act on.
+      if (slot < state.content_absent.size() && state.content_absent[slot]) {
+        continue;
+      }
       const bool district_held = slot < state.content_held.size() &&
                                  state.content_held[slot];
       if (district_held == name_the_held) districts.push_back(kDistrictNames[district]);
@@ -398,12 +416,13 @@ inline StatusSection ComposeRewardSection(const StatusPanelState& state) {
   return section;
 }
 
-// One row per way to the mainland. A route whose item arrived while the second
-// item its route needs is missing says so rather than reading as plainly shut,
-// since that is the one state a player can act on.
+// One row per crossing off the start island, the mainland ways and Starfish
+// Island. A route whose item arrived while the second item its route needs is
+// missing says so rather than reading as plainly shut, since that is the one
+// state a player can act on.
 inline StatusSection ComposeRouteSection(const StatusPanelState& state) {
   StatusSection section;
-  section.heading = "TO THE MAINLAND";
+  section.heading = "CROSSINGS";
   const std::size_t count = state.route_labels.size() < state.route_states.size()
                                 ? state.route_labels.size()
                                 : state.route_states.size();

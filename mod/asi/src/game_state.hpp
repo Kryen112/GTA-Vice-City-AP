@@ -51,6 +51,10 @@ struct PackageLocation {
 // wire's double precision so the interop harness echoes it back exactly; the
 // pool matching happens well inside float tolerance either way.
 struct PickupTarget {
+  // The completion global of the check on this slot, or 0 when the slot is
+  // not a check. Reading zero from a non-zero global means the check is
+  // still to be taken, which is when the slot wears the AP marker.
+  int check_global = 0;
   double x = 0.0;
   double y = 0.0;
   double z = 0.0;
@@ -102,8 +106,9 @@ class GameState {
   // effect. config_globals: config-flag global index -> value to stamp.
   // completion_watch: completion global index -> AP location id to poll.
   // pickup_targets: the ambient pickup layout to enforce, empty when vanilla.
-  // routes carries the ways to the mainland: one entry when Mainland Access
-  // opens them all, one per crossing when the seed split them.
+  // routes carries every crossing off the start island: the mainland ways, one
+  // entry when Mainland Access opens them all and one per crossing when the seed
+  // split them, and then Starfish Island, which is always its own row.
   virtual void ApplyConfig(const std::map<std::int64_t, int>& item_globals,
                            const std::map<int, std::int64_t>& completion_watch,
                            const std::map<std::int64_t, ItemEffect>& item_effects,

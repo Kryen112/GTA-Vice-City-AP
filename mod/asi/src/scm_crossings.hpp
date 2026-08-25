@@ -1,12 +1,13 @@
-// The mainland routes, free of any game headers so the console self-test can
-// exercise them without plugin-sdk or the game.
+// The crossings off the start island, free of any game headers so the console
+// self-test can exercise them without plugin-sdk or the game.
 //
 // The way to the mainland is either one item that opens every vanilla crossing
 // or, with split_mainland_access on, one item per crossing that opens only its
-// own barrier. Nothing here decides which: the world sends the routes it made,
-// one entry or four, each carrying the global its item writes, the name to show,
-// and the global of the second item its route needs, which is the Starfish
-// causeway and the island its gate stands on.
+// own barrier. Starfish Island is a crossing of its own and is always sent.
+// Nothing here decides how many: the world sends the routes it made, each
+// carrying the global its item writes, the name to show, and the global of the
+// second item its route needs, which is the Starfish causeway and the island its
+// gate stands on.
 //
 // The mod announces a route because the player otherwise has no way to learn
 // which crossing they were handed: the barrier simply vanishes somewhere across

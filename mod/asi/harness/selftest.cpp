@@ -107,16 +107,19 @@ int main() {
     auto later = DetectCompletedLocations(watch, baseline, current, reported);
     Expect(later.size() == 1 && later[0] == 542000001, "reports a later completion");
 
-    // Draining: held while the player has no control, and holding must cost a
-    // delay and never a check. The queue survives being held, survives a game
-    // boundary, and leaves in the order it was found.
+    // Draining: held between games, and holding must cost a delay and never a
+    // check. The queue survives being held, survives a game boundary, and
+    // leaves in the order it was found. Control is deliberately NOT the hold
+    // condition: a check leaving touches no game state, and the on-foot shops
+    // freeze the player from the door to the exit, so waiting for control would
+    // strand every purchase made inside one.
     std::vector<std::int64_t> queued = {542000001, 542000002};
     Expect(DrainChecks(queued, true).empty(),
-           "nothing leaves while the player has no control");
+           "nothing leaves while the queue is held");
     Expect(queued.size() == 2,
            "and what was found stays queued rather than being dropped");
 
-    // Found while held, then control returns: everything leaves, once, in
+    // Found while held, then the hold lifts: everything leaves, once, in
     // order. This is the whole contract, since a check dropped here can never
     // be found again.
     queued.push_back(542000003);
@@ -712,9 +715,9 @@ int main() {
   // recreated slot arrives with its vanilla type) and a far entry never match.
   {
     const std::vector<PickupTarget> targets = {
-        {393.9, -60.2, 11.5, 15, 274, 34},
-        {30.0, -1330.9, 13.0, 2, 366, 0},
-        {-900.0, 250.0, 17.0, 15, 375, 0},
+        {0, 393.9, -60.2, 11.5, 15, 274, 34},
+        {0, 30.0, -1330.9, 13.0, 2, 366, 0},
+        {0, -900.0, 250.0, 17.0, 15, 375, 0},
     };
     const std::vector<PickupPoolEntry> pool = {
         // The first target's slot, still holding its vanilla bribe.
@@ -736,6 +739,250 @@ int main() {
     const auto vanilla = PlanPickupLayout({}, pool);
     Expect(vanilla.rewrites.empty() && vanilla.unmatched_targets == 0,
            "an empty layout plans nothing");
+  }
+
+  // The AP check marker: a slot whose check is still to be taken shows the
+  // marker model instead of whatever the layout gives it, and goes back to the
+  // layout once the check is taken. The flag is re-derived per frame by the
+  // caller, so "taken" is simply the flag going false.
+  {
+    const std::vector<PickupTarget> targets = {
+        // A weapon slot with ammo, so reverting has something to re-stamp.
+        {1, 393.9, -60.2, 11.5, 15, 274, 34},
+        // A heart, and the layout already matches the pool.
+        {2, 30.0, -1330.9, 13.0, 2, 366, 0},
+    };
+    const std::vector<PickupPoolEntry> pool = {
+        {393.9f, -60.2f, 11.5f, 15, 274, 40},
+        {30.0f, -1330.9f, 13.0f, 2, 366, 41},
+    };
+
+    const auto pending = PlanPickupLayout(targets, pool, {true, true});
+    Expect(pending.rewrites.size() == 2, "both pending slots take the marker");
+    Expect(pending.unmatched_targets == 0,
+           "a matched pending slot is not counted unmatched");
+    // Unmatched counting is the one thing converting the range-for to an index
+    // loop could have broken, so a pending target the pool never offers is
+    // pinned too: it counts once and rewrites nothing.
+    const auto orphan = PlanPickupLayout(targets, {}, {true, true});
+    Expect(orphan.rewrites.empty() && orphan.unmatched_targets == 2,
+           "a pending slot the pool never offers counts unmatched, rewrites nothing");
+    for (const PickupRewrite& rewrite : pending.rewrites) {
+      Expect(rewrite.model == kPickupCheckMarkerModel,
+             "a pending check shows the marker model");
+      Expect(rewrite.quantity == 0,
+             "the marker carries no ammo, since it is not a weapon");
+    }
+
+    // Taken: the flags go false and the slot returns to the layout. The weapon
+    // gets its ammo back because the rewrite fires on the model differing, and
+    // the marker is what it differs from.
+    const std::vector<PickupPoolEntry> marked = {
+        {393.9f, -60.2f, 11.5f, 15, kPickupCheckMarkerModel, 40},
+        {30.0f, -1330.9f, 13.0f, 2, kPickupCheckMarkerModel, 41},
+    };
+    const auto taken = PlanPickupLayout(targets, marked, {false, false});
+    Expect(taken.rewrites.size() == 2, "both taken slots revert");
+    Expect(taken.rewrites[0].model == 274 && taken.rewrites[0].quantity == 34,
+           "reverting a weapon slot re-stamps its ammo");
+    Expect(taken.rewrites[1].model == 366,
+           "reverting a heart slot restores the heart");
+
+    // Already showing the marker and still pending: nothing to do, which is
+    // what keeps this off the rewrite path every frame for 110 slots.
+    const auto steady = PlanPickupLayout(targets, marked, {true, true});
+    Expect(steady.rewrites.empty(),
+           "a slot already showing the marker is not rewritten again");
+
+    // A short flag list leaves the rest not pending rather than reading past it.
+    const auto partial = PlanPickupLayout(targets, pool, {true});
+    Expect(partial.rewrites.size() == 1 &&
+               partial.rewrites[0].pool_index == 40,
+           "only the flagged slot takes the marker when the list is short");
+
+    // And with no flags at all the planner is exactly the shuffle it was.
+    const auto none = PlanPickupLayout(targets, pool);
+    Expect(none.rewrites.empty(),
+           "with no checks pending the layout already matches the pool");
+  }
+
+  // What an in-shop pickup prices from, in the order the purchase path resolves
+  // it. The order is the whole of this: the three fixed models are compared
+  // before anything reads a model info, so resolving them the other way round
+  // prices a stand off a field that means nothing for it.
+  {
+    PickupFixedPriceModels fixed;
+    fixed.body_armour = 368;
+    fixed.health = 366;
+    fixed.adrenaline = 367;
+    // Distinct on purpose. The game gives armour and adrenaline the same type,
+    // so using the real pair here would leave the first and third clauses
+    // indistinguishable and a swap between them would redden nothing.
+    fixed.body_armour_weapon_type = 0x26;
+    fixed.health_weapon_type = 0x25;
+    fixed.adrenaline_weapon_type = 0x21;
+    // A model info value that must never win where a fixed model matches.
+    const int ignored = 99;
+    Expect(PickupWeaponTypeForPrice(366, fixed, ignored, 1) == 0x25,
+           "a health stand prices from its fixed type, not its model info");
+    Expect(PickupWeaponTypeForPrice(368, fixed, ignored, 1) == 0x26,
+           "and so does body armour");
+    Expect(PickupWeaponTypeForPrice(367, fixed, ignored, 1) == 0x21,
+           "and adrenaline, by its own clause and not body armour's");
+    Expect(PickupWeaponTypeForPrice(-1, fixed, ignored, 1) == 0,
+           "a model of minus one prices from nothing, the way the table does");
+    Expect(PickupWeaponTypeForPrice(kPickupCheckMarkerModel, fixed, ignored, 1) == 1,
+           "the marker prices at what the ASI charges for it");
+    Expect(PickupWeaponTypeForPrice(274, fixed, ignored, 1) == ignored,
+           "and any other model prices from its model info");
+    // The marker's type is the caller's to choose, so a value no other clause
+    // returns proves the parameter is what comes back.
+    Expect(PickupWeaponTypeForPrice(kPickupCheckMarkerModel, fixed, ignored, 7) == 7,
+           "and the marker's price is whatever the caller asks for");
+    // The shipped constant through the same clause, which pins that no earlier
+    // clause intercepts the marker model, the three fixed ones included. The
+    // order among those clauses is pinned by the cases above. It cannot pin the
+    // constant's VALUE, being an identity in it; the tripwire below does that.
+    Expect(PickupWeaponTypeForPrice(kPickupCheckMarkerModel, fixed, ignored,
+                                    kPickupCheckMarkerWeaponType)
+               == kPickupCheckMarkerWeaponType,
+           "the marker prices from the shipped marker weapon type");
+    // A tripwire, not a derivation: what makes 12 right is that CostOfWeapon
+    // holds a thousand there, which only the game's own table can say. The ASI
+    // reads it at load and logs a mismatch; this refuses a silent edit to either
+    // half of the pair.
+    Expect(kPickupCheckMarkerWeaponType == 12 &&
+               kPickupCheckMarkerPriceInDollars == 1000,
+           "the marker's price index and its documented price still agree; "
+           "re-read CostOfWeapon before changing either");
+
+    // A name that never resolved leaves 0xFFFF in the game's own slot, which the
+    // game reads unsigned, so it can never match a model. Minus one must still
+    // reach the minus one clause and not be swallowed by one of the three, so
+    // each of them carries a type that would be visible if it were.
+    PickupFixedPriceModels unresolved;
+    unresolved.body_armour_weapon_type = 0x11;
+    unresolved.health_weapon_type = 0x12;
+    unresolved.adrenaline_weapon_type = 0x13;
+    Expect(unresolved.body_armour == 0xFFFF &&
+               unresolved.health == 0xFFFF &&
+               unresolved.adrenaline == 0xFFFF,
+           "all three fields default to the 0xFFFF the game leaves in an "
+           "unresolved slot");
+    Expect(PickupWeaponTypeForPrice(-1, unresolved, ignored, 1) == 0,
+           "an unresolved fixed model does not swallow the minus one case");
+
+    // Which model infos carry the weapon type at all. Leaving the weapon kind
+    // out reads as a working dump whose price column simply says nothing, and
+    // the models it drops are the weapons, which is most of what a shop sells.
+    // Literals, not the constants, so this pins WHICH kinds are admitted rather
+    // than restating the disjunction with its own names.
+    Expect(ModelInfoCarriesWeaponType(4),
+           "a weapon model info carries the weapon type");
+    Expect(ModelInfoCarriesWeaponType(1) && ModelInfoCarriesWeaponType(3),
+           "and so do the simple and time kinds it derives from");
+    for (const int kind : {0, 2, 5, 6, 7, -1}) {
+      Expect(!ModelInfoCarriesWeaponType(kind),
+             "and no other kind does, since that offset is something else or "
+             "past the object");
+    }
+  }
+
+  {
+    // Taking a check from a vehicle. The gate compares the police bribe model
+    // against the pickup's own, so the answer here IS the patch: give it the
+    // pickup's model and the game's own comparison agrees.
+    constexpr int kBribe = 375;
+    constexpr int kSomethingElse = 274;
+    Expect(VehicleCollectComparisonModel(kPickupCheckMarkerModel, kBribe, true)
+               == kPickupCheckMarkerModel,
+           "a marker in a vehicle answers with its own model, so the compare "
+           "agrees and the vehicle branch is taken");
+    // The half that keeps on-foot collection provably vanilla. Both paths run
+    // the same on-foot test, so answering unconditionally would behave the same;
+    // the point of the gate is that out of a car the answer is the game's own,
+    // which is what makes the patch additive rather than merely equivalent.
+    Expect(VehicleCollectComparisonModel(kPickupCheckMarkerModel, kBribe, false)
+               == kBribe,
+           "a marker on foot answers with the bribe model, so the compare fails "
+           "and the ordinary on-foot path is kept");
+    Expect(VehicleCollectComparisonModel(kSomethingElse, kBribe, true) == kBribe,
+           "any other model answers with the bribe model in a vehicle too");
+    Expect(VehicleCollectComparisonModel(kSomethingElse, kBribe, false) == kBribe,
+           "and on foot");
+    // What counts as a shop's stock. Two silent mistakes to refuse: dropping the
+    // body armour, which is a simple model sold beside the guns, and catching a
+    // pickup's own visible object, which wears a weapon model info too.
+    constexpr int kBodyArmour = 368;
+    constexpr int kOtherModel = 401;
+    Expect(IsShopStockObject(kModelInfoWeapon, 274, kBodyArmour,
+                             kObjectTypeMission, false),
+           "a gun on a rack is stock");
+    Expect(IsShopStockObject(kModelInfoSimple, kBodyArmour, kBodyArmour,
+                             kObjectTypeMission, false),
+           "and so is the body armour beside it, by model rather than by kind");
+    Expect(!IsShopStockObject(kModelInfoWeapon, 274, kBodyArmour,
+                              kObjectTypeMission, true),
+           "a pickup's own object is never stock, whatever it wears");
+    Expect(!IsShopStockObject(kModelInfoSimple, kBodyArmour, kBodyArmour,
+                              kObjectTypeMission, true),
+           "including the body armour pickup");
+    Expect(!IsShopStockObject(kModelInfoWeapon, 274, kBodyArmour, 1, false),
+           "and neither is a map object, whatever it wears");
+    Expect(!IsShopStockObject(kModelInfoSimple, kOtherModel, kBodyArmour,
+                              kObjectTypeMission, false),
+           "an ordinary script object is not stock either");
+
+    // A real bribe is what the gate was built for and must be untouched, in a
+    // vehicle and out of one.
+    Expect(VehicleCollectComparisonModel(kBribe, kBribe, true) == kBribe &&
+               VehicleCollectComparisonModel(kBribe, kBribe, false) == kBribe,
+           "a police bribe still answers with the bribe model either way");
+  }
+
+  // An in-shop slot wears the marker like any other. What makes that safe is
+  // outside this header: the ASI prices the marker itself on the purchase path,
+  // so the model no longer decides what the stand charges.
+  {
+    const std::vector<PickupTarget> targets = {
+        // A health stand, in-shop, so it charges.
+        {1, 100.0, 200.0, 10.0, kPickupTypeInShop, 366, 0},
+        // An ordinary heart beside it.
+        {2, 300.0, 400.0, 10.0, 2, 366, 0},
+    };
+    const std::vector<PickupPoolEntry> pool = {
+        {100.0f, 200.0f, 10.0f, kPickupTypeInShop, 366, 60},
+        {300.0f, 400.0f, 10.0f, 2, 366, 61},
+    };
+    const auto plan = PlanPickupLayout(targets, pool, {true, true});
+    Expect(plan.rewrites.size() == 2, "both pending slots take the marker");
+    bool shop_marked = false;
+    for (const PickupRewrite& rewrite : plan.rewrites) {
+      Expect(rewrite.model == kPickupCheckMarkerModel,
+             "each pending slot shows the marker whatever its type");
+      Expect(rewrite.quantity == 0, "and carries no ammo with it");
+      if (rewrite.pool_index == 60) shop_marked = true;
+    }
+    Expect(shop_marked, "the shop stand is one of them");
+
+    // A slot the caller does not flag keeps its own model, whatever its type.
+    const auto one_only = PlanPickupLayout(targets, pool, {false, true});
+    Expect(one_only.rewrites.size() == 1,
+           "an unflagged slot stays on its own model");
+    Expect(!one_only.rewrites.empty() && one_only.rewrites[0].pool_index == 61 &&
+               one_only.rewrites[0].model == kPickupCheckMarkerModel,
+           "and the flagged slot beside it takes the marker");
+
+    // Taken, and the stand goes back to selling what the layout gives it.
+    const std::vector<PickupPoolEntry> marked = {
+        {100.0f, 200.0f, 10.0f, kPickupTypeInShop, kPickupCheckMarkerModel, 60},
+        {300.0f, 400.0f, 10.0f, 2, kPickupCheckMarkerModel, 61},
+    };
+    const auto taken = PlanPickupLayout(targets, marked, {false, false});
+    Expect(taken.rewrites.size() == 2, "both revert once their checks are taken");
+    for (const PickupRewrite& rewrite : taken.rewrites) {
+      Expect(rewrite.model == 366, "back to the model the layout gives it");
+    }
   }
 
   // Ability lock planning: a lock is its flag with no unlock; the input plan
@@ -1038,6 +1285,25 @@ int main() {
     Expect(!AnyContentHeld(PlanContentLocks(all_released)),
            "an unlocked seed never holds, the toggle invariant");
 
+    // Absent reads from the same block as released, and both let content
+    // through. What they must not share is the page: a district with none of a
+    // class is not a place the class became available.
+    std::array<int, kContentCount * kDistrictCount> mixed{};
+    const std::size_t store_ocean = ContentDistrictSlot(kContentRobbableStores, 0);
+    mixed[store_ocean] = kDistrictAbsent;
+    Expect(!PlanContentLocks(mixed)[store_ocean],
+           "an absent pair is not held, so no gate ever waits on it");
+    Expect(PlanContentAbsence(mixed)[store_ocean],
+           "and it reads as absent, so the page leaves it out");
+    Expect(!PlanContentAbsence(mixed)[ContentDistrictSlot(kContentRobbableStores, 1)],
+           "a held district is not absent, which is why it is worth naming");
+    Expect(!PlanContentAbsence(all_released)[store_ocean],
+           "released is not absent: an older seed stamped both alike, and reading "
+           "that as absent would hide districts that do hold content");
+    Expect(ContentDistrictsPresent(PlanContentAbsence(mixed),
+                                   kContentRobbableStores) == kDistrictCount - 1,
+           "and the denominator counts what exists rather than all eleven");
+
     // Placing a pool entry: the position finds it, and the class has to agree,
     // since a property icon and a package can stand close together.
     const std::vector<PickupDistrict> table = {
@@ -1215,12 +1481,58 @@ int main() {
   // The pause menu's status page. Sections are found by heading rather than by
   // index, so adding a block never silently moves what an assertion is aiming at.
   {
-    auto Section = [](const std::vector<StatusSection>& sections,
-                      const std::string& heading) {
+    // Every heading these two helpers are asked for, and every heading the pages
+    // they are handed carry. A heading in the first set and not the second is one
+    // no page here ever shows, which is a typo in the test or an assertion aimed
+    // at a state this block never builds; either way it tests nothing. The two
+    // sets are compared once at the end of the block, and that is what covers
+    // HasSection, whose absence assertions read the same whether the heading is
+    // spelled right or not.
+    std::set<std::string> asked_headings;
+    std::set<std::string> page_headings;
+    auto Note = [&asked_headings, &page_headings](
+        const std::vector<StatusSection>& sections, const std::string& heading) {
+      asked_headings.insert(heading);
+      for (const StatusSection& section : sections) {
+        if (!section.heading.empty()) page_headings.insert(section.heading);
+      }
+    };
+
+    // Whether the page carries a block at all. ComposeStatusPanel drops a
+    // section with no rows, so a block with nothing to say is absent from the
+    // page and absence is a real thing to assert.
+    auto HasSection = [&Note](const std::vector<StatusSection>& sections,
+                              const std::string& heading) {
+      Note(sections, heading);
+      for (const StatusSection& section : sections) {
+        if (section.heading == heading) return true;
+      }
+      return false;
+    };
+
+    // A heading that matches nothing is a named failure rather than an empty
+    // section, because an assertion reading an empty section passes on any
+    // rows.empty() or size test it makes.
+    auto Section = [&Note](const std::vector<StatusSection>& sections,
+                           const std::string& heading) {
+      Note(sections, heading);
       for (const StatusSection& section : sections) {
         if (section.heading == heading) return section;
       }
-      return StatusSection{};
+      const std::string missing = "the page has a section headed " + heading;
+      Expect(false, missing.c_str());
+      // Three rows, one deeper than the deepest a caller indexes. Three callers
+      // read rows[1] or rows[2] in an Expect of their own, separate from the
+      // size guard beside it, so a shorter section is read out of range before
+      // the failure count is printed. Three is not a count any assertion asks
+      // for by equality either, and every inequality it does satisfy is ANDed
+      // with a value clause the filler fails.
+      StatusSection absent;
+      absent.heading = heading;
+      for (int filler = 0; filler < 3; ++filler) {
+        absent.rows.push_back({"", "no such section", StatusTone::kPlain});
+      }
+      return absent;
     };
 
     StatusPanelState state;
@@ -1244,9 +1556,10 @@ int main() {
            Section(ComposeStatusPanel(read_state), "CONTENT").rows[0].value ==
                "This seed holds no content.",
            "and once the globals are read they say the seed locks nothing");
-    // The client's own blocks stay out until a client has said something.
-    Expect(Section(sections, "GOAL").rows.empty() &&
-               Section(sections, "MISSION STRANDS").rows.empty(),
+    // The client's own blocks stay out until a client has said something, which
+    // means off the page rather than on it and empty.
+    Expect(!HasSection(sections, "GOAL") &&
+               !HasSection(sections, "MISSION STRANDS"),
            "the goal and strand blocks wait for the client");
 
     state.client_connected = true;
@@ -1380,6 +1693,65 @@ int main() {
                fewer.rows[1].value.find("Ocean Beach") != std::string::npos,
            "a class held in a few districts names those instead");
 
+    // A class does not stand in all eleven districts. There are robbable stores
+    // in five, so the count is read against those five, and the districts with
+    // none of the class are named in neither list: telling the player stores are
+    // free in Leaf Links sends them somewhere there is nothing to rob.
+    StatusPanelState sparse;
+    sparse.locks_known = true;
+    sparse.content_flags[kContentRobbableStores] = 1;
+    // Ocean Beach, Starfish Island, Prawn Island, Leaf Links, Viceport and
+    // Escobar International hold no store, leaving five that do.
+    for (const int district : {0, 3, 4, 5, 9, 10}) {
+      sparse.content_absent[ContentDistrictSlot(kContentRobbableStores, district)] =
+          true;
+    }
+    const int store_districts =
+        ContentDistrictsPresent(sparse.content_absent, kContentRobbableStores);
+    Expect(store_districts == 5, "five districts hold the robbable stores");
+
+    for (const int district : {1, 2, 6, 7, 8}) {
+      sparse.content_held[ContentDistrictSlot(kContentRobbableStores, district)] =
+          true;
+    }
+    sparse.content_districts_held[kContentRobbableStores] = store_districts;
+    StatusSection sparse_section = ComposeContentSection(sparse);
+    Expect(sparse_section.rows.size() == 1 &&
+               sparse_section.rows[0].value == "HELD",
+           "a class held in every district that has it is simply held, not five "
+           "of eleven");
+
+    // One released of the five, so the free list is the shorter one and is the
+    // one place an absent district would show.
+    sparse.content_held[ContentDistrictSlot(kContentRobbableStores, 1)] = false;
+    sparse.content_districts_held[kContentRobbableStores] = store_districts - 1;
+    sparse_section = ComposeContentSection(sparse);
+    Expect(sparse_section.rows[0].value == "HELD 4/5",
+           "and a part-held class counts against the districts that have it");
+    Expect(sparse_section.rows.size() > 1 &&
+               sparse_section.rows[1].value.rfind("free in:", 0) == 0,
+           "naming the free districts, being the shorter list");
+    std::string sparse_free;
+    for (std::size_t row = 1; row < sparse_section.rows.size(); ++row) {
+      sparse_free += sparse_section.rows[row].value;
+    }
+    Expect(sparse_free.find("Washington Beach") != std::string::npos,
+           "the district that really did open is named");
+    for (const char* nowhere : {"Ocean Beach", "Starfish Island", "Prawn Island",
+                                "Leaf Links", "Viceport", "Escobar"}) {
+      Expect(sparse_free.find(nowhere) == std::string::npos,
+             "and a district with no store of its own is not offered as free");
+    }
+
+    // Absence is what a default state knows none of, so a page built before the
+    // globals were read reports what it always did rather than blanking.
+    StatusPanelState unfilled;
+    unfilled.locks_known = true;
+    unfilled.content_flags[kContentRampages] = 1;
+    unfilled.content_districts_held[kContentRampages] = kDistrictCount;
+    Expect(ComposeContentSection(unfilled).rows[0].value == "HELD",
+           "a state that knows of no absence counts all eleven, the old reading");
+
     state.content_districts_held[kContentRampages] = 0;
     state.content_held.fill(false);
     sections = ComposeStatusPanel(state);
@@ -1392,7 +1764,7 @@ int main() {
     state.route_labels = {"Prawn Island Bridge", "Starfish Island Causeway"};
     state.route_states = {RouteState::kOpen, RouteState::kWaiting};
     sections = ComposeStatusPanel(state);
-    const StatusSection routes = Section(sections, "TO THE MAINLAND");
+    const StatusSection routes = Section(sections, "CROSSINGS");
     Expect(routes.rows.size() == 2 && routes.rows[0].value == "open" &&
                routes.rows[1].value == "needs its island",
            "each route reads out what it is doing");
@@ -1400,13 +1772,14 @@ int main() {
     // A route list out of step with its states is a caller error, not a crash:
     // the rows stop at the shorter of the two.
     state.route_states = {RouteState::kOpen};
-    Expect(Section(ComposeStatusPanel(state), "TO THE MAINLAND").rows.size() == 1,
+    Expect(Section(ComposeStatusPanel(state), "CROSSINGS").rows.size() == 1,
            "a route list out of step with its states stops at the shorter one");
     state.route_states = {RouteState::kOpen, RouteState::kWaiting};
 
-    // The radio and the minimap only have rows while their options are on.
-    Expect(Section(ComposeStatusPanel(state), "RADIO").rows.empty() &&
-               Section(ComposeStatusPanel(state), "MINIMAP").rows.empty(),
+    // The radio and the minimap only have rows while their options are on, and a
+    // section with no rows is not on the page at all.
+    Expect(!HasSection(ComposeStatusPanel(state), "RADIO") &&
+               !HasSection(ComposeStatusPanel(state), "MINIMAP"),
            "the radio and minimap blocks stay away while their options are off");
     state.radio_randomized = true;
     state.radio_unlocked[0] = true;
@@ -1427,6 +1800,13 @@ int main() {
     Expect(Section(sections, "MINIMAP").rows.size() == 1 &&
                Section(sections, "MINIMAP").rows[0].value == "HIDDEN",
            "and the radar says whether the item has arrived");
+
+    // The comparison the two sets above exist for.
+    for (const std::string& heading : asked_headings) {
+      if (page_headings.count(heading) != 0) continue;
+      const std::string unknown = "no page ever carries a section headed " + heading;
+      Expect(false, unknown.c_str());
+    }
 
     // Every wrapped line is drawn from the column's own left edge, so what it has
     // to fit is the whole column; a line carrying a label would start a third of

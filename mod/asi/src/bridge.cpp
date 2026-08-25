@@ -167,6 +167,11 @@ void BridgeClient::HandleMessage(const json& message) {
           target.pickup_type = row.at(3).get<int>();
           target.model = row.at(4).get<int>();
           target.quantity = row.at(5).get<int>();
+          // Seventh element from the change that made the slots checks; a
+          // frame without it is a shuffle-only layout and no slot is one.
+          if (row.size() > 6) {
+            target.check_global = row.at(6).get<int>();
+          }
           pickup_targets.push_back(target);
         }
       }
