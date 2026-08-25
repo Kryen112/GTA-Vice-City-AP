@@ -5,3 +5,8 @@ mod/asi/third_party/** -whitespace -text
 # steps carry trailing whitespace); exempt them from the whitespace gate.
 mod/asi/plugin/*.vcxproj -whitespace
 mod/asi/plugin/*.sln -whitespace
+# The generated pickup table is written CRLF by scripts/dump_pickups.py; pin it
+# so a hand edit or a checkout cannot leave it LF and turn the next regeneration
+# into a whole-file diff. Scoped to this one path on purpose: a blanket
+# `* text=auto` would renormalise the whole repo on the next checkout.
+apworld/gta_vice_city/pickup_data.py text eol=crlf

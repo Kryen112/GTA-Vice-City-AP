@@ -56,6 +56,16 @@ CONFIGURATIONS: list[tuple[str, dict]] = [
         "enable_emergency_vehicles": False, "enable_properties": False,
         "enable_robbable_stores": False, "enable_side_events": False,
     }),
+    # The 110 ambient pickups carry the story pool on their own: 53 sit on the
+    # start island, which is 54 free checks in sphere 0, the widest of these
+    # rows but only just, since packages alone give 49.
+    ("story plus pickups", {
+        "enable_pickups": True,
+        "enable_hidden_packages": False, "enable_rampages": False,
+        "enable_stunt_jumps": False, "enable_emergency_vehicles": False,
+        "enable_properties": False, "enable_robbable_stores": False,
+        "enable_side_events": False,
+    }),
     # Radio stations add eight useful items to the pool.
     ("radio stations on", {"randomize_radio_stations": True}),
     ("radio stations on, story plus stores", {
@@ -148,6 +158,19 @@ CONFIGURATIONS: list[tuple[str, dict]] = [
         "enable_hidden_packages": False, "enable_rampages": False,
         "enable_stunt_jumps": False, "enable_emergency_vehicles": False,
         "enable_properties": False, "enable_robbable_stores": False,
+    }),
+    # Pickups are the one class every ability key leaves standing, since walking
+    # over one takes nothing: 50 free checks here against 54 with no locks. The
+    # four that close are pay stands on the start island, which charge for what
+    # they give and so wait on Wallet, ten of them across the city.
+    ("ability locks, all keys, story plus pickups", {
+        "enable_pickups": True,
+        "ability_locks": ["sprint", "jump", "crouch", "vehicles",
+                          "weapon_equip", "wallet"],
+        "enable_hidden_packages": False, "enable_rampages": False,
+        "enable_stunt_jumps": False, "enable_emergency_vehicles": False,
+        "enable_properties": False, "enable_robbable_stores": False,
+        "enable_side_events": False,
     }),
     ("ability locks, all keys, 100 percent", {
         "goal": "hundred_percent",

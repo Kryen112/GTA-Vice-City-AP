@@ -39,10 +39,34 @@ CONFIG = {
         # so the round trip proves the param list is preserved either way.
         "542100052": ["trap_speed_up", 30], "542100053": ["trap_weather"],
     },
-    "config_globals": {"9377": 1, "9378": 0},
+    # The item ids here are invented; the globals are NOT. They are taken from
+    # the real layout so the frame reads like one the game would receive, which
+    # means a shift of the reserved block moves the ones above the completion
+    # block and this fixture is one of the places to move them. Below that block
+    # nothing moves, which is why the unlock globals and the completion globals
+    # elsewhere in this frame stay put. In completion_watch above, 9035 is the
+    # last UNLOCK global rather than a completion global; 9036 is the first
+    # completion one.
+    "config_globals": {"9501": 1, "9502": 0},
     # Two ambient pickup rows, one weapon with ammo and one consumable, so the
     # round trip proves the layout decode end to end.
-    "pickup_layout": [[393.9, -60.2, 11.5, 15, 274, 34], [-37.7, -938.3, 10.5, 15, 375, 0]],
+    # Three rows, one shape each the decode has to survive: a slot that is a
+    # check and carries its completion global as a seventh element, a slot that
+    # is not, and a six-element row from a world that predates the checks, which
+    # the ASI reads as no check rather than as a malformed frame.
+    "pickup_layout": [
+        [393.9, -60.2, 11.5, 15, 274, 34, 9376],
+        [-37.7, -938.3, 10.5, 15, 375, 0, 0],
+        [201.4, -1077.6, 10.9, 2, 366, 0],
+    ],
+    # What the six-element row above becomes once decoded: no check. The
+    # comparison is against the echo, so the expectation carries the shape the
+    # ASI produces rather than the shape the world sent.
+    "pickup_layout_echoed": [
+        [393.9, -60.2, 11.5, 15, 274, 34, 9376],
+        [-37.7, -938.3, 10.5, 15, 375, 0, 0],
+        [201.4, -1077.6, 10.9, 2, 366, 0, 0],
+    ],
     # Two mainland routes, one plain and one carrying the second item its route
     # needs, so the round trip proves both shapes decode.
     "mainland_routes": [
@@ -54,8 +78,8 @@ CONFIG = {
     # One content item releasing several district globals and one releasing a
     # single global: the two shapes the fan-out has to decode.
     "content_district_globals": {
-        "542100200": [9460, 9461, 9462],
-        "542100201": [9471],
+        "542100200": [9570, 9571, 9572],
+        "542100201": [9581],
     },
     # Two placed pickups of different classes, close enough together that only
     # the class tells them apart.
@@ -197,8 +221,9 @@ async def run(harness: str) -> int:
         failures.append(f"item_effects {summary.get('item_effects')} != {CONFIG['item_effects']}")
     if summary.get("config_globals") != CONFIG["config_globals"]:
         failures.append(f"config_globals {summary.get('config_globals')} != {CONFIG['config_globals']}")
-    if summary.get("pickup_layout") != CONFIG["pickup_layout"]:
-        failures.append(f"pickup_layout {summary.get('pickup_layout')} != {CONFIG['pickup_layout']}")
+    if summary.get("pickup_layout") != CONFIG["pickup_layout_echoed"]:
+        failures.append(f"pickup_layout {summary.get('pickup_layout')} != "
+                        f"{CONFIG['pickup_layout_echoed']}")
     # The routes echo as rows rather than objects, so compare them that way: the
     # point of the assertion is that the C++ side read every field, including the
     # second requirement only one route carries.

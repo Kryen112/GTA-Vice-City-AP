@@ -27,6 +27,11 @@ positions in the same create_collectable1 order, so re-emitting them would make
 two tables to keep in step. They are still extracted, and disagreeing with
 package_data.py fails the run.
 
+The ambient pickups are absent for the same reason and are not extracted at all:
+pickup_data.py owns all 110 positions, taken from the same decompile, and the
+pickup class is not playable yet. Emitting them belongs with the mod half, and
+until then the tracker lists those checks rather than pinning them.
+
 The emergency vehicle milestones place nothing anywhere and so get no
 coordinate: a level completes wherever the last fare or fire happens to be.
 
