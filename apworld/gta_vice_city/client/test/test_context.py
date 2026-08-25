@@ -672,6 +672,11 @@ class TestStatusCounts(unittest.TestCase):
                 context.checked_locations = {1, 2}
                 context.missing_locations = {3}
                 self.assertEqual(context._goal_rows()[1], ["Checks left", "1", False])
+                # And it counts only what the goal waits for: a location outside
+                # the goal is not a check left, so the page cannot report a
+                # number the goal is not holding on.
+                context.goal_uncounted_locations = {3}
+                self.assertEqual(context._goal_rows()[1], ["Checks left", "0", True])
 
         asyncio.run(scenario())
 
@@ -808,6 +813,28 @@ class TestFinaleWarp(unittest.TestCase):
             context.checked_locations = {500}
 
         self.assertEqual(_run_warp(configure), (True, False))
+
+    def test_the_hundred_percent_goal_ignores_locations_outside_it(self) -> None:
+        # The world stopped counting the uncounted classes toward this goal, so
+        # the client has to agree or it waits for checks the seed does not need.
+        # With the ambient pickups on that is 110 of them, and one that cannot be
+        # collected would hold the goal forever.
+        async def scenario() -> None:
+            with _fake_settings(""):
+                context = _context()
+                context.slot_goal = "hundred_percent"
+                context.checked_locations = {1, 2}
+                context.missing_locations = {50, 51}
+                self.assertFalse(context._goal_reached())
+                # Both outstanding locations are outside the goal: it is met.
+                context.goal_uncounted_locations = {50, 51}
+                self.assertTrue(context._goal_reached())
+                # One counted location still missing holds it, so this is not
+                # passing by ignoring everything.
+                context.missing_locations = {50, 51, 9}
+                self.assertFalse(context._goal_reached())
+
+        asyncio.run(scenario())
 
     def test_the_hundred_percent_goal_never_asks(self) -> None:
         # Same reason: every location checked includes the finale's.

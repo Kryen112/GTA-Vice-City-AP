@@ -3,7 +3,8 @@
 Story missions are always on. Every other check class has a toggle. A disabled
 class behaves fully vanilla in game: its locations do not exist and its
 class-specific items leave the pool (CLAUDE.md toggle invariant). The 100% goal
-is rejected unless every check class is enabled.
+is rejected unless every check class holding content the game's own completion
+stat counts is enabled, which is every class except the ambient pickups.
 """
 
 from __future__ import annotations
@@ -31,8 +32,11 @@ class Goal(Choice):
     hunt across the multiworld. Collecting a package in game is a check, never
     goal progress.
     hundred_percent: reach the game's own 100 percent stat. Generation rejects
-    this unless every check class is enabled, since every stat contributor must
-    be a check.
+    this unless every check class holding content that stat counts is enabled,
+    so that beating the seed means the stat is actually full: a class left off
+    stays vanilla and playable, so the goal would fire short of 100 percent
+    rather than become unreachable. Ambient pickups are the one class it does
+    not require, because the stat counts none of them.
     """
     display_name = "Goal"
     option_final_mission = 0
@@ -77,9 +81,14 @@ class EnableEmergencyVehicles(DefaultOnToggle):
 
 class ShuffleEmergencyRewards(Toggle):
     """If on, the five emergency-vehicle completion rewards (infinite sprint,
-    fireproof, max armor, taxi jump ability, max health) become useful items
-    in the pool and the vanilla full-completion grant is suppressed. Has no
-    effect unless emergency vehicle missions are enabled."""
+    fireproof, max armor, taxi jump ability, max health) become useful items in
+    the pool and the vanilla grant is suppressed, so finishing an emergency
+    chain hands over nothing and the reward arrives from the multiworld instead.
+
+    Independent of enable_emergency_vehicles. Whether the levels are CHECKS and
+    who hands over the REWARDS are different questions, and this answers only the
+    second: with the levels left vanilla and this on, the chains still play as
+    they always did and simply stop paying out."""
     display_name = "Shuffle emergency vehicle rewards"
 
 
@@ -91,6 +100,59 @@ class EnableProperties(DefaultOnToggle):
 class EnableRobbableStores(DefaultOnToggle):
     """If on, the robbable stores are checks."""
     display_name = "Enable robbable stores"
+
+
+class EnablePickups(Toggle):
+    """If on, the 110 pickups lying around the world are checks the first time
+    each one is taken: street weapons, health, body armor, adrenaline and
+    police bribes. An untaken pickup shows an Archipelago marker, and once its
+    check is taken it goes back to being an ordinary pickup, shuffled if
+    randomize_pickups is on. Ten of them sit inside shops and charge a thousand
+    dollars for the marker.
+
+    Off by default, because 110 extra checks change how a game plays. The 100
+    percent goal ignores them, since the game never counted a health pickup off
+    the street.
+
+    LOGIC IS INCOMPLETE. A few pickups need something to reach, a boat or a way
+    onto a roof, and the rules do not know that yet. Play with a way to release
+    items from the server in case one dead-ends."""
+    display_name = "Enable pickups"
+    # Offered with the reach terms still missing, deliberately, because the walk
+    # that writes them needs the checks live to walk to. The pickups were held to
+    # filler for exactly this reason once; that came off at the player's word so
+    # story missions plus pickups alone could generate, which the filler rule
+    # refused for want of anywhere to put progression. The docstring says so
+    # plainly rather than leaving it a surprise.
+
+
+class ShuffleShops(Toggle):
+    """If on, the 32 things the weapon shops sell are checks the first time each
+    one is bought. Six shops sell: three Ammu-Nations, with guns, grenades and
+    body armor, and three tool stores, with melee weapons. Each shop has its
+    own stock and its own prices, so the same weapon in two shops is two
+    separate checks. Every one of them needs the Wallet if you play with that
+    ability lock, since a shop charges.
+
+    While a check is pending the shop shows an Archipelago marker in place of
+    the item. Buying it costs the shop's usual price and hands over nothing,
+    and the stand then turns back into the real item, so buying again is an
+    ordinary purchase. With this off the shops are exactly vanilla.
+
+    The 100 percent goal ignores them, since buying a shotgun never counted
+    toward it.
+
+    LOGIC IS INCOMPLETE, and this one can cost you a seed rather than just a
+    check. 13 of the 32 only come into stock after a particular story mission,
+    and the rules do not know that yet. Eight of those sit in first-island
+    shops, which logic thinks you can reach immediately, so the item that
+    unlocks the very mission that stocks one can be placed behind it, and then
+    neither can be got. Play with a way to release items from the server.
+
+    The Vice Point sniper was a fourteenth and is handled: it stocks when the
+    mainland opens, so it asks for Mainland Access despite standing on the
+    first island."""
+    display_name = "Shuffle shops"
 
 
 class EnableSideEvents(DefaultOnToggle):
@@ -250,9 +312,11 @@ class StartingContentUnlock(Toggle):
     the ones this seed's content_locks keys produce. The seed makes the choice,
     so what is released is not known until the game starts. With
     split_content_locks on that is one district's worth rather than a whole
-    class, so this opens correspondingly less. The item is starting inventory,
-    so it leaves the pool rather than adding to it. Nothing happens when
-    content_locks is empty.
+    class, so this opens correspondingly less, and the draw is over the start
+    island's districts only: a district item for the mainland or Starfish Island
+    would be worth nothing on a new game. The item is starting inventory, so it
+    leaves the pool rather than adding to it. Nothing happens when content_locks
+    is empty, or when its keys hold nothing on the start island.
 
     A released class widens the start of the game, but generation never counts
     on it: the narrow-start measure reads what is open with no item at all, so
@@ -278,13 +342,40 @@ class TrapPercentage(NamedRange):
     }
 
 
-# The check-class toggles, by option attribute name. Story missions are always
-# on and are not listed. The 100 percent goal requires every one of these true.
+# Every check-class toggle, by option attribute name. Story missions are always
+# on and are not listed. This is the list a seed publishes into slot_data and a
+# Universal Tracker regeneration replays, so a class missing from it is a class
+# whose setting the played seed does not record and a tracker silently defaults.
+# Which of these the client then hands the ASI is a separate choice, made by the
+# fixed key list in client/context.py.
 CHECK_CLASS_OPTIONS: list[str] = [
+    "enable_hidden_packages", "enable_rampages", "enable_stunt_jumps",
+    "enable_emergency_vehicles", "enable_properties",
+    "enable_robbable_stores", "enable_side_events", "enable_pickups",
+    "shuffle_shops",
+]
+
+# The classes the 100 percent goal demands, because each HOLDS content the
+# game's own completion stat counts. Holding some is the test: the emergency
+# class carries 56 checks and the stat counts five of them, one per activity
+# completed, ignoring every intermediate milestone, and it is demanded on the
+# strength of those five.
+HUNDRED_PERCENT_CLASS_OPTIONS: list[str] = [
     "enable_hidden_packages", "enable_rampages", "enable_stunt_jumps",
     "enable_emergency_vehicles", "enable_properties",
     "enable_robbable_stores", "enable_side_events",
 ]
+
+# The classes the stat counts nothing in, so the goal cannot demand them without
+# meaning something the game does not. Named rather than subtracted: a list built
+# by taking one name out of another says nothing about a class added later, which
+# would then be demanded by default and silently. Every check class belongs to
+# this list or the one above, and a test refuses one that belongs to neither.
+UNCOUNTED_CLASS_OPTIONS: list[str] = ["enable_pickups", "shuffle_shops"]
+
+# The class keys those options belong to, for the goal to skip their
+# locations. Neither was ever part of the game's 100 percent.
+UNCOUNTED_CLASS_KEYS: list[str] = ["pickups", "shops"]
 
 
 @dataclass
@@ -298,6 +389,8 @@ class GTAViceCityOptions(PerGameCommonOptions):
     enable_emergency_vehicles: EnableEmergencyVehicles
     enable_properties: EnableProperties
     enable_robbable_stores: EnableRobbableStores
+    enable_pickups: EnablePickups
+    shuffle_shops: ShuffleShops
     enable_side_events: EnableSideEvents
     shuffle_emergency_rewards: ShuffleEmergencyRewards
     randomize_radio_stations: RandomizeRadioStations

@@ -49,6 +49,27 @@ SHIPPED_PAYLOAD_PATHS = (
     "cleo/aparea.cs",
     "cleo/aprewd.cs",
     "cleo/apradio.cs",
+    # The six weapon shop threads, one file each, the same reason as the three
+    # above. They gosub subroutines that live in one of the six, so every file
+    # carries a copy of that one's body; the copies are reachable only through
+    # those gosubs. One file for all six is not possible: starting a thread at a
+    # label inside a .cs needs an opcode CLEO does not override.
+    "cleo/apammu1.cs",
+    "cleo/apammu2.cs",
+    "cleo/apammu3.cs",
+    "cleo/aphard1.cs",
+    "cleo/aphard2.cs",
+    "cleo/aphard3.cs",
+    # apshops.cs, the one build that shipped those six as a single file, is NOT
+    # here. It is on STALE_PAYLOAD_PATHS instead, and remove() reads both lists,
+    # so an uninstall still cleans it. On both lists it would resolve to one
+    # destination twice, and deploy would write it and then clear it as stale on
+    # every run; a test refuses that overlap.
+
+    # Pickup detection: one pass per frame over all 110 ambient slots, asking
+    # the game whether each has been collected and latching its completion
+    # global. Its own file because a CLEO script runs from its own entry point.
+    "cleo/appickup.cs",
 )
 
 # Places an earlier build put a payload file that it no longer uses. The ASI
@@ -56,7 +77,20 @@ SHIPPED_PAYLOAD_PATHS = (
 # loaded as a second instance beside the current one: two frame hooks, two
 # pickup pool walks, and two writers to one log. Deploy clears these so an
 # install made by an older build heals itself.
-STALE_PAYLOAD_PATHS = ("scripts/GtaVcAp.VC.asi",)
+STALE_PAYLOAD_PATHS = (
+    "scripts/GtaVcAp.VC.asi",
+    # One build shipped the six weapon shops as a single apshops.cs. Left in
+    # place it runs beside the six that replaced it, so every shop thread exists
+    # twice, and it carries the start_new_script the split exists to remove.
+    # Listed here as well as in SHIPPED_PAYLOAD_PATHS because that one is only
+    # read by remove(); this is the list deploy() clears and is_current() tests.
+    #
+    # Spelled CLEO, not cleo: these entries are joined literally, so each has to
+    # name the folder the build that wrote it actually used, and deploy sends a
+    # cleo/ payload path through _destination to CLEO/. Windows would forgive the
+    # difference and a case-sensitive filesystem would not.
+    "CLEO/apshops.cs",
+)
 
 # What a half-written or truncated text table raises on its way through the
 # readers below. struct.error is neither OSError nor ValueError, so it has to be
@@ -378,6 +412,11 @@ def deploy(install_dir: Path, payload: list[tuple[str, bytes]] | None = None) ->
     install_dir = Path(install_dir)
     log: list[str] = []
     log.extend(_clear_stale_paths(install_dir))
+    # Counted rather than listed. The payload is one mod in a dozen files, and a
+    # player reading this wants to know it is in place, not which files carry it.
+    # A file the install already has is not counted, so a run that changes
+    # nothing still says so.
+    installed = 0
     for relative_path, data in files:
         destination = _destination(install_dir, relative_path)
         if destination.is_file() and destination.read_bytes() == data:
@@ -388,7 +427,9 @@ def deploy(install_dir: Path, payload: list[tuple[str, bytes]] | None = None) ->
             _backup_once(install_dir, destination)
         destination.parent.mkdir(parents=True, exist_ok=True)
         destination.write_bytes(data)
-        log.append(f"Installed {relative_path}.")
+        installed += 1
+    if installed:
+        log.append("Installed the mod into the game folder.")
     log.extend(patch_text_tables(install_dir))
     if not log:
         log.append("The mod is already up to date.")
@@ -408,6 +449,9 @@ def remove(install_dir: Path, payload: list[tuple[str, bytes]] | None = None) ->
 
     log.extend(_clear_stale_paths(install_dir))
     relative_paths = sorted({relative for relative, _ in files} | set(SHIPPED_PAYLOAD_PATHS))
+    # Counted, like the install. The paths an earlier build left behind stay
+    # named individually below, since one of those is news rather than routine.
+    removed = 0
     for relative_path in relative_paths:
         # main.scm is a stock file: it is restored from its backup below,
         # never deleted.
@@ -416,7 +460,9 @@ def remove(install_dir: Path, payload: list[tuple[str, bytes]] | None = None) ->
         destination = _destination(install_dir, relative_path)
         if destination.is_file():
             destination.unlink()
-            log.append(f"Removed {relative_path}.")
+            removed += 1
+    if removed:
+        log.append("Removed the mod from the game folder.")
 
     # Removing the CLEO folder only when empty can never take a player file;
     # the player's own CLEO runtime files and scripts keep it alive.

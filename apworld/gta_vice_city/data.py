@@ -10,7 +10,7 @@ Nothing here gates logic on money.
 
 from __future__ import annotations
 
-from . import district_data, package_data, pickup_data
+from . import district_data, package_data, pickup_data, shop_data
 
 # Story missions grouped by giver, each list in vanilla play order. Progressive
 # unlocks follow this order (Progressive <giver> #n opens the giver's nth
@@ -383,6 +383,32 @@ CONTENT_DISTRICTS: list[str] = [
     district for district in district_data.DISTRICTS
     if any(district in districts for districts in CONTENT_CLASS_DISTRICTS.values())
 ]
+
+
+def content_item_district(name: str) -> str | None:
+    """The district a district-scoped content item holds, or None for a whole one.
+
+    Both split forms lead with the district name, `Downtown Content` and
+    `Downtown Hidden Packages`, and no district name is a prefix of another
+    followed by a space, so the leading name identifies it. A whole-class item
+    covers every district and belongs to no one of them.
+    """
+    for district in district_data.DISTRICTS:
+        if name.startswith(f"{district} "):
+            return district
+    return None
+
+
+def content_item_on_start_island(name: str) -> bool:
+    """Whether a content item holds something reachable on a new game.
+
+    A whole-class item always does, since it covers the start island among the
+    rest. A district item does only if its district is on the start island: one
+    holding Downtown is worth nothing until the mainland opens, which is not what
+    a STARTING unlock is for.
+    """
+    district = content_item_district(name)
+    return district is None or district_region(district) == REGION_VICE_CITY
 
 
 def content_items(selected_keys: frozenset[str], split: int) -> list[str]:
@@ -778,6 +804,13 @@ def optional_check_classes() -> dict[str, tuple[str, list[str]]]:
                 for activity in activities
             ],
         ),
+        # LAST on purpose. Ids and completion globals are index-derived, so a
+        # class inserted mid-registry shifts every class after it and every
+        # reserved global above the completion block. Appending moves nothing
+        # that already exists.
+        "pickups": ("enable_pickups", list(PICKUP_NAMES)),
+        # Appended after pickups, for that same reason.
+        "shops": ("shuffle_shops", list(shop_data.SHOP_ITEM_NAMES)),
     }
 
 
@@ -1207,13 +1240,163 @@ PACKAGE_COORDS: list[tuple[float, float, float]] = package_data.PACKAGE_COORDS
 # Ambient pickup slots for the randomize_pickups permutation, extracted from
 # the decompile by scripts/dump_pickups.py: the MAIN-section bribes plus the
 # Mission 0 street weapons, hearts, armors, and adrenalines. Each slot keeps
-# its position and pickup type; the permutation moves the model and ammo. The
-# bribe model breaks the in-shop cost lookup, so bribes never land on
-# shop-type slots.
+# its position and pickup type; the permutation moves the model and ammo.
+#
+# Bribes never land on shop-type slots. Not because the price breaks: an in-shop
+# pickup prices from a field that means a weapon type only for a weapon model, and
+# the bribe is a simple model whose field is zero, so the cost table's zeroth
+# entry prices it, which is nothing. A free police bribe that respawns is the
+# problem: each one takes a star off the wanted level, so an endless supply of
+# them at a fixed spot is an endless supply of stars.
 PICKUP_SLOTS: list[tuple[float, float, float, int, int, int]] = pickup_data.PICKUP_SLOTS
 PICKUP_MODEL_NAMES: dict[int, str] = pickup_data.PICKUP_MODEL_NAMES
 PICKUP_BRIBE_MODEL: int = pickup_data.BRIBE_MODEL
 PICKUP_SHOP_TYPE: int = pickup_data.SHOP_PICKUP_TYPE
+PICKUP_HANDLE_GLOBALS: list[int] = pickup_data.PICKUP_HANDLE_GLOBALS
+
+# Every ambient slot is also a check, the first time it is taken, while
+# enable_pickups is on. Afterwards the slot behaves as randomize_pickups says:
+# shuffled when that option is on, vanilla when it is off. The two options
+# compose and neither overrides the other.
+
+# Whether any mod code reports an ambient pickup as taken. True since the
+# appickup CLEO watcher shipped: it polls all 110 slot handles and latches each
+# slot's completion global, which the ASI already reads like any other check.
+MOD_REPORTS_PICKUPS: bool = True
+
+# What is still NOT audited: the reach terms. Each slot sits on its verified
+# island, but nothing yet says a rooftop slot needs Jump or a ship needs a
+# boat, the way 23 audited packages and rampages do. That is data the hand
+# audit adds to the requirement tables, not a flag anything reads, which is
+# why there is no flag here for it.
+
+
+# One check per slot, so the count is the slot table's and not a number written
+# down twice.
+PICKUP_COUNT: int = len(pickup_data.PICKUP_SLOTS)
+
+# The derived district table must cover the slot table exactly. The zip below is
+# strict, so either table being longer raises there on its own, and this assert
+# adds no safety the zip lacks. It is kept for its message: the zip names an
+# argument number and which way it is wrong, while this names the two counts,
+# which is what tells the incoming hand audit what it left the wrong length.
+assert len(district_data.PICKUP_DISTRICTS) == PICKUP_COUNT, (
+    f"{len(district_data.PICKUP_DISTRICTS)} pickup districts for "
+    f"{PICKUP_COUNT} slots"
+)
+
+# The ten in-shop stands charge for what they give, so their checks need the
+# Wallet item while that key is selected. The other hundred need nothing at all:
+# walking over a pickup takes no ability.
+# Keyed on the slot's TYPE and never on its model. The type is what decides
+# whether a slot charges at all; the model only decides how much. So keying on
+# type keeps the term right under randomize_pickups, which moves models between
+# slots and would otherwise move the Wallet term with them.
+PICKUP_PAY_STAND_INDICES: frozenset[int] = frozenset(
+    index
+    for index, (_x, _y, _z, pickup_type, _model, _ammo)
+    in enumerate(pickup_data.PICKUP_SLOTS)
+    if pickup_type == PICKUP_SHOP_TYPE
+)
+
+
+# The vanilla global each slot's creation stores its pickup handle in, in slot
+# order. The generated APPICK watcher reads every one of them, polling
+# has_pickup_been_collected on each handle, since a handle is the game's own name
+# for a slot and there is nothing else to detect a taken pickup by.
+#
+# A handle alone is NOT a stable identity, and no assert here can see why: the
+# reuse is in the game's script rather than in this table. Mission 52 creates a
+# new pickup into slot 62's handle without removing slot 62's own first, so for
+# part of that mission the handle names a pickup at the mansion instead, and
+# slot 62's original is left in the world named by nothing. Every other
+# re-creation puts the pickup back at its own slot's coordinates: mission 32 on
+# this same slot, mission 52 again once it has removed the one it moved, and
+# mission 21 on slot 24, which is the only other slot touched at all. So
+# whatever reads a handle has to check the pickup it resolves to still stands
+# where the slot does.
+#
+# What the asserts below DO cover: one handle per slot and never shared, plus a
+# third in scm.py, which owns the reserved base and can compare against it
+# without importing back into here.
+assert len(pickup_data.PICKUP_HANDLE_GLOBALS) == PICKUP_COUNT, (
+    f"{len(pickup_data.PICKUP_HANDLE_GLOBALS)} handles for {PICKUP_COUNT} slots"
+)
+assert len(set(pickup_data.PICKUP_HANDLE_GLOBALS)) == PICKUP_COUNT, (
+    "two slots share a pickup handle global"
+)
+
+
+def pickup_handle_global(index: int) -> int:
+    return pickup_data.PICKUP_HANDLE_GLOBALS[index]
+
+
+def _pickup_names() -> list[str]:
+    """One name per slot, numbered only where district and item are not enough.
+
+    The district is what tells a player where to go, but 55 of the 110 share a
+    district and an item: five read "Pickup - Downtown - Health" on their own.
+    Those take a numeric suffix, which is PROVISIONAL. The hand audit replaces it
+    with a landmark the way the package names read. A corrected district can also
+    make a stem that was unique collide, or free one that collided, so the audit
+    can rename a slot that carries no suffix today and renumber the group it
+    joins. Two model names already end in a space and two digits, S.P.A.S. 12 and
+    Ingram Mac 10, which is exactly the shape a suffix takes, so a name ending
+    that way is not by itself a suffixed one. Several more end in a digit without
+    the space, M4 and M60 and Tec-9 among them, and those cannot collide.
+
+    The item half is the slot's VANILLA model and stays that way whatever
+    randomize_pickups rolls, so with that option on a slot named for a health
+    heart can hand over a shotgun. Names key the id table, so they cannot depend
+    on the seed; what the name promises is the place, not the prize.
+    """
+    stems = [
+        f"Pickup - {district} - {PICKUP_MODEL_NAMES[model]}"
+        for district, (_x, _y, _z, _pickup_type, model, _ammo)
+        in zip(district_data.PICKUP_DISTRICTS, pickup_data.PICKUP_SLOTS,
+               strict=True)
+    ]
+    shared: dict[str, int] = {}
+    for stem in stems:
+        shared[stem] = shared.get(stem, 0) + 1
+    seen: dict[str, int] = {}
+    names: list[str] = []
+    for stem in stems:
+        if shared[stem] == 1:
+            names.append(stem)
+            continue
+        seen[stem] = seen.get(stem, 0) + 1
+        names.append(f"{stem} {seen[stem]:02d}")
+    return names
+
+
+PICKUP_NAMES: list[str] = _pickup_names()
+
+
+def pickup_name(index: int) -> str:
+    return PICKUP_NAMES[index]
+
+
+def pickup_region(index: int) -> str:
+    return district_region(district_data.PICKUP_DISTRICTS[index])
+
+
+def shop_item_region(item: shop_data.ShopItem) -> str:
+    # A shop's island comes from the district it stands in, the same way a
+    # pickup's does. Two of the six are on the mainland, the Downtown
+    # Ammu-Nation and the Little Havana tool store, so those wait on the
+    # crossing; the other four are on the starting island.
+    #
+    # Except that reaching a shop and it having the thing in stock are two
+    # questions. The Vice Point sniper stocks off the flag the crossing sets, so
+    # it gates on Mainland Access despite standing on the starting island, for
+    # the same reason the mainland property purchases below do: left on the
+    # starting island the fill can hide Mainland Access itself behind a check
+    # that only stocks once the mainland is open, which is unwinnable.
+    if (item.thread, item.script_global) in shop_data.CROSSING_STOCKED_ITEMS:
+        return REGION_MAINLAND
+    return district_region(shop_data.SHOP_DISTRICTS[item.thread])
+
 
 # Property purchases on the mainland: the five mainland venue businesses and the
 # two mainland safehouses (Hyman Condo in Downtown, Skumole Shack in Little
@@ -1469,6 +1652,46 @@ def location_ability_requirements() -> dict[str, list[str]]:
         )
     for index in range(1, ROBBABLE_STORE_COUNT + 1):
         requirements[robbable_store_name(index)] = [WEAPON_EQUIP_ITEM]
+    # Walking over a pickup takes no ability, so nothing here is about TAKING
+    # one. Reaching one is a different question and this table does not answer
+    # it yet. The shipped audit puts a REACH term on 23 places: 19 of the 100
+    # packages, through PACKAGE_ABILITY_REQUIREMENTS and the one-of routes in
+    # PACKAGE_ABILITY_ALTERNATIVES, and 4 of the 35 rampages, being 14 and 19
+    # plus the two in RAMPAGE_ABILITY_ALTERNATIVES. The other three rampages
+    # carrying a term are the drive-bys, and needing a car to DO a rampage is not
+    # needing one to reach its icon, which is the distinction this paragraph is
+    # about. The 23 are roofs, water, a billboard, a pool, an airplane, a ship,
+    # the inside of a mall shop, and one under a sculpture. Ambient slots sit in
+    # the same city and some sit in the same kind of place, so the hundred
+    # ordinary slots carry no term because none is KNOWN, not because none can
+    # exist.
+    #
+    # THIS SHIPS, and nothing guards it. There is no refusal in generate_early
+    # and the pickups are ordinary locations that may hold progression, so a
+    # missing term here is a seed that can dead-end: the fill is entitled to put
+    # a progression item on a rooftop slot whose way up the seed has not handed
+    # over. enable_pickups says so in its own help text.
+    #
+    # It ships that way on purpose. The walk that resolves it needs the checks
+    # live to walk to, and holding the pickups to filler until then was what made
+    # story missions plus pickups alone refuse to generate, since it left the fill
+    # nowhere to put progression at all.
+    #
+    # The hand audit is what resolves it, by walking all 110 and filling the
+    # needs_ability column in notes/pickup-audit.csv. Nothing here guesses which
+    # slots need a term: a derived shortlist would only tell the walk what to
+    # expect, and an unflagged slot would read as settled when nothing had
+    # checked it.
+    #
+    # The ten in-shop stands charge for what they give, and with the wallet key
+    # selected the money pins to zero, so those alone wait on the Wallet item.
+    for index in PICKUP_PAY_STAND_INDICES:
+        requirements[pickup_name(index)] = [WALLET_ITEM]
+    # Every shop item is bought, and with the wallet key selected the money pins
+    # to zero, so all 32 wait on the Wallet item. Amounts still gate nothing: the
+    # dearest is 6000 dollars and money is grindable once Tommy can hold it.
+    for shop_item in shop_data.SHOP_ITEMS:
+        requirements[shop_data.shop_item_name(shop_item)] = [WALLET_ITEM]
     for index in range(1, RAMPAGE_COUNT + 1):
         base = ([LAND_VEHICLES_ITEM] if index in VEHICLE_RAMPAGE_INDICES
                 else [WEAPON_EQUIP_ITEM])
@@ -1731,6 +1954,18 @@ def _build_location_reward() -> dict[str, int]:
     for index in range(1, ROBBABLE_STORE_COUNT + 1):
         reward[robbable_store_name(index)] = 0
     for name in PROPERTY_PURCHASES:
+        reward[name] = 0
+    # A pickup paid no cash in vanilla, it handed over a weapon or a heart, so
+    # the mirror has nothing to give back and these sort last as generic filler.
+    # The ten in-shop stands COST money rather than paying it, and a negative
+    # entry would ask the mirror to take cash away, which it cannot do; they are
+    # zero like the rest.
+    for index in range(PICKUP_COUNT):
+        reward[pickup_name(index)] = 0
+    # A shop item COSTS money rather than paying it, for the same reason the
+    # in-shop stands do, so it is zero here too: a negative entry would ask the
+    # mirror to take cash away, which it cannot do.
+    for name in shop_data.SHOP_ITEM_NAMES:
         reward[name] = 0
     return reward
 

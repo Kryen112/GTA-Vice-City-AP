@@ -3,8 +3,11 @@
 Each row is one eligible world pickup slot in decompile order:
 (x, y, z, pickup type, vanilla model, vanilla ammo). The randomize_pickups
 option permutes the (model, ammo) pairs across the slots; the position and
-the pickup type stay with the slot. Type 1 is the in-shop type whose cost
-lookup misreads on the bribe model, so bribes never land on type 1 slots.
+the pickup type stay with the slot. Type 1 is the in-shop type, which charges,
+and bribes never land on a type 1 slot: an in-shop bribe would be free, since a
+bribe's weapon-type field is zero and so is the cost table's zeroth entry, and
+each bribe takes a star off the wanted level, so a free one that respawns is an
+endless supply of them.
 """
 
 from __future__ import annotations
@@ -155,6 +158,27 @@ PICKUP_MODEL_NAMES: dict[int, str] = {
     368: "Body Armor",
     375: "Police Bribe",
 }
+
+# The global each slot's creation stores its pickup handle in,
+# in PICKUP_SLOTS order. Vanilla globals, so they never move.
+# Nothing reads them yet; they are the game's own name for a
+# slot. Two slots have their pickup re-created by a mission, and
+# one of those re-creations puts it somewhere else, so a reader
+# has to check the pickup a handle resolves to still stands
+# where the slot does. See data.py.
+PICKUP_HANDLE_GLOBALS: list[int] = [
+    110, 111, 112, 113, 114, 115, 116, 117, 118, 119,
+    120, 121, 122, 2035, 1999, 2000, 2001, 2002, 2003, 2004,
+    2005, 2006, 2007, 2008, 2009, 2011, 2012, 2013, 2014, 2036,
+    2010, 2015, 2016, 2017, 2018, 2019, 2020, 2021, 2022, 2023,
+    2024, 2025, 2026, 2027, 2028, 2029, 2030, 2031, 2032, 2033,
+    2034, 2037, 2038, 2039, 2040, 2041, 2042, 2043, 2044, 2045,
+    2046, 2047, 2061, 2048, 2049, 2050, 2051, 2052, 2053, 2054,
+    2055, 2056, 2057, 2058, 2059, 2060, 2062, 2063, 2064, 2065,
+    2066, 2067, 2068, 2069, 2070, 2071, 2072, 2073, 2074, 2076,
+    2077, 2078, 2079, 2075, 2080, 2081, 2082, 2083, 2084, 2085,
+    2086, 2087, 2088, 2089, 2090, 2091, 2092, 2093, 2094, 2095,
+]
 
 BRIBE_MODEL = 375
 SHOP_PICKUP_TYPE = 1

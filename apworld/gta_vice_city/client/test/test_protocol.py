@@ -36,16 +36,22 @@ class TestFraming(unittest.TestCase):
         message = protocol.config_message(
             {"542100000": 9010}, {"9035": 542000000, "9036": 542000001},
             {"542100050": ["cash", 5000], "542100051": ["weapon"]},
-            {"9377": 1, "9378": 0},
+            {"9501": 1, "9502": 0},
             {"9075": [479.6, -1718.5, 15.6], "9076": [708.4, -498.2, 12.3]},
-            [[393.9, -60.2, 11.5, 15, 366, 0], [-228.4, -1318.2, 9.1, 15, 274, 34]],
+            # A slot that is a check, carrying its completion global, and one
+            # that is not: both shapes have to survive framing.
+            [[393.9, -60.2, 11.5, 15, 366, 0, 9376],
+             [-228.4, -1318.2, 9.1, 15, 274, 34, 0]],
             [{"global": 9032, "label": "Prawn Island Bridge",
               "needs_global": 0, "needs_label": ""},
              {"global": 9035, "label": "Starfish Island Causeway",
               "needs_global": 9031, "needs_label": "Starfish Island Access"}],
             # A whole-class item releasing several districts, and a district item
             # releasing one: the two shapes the fan-out has to survive framing.
-            {"542100200": [9460, 9461, 9462], "542100201": [9471]},
+            # The globals are the real layout, so they move when it moves; only
+            # the item ids are invented. In the completion_watch argument above,
+            # 9035 is the last unlock global and 9036 the first completion one.
+            {"542100200": [9570, 9571, 9572], "542100201": [9581]},
             [{"x": 479.6, "y": -1718.5, "class": 0, "district": 0},
              {"x": 218.22, "y": -1613.76, "class": 1, "district": 0}],
         )

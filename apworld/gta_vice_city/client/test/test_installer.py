@@ -80,7 +80,18 @@ class TestDeploy(unittest.TestCase):
         self.assertEqual((self.install / "GtaVcAp.VC.asi").read_bytes(), b"asi-bytes")
         self.assertEqual((self.install / "CLEO" / "gtavc_ap.cs").read_bytes(), b"cleo-bytes")
         self.assertEqual((self.install / "data" / "main.scm").read_bytes(), b"scm-bytes")
-        self.assertEqual(len(log), 3)
+        # One line for the whole payload, however many files carry it, so the
+        # launcher does not read as a dozen separate installs.
+        self.assertEqual(log, ["Installed the mod into the game folder."])
+
+    def test_says_it_installed_once_however_many_files_moved(self) -> None:
+        # Two payloads of different sizes, same one line. The count is what
+        # regressed into a per-file list, so the count is what is pinned.
+        one = installer.deploy(self.install, payload=[SCM])
+        installer.remove(self.install, payload=[SCM])
+        many = installer.deploy(self.install, payload=PAYLOAD)
+        self.assertEqual(one, many)
+        self.assertEqual(len(many), 1)
 
     def test_clears_a_copy_an_earlier_build_left_in_scripts(self) -> None:
         # The ASI loader scans the install root and scripts alike, so a copy an
@@ -93,6 +104,45 @@ class TestDeploy(unittest.TestCase):
         self.assertFalse(stale.exists())
         self.assertEqual((self.install / "GtaVcAp.VC.asi").read_bytes(), b"asi-bytes")
         self.assertTrue(any("scripts/GtaVcAp.VC.asi" in line for line in log))
+
+    def test_deploy_clears_the_superseded_shop_script(self) -> None:
+        # One build shipped the six weapon shops as a single apshops.cs. Left in
+        # place it runs beside the six that replaced it, so every shop thread
+        # exists twice. Deploy takes it out, and an install still holding one is
+        # not current, or the heal never runs.
+        #
+        # Deployed FIRST, then the leftover planted: asking before a deploy
+        # answers False because the payload is not there yet, whatever the stale
+        # list says, so the interesting half would bind to nothing.
+        installer.deploy(self.install, payload=PAYLOAD)
+        self.assertTrue(installer.mod_is_current(self.install, payload=PAYLOAD))
+        stale = self.install / "CLEO" / "apshops.cs"
+        stale.parent.mkdir(parents=True, exist_ok=True)
+        stale.write_bytes(b"the-one-file-shops")
+        self.assertFalse(installer.mod_is_current(self.install, payload=PAYLOAD))
+        log = installer.deploy(self.install, payload=PAYLOAD)
+        self.assertFalse(stale.exists())
+        self.assertTrue(any("CLEO/apshops.cs" in line for line in log))
+
+    def test_stale_paths_name_the_folder_a_build_wrote_to(self) -> None:
+        # Stale entries are joined literally while deploy sends a payload path
+        # through _destination, which maps cleo/ to CLEO/. On Windows the two
+        # spellings are the same file, so only this assertion catches the
+        # difference on the machine the mod is built on.
+        for stale_path in installer.STALE_PAYLOAD_PATHS:
+            first = stale_path.split("/")[0]
+            if first.lower() == "cleo":
+                self.assertEqual(first, "CLEO", stale_path)
+
+    def test_nothing_is_both_shipped_and_stale_at_one_place(self) -> None:
+        # A file deploy writes and then clears as stale would be rewritten every
+        # run and never read as current. The two lists may name the same file,
+        # since they resolve differently, but not the same DESTINATION.
+        shipped = {installer._destination(self.install, path)
+                   for path in installer.SHIPPED_PAYLOAD_PATHS}
+        for stale_path in installer.STALE_PAYLOAD_PATHS:
+            stale = self.install.joinpath(*stale_path.split("/"))
+            self.assertNotIn(stale, shipped, stale_path)
 
     def test_leaves_other_files_in_scripts_alone(self) -> None:
         # Only the paths this mod itself used to occupy are cleared; the folder
@@ -246,13 +296,31 @@ class TestRemove(unittest.TestCase):
     def test_removes_a_copy_an_earlier_build_left_in_scripts(self) -> None:
         # Left behind, it would keep running the mod against the restored stock
         # main.scm and the deleted CLEO scripts, which is worse than a leftover.
+        #
+        # Every stale path, not one of them: apshops.cs is on this list ALONE,
+        # having come off the shipped list to stop deploy writing and clearing
+        # one file, so an uninstall cleaning it rests entirely on this pass.
         installer.deploy(self.install, payload=PAYLOAD)
-        stale = self.install / "scripts" / "GtaVcAp.VC.asi"
-        stale.parent.mkdir(parents=True, exist_ok=True)
-        stale.write_bytes(b"an-older-build")
+        planted = []
+        for stale_path in installer.STALE_PAYLOAD_PATHS:
+            stale = self.install.joinpath(*stale_path.split("/"))
+            stale.parent.mkdir(parents=True, exist_ok=True)
+            stale.write_bytes(b"an-older-build")
+            planted.append((stale_path, stale))
         log = installer.remove(self.install, payload=PAYLOAD)
-        self.assertFalse(stale.exists())
-        self.assertTrue(any("scripts/GtaVcAp.VC.asi" in line for line in log))
+        for stale_path, stale in planted:
+            self.assertFalse(stale.exists(), stale_path)
+            self.assertTrue(any(stale_path in line for line in log), stale_path)
+
+    def test_says_it_removed_once_however_many_files_went(self) -> None:
+        # The counterpart of the install line, and pinned for the same reason:
+        # this was a line per file and read as a dozen separate removals.
+        installer.deploy(self.install, payload=PAYLOAD)
+        log = installer.remove(self.install, payload=PAYLOAD)
+        summary = [line for line in log if line.startswith(("Installed", "Removed"))]
+        self.assertIn("Removed the mod from the game folder.", summary)
+        self.assertEqual(
+            len([line for line in summary if line.startswith("Removed the mod")]), 1)
 
     def test_removes_the_cleo_folder_it_created_once_empty(self) -> None:
         installer.deploy(self.install, payload=[CLEO])

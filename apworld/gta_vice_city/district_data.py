@@ -209,3 +209,141 @@ PROPERTY_COORDS: dict[str, tuple[float, float, float]] = {
     "3321 Vice Point": (531.4, 1273.7, 17.6),
     "Skumole Shack": (-560.1, 703.6, 20.5),
 }
+
+# The 110 ambient pickup slots, in pickup_data.PICKUP_SLOTS order.
+#
+# DERIVED, not audited, and the only derived table here besides the properties.
+# Each slot takes the district of its three nearest audited anchors, the 100
+# packages and the 35 rampages, weighted by inverse HORIZONTAL distance; the
+# same recipe in three dimensions disagrees with this table at slot 16, so the
+# metric is part of the recipe and not an aside.
+#
+# Measured against those anchors leave-one-out it agrees 90.4 per cent of the
+# time (122 of 135). Distance to the nearest anchor carries signal: 94.9 per cent
+# within 100 units against 86.8 per cent beyond it, and 94.1 against 84.0 at
+# 125. What that does NOT give is a cut past which a slot is safe, since even
+# the closest bucket is only about 95 per cent; what it gives the hand audit is
+# an order to work in, farthest anchor first. The slots sit closer to their
+# anchors than the anchors do to each other, a median of 74.6 against 110.3, so
+# the flat rate understates them and eight wrong is the better expectation than
+# eleven.
+#
+# They are here so the class can be built and played, and the hand audit
+# replaces them. A test pins every slot to the island of its nearest anchor, so
+# the audit can move a district within a region but not between regions without
+# saying so. That test measures nearest in three dimensions, which is a
+# different metric from the derivation above and a deliberately blunter one: it
+# only has to separate islands, which sit far enough apart that the vertical
+# term cannot move a slot across the gap.
+PICKUP_DISTRICTS: list[str] = [
+    "Vice Point",  # 0
+    "Ocean Beach",  # 1
+    "Washington Beach",  # 2
+    "Vice Point",  # 3
+    "Vice Point",  # 4
+    "Vice Point",  # 5
+    "Prawn Island",  # 6
+    "Downtown",  # 7
+    "Little Haiti",  # 8
+    "Little Haiti",  # 9
+    "Little Haiti",  # 10
+    "Little Havana",  # 11
+    "Little Havana",  # 12
+    "Ocean Beach",  # 13
+    "Ocean Beach",  # 14
+    "Ocean Beach",  # 15
+    "Vice Point",  # 16
+    "Ocean Beach",  # 17
+    "Washington Beach",  # 18
+    "Vice Point",  # 19
+    "Washington Beach",  # 20
+    "Vice Point",  # 21
+    "Vice Point",  # 22
+    "Vice Point",  # 23
+    "Washington Beach",  # 24
+    "Ocean Beach",  # 25
+    "Ocean Beach",  # 26
+    "Washington Beach",  # 27
+    "Ocean Beach",  # 28
+    "Washington Beach",  # 29
+    "Vice Point",  # 30
+    "Prawn Island",  # 31
+    "Prawn Island",  # 32
+    "Leaf Links",  # 33
+    "Starfish Island",  # 34
+    "Starfish Island",  # 35
+    "Starfish Island",  # 36
+    "Downtown",  # 37
+    "Downtown",  # 38
+    "Little Haiti",  # 39
+    "Little Havana",  # 40
+    "Viceport",  # 41
+    "Viceport",  # 42
+    "Viceport",  # 43
+    "Viceport",  # 44
+    "Escobar International",  # 45
+    "Escobar International",  # 46
+    "Little Havana",  # 47
+    "Little Havana",  # 48
+    "Little Haiti",  # 49
+    "Little Havana",  # 50
+    "Ocean Beach",  # 51
+    "Ocean Beach",  # 52
+    "Washington Beach",  # 53
+    "Vice Point",  # 54
+    "Vice Point",  # 55
+    "Vice Point",  # 56
+    "Vice Point",  # 57
+    "Prawn Island",  # 58
+    "Leaf Links",  # 59
+    "Starfish Island",  # 60
+    "Starfish Island",  # 61
+    "Starfish Island",  # 62
+    "Downtown",  # 63
+    "Downtown",  # 64
+    "Downtown",  # 65
+    "Little Haiti",  # 66
+    "Little Haiti",  # 67
+    "Little Havana",  # 68
+    "Little Havana",  # 69
+    "Viceport",  # 70
+    "Viceport",  # 71
+    "Escobar International",  # 72
+    "Downtown",  # 73
+    "Little Haiti",  # 74
+    "Downtown",  # 75
+    "Ocean Beach",  # 76
+    "Washington Beach",  # 77
+    "Washington Beach",  # 78
+    "Vice Point",  # 79
+    "Vice Point",  # 80
+    "Vice Point",  # 81
+    "Vice Point",  # 82
+    "Vice Point",  # 83
+    "Prawn Island",  # 84
+    "Leaf Links",  # 85
+    "Escobar International",  # 86
+    "Downtown",  # 87
+    "Downtown",  # 88
+    "Little Haiti",  # 89
+    "Downtown",  # 90
+    "Viceport",  # 91
+    "Viceport",  # 92
+    "Little Havana",  # 93
+    "Ocean Beach",  # 94
+    "Washington Beach",  # 95
+    "Vice Point",  # 96
+    "Vice Point",  # 97
+    "Vice Point",  # 98
+    "Vice Point",  # 99
+    "Starfish Island",  # 100
+    "Starfish Island",  # 101
+    "Downtown",  # 102
+    "Downtown",  # 103
+    "Little Haiti",  # 104
+    "Little Haiti",  # 105
+    "Little Havana",  # 106
+    "Little Haiti",  # 107
+    "Little Haiti",  # 108
+    "Downtown",  # 109
+]

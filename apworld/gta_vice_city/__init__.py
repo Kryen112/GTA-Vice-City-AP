@@ -18,7 +18,14 @@ from collections import Counter
 from collections.abc import Callable
 
 import settings
-from BaseClasses import CollectionState, Item, ItemClassification, Location, Region
+from BaseClasses import (
+    CollectionState,
+    Item,
+    ItemClassification,
+    Location,
+    LocationProgressType,
+    Region,
+)
 from Options import OptionError
 from worlds.AutoWorld import WebWorld, World
 from worlds.LauncherComponents import Component, Type, components
@@ -34,7 +41,13 @@ from .items import (
     ITEM_QUANTITIES,
 )
 from .locations import CLASS_TOGGLE, LOCATION_GROUPS, LOCATION_NAME_TO_ID, LOCATION_REGIONS, LOCATION_TOGGLE
-from .options import CHECK_CLASS_OPTIONS, Goal, GTAViceCityOptions
+from .options import (
+    CHECK_CLASS_OPTIONS,
+    HUNDRED_PERCENT_CLASS_OPTIONS,
+    UNCOUNTED_CLASS_KEYS,
+    Goal,
+    GTAViceCityOptions,
+)
 
 # How many checks a seed must leave reachable on a new game before it needs no
 # help. Nothing is granted at the start to widen a narrow seed, so a sphere 0 of
@@ -44,6 +57,14 @@ from .options import CHECK_CLASS_OPTIONS, Goal, GTAViceCityOptions
 # directed into it, and, for a solo seed with no opener to direct, the refusal.
 # Measured against scripts/fuzz_fill.py, which generates solo.
 MINIMUM_SPHERE_ZERO = 2
+
+# Every location in a class the game's own completion stat does not count, so
+# the 100 percent goal can ask for what the game asks for and no more.
+_UNCOUNTED_LOCATION_NAMES: frozenset[str] = frozenset(
+    name
+    for key in UNCOUNTED_CLASS_KEYS
+    for name in data.optional_check_classes()[key][1]
+)
 
 # How many checks the directed opening item must leave reachable before a narrow
 # seed is widened instead of refused. Directing spends the fill's own choice of
@@ -230,13 +251,17 @@ class GTAViceCityWorld(World):
         self._choose_directed_opener()
         self._choose_starting_unlocks(None)
         if options.goal == Goal.option_hundred_percent:
-            missing = [name for name in CHECK_CLASS_OPTIONS
+            missing = [name for name in HUNDRED_PERCENT_CLASS_OPTIONS
                        if not getattr(options, name).value]
             if missing:
                 raise OptionError(
                     f"{self.game}: the 100 percent goal requires every check "
-                    "class enabled, because every stat contributor must be a "
-                    f"check. Disabled: {', '.join(sorted(missing))}."
+                    "class holding content the completion stat counts, so that "
+                    "beating the seed means the stat is actually full. A class "
+                    "left off stays vanilla and playable, so the goal would fire "
+                    "short of 100 percent rather than become unreachable. "
+                    "Disabled: "
+                    f"{', '.join(sorted(missing))}."
                 )
         if options.goal == Goal.option_hidden_packages and not options.enable_hidden_packages:
             raise OptionError(
@@ -275,21 +300,43 @@ class GTAViceCityWorld(World):
         # in the pool for the fill to place, and with heavy ability locks the
         # held packages are often the only class that opens the start at all, so
         # a draw free to take it would decide whether the seed generates.
+        # And a fresh draw holds something Tommy can walk to. A district item
+        # for the mainland or Starfish Island is worth nothing on a new game,
+        # which is not what a STARTING unlock is for, so the draw is over the
+        # start island's items and whole-class items, which cover it among the
+        # rest. If the seed's keys hold nothing there the narrowed list is empty
+        # and the draw yields None, which the option already allows: a draw that
+        # can find nothing hands over nothing rather than something useless.
+        #
+        # A replay is judged against the wider list on purpose. Narrowing the
+        # draw does not make a seed already being played invalid, and a seed that
+        # drew Downtown Content before this existed must keep it: restoring None
+        # instead would leave the item in the pool while every Downtown location
+        # read as gated on something the player was told they held.
+        eligible = [name for name in self._content_items()
+                    if name != self.directed_opening_item]
         self.starting_content_item = self._draw_starting_unlock(
             bool(self.options.starting_content_unlock.value),
-            [name for name in self._content_items()
-             if name != self.directed_opening_item],
+            eligible,
             (passthrough or {}).get("starting_content_item"),
             replaying,
+            draw_from=[name for name in eligible
+                       if data.content_item_on_start_island(name)],
         )
 
     def _draw_starting_unlock(
         self, enabled: bool, eligible: list[str], restored: str | None,
-        replaying: bool,
+        replaying: bool, draw_from: list[str] | None = None,
     ) -> str | None:
         # One item out of those the seed's own lock keys put in the pool. The
         # draw is over items, not keys, so the vehicles key hands over one of
         # land, sea, or air rather than all three.
+        #
+        # eligible is what a restored name is checked against, and draw_from is
+        # what a fresh roll picks out of. They differ where a draw is narrowed to
+        # items worth holding at the start: narrowing which item a NEW seed picks
+        # must not retire a name an OLD seed already handed the player, so the
+        # check stays on the wider list.
         #
         # A replay never rolls. The played seed can have drawn nothing with the
         # option on and a key selected, since the item a narrow seed directs is
@@ -300,14 +347,20 @@ class GTAViceCityWorld(World):
             return None
         if replaying:
             return restored if restored in eligible else None
-        return self.random.choice(eligible)
+        rollable = eligible if draw_from is None else draw_from
+        if not rollable:
+            return None
+        return self.random.choice(rollable)
 
     def _choose_pickup_permutation(self, passthrough: dict | None) -> None:
         # The ambient pickup layout. Fixed here, before the pool builds, and
         # carried in slot_data so a tracker regeneration replays the seed's
-        # layout instead of rerolling. The bribe model breaks the in-shop cost
-        # lookup, so any bribe the shuffle drops on a shop-type slot trades
-        # places with a non-bribe on a non-shop slot.
+        # layout instead of rerolling. An in-shop bribe would cost nothing, since
+        # a bribe is a simple model whose weapon-type field is zero and the cost
+        # table's zeroth entry is zero, so any bribe the shuffle drops on a
+        # shop-type slot trades places with a non-bribe on a non-shop slot: each
+        # bribe takes a star off the wanted level, and a free one that respawns is
+        # an endless supply of them.
         if not self.options.randomize_pickups:
             self.pickup_permutation = None
             return
@@ -351,8 +404,12 @@ class GTAViceCityWorld(World):
         if name in data.PACKAGE_REWARD_ITEMS:
             return bool(self.options.enable_hidden_packages.value)
         if name in data.EMERGENCY_REWARD_ITEMS:
-            return bool(self.options.enable_emergency_vehicles.value
-                        and self.options.shuffle_emergency_rewards.value)
+            # Independent of whether the emergency levels are checks. The
+            # reward and the check are different questions: one asks who hands
+            # over infinite sprint, the other asks whether reaching level 12 is
+            # a location. A player can want the rewards in the pool without
+            # wanting 56 more checks.
+            return bool(self.options.shuffle_emergency_rewards.value)
         if name in data.PROPERTY_OWNERSHIP_ITEMS:
             return bool(self.options.enable_properties.value)
         if name in data.ABILITY_ITEM_KEY:
@@ -461,9 +518,15 @@ class GTAViceCityWorld(World):
             if not self._location_enabled(location_name):
                 continue
             region = by_name[region_name]
-            region.locations.append(GTAViceCityLocation(
+            location = GTAViceCityLocation(
                 self.player, location_name, LOCATION_NAME_TO_ID[location_name], region,
-            ))
+            )
+            # See _location_excluded: a pickup's region is a claim rather than a
+            # fact while the logic is unwalked, so nothing a seed needs may sit
+            # behind it. They are still real checks holding real filler.
+            if self._location_excluded(location_name):
+                location.progress_type = LocationProgressType.EXCLUDED
+            region.locations.append(location)
 
     def create_items(self) -> None:
         placeable: list[str] = []
@@ -529,10 +592,21 @@ class GTAViceCityWorld(World):
             # a physical package pickup stays an ordinary check.
             placeable.extend([data.PACKAGE_FRAGMENT_ITEM] * data.HIDDEN_PACKAGE_COUNT)
 
+        # Two counts, because two different questions. How many checks the seed
+        # has decides how many items it owes, and every location needs one
+        # whether or not progression may go there. How many can HOLD one of
+        # these decides whether they fit: an excluded location is a real check
+        # holding real filler but it is not room for progression, and counting it
+        # as room stands the guard below down and lets the fill die with a
+        # FillError instead of refusing cleanly.
         active_locations = sum(
             1 for name in LOCATION_NAME_TO_ID if self._location_enabled(name)
         )
-        overflow = len(placeable) - active_locations
+        placeable_locations = sum(
+            1 for name in LOCATION_NAME_TO_ID
+            if self._location_enabled(name) and not self._location_excluded(name)
+        )
+        overflow = len(placeable) - placeable_locations
         if overflow > 0:
             # More progression and useful items than checks. Filler is what
             # gives way as the item count grows, and by here there is none left
@@ -545,7 +619,7 @@ class GTAViceCityWorld(World):
                 advice = "Enable another check class"
             raise OptionError(
                 f"{self.game}: {len(placeable)} progression and useful items but "
-                f"only {active_locations} checks this seed. {advice} so the items "
+                f"only {placeable_locations} checks this seed. {advice} so the items "
                 "have reachable homes."
             )
         self._guard_fill_room()
@@ -655,16 +729,45 @@ class GTAViceCityWorld(World):
             "lock key."
         )
 
+    def _location_uncounted(self, name: str) -> bool:
+        """Whether the game's own completion stat counts this location.
+
+        False for everything the stat counts, and True for the classes it never
+        did: the ambient pickups and the shop items. Read by the
+        100 percent goal, which is the game's percentage rather than a count of
+        this world's checks.
+        """
+        return name in _UNCOUNTED_LOCATION_NAMES
+
+    def _location_excluded(self, name: str) -> bool:
+        """Whether the fill is told to keep progression and useful items out.
+
+        Nothing today. The ambient pickups were excluded while they claimed to
+        sit in the start region, because a seed must not need an item behind a
+        claim; they sit on their real island now, which is verified, so they
+        hold anything.
+
+        The seam stays because the reasoning is not specific to pickups: a class
+        whose logic cannot be trusted must not be counted as room for
+        progression either, and getting that wrong cost two blockers. Read by
+        create_regions and by both counts that size the fill.
+        """
+        return False
+
     def _free_start_location_count(self) -> int:
         # Locations reachable on a new game with no item: enabled start-region
         # locations that carry no access rule. This is the sphere-0 room the
         # fill has to work with. Built from this world's own rules, so ability
         # terms (a stunt jump needing Land Vehicles) count as not free.
+        # Excluded locations are not sphere-0 room either: the fill cannot put a
+        # progression item in one, so counting them here disabled both narrow
+        # seed mitigations at once, the refusal and the directed opener.
         location_rules = self._location_rules()
         return sum(
             1 for name, region in LOCATION_REGIONS.items()
             if region == data.REGION_VICE_CITY
             and self._location_enabled(name)
+            and not self._location_excluded(name)
             and name not in location_rules
         )
 
@@ -719,6 +822,11 @@ class GTAViceCityWorld(World):
     ) -> int:
         """How many start-region checks this one item opens by itself.
 
+        Counts the same locations _free_start_location_count does, and for the
+        same reason skips the excluded ones: an opener that only reaches checks
+        the fill may not put progression in has opened nothing, and scoring them
+        cleared the narrow-seed floor and let generation run on into a FillError.
+
         CONSUMES state: its item counts are overwritten, so pass a scratch
         CollectionState and never self.multiworld.state.
         """
@@ -733,6 +841,7 @@ class GTAViceCityWorld(World):
             1 for name, region in LOCATION_REGIONS.items()
             if region == data.REGION_VICE_CITY
             and self._location_enabled(name)
+            and not self._location_excluded(name)
             and (name not in location_rules
                  or location_rules[name](state, self.player))
         )
@@ -838,20 +947,42 @@ class GTAViceCityWorld(World):
                 for global_index, coord in scm.package_coords().items()
             } if self.options.enable_hidden_packages.value else {},
             **{name: bool(getattr(self.options, name).value) for name in CHECK_CLASS_OPTIONS},
+            # Location ids the 100 percent goal does not count, so the client
+            # stops waiting for them. That goal is the game's own percentage and
+            # these classes sit outside it, so a seed is finished with them
+            # unchecked. Empty when no such class is on.
+            "goal_uncounted_locations": sorted(
+                LOCATION_NAME_TO_ID[name] for name in _UNCOUNTED_LOCATION_NAMES
+                if self._location_enabled(name)
+            ),
         }
 
     def _pickup_layout(self) -> list[list[float | int]]:
-        # One row per ambient slot: x, y, z, pickup type, then the model and
-        # ammo the permutation assigns to that spot. The ASI matches rows to
-        # pickup pool entries by position and type and rewrites the entries
-        # whose model differs.
-        if self.pickup_permutation is None:
+        # One row per ambient slot: x, y, z, pickup type, the model and ammo that
+        # spot ends up with, then the completion global of the check on that slot,
+        # or 0 when the slot is not a check. The ASI matches rows to pickup pool
+        # entries by position and type, rewrites the entries whose model differs,
+        # and serves the AP marker instead while a row's completion global reads
+        # zero.
+        #
+        # Sent when EITHER option wants it. The shuffle needs it to move models
+        # about; the check class needs it to know where the slots are and which
+        # are still to be taken. With neither on it stays empty, which is what
+        # keeps a vanilla seed vanilla.
+        checks_on = bool(self.options.enable_pickups.value)
+        if self.pickup_permutation is None and not checks_on:
             return []
         layout: list[list[float | int]] = []
-        for slot_index, source_index in enumerate(self.pickup_permutation):
-            x, y, z, pickup_type, _model, _ammo = data.PICKUP_SLOTS[slot_index]
-            model, ammo = data.PICKUP_SLOTS[source_index][4:6]
-            layout.append([x, y, z, pickup_type, model, ammo])
+        for slot_index in range(data.PICKUP_COUNT):
+            x, y, z, pickup_type, model, ammo = data.PICKUP_SLOTS[slot_index]
+            if self.pickup_permutation is not None:
+                # The shuffle decides what stands here; without it the slot keeps
+                # its own item.
+                source_index = self.pickup_permutation[slot_index]
+                model, ammo = data.PICKUP_SLOTS[source_index][4:6]
+            check_global = (scm.completion_global(data.pickup_name(slot_index))
+                            if checks_on else 0)
+            layout.append([x, y, z, pickup_type, model, ammo, check_global])
         return layout
 
     def write_spoiler(self, spoiler_handle: typing.TextIO) -> None:
@@ -878,11 +1009,18 @@ class GTAViceCityWorld(World):
         # vanilla semantics the toggle invariant demands.
         flags = scm.config_flags(
             bool(self.options.enable_hidden_packages.value),
-            bool(self.options.enable_emergency_vehicles.value
-                 and self.options.shuffle_emergency_rewards.value),
+            # One flag, one question: are the emergency rewards shuffled. It
+            # suppresses the vanilla grant and arms the applier together, so
+            # tying it to the check class made the option silently do nothing
+            # with that class off.
+            bool(self.options.shuffle_emergency_rewards.value),
             bool(self.options.randomize_radio_stations.value),
             bool(self.options.shuffle_minimap.value),
         )
+        # The shop threads read this before they hide what a shop sells, so a
+        # seed without the class leaves every shop exactly vanilla.
+        flags.update(scm.shops_enabled_flag(
+            bool(self.options.shuffle_shops.value)))
         flags.update(scm.class_cash_flags(
             bool(self.options.enable_side_events.value),
             bool(self.options.enable_stunt_jumps.value),
@@ -914,11 +1052,19 @@ class GTAViceCityWorld(World):
             need = self.options.hidden_packages_required.value
             return lambda state: state.has(data.PACKAGE_FRAGMENT_ITEM, player, need)
         if goal == Goal.option_hundred_percent:
-            # The game's 100 percent requires every stat contributor, and
-            # generation only allows this goal when every check class is on, so
-            # completion is every enabled check reachable.
+            # This goal is the GAME's 100 percent, so it asks for exactly what
+            # the game's own stat counts: every enabled check in a class that
+            # contributes to it. A class the stat never counted stays out even
+            # when the seed has it on, because a goal that demanded more than
+            # the game does would not be the game's 100 percent any more.
+            #
+            # The ambient pickups are that case: no progress point in the script
+            # touches one. Shop items are the same, which is
+            # why the exclusion is by class key rather than by name.
             enabled = [
-                name for name in LOCATION_NAME_TO_ID if self._location_enabled(name)
+                name for name in LOCATION_NAME_TO_ID
+                if self._location_enabled(name)
+                and not self._location_uncounted(name)
             ]
             return lambda state: all(
                 state.can_reach_location(name, player) for name in enabled

@@ -147,6 +147,10 @@ class GTAViceCityContext(CommonContext):
         # watches for the finale location being checked; hundred_percent waits
         # until no location is missing.
         self.slot_goal: str | None = None
+        # Locations outside the 100 percent goal, from slot_data on connect. A
+        # seed generated before that field sends none, which is the old
+        # behaviour of counting every location.
+        self.goal_uncounted_locations: set[int] = set()
         self.hunt_item_id: int | None = None
         self.hunt_required = 0
         self.final_location_id: int | None = None
@@ -207,6 +211,8 @@ class GTAViceCityContext(CommonContext):
                 "enable_properties": bool(slot_data.get("enable_properties", False)),
             }
             self.slot_goal = slot_data.get("goal")
+            self.goal_uncounted_locations = set(
+                slot_data.get("goal_uncounted_locations", []))
             self.final_location_id = slot_data.get("final_location_id")
             if self.slot_goal == "hidden_packages":
                 self.hunt_item_id = slot_data.get("hidden_package_item_id")
@@ -322,9 +328,12 @@ class GTAViceCityContext(CommonContext):
             rows.append(["Fragments", f"{have} of {self.hunt_required}",
                          have >= self.hunt_required])
         elif goal == "hundred_percent":
+            # The same count the goal uses, so the page cannot report checks left
+            # that the goal is not waiting for.
+            outstanding = set(self.missing_locations) - self.goal_uncounted_locations
             checked = len(self.checked_locations)
-            rows.append(["Checks left", str(len(self.missing_locations)),
-                         not self.missing_locations and checked > 0])
+            rows.append(["Checks left", str(len(outstanding)),
+                         not outstanding and checked > 0])
         return rows
 
     def _strand_rows(self) -> list[list]:
@@ -444,8 +453,13 @@ class GTAViceCityContext(CommonContext):
             received = sum(1 for item in self.items_received if item.item == self.hunt_item_id)
             return received >= self.hunt_required
         if self.slot_goal == "hundred_percent":
-            # Every location in the slot checked: nothing left missing.
-            return bool(self.checked_locations) and not self.missing_locations
+            # Every location the GAME's own percentage counts, checked. Classes
+            # the stat never counted sit outside this goal, so waiting on them
+            # would hold it for checks the seed does not need: with the ambient
+            # pickups on that is 110, and one that cannot be collected would hold
+            # the goal forever.
+            outstanding = set(self.missing_locations) - self.goal_uncounted_locations
+            return bool(self.checked_locations) and not outstanding
         if self.slot_goal == "final_mission":
             return self.final_location_id in self.checked_locations
         return False

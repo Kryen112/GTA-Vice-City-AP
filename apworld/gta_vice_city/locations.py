@@ -69,6 +69,8 @@ LOCATION_GROUPS: dict[str, list[str]] = {
     "Emergency Vehicle Missions": list(OPTIONAL_CLASSES["emergency_vehicles"][1]),
     "Side Events": list(OPTIONAL_CLASSES["side_events"][1]),
     "Robbable Stores": list(OPTIONAL_CLASSES["robbable_stores"][1]),
+    "Pickups": list(OPTIONAL_CLASSES["pickups"][1]),
+    "Shops": list(OPTIONAL_CLASSES["shops"][1]),
 }
 
 # Which strand and 0-based index each mission has, and each strand's missions in
@@ -117,5 +119,22 @@ for _name in data.STARFISH_STUNT_JUMPS:
     LOCATION_REGIONS[_name] = data.REGION_STARFISH
 for _name in data.MAINLAND_STUNT_JUMPS:
     LOCATION_REGIONS[_name] = data.REGION_MAINLAND
+# A pickup's region comes from its own district rather than from a membership
+# list, since every district is known for all 110 of them and the districts are
+# what the names already read from. Derived rather than audited, so a wrong
+# district here is a wrong region too: see district_data.PICKUP_DISTRICTS.
+for _index in range(data.PICKUP_COUNT):
+    # The island a slot actually sits on. The district NAME here is derived and
+    # about 90 per cent accurate, but the REGION it maps to is verified for all
+    # 110 against the nearest audited anchor, at a minimum margin of 92 units,
+    # so the island gate is sound even for a slot whose district name the hand
+    # audit will correct. That is what lets these hold progression: a wrong
+    # name misnames a check, a wrong island would strand one.
+    LOCATION_REGIONS[data.pickup_name(_index)] = data.pickup_region(_index)
+# A shop's region comes from its district too, so the two mainland shops wait on
+# the crossing and the four on the starting island do not.
+for _shop_item in data.shop_data.SHOP_ITEMS:
+    LOCATION_REGIONS[data.shop_data.shop_item_name(_shop_item)] = (
+        data.shop_item_region(_shop_item))
 for _name in _ORDERED_LOCATION_NAMES:
     LOCATION_REGIONS.setdefault(_name, data.REGION_VICE_CITY)

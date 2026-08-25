@@ -39,6 +39,15 @@ from . import data, district_data, items, locations, package_data
 
 # The reserved block starts here, clear of the vanilla maximum global ($8583).
 RESERVED_BASE = 9000
+# Every ambient pickup slot's handle lives in a vanilla global. The generated
+# APPICK watcher polls all 110 of them, and one at or above the reserved base
+# would be a global the mod also writes, so the check would fire on whatever the
+# mod put there. Asserted here because this is where the base is defined.
+assert all(handle < RESERVED_BASE
+           for handle in data.PICKUP_HANDLE_GLOBALS), (
+    "a pickup handle global sits inside the reserved block"
+)
+
 # The seed-and-slot hash, sixteen hex characters packed four per global.
 SEED_HASH_BASE = RESERVED_BASE
 SEED_HASH_GLOBAL_COUNT = 4
@@ -119,6 +128,14 @@ STUNT_JUMPS_CASH_GLOBAL = SIDE_EVENTS_CASH_GLOBAL + 1
 RAMPAGES_CASH_GLOBAL = STUNT_JUMPS_CASH_GLOBAL + 1
 PROPERTIES_CASH_GLOBAL = RAMPAGES_CASH_GLOBAL + 1
 
+# One while the shuffle_shops class is on, stamped from slot_data. The shop
+# threads read it before they hide what a shop sells or withhold what it hands
+# over, so a seed without the class behaves exactly as vanilla does: the wall
+# wears its own model and the first purchase pays out. A check class that is off
+# leaves no trace in the world, and the shops are the one place the script would
+# otherwise act on the completion global alone.
+SHOPS_ENABLED_GLOBAL = PROPERTIES_CASH_GLOBAL + 1
+
 # Ability lock globals follow the class-cash flags, ASI-facing only (the
 # main.scm never reads them; as reserved globals they persist inside saves, so
 # the locks keep enforcing offline from a save, the minimap pattern). One
@@ -129,7 +146,7 @@ PROPERTIES_CASH_GLOBAL = RAMPAGES_CASH_GLOBAL + 1
 # Order is data.ABILITY_ITEMS and never reorders. The content lock block sits
 # directly above this one.
 ABILITY_KEYS: list[str] = list(data.ABILITY_ITEMS)
-ABILITY_LOCK_FLAG_BASE = PROPERTIES_CASH_GLOBAL + 1
+ABILITY_LOCK_FLAG_BASE = SHOPS_ENABLED_GLOBAL + 1
 ABILITY_UNLOCK_BASE = ABILITY_LOCK_FLAG_BASE + len(ABILITY_KEYS)
 
 # Content lock globals follow the ability block in the same shape: one lock
@@ -158,7 +175,7 @@ DISTRICT_KEYS: list[str] = list(district_data.DISTRICTS)
 DISTRICT_UNLOCK_BASE = CONTENT_UNLOCK_BASE + len(CONTENT_KEYS)
 DISTRICT_UNLOCK_COUNT = len(CONTENT_KEYS) * len(DISTRICT_KEYS)
 
-# The finale warp flag tops the reserved block. The client sets it in the status
+# The finale warp flag sits one below the top of the reserved block. The client sets it in the status
 # frame once the hidden-packages goal is met and the ASI writes it here; the
 # main.scm's APFIN watcher reads it and launches Keep Your Friends Close...
 # straight into its ending cutscene, wherever the player is standing. A hunt goal
@@ -168,6 +185,17 @@ DISTRICT_UNLOCK_COUNT = len(CONTENT_KEYS) * len(DISTRICT_KEYS)
 # holds on the mission's own passed flag, so a game that has seen the ending
 # never sees it again.
 FINALE_WARP_GLOBAL = DISTRICT_UNLOCK_BASE + DISTRICT_UNLOCK_COUNT
+
+# The finale raises this while it runs and drops it at its single exit, so the
+# ASI can keep the ambient pickup layout off the pool for the length of the
+# mansion siege: that fight places its own pickups to be survived with, and one
+# ambient slot stands in the same grounds.
+#
+# On top of the block and derived like every other base. The unused space lower
+# down looks free and is not: build_scm.py takes every one of those for scratch,
+# and the package watcher alone touches RESERVED_BASE + 6 a hundred and one
+# times, once to write the collected count and a hundred to compare against it.
+FINALE_ACTIVE_GLOBAL = FINALE_WARP_GLOBAL + 1
 
 
 def unlock_global(key: str) -> int:
@@ -238,8 +266,16 @@ def content_district_globals() -> dict[int, list[int]]:
     return mapping
 
 
+# What a district unlock holds. Zero is the absence of these: still held.
+# The script's gates ask ">= 1", so released and absent both pass, and the
+# difference is only for the status page, which must not offer a district that
+# holds nothing of a class as somewhere the player can now go and collect.
+DISTRICT_RELEASED = 1
+DISTRICT_ABSENT = 2
+
+
 def unlocked_district_globals(selected_keys: frozenset[str]) -> dict[int, int]:
-    """Global index -> 1 for every district unlock no item will ever release.
+    """Global index -> released or absent for every district unlock no item covers.
 
     Every gate the script makes for the two classes with no icon is a single
     condition, "this district is released", and so is every hold the ASI makes.
@@ -258,15 +294,24 @@ def unlocked_district_globals(selected_keys: frozenset[str]) -> dict[int, int]:
     accounting believes: a class would report as part-held on the status page
     forever, and a pickup the district table failed to place would never be
     released by anything.
+
+    The two kinds are stamped apart, DISTRICT_RELEASED and DISTRICT_ABSENT, and
+    every gate passes either since all of them ask ">= 1". The page is what needs
+    them apart: a district holding no content of a class is not somewhere the
+    class became available, so counting it as released told the player Leaf Links
+    rampages were theirs to collect, and read the five districts that are all the
+    robbable stores there are as five of eleven.
     """
     stamped: dict[int, int] = {}
     for content_item in CONTENT_KEYS:
         locked = data.CONTENT_ITEM_KEY[content_item] in selected_keys
         for district in DISTRICT_KEYS:
-            covered = (locked
-                       and district in data.CONTENT_CLASS_DISTRICTS[content_item])
-            if not covered:
-                stamped[district_unlock_global(content_item, district)] = 1
+            if district not in data.CONTENT_CLASS_DISTRICTS[content_item]:
+                # Absence outranks the lock state: it is true of every seed, and
+                # an unlocked class is not displayed at all.
+                stamped[district_unlock_global(content_item, district)] = DISTRICT_ABSENT
+            elif not locked:
+                stamped[district_unlock_global(content_item, district)] = DISTRICT_RELEASED
     return stamped
 
 
@@ -300,24 +345,36 @@ def content_districts() -> list[dict]:
 
 
 def highest_reserved_global() -> int:
-    return FINALE_WARP_GLOBAL
+    return FINALE_ACTIVE_GLOBAL
 
 
 def mainland_routes(split_mainland_access: bool) -> list[dict]:
-    """The ways to the mainland, for the ASI to announce and to list on demand.
+    """Every crossing off the start island, for the ASI to announce and to list.
 
     The ASI needs three things it cannot work out for itself: which globals are
-    mainland routes, what to call them, and whether the seed split them, since
-    item_globals maps every area item whatever the setting. It gets them here
-    rather than mirroring the layout or the names, so this stays the only place a
-    route is named. One entry means the routes are whole and Mainland Access
-    opens them together; four means they are split. A route needing a second item
-    carries it, which is the causeway and the island its gate stands on.
+    crossings, what to call them, and whether the seed split the mainland ones,
+    since item_globals maps every area item whatever the setting. It gets them
+    here rather than mirroring the layout or the names, so this stays the only
+    place a crossing is named. One mainland entry means the routes are whole and
+    Mainland Access opens them together; four means they are split. A route
+    needing a second item carries it, which is the causeway and the island its
+    gate stands on.
+
+    Starfish Island is one of these and used to be missing, which left the page
+    silent about the crossing a player asks about as often as any bridge. It is
+    listed last because it is the one a mainland route can depend on.
     """
     starfish = "Starfish Island Access"
+    starfish_row = {
+        "global": unlock_global(starfish),
+        "label": "Starfish Island",
+        "needs_global": 0,
+        "needs_label": "",
+    }
     if not split_mainland_access:
         return [{"global": unlock_global(data.AREA_ITEM_BY_REGION[data.REGION_MAINLAND]),
-                 "label": "The mainland", "needs_global": 0, "needs_label": ""}]
+                 "label": "The mainland", "needs_global": 0, "needs_label": ""},
+                starfish_row]
     routes: list[dict] = []
     for crossing, also in data.MAINLAND_CROSSINGS.items():
         # One extra requirement is all a route can carry over the wire, and all
@@ -332,6 +389,7 @@ def mainland_routes(split_mainland_access: bool) -> list[dict]:
             "needs_label": needs or "",
         })
     assert all(route["needs_label"] in ("", starfish) for route in routes)
+    routes.append(starfish_row)
     return routes
 
 
@@ -427,6 +485,17 @@ def config_flags(packages_shuffled: bool, emergency_shuffled: bool,
         RADIO_RANDOMIZED_GLOBAL: int(bool(radio_randomized)),
         MINIMAP_SHUFFLED_GLOBAL: int(bool(minimap_shuffled)),
     }
+
+
+def shops_enabled_flag(shops: bool) -> dict[int, int]:
+    """The shuffle_shops flag global -> the raw class toggle.
+
+    Its own function rather than a fifth argument above, because those four are
+    effective SHUFFLED states, meaning an AP item exists to replace a vanilla
+    grant. This one is the class toggle itself: with the class off the shops are
+    vanilla, and there is no reward being replaced to reason about.
+    """
+    return {SHOPS_ENABLED_GLOBAL: int(bool(shops))}
 
 
 def class_cash_flags(side_events: bool, stunt_jumps: bool,

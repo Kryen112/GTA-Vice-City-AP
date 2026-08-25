@@ -11,10 +11,11 @@ import io
 import math
 import random
 from typing import ClassVar
+from unittest.mock import patch
 
-from BaseClasses import CollectionState, ItemClassification
+from BaseClasses import CollectionState, ItemClassification, LocationProgressType
 from Fill import distribute_items_restrictive
-from Options import OptionError
+from Options import OptionError, Visibility
 from test.bases import WorldTestBase
 from test.general import gen_steps, setup_multiworld
 from worlds.AutoWorld import call_all
@@ -30,6 +31,7 @@ from .. import (
 )
 from ..items import DISTRICT_CONTENT_NAMES, ITEM_CLASSIFICATIONS, ITEM_NAME_TO_ID, ORDERED_ITEM_NAMES
 from ..locations import (
+    CLASS_TOGGLE,
     LOCATION_NAME_TO_ID,
     LOCATION_REGIONS,
     MISSION_GIVER,
@@ -38,7 +40,14 @@ from ..locations import (
     STORY_MISSION_NAMES,
     STRAND_MISSIONS,
 )
-from ..options import CHECK_CLASS_OPTIONS
+from ..options import (
+    CHECK_CLASS_OPTIONS,
+    HUNDRED_PERCENT_CLASS_OPTIONS,
+    UNCOUNTED_CLASS_KEYS,
+    UNCOUNTED_CLASS_OPTIONS,
+    EnablePickups,
+    EnableSideEvents,
+)
 
 # The fields _restore_options reads unconditionally, so a passthrough test only
 # has to name what it is actually about.
@@ -92,6 +101,42 @@ class TestHundredPercentAllClasses(WorldTestBase):
         "enable_robbable_stores": True,
         "enable_side_events": True,
     }
+
+    def test_the_goal_does_not_demand_the_pickup_class(self) -> None:
+        # This world constructs with enable_pickups off, which is the one
+        # deliberate hole in "the goal requires every check class": the game's
+        # completion stat never counted an ambient pickup, so demanding the class
+        # would make the goal mean something the game itself does not. Pickups
+        # stay a check class in every other respect, so the two lists differ by
+        # exactly this one name and nothing else may drift out of the first.
+        self.assertFalse(bool(self.world.options.enable_pickups.value))
+        self.assertEqual(self.world.options.goal.current_key, "hundred_percent")
+        self.assertNotIn("enable_pickups", HUNDRED_PERCENT_CLASS_OPTIONS)
+        self.assertIn("enable_pickups", CHECK_CLASS_OPTIONS)
+        self.assertIn("enable_pickups", UNCOUNTED_CLASS_OPTIONS)
+        # Every check class is classified, and classified once. A class in
+        # neither list is silently EXEMPT, since the goal iterates the demanded
+        # list; a class in both would make the two disagree. And the registry is
+        # where a class is born, so it is tied in too: a class added there and
+        # not here would get locations and a toggle but reach no slot_data, no
+        # tracker replay, and no goal precondition.
+        self.assertEqual(
+            set(HUNDRED_PERCENT_CLASS_OPTIONS) | set(UNCOUNTED_CLASS_OPTIONS),
+            set(CHECK_CLASS_OPTIONS))
+        self.assertEqual(
+            set(HUNDRED_PERCENT_CLASS_OPTIONS) & set(UNCOUNTED_CLASS_OPTIONS),
+            set())
+        self.assertEqual(set(CHECK_CLASS_OPTIONS), set(CLASS_TOGGLE.values()))
+        # The two uncounted lists name the same classes by different keys and
+        # drive different halves of one contract: the options list drives the
+        # goal's precondition, the keys list drives which locations the goal and
+        # the client skip. Adding a class to the options list alone leaves its
+        # checks required by the completion condition and waited on by the
+        # client, which is a seed that generates and cannot be finished. The
+        # registry already knows the pairing, so it is the tie.
+        self.assertEqual(
+            {data.optional_check_classes()[key][0] for key in UNCOUNTED_CLASS_KEYS},
+            set(UNCOUNTED_CLASS_OPTIONS))
 
 
 _STORY_ONLY_OPTIONS: dict = {
@@ -232,6 +277,8 @@ class TestUniversalTracker(WorldTestBase):
             "enable_properties": True,
             "enable_robbable_stores": True,
             "enable_side_events": True,
+            "enable_pickups": True,
+            "shuffle_shops": True,
         }
         self.multiworld.re_gen_passthrough = {self.game: slot_data}
         self.world.generate_early()
@@ -296,13 +343,19 @@ class TestRadioStationsOn(WorldTestBase):
             )
 
     def test_reserved_block_stays_below_the_marker_globals(self) -> None:
-        # $9516 up is SCM-internal (marker handles and visibility flags, whose
+        # $9660 up is SCM-internal (marker handles and visibility flags, whose
         # bases live in add_markers.py); the reserved contract must never grow
-        # into it. The district content unlocks took $9460..$9514 and the finale
-        # warp flag $9515, which is why add_markers.py's HANDLE_BASE moved with
-        # them: a reserved block growing into the marker scratch would have the
-        # ASI writing over live marker handles.
-        self.assertLess(scm.highest_reserved_global(), 9516)
+        # into it. The district content unlocks took $9603..$9657, the finale warp
+        # flag $9658 and the finale active flag $9659, which is why
+        # add_markers.py's HANDLE_BASE moved with them: a reserved block growing
+        # into the marker scratch would have the ASI writing over live marker
+        # handles.
+        #
+        # Every number here is a mirror, so adding locations moves them all: the
+        # reward block sits directly above the completion block, so a class
+        # appended to the registry leaves the unlock and completion globals alone
+        # and pushes everything from the rewards up by its own size.
+        self.assertLess(scm.highest_reserved_global(), 9660)
 
 
 class TestRadioStationsOff(WorldTestBase):
@@ -402,8 +455,10 @@ class TestPickupRandomizerOn(WorldTestBase):
         self.assertEqual(sorted(permutation), list(range(len(data.PICKUP_SLOTS))))
 
     def test_no_bribe_lands_on_a_shop_slot(self) -> None:
-        # The in-shop cost lookup misreads on the bribe model, so the
-        # permutation keeps bribes off shop-type slots.
+        # An in-shop bribe would be free, because a bribe's weapon-type field is
+        # zero and so is the cost table's zeroth entry, and each bribe takes a
+        # star off the wanted level, so a free one that respawns is an endless
+        # supply of them. The permutation keeps bribes off shop-type slots.
         for slot_index, source_index in enumerate(self.world.pickup_permutation):
             if data.PICKUP_SLOTS[slot_index][3] == data.PICKUP_SHOP_TYPE:
                 self.assertNotEqual(
@@ -420,7 +475,10 @@ class TestPickupRandomizerOn(WorldTestBase):
         for slot_index, row in enumerate(layout):
             x, y, z, pickup_type, _model, _ammo = data.PICKUP_SLOTS[slot_index]
             source = data.PICKUP_SLOTS[self.world.pickup_permutation[slot_index]]
-            self.assertEqual(row, [x, y, z, pickup_type, source[4], source[5]])
+            # The seventh element is the completion global of the check on this
+            # slot, and zero here because the class is off in this seed: the
+            # shuffle alone makes no slot a check.
+            self.assertEqual(row, [x, y, z, pickup_type, source[4], source[5], 0])
 
     def test_forced_shop_conflict_is_swapped_away(self) -> None:
         # The fix branch only runs when the shuffle happens to drop a bribe on
@@ -512,6 +570,463 @@ class TestPickupRandomizerOff(WorldTestBase):
         handle = io.StringIO()
         self.world.write_spoiler(handle)
         self.assertEqual(handle.getvalue(), "")
+
+
+class TestHundredPercentWithPickups(WorldTestBase):
+    game = "Grand Theft Auto Vice City"
+    options: ClassVar[dict] = {
+        "goal": "hundred_percent",
+        "enable_hidden_packages": True,
+        "enable_rampages": True, "enable_stunt_jumps": True,
+        "enable_emergency_vehicles": True,
+        "enable_properties": True,
+        "enable_robbable_stores": True,
+        "enable_side_events": True,
+        "enable_pickups": True,
+    }
+
+    def test_slot_data_names_the_locations_the_goal_skips(self) -> None:
+        # The world stopped counting these toward the goal, but the client is what
+        # sends it, so the ids have to travel. Without them the client waits for
+        # 110 checks the seed does not need, and one it cannot collect holds the
+        # goal forever.
+        uncounted = self.world.fill_slot_data()["goal_uncounted_locations"]
+        self.assertEqual(
+            set(uncounted),
+            {LOCATION_NAME_TO_ID[name] for name in data.PICKUP_NAMES})
+
+    def test_the_goal_ignores_the_pickups_even_with_the_class_on(self) -> None:
+        # This goal is the GAME's 100 percent, so it asks for what the game's
+        # own stat counts and nothing more. The stat never counted an ambient
+        # pickup, so the class is out of the goal on both counts: not required to
+        # be on, and not counted when it is. Turning it on just adds extra checks.
+        self.assertEqual(self.world.options.goal.current_key, "hundred_percent")
+        for name in data.PICKUP_NAMES:
+            self.assertTrue(self.world._location_enabled(name), name)
+        # And they really are in the seed, not merely enabled in principle.
+        placed = {location.name
+                  for location in self.multiworld.get_locations(self.player)}
+        for name in data.PICKUP_NAMES:
+            self.assertIn(name, placed, name)
+
+        # Asked of the condition rather than of the location list, because the
+        # assertions above would stay green if a future edit put the pickups back
+        # into the goal. Withholding any single pickup must NOT stop the goal
+        # being met; withholding a mission must.
+        condition = self.multiworld.completion_condition[self.player]
+
+        class ReachesAllBut:
+            def __init__(self, withheld: str) -> None:
+                self.withheld = withheld
+
+            def can_reach_location(self, name: str, _player: int) -> bool:
+                return name != self.withheld
+
+        for name in data.PICKUP_NAMES:
+            self.assertTrue(condition(ReachesAllBut(name)), name)
+        # And the goal still means something: a counted check held back does stop
+        # it, so this is not passing because the condition is trivially true.
+        self.assertFalse(condition(ReachesAllBut(data.FINAL_MISSION)))
+
+
+# The one shop item whose stock, not whose shop, waits on the crossing.
+CROSSING_STOCKED_SHOP_ITEM = "Shop - Vice Point - Ammu-Nation - Sniper Rifle"
+
+
+class TestShops(WorldTestBase):
+    game = "Grand Theft Auto Vice City"
+    options: ClassVar[dict] = {"shuffle_shops": True, "ability_locks": ["wallet"]}
+
+    def test_the_shop_locations_exist(self) -> None:
+        names = {location.name
+                 for location in self.multiworld.get_locations(self.player)}
+        for name in data.shop_data.SHOP_ITEM_NAMES:
+            self.assertIn(name, names)
+        self.assertEqual(len(data.shop_data.SHOP_ITEM_NAMES), 32)
+
+    def test_stock_the_crossing_opens_gates_on_the_crossing(self) -> None:
+        # Reaching a shop and it having the thing in stock are two questions.
+        # The Vice Point sniper stocks off the flag the mainland crossing sets,
+        # so it must gate on Mainland Access even though its shop is on the
+        # starting island. Left start-island the fill can hide Mainland Access
+        # itself behind it, and the seed cannot be finished.
+        self.assertEqual(LOCATION_REGIONS[CROSSING_STOCKED_SHOP_ITEM],
+                         data.REGION_MAINLAND)
+        self.collect_by_name([data.WALLET_ITEM])
+        self.assertFalse(
+            self.can_reach_location(CROSSING_STOCKED_SHOP_ITEM),
+            "the sniper is reachable with the Wallet alone, before the "
+            "mainland opens")
+        self.collect_by_name(["Mainland Access"])
+        self.assertTrue(self.can_reach_location(CROSSING_STOCKED_SHOP_ITEM))
+
+    def test_every_crossing_stocked_key_names_a_real_item(self) -> None:
+        # A key matching no row would silently do nothing, and the unwinnable
+        # placement it exists to stop would be back.
+        rows = {(item.thread, item.script_global)
+                for item in data.shop_data.SHOP_ITEMS}
+        self.assertTrue(data.shop_data.CROSSING_STOCKED_ITEMS)
+        self.assertLessEqual(data.shop_data.CROSSING_STOCKED_ITEMS, rows)
+
+    def test_only_that_one_start_island_item_waits_on_the_crossing(self) -> None:
+        # The override is one item, not a rule about Vice Point: its five
+        # neighbours on the same wall are start-island checks.
+        waiting = {data.shop_data.shop_item_name(item)
+                   for item in data.shop_data.SHOP_ITEMS
+                   if data.shop_data.SHOP_DISTRICTS[item.thread]
+                   not in data.MAINLAND_DISTRICTS
+                   and data.shop_item_region(item) == data.REGION_MAINLAND}
+        self.assertEqual(waiting, {CROSSING_STOCKED_SHOP_ITEM})
+
+    def test_the_shop_names_are_unique(self) -> None:
+        # Two rows sharing a display name inside one shop would be one location
+        # and one row that is silently not a check, which the count and the
+        # membership above both survive.
+        names = data.shop_data.SHOP_ITEM_NAMES
+        self.assertEqual(len(set(names)), len(names))
+
+    def test_a_shop_item_needs_the_wallet_to_be_reached(self) -> None:
+        # The tables are one thing and reaching a Location is another. All 32,
+        # not a sample: filtering to one island is what left the mainland stands
+        # unclaimed in the pickup class.
+        self.collect_by_name(["Mainland Access"])
+        for name in data.shop_data.SHOP_ITEM_NAMES:
+            self.assertFalse(self.can_reach_location(name), name)
+        self.collect_by_name([data.WALLET_ITEM])
+        for name in data.shop_data.SHOP_ITEM_NAMES:
+            self.assertTrue(self.can_reach_location(name), name)
+
+    def test_a_mainland_shop_also_needs_the_crossing(self) -> None:
+        # The eleven Downtown and Little Havana items wait on the crossing as
+        # well, so the Wallet alone leaves them out of reach. So does the Vice
+        # Point sniper, whose shop is on the starting island but whose stock is
+        # not.
+        self.collect_by_name([data.WALLET_ITEM])
+        for name in data.shop_data.SHOP_ITEM_NAMES:
+            waits = (" - Downtown - " in name or " - Little Havana - " in name
+                     or name == CROSSING_STOCKED_SHOP_ITEM)
+            self.assertEqual(self.can_reach_location(name), not waits, name)
+
+    def test_a_shop_sits_on_the_island_it_stands_in(self) -> None:
+        # Two of the six shops are on the mainland, so eleven of the thirty two
+        # wait on the crossing, and the sniper waits with them for its stock
+        # rather than its island. Written out rather than counted from the same
+        # table the code reads, so a district moving is a failure here.
+        mainland = {name for name in data.shop_data.SHOP_ITEM_NAMES
+                    if " - Downtown - " in name or " - Little Havana - " in name}
+        self.assertEqual(len(mainland), 11)
+        for name in data.shop_data.SHOP_ITEM_NAMES:
+            region = LOCATION_REGIONS[name]
+            expected = (data.REGION_MAINLAND
+                        if name in mainland or name == CROSSING_STOCKED_SHOP_ITEM
+                        else data.REGION_VICE_CITY)
+            self.assertEqual(region, expected, name)
+
+    def test_the_class_flag_reaches_the_script(self) -> None:
+        # The script reads this before it hides what a shop sells. Without it the
+        # withholding would key on the completion global alone, which every seed
+        # allocates, and a seed without the class would still change the world.
+        flags = self.world.fill_slot_data()["config_globals"]
+        self.assertEqual(flags[str(scm.SHOPS_ENABLED_GLOBAL)], 1)
+
+    def test_every_shop_item_wants_the_wallet(self) -> None:
+        # A shop charges, and the wallet lock pins the balance to zero, so all
+        # thirty two wait on the Wallet item while that key is selected.
+        requirements = data.location_ability_requirements()
+        for name in data.shop_data.SHOP_ITEM_NAMES:
+            self.assertIn(name, requirements, name)
+            self.assertIn(data.WALLET_ITEM, requirements[name], name)
+
+
+class TestShopsOff(WorldTestBase):
+    game = "Grand Theft Auto Vice City"
+    options: ClassVar[dict] = {"shuffle_shops": False}
+
+    def test_the_class_flag_is_zero_and_no_locations_exist(self) -> None:
+        # A disabled check class behaves fully vanilla in game, which for the
+        # shops means the flag the script reads is zero: no marker on the wall
+        # and a first purchase that pays out like it always did.
+        flags = self.world.fill_slot_data()["config_globals"]
+        self.assertEqual(flags[str(scm.SHOPS_ENABLED_GLOBAL)], 0)
+        names = {location.name
+                 for location in self.multiworld.get_locations(self.player)}
+        for name in data.shop_data.SHOP_ITEM_NAMES:
+            self.assertNotIn(name, names)
+
+
+class TestHundredPercentWithShops(WorldTestBase):
+    game = "Grand Theft Auto Vice City"
+    options: ClassVar[dict] = {
+        "goal": "hundred_percent",
+        "enable_hidden_packages": True,
+        "enable_rampages": True, "enable_stunt_jumps": True,
+        "enable_emergency_vehicles": True,
+        "enable_properties": True,
+        "enable_robbable_stores": True,
+        "enable_side_events": True,
+        "shuffle_shops": True,
+    }
+
+    def test_the_goal_skips_the_shop_locations(self) -> None:
+        # The game's percentage never counted buying a shotgun, so the goal does
+        # not wait on one. The ids still have to travel, since the client is what
+        # decides the goal is met and one uncollectable check would hold it.
+        uncounted = self.world.fill_slot_data()["goal_uncounted_locations"]
+        self.assertEqual(
+            set(uncounted),
+            {LOCATION_NAME_TO_ID[name]
+             for name in data.shop_data.SHOP_ITEM_NAMES})
+
+
+class TestPickupChecksOn(WorldTestBase):
+    game = "Grand Theft Auto Vice City"
+    options: ClassVar[dict] = {"enable_pickups": True}
+
+    def test_every_ambient_slot_is_a_location(self) -> None:
+        # One check per slot, so the count is the slot table's count and not a
+        # number written twice.
+        self.assertEqual(len(data.PICKUP_NAMES), len(data.PICKUP_SLOTS))
+        for name in data.PICKUP_NAMES:
+            self.assertIn(name, LOCATION_NAME_TO_ID, name)
+
+    def test_the_names_are_unique(self) -> None:
+        # A district and an item name a slot, and 55 of the 110 share both, so
+        # the colliding stems carry a suffix. Two slots sharing a name would be
+        # one location and the other slot would be no check at all.
+        self.assertEqual(len(set(data.PICKUP_NAMES)), len(data.PICKUP_NAMES))
+
+    def test_an_ordinary_pickup_needs_only_its_area(self) -> None:
+        # Walking over a pickup takes no ability, so an ordinary slot asks for the
+        # island it stands on and nothing else. Asserted against the region rather
+        # than a list of items, because naming the items would restate the area
+        # rules here and pass while saying nothing about the pickups.
+        ordinary = [(name, data.pickup_region(index))
+                    for index, name in enumerate(data.PICKUP_NAMES)
+                    if index not in data.PICKUP_PAY_STAND_INDICES]
+        self.assertEqual({region for _name, region in ordinary},
+                         {data.REGION_VICE_CITY, data.REGION_MAINLAND,
+                          data.REGION_STARFISH})
+
+        def check(stage: str) -> None:
+            for name, region in ordinary:
+                self.assertEqual(
+                    self.can_reach_location(name), self.can_reach_region(region),
+                    f"{name} does not follow {region} {stage}")
+
+        check("with nothing collected")
+        self.collect_by_name(["Mainland Access"])
+        check("after the mainland opens")
+        for region in (data.REGION_VICE_CITY, data.REGION_MAINLAND,
+                       data.REGION_STARFISH):
+            self.assertTrue(self.can_reach_region(region), region)
+
+    def test_slot_data_carries_the_class(self) -> None:
+        # The played seed has to record the setting, for a tracker regeneration
+        # and for whatever the client chooses to forward. Forwarding it to the
+        # ASI is a separate step in client/context.py and belongs to the mod half.
+        self.assertTrue(self.world.fill_slot_data()["enable_pickups"])
+
+
+class TestExclusionSeam(WorldTestBase):
+    game = "Grand Theft Auto Vice City"
+    options: ClassVar[dict] = {"enable_pickups": True}
+
+    def test_an_excluded_class_is_not_counted_as_room(self) -> None:
+        # Nothing is excluded today, so all four call sites of
+        # _location_excluded are dead branches. They are the sites a future
+        # excluded class depends on, and missing one of them cost two blockers:
+        # a class kept out of the fill while still counted as somewhere
+        # progression can go turns a clean refusal into a FillError.
+        #
+        # So the seam is pinned directly rather than through a configuration
+        # sweep, which is what the deleted parity test tried to do and which no
+        # longer works now that turning pickups on legitimately changes outcomes.
+        pickups = frozenset(data.PICKUP_NAMES)
+        world = self.world
+
+        def excluded_none(_name: str) -> bool:
+            return False
+
+        def excluded_pickups(name: str) -> bool:
+            return name in pickups
+
+        with patch.object(type(world), "_location_excluded",
+                          staticmethod(excluded_none)):
+            base_free = world._free_start_location_count()
+            base_opener = world._start_locations_opened_by(
+                data.LAND_VEHICLES_ITEM, world._location_rules(),
+                self.multiworld.get_all_state(False))
+
+        with patch.object(type(world), "_location_excluded",
+                          staticmethod(excluded_pickups)):
+            free = world._free_start_location_count()
+            opener = world._start_locations_opened_by(
+                data.LAND_VEHICLES_ITEM, world._location_rules(),
+                self.multiworld.get_all_state(False))
+
+        # Sphere-0 room drops by the start-island pickups, and the opener score
+        # with it: an excluded location is not room for progression, so neither
+        # count may include it.
+        start_island = sum(1 for index in range(data.PICKUP_COUNT)
+                           if data.pickup_region(index) == data.REGION_VICE_CITY)
+        self.assertGreater(start_island, 0)
+        self.assertEqual(base_free - free, start_island)
+        self.assertLess(opener, base_opener)
+
+
+class TestPickupsAreOrdinaryLocations(WorldTestBase):
+    game = "Grand Theft Auto Vice City"
+    options: ClassVar[dict] = {"enable_pickups": True}
+
+    def test_a_pickup_may_hold_anything_the_fill_puts_there(self) -> None:
+        # They were excluded while they claimed to sit in the start region: a seed
+        # must not need an item behind a claim. They sit on their real island now,
+        # which test_no_pickup_sits_on_the_wrong_island verifies for all 110, so
+        # they are ordinary locations and the fill may use them like any other.
+        pickups = frozenset(data.PICKUP_NAMES)
+        placed = [location for location in self.multiworld.get_locations(self.player)
+                  if location.name in pickups]
+        self.assertEqual(len(placed), len(data.PICKUP_NAMES))
+        for location in placed:
+            self.assertEqual(location.progress_type, LocationProgressType.DEFAULT,
+                             location.name)
+
+        distribute_items_restrictive(self.multiworld)
+        for location in placed:
+            self.assertIsNotNone(location.item, location.name)
+        self.assertTrue(self.multiworld.can_beat_game())
+
+
+class TestPickupChecksPayStands(WorldTestBase):
+    game = "Grand Theft Auto Vice City"
+    options: ClassVar[dict] = {"enable_pickups": True, "ability_locks": ["wallet"]}
+
+    def test_a_pay_stand_needs_the_wallet(self) -> None:
+        # The ten in-shop stands charge for what they give, so their checks wait
+        # on the Wallet while that key is selected. The amount never gates: the
+        # term is holding the wallet at all.
+        # All ten, not the four on the start island: filtering by region left the
+        # six mainland stands with no claim at all, which is the shape of gap
+        # that hid in the ordinary-slot test too.
+        stands = [data.pickup_name(index)
+                  for index in sorted(data.PICKUP_PAY_STAND_INDICES)]
+        self.assertEqual(len(stands), 10)
+        self.collect_by_name(["Mainland Access"])
+        for name in stands:
+            self.assertFalse(self.can_reach_location(name), name)
+        self.collect_by_name([data.WALLET_ITEM])
+        for name in stands:
+            self.assertTrue(self.can_reach_location(name), name)
+
+
+class TestPickupChecksWithoutTheWalletKey(WorldTestBase):
+    game = "Grand Theft Auto Vice City"
+    options: ClassVar[dict] = {"enable_pickups": True, "ability_locks": []}
+
+    def test_a_pay_stand_asks_for_nothing_when_the_key_is_off(self) -> None:
+        # Toggle semantics: an unselected ability key means no lock, no item, and
+        # no access rule naming that item. So with the wallet key off the ten
+        # stands are ordinary pickups, reachable from their area alone, and Wallet
+        # is in no pool for a rule to name.
+        pool = {item.name for item in self.multiworld.itempool}
+        self.assertNotIn(data.WALLET_ITEM, pool)
+        # All ten, like the sibling test: filtering by region left the six
+        # mainland stands with no claim at all.
+        stands = [data.pickup_name(index)
+                  for index in sorted(data.PICKUP_PAY_STAND_INDICES)]
+        self.assertEqual(len(stands), 10)
+        self.collect_by_name(["Mainland Access"])
+        for name in stands:
+            self.assertTrue(self.can_reach_location(name), name)
+
+
+class TestPickupDistrictTable(WorldTestBase):
+    game = "Grand Theft Auto Vice City"
+    options: ClassVar[dict] = {"enable_pickups": True}
+
+    def test_the_district_table_covers_every_slot(self) -> None:
+        # The strict zip in _pickup_names already raises whichever table is the
+        # longer, so this guards nothing the zip does not; it names the two counts
+        # where the zip names an argument number, which is what tells the hand
+        # audit, the change most likely to leave a table the wrong length, what
+        # it left wrong.
+        self.assertEqual(len(district_data.PICKUP_DISTRICTS),
+                         len(data.PICKUP_SLOTS))
+        for district in district_data.PICKUP_DISTRICTS:
+            self.assertIn(district, district_data.DISTRICTS, district)
+
+    def test_no_pickup_sits_on_the_wrong_island(self) -> None:
+        # The district table is derived and about 90 percent accurate, and through
+        # the region it decides which island gate a check waits behind. An
+        # intra-island error only misnames a location; a cross-island one puts a
+        # check in logic on the start island while the pickup itself sits behind
+        # Mainland Access, which is a seed that cannot be finished.
+        #
+        # So the region is pinned against the audited anchors the table was
+        # derived from, the 100 packages and the 35 rampages: every slot must
+        # agree with its NEAREST anchor, which is a stronger claim than the
+        # weighted derivation makes and holds for all 110 today. The hand audit
+        # may move a district freely within a region; moving one between regions
+        # reddens this, which includes moving a slot between Starfish Island and
+        # the rest of the start island, since Starfish is its own region and its
+        # own gate.
+        coords = scm.package_coords()
+        anchors = [
+            (coords[key], district) for key, district
+            in zip(sorted(coords), district_data.PACKAGE_DISTRICTS, strict=True)
+        ] + [
+            (list(point), district) for point, district
+            in zip(district_data.RAMPAGE_COORDS, district_data.RAMPAGE_DISTRICTS,
+                   strict=True)
+        ]
+        for index, (x, y, z, _pickup_type, _model, _ammo) in enumerate(
+                data.PICKUP_SLOTS):
+            here = (x, y, z)
+            _, nearest = min(
+                (math.dist(here, (point[0], point[1], point[2])), district)
+                for point, district in anchors
+            )
+            self.assertEqual(
+                data.pickup_region(index), data.district_region(nearest),
+                f"slot {index} ({data.pickup_name(index)}) is on a different "
+                f"island from its nearest anchor, in {nearest}",
+            )
+
+
+class TestPickupChecksOff(WorldTestBase):
+    game = "Grand Theft Auto Vice City"
+    # Default options: enable_pickups is off.
+
+    def test_the_class_is_offered_and_reported(self) -> None:
+        # Offered like any other class, and reported by the mod, so a seed with it
+        # on plays. Nothing about it is gated behind a flag any more: the slots sit
+        # on their verified island and hold whatever the fill puts there.
+        self.assertTrue(data.MOD_REPORTS_PICKUPS)
+        self.assertEqual(EnablePickups.visibility, Visibility.all)
+        self.assertEqual(EnableSideEvents.visibility, Visibility.all)
+
+    def test_no_slot_is_a_location(self) -> None:
+        # A disabled class contributes no locations, so the slots stay ambient
+        # pickups and nothing else.
+        placed = {location.name
+                  for location in self.multiworld.get_locations(self.player)}
+        for name in data.PICKUP_NAMES:
+            self.assertNotIn(name, placed, name)
+        self.assertFalse(self.world.fill_slot_data()["enable_pickups"])
+
+
+class TestPickupChecksComposeWithTheRandomizer(WorldTestBase):
+    game = "Grand Theft Auto Vice City"
+    options: ClassVar[dict] = {"enable_pickups": True, "randomize_pickups": True}
+
+    def test_both_options_hold_at_once(self) -> None:
+        # The two are separate questions: whether a slot is a check the first
+        # time, and what it hands over afterwards. Neither overrides the other.
+        self.assertIn(data.PICKUP_NAMES[0], LOCATION_NAME_TO_ID)
+        slot_data = self.world.fill_slot_data()
+        self.assertTrue(slot_data["enable_pickups"])
+        self.assertTrue(slot_data["randomize_pickups"])
+        self.assertEqual(len(slot_data["pickup_layout"]), len(data.PICKUP_SLOTS))
 
 
 _ALL_ABILITY_LOCKS: list[str] = [
@@ -1837,6 +2352,116 @@ class TestStartingUnlocksWithoutKeys(WorldTestBase):
         self.assertIsNone(slot_data["starting_content_item"])
 
 
+class TestStartingContentUnlockStaysOnTheStartIsland(WorldTestBase):
+    game = "Grand Theft Auto Vice City"
+    options: ClassVar[dict] = {
+        "starting_content_unlock": True,
+        "content_locks": ["hidden_packages", "rampages", "stunt_jumps",
+                          "properties", "robbable_stores"],
+        "split_content_locks": "per_district",
+        "enable_hidden_packages": True, "enable_rampages": True,
+        "enable_stunt_jumps": True, "enable_properties": True,
+        "enable_robbable_stores": True,
+    }
+
+    def test_the_draw_never_hands_over_a_district_off_the_island(self) -> None:
+        # A STARTING unlock has to be worth something at the start. Split per
+        # district, most content items hold a district the player cannot reach on
+        # a new game, so drawing one would hand over an item that does nothing
+        # until the mainland opens.
+        #
+        # Asserted over many rolls rather than one. Six of the eleven districts
+        # are off the island, so a single roll lands on the island about half the
+        # time by luck: one assertion here passed with the filter deleted, which
+        # is worse than no assertion. Re-seeding the world's own random and
+        # re-drawing is what makes it bite.
+        seen = set()
+        for seed in range(40):
+            self.world.random.seed(seed)
+            self.world._choose_starting_unlocks(None)
+            drawn = self.world.starting_content_item
+            self.assertIsNotNone(drawn)
+            district = data.content_item_district(drawn)
+            self.assertIsNotNone(district, drawn)
+            self.assertEqual(
+                data.district_region(district), data.REGION_VICE_CITY,
+                f"{drawn} holds {district}, which is off the start island")
+            seen.add(district)
+        # And the rolls really do vary, so this is not forty copies of one draw.
+        self.assertGreater(len(seen), 1)
+
+    def test_a_district_name_is_never_a_prefix_of_another(self) -> None:
+        # content_item_district reads the leading district name off an item name,
+        # which only works while no district name is a prefix of another followed
+        # by a space. "Vice Point" and a hypothetical "Vice Point North" would
+        # both match the shorter one, and the item would hold the wrong district.
+        for district in district_data.DISTRICTS:
+            for other in district_data.DISTRICTS:
+                if district is other:
+                    continue
+                self.assertFalse(other.startswith(f"{district} "),
+                                 f"{other} starts with {district}")
+
+    def test_every_content_item_classifies(self) -> None:
+        # It fails OPEN: a name matching no district returns None, and None reads
+        # as a whole-class item, which reads as on the start island. So a district
+        # item this stopped recognising would silently widen the draw rather than
+        # raise. Every item is classified here so that cannot go unnoticed.
+        every = frozenset(data.CONTENT_LOCK_ITEMS)
+        whole_class = data.content_items(every, data.CONTENT_SPLIT_OFF)
+        for name in whole_class:
+            with self.subTest(name=name):
+                self.assertIsNone(data.content_item_district(name))
+                self.assertTrue(data.content_item_on_start_island(name))
+        for split in (data.CONTENT_SPLIT_PER_DISTRICT, data.CONTENT_SPLIT_PER_CLASS):
+            for name in data.content_items(every, split):
+                with self.subTest(split=split, name=name):
+                    district = data.content_item_district(name)
+                    self.assertIn(district, district_data.DISTRICTS, name)
+                    self.assertEqual(
+                        data.content_item_on_start_island(name),
+                        data.district_region(district) == data.REGION_VICE_CITY,
+                        name)
+
+    def test_a_seed_drawn_before_the_narrowing_keeps_its_item(self) -> None:
+        # The narrowing decides what a NEW seed rolls. A seed already being
+        # played carries its draw in slot_data, and an off-island name there is
+        # still that seed's answer: dropping it would leave the item in the pool
+        # while the tracker showed every Downtown location gated on something the
+        # player was told they held.
+        off_island = [name for name in self.world._content_items()
+                      if not data.content_item_on_start_island(name)
+                      and name != self.world.directed_opening_item]
+        self.assertTrue(off_island)
+        for name in off_island[:4]:
+            with self.subTest(name=name):
+                self.world._choose_starting_unlocks({"starting_content_item": name})
+                self.assertEqual(self.world.starting_content_item, name)
+
+    def test_a_replayed_name_the_seed_cannot_offer_is_still_dropped(self) -> None:
+        # The wider list is the seed's own items, not everything: slot_data from a
+        # different set of keys must not ask create_items for an item the pool
+        # never had.
+        self.world._choose_starting_unlocks(
+            {"starting_content_item": "Hidden Packages"})
+        self.assertIsNone(self.world.starting_content_item)
+
+    def test_every_candidate_is_reachable_and_the_others_are_not_lost(self) -> None:
+        # The filter narrows the draw, not the pool: the districts it excludes are
+        # still held and still arrive as items later.
+        candidates = [name for name in self.world._content_items()
+                      if data.content_item_on_start_island(name)]
+        excluded = [name for name in self.world._content_items()
+                    if not data.content_item_on_start_island(name)]
+        self.assertTrue(candidates)
+        self.assertTrue(excluded)
+        pool = {item.name for item in self.multiworld.itempool}
+        pool |= {item.name for item in
+                 self.multiworld.precollected_items[self.player]}
+        for name in excluded:
+            self.assertIn(name, pool, name)
+
+
 class TestStartingUnlocksOff(WorldTestBase):
     # Locks selected, the draw off: every lock item waits in the pool.
     game = "Grand Theft Auto Vice City"
@@ -2045,13 +2670,17 @@ class TestSplitMainlandAccessOff(WorldTestBase):
 
     def test_one_route_is_shipped_for_the_asi_to_announce(self) -> None:
         # The ASI cannot tell the setting from item_globals, which maps every
-        # area item either way, so it reads the routes from here. One entry means
-        # the crossings are whole.
+        # area item either way, so it reads the crossings from here. One mainland
+        # entry means they are whole, and Starfish Island is always its own row:
+        # the page was silent about that crossing before, which is the one a
+        # player asks about as often as any bridge.
         routes = self.world.fill_slot_data()["mainland_routes"]
-        self.assertEqual(routes, [{
-            "global": scm.unlock_global("Mainland Access"),
-            "label": "The mainland", "needs_global": 0, "needs_label": "",
-        }])
+        self.assertEqual(routes, [
+            {"global": scm.unlock_global("Mainland Access"),
+             "label": "The mainland", "needs_global": 0, "needs_label": ""},
+            {"global": scm.unlock_global("Starfish Island Access"),
+             "label": "Starfish Island", "needs_global": 0, "needs_label": ""},
+        ])
 
 
 class TestSplitMainlandAccessOn(WorldTestBase):
@@ -2158,9 +2787,13 @@ class TestSplitMainlandAccessOn(WorldTestBase):
         # ASI reads it to know the difference between a route that opened and an
         # item that opened nothing yet.
         routes = self.world.fill_slot_data()["mainland_routes"]
+        # The mainland crossings, then Starfish Island last, because it is the
+        # one a mainland route can depend on.
         self.assertEqual([route["label"] for route in routes],
-                         data.MAINLAND_CROSSING_ITEMS)
-        for route in routes:
+                         [*data.MAINLAND_CROSSING_ITEMS, "Starfish Island"])
+        self.assertEqual(routes[-1]["global"],
+                         scm.unlock_global("Starfish Island Access"))
+        for route in routes[:-1]:
             self.assertEqual(route["global"], scm.unlock_global(route["label"]))
         needs = {route["label"]: (route["needs_global"], route["needs_label"])
                  for route in routes}
@@ -2661,21 +3294,27 @@ class TestEmergencyRewardsUnshuffled(WorldTestBase):
             self.assertNotIn(reward, item_names)
 
 
-class TestEmergencyRewardsRequireVehicles(WorldTestBase):
+class TestEmergencyRewardsWithoutTheVehiclesClass(WorldTestBase):
     game = "Grand Theft Auto Vice City"
     options: ClassVar[dict] = {
         "shuffle_emergency_rewards": True, "enable_emergency_vehicles": False,
     }
 
-    def test_reward_items_absent_without_the_vehicles_class(self) -> None:
-        # Shuffle on but the emergency-vehicles class off: the toggle AND keeps
-        # the reward items out of the pool, since there is nothing to complete.
+    def test_reward_items_are_pooled_whatever_the_class_says(self) -> None:
+        # The reward shuffle is independent of the check class. Whether the levels
+        # are checks and who hands over the rewards are different questions, and
+        # this option answers only the second: the chains still play, they just
+        # stop paying out, and the payout comes from the multiworld.
+        #
+        # This used to assert the opposite, on the reasoning that there was
+        # nothing to complete. There is: the emergency chains exist in the game
+        # whether or not their levels are AP locations.
         item_names = {item.name for item in self.multiworld.itempool}
         item_names |= {
             item.name for item in self.multiworld.precollected_items[self.player]
         }
         for reward in data.EMERGENCY_REWARD_ITEMS:
-            self.assertNotIn(reward, item_names)
+            self.assertIn(reward, item_names)
 
 
 class TestConfigFlagsShuffleWithoutVehicles(WorldTestBase):
@@ -2684,12 +3323,20 @@ class TestConfigFlagsShuffleWithoutVehicles(WorldTestBase):
         "shuffle_emergency_rewards": True, "enable_emergency_vehicles": False,
     }
 
-    def test_emergency_flag_off_when_vehicles_off(self) -> None:
-        # Shuffle on but vehicles off: no ability item is in the pool, so the
-        # config flag must report NOT shuffled, or the SCM would suppress the
-        # vanilla grants with nothing to replace them.
+    def test_the_flag_follows_the_option_alone(self) -> None:
+        # The flag does two things at once, suppress the vanilla grant and arm the
+        # applier, so it must never be set without the items that replace what it
+        # suppresses. That is the hazard the old coupling was guarding against,
+        # and it is closed by construction now: the flag and the items are driven
+        # by the same option, so they cannot disagree. Asserted together here
+        # rather than separately, because it is the pairing that matters.
         config = self.world.fill_slot_data()["config_globals"]
-        self.assertEqual(config[str(scm.EMERGENCY_SHUFFLED_GLOBAL)], 0)
+        self.assertEqual(config[str(scm.EMERGENCY_SHUFFLED_GLOBAL)], 1)
+        pooled = {item.name for item in self.multiworld.itempool}
+        pooled |= {item.name for item in
+                   self.multiworld.precollected_items[self.player]}
+        for reward in data.EMERGENCY_REWARD_ITEMS:
+            self.assertIn(reward, pooled, reward)
         self.assertEqual(config[str(scm.PACKAGES_SHUFFLED_GLOBAL)], 1)
 
 
@@ -2704,7 +3351,9 @@ class TestConfigFlagsShuffled(WorldTestBase):
 
 class TestClassCashFlagsAllOn(WorldTestBase):
     game = "Grand Theft Auto Vice City"
-    # Default options: every check class is on.
+    # Default options, which turn on every class that has a cash flag. The
+    # pickup class defaults OFF and has no cash flag of its own, so the four
+    # flags below are still the whole set.
 
     def test_enabled_classes_stamp_their_cash_flags(self) -> None:
         # With a class enabled its one-time completion cash is suppressed in
@@ -2769,10 +3418,64 @@ class TestRejections(WorldTestBase):
                 self.assertNotEqual(self.world.starting_content_item,
                                     self.world.directed_opening_item)
 
+    def test_the_hundred_percent_goal_generates_with_pickups_on(self) -> None:
+        # This was refused while nothing reported a pickup, because the client
+        # holds that goal until no location is missing. The watcher reports them
+        # now, so the refusal went with its reason rather than outliving it.
+        self.assertTrue(data.MOD_REPORTS_PICKUPS)
+        self.options = {
+            "enable_pickups": True, "goal": "hundred_percent",
+            "enable_hidden_packages": True, "enable_rampages": True,
+            "enable_stunt_jumps": True, "enable_emergency_vehicles": True,
+            "enable_properties": True, "enable_robbable_stores": True,
+            "enable_side_events": True}
+        self.world_setup()
+        self.assertEqual(self.world.options.goal.current_key, "hundred_percent")
+
+    def test_any_goal_generates_with_pickups_on(self) -> None:
+        # The class is meant to be playable, so a seed carrying it has to
+        # generate rather than refuse.
+        self.options = {"enable_pickups": True}
+        self.world_setup()
+        self.assertTrue(self.world.options.enable_pickups.value)
+
+    def test_story_missions_plus_pickups_generates(self) -> None:
+        # 110 slots is plenty of room, and while they were excluded from holding
+        # progression they were not room at all, so this refused. They sit on
+        # their verified island now and hold anything, so it generates: 44 story
+        # checks plus 110 pickups, and the 53 on the start island are sphere-0
+        # room in their own right.
+        self.options = dict(_STORY_ONLY_OPTIONS, enable_pickups=True)
+        self.world_setup()
+        self.assertGreaterEqual(self.world._free_start_location_count(),
+                                MINIMUM_SPHERE_ZERO)
+        distribute_items_restrictive(self.multiworld)
+        self.assertTrue(self.multiworld.can_beat_game())
+
+    def test_story_missions_plus_pickups_survives_the_locks(self) -> None:
+        # The same with every ability key selected, which is the narrowest shape
+        # the option space allows and the one that used to refuse.
+        self.options = dict(_STORY_ONLY_OPTIONS, enable_pickups=True,
+                            ability_locks=_ALL_ABILITY_LOCKS)
+        self.world_setup()
+        distribute_items_restrictive(self.multiworld)
+        self.assertTrue(self.multiworld.can_beat_game())
+
+    def _generation_outcome(self, options: dict) -> str:
+        """How this configuration ends: filled, or the refusal it gives."""
+        self.options = options
+        try:
+            self.world_setup()
+        except OptionError as error:
+            # The message names the counts, so comparing it compares them.
+            return f"refused: {error}"
+        return "generated"
+
     def test_hundred_percent_rejects_with_a_class_off(self) -> None:
         # The 100 percent goal is a solvability contract: every stat
         # contributor must be a check, so generation must refuse the goal
-        # unless every check class is enabled.
+        # unless every class the stat counts is enabled. The pickup class is not
+        # one of them, which TestHundredPercentAllClasses holds.
         self._assert_rejected({"goal": "hundred_percent", "enable_side_events": False},
                               "100 percent goal requires every check class")
 
@@ -2976,6 +3679,9 @@ class TestRejections(WorldTestBase):
                 self.options = dict(_STORY_ONLY_OPTIONS, **{option_name: True})
                 # world_setup raises on a narrow start, so reaching the assertion
                 # is most of the answer; the assertion says which way it failed.
+                # The patch is what lets the pickup class take its turn: without
+                # it generation refuses the option outright, which the rejection
+                # test covers instead.
                 self.world_setup()
                 self.assertGreaterEqual(self.world._free_start_location_count(),
                                         MINIMUM_SPHERE_ZERO)
@@ -3182,6 +3888,7 @@ class TestTables(WorldTestBase):
         # 15 property purchases, the venue mission strands, and the six
         # Sunshine Autos races, which are venue activities rather than a strand.
         self.assertEqual(len(classes["properties"][1]), 40)
+        self.assertEqual(len(classes["pickups"][1]), 110)
 
     def test_venue_strands_are_not_story_missions(self) -> None:
         # The venue strands moved to the Properties class, so their missions
@@ -3307,6 +4014,54 @@ class TestReservedGlobals(WorldTestBase):
             self.assertGreaterEqual(global_index, scm.UNLOCK_BASE)
         self.assertGreater(scm.highest_reserved_global(), scm.COMPLETION_BASE)
 
+    def test_the_finale_flag_tops_the_block_and_collides_with_nothing(self) -> None:
+        # The finale raises this while the mansion siege runs so the ASI keeps the
+        # ambient pickup layout off the pool for it. It tops the reserved block and
+        # is what sizes it, so the marker scratch above starts one higher.
+        #
+        # NOT taken from the unused space lower down, which looks free and is not:
+        # build_scm.py uses every one of those globals for scratch, and its package
+        # watcher touches RESERVED_BASE + 6 a hundred and one times, once to
+        # write the collected count and a hundred to compare against it.
+        self.assertEqual(scm.FINALE_ACTIVE_GLOBAL, scm.FINALE_WARP_GLOBAL + 1)
+        self.assertEqual(scm.highest_reserved_global(), scm.FINALE_ACTIVE_GLOBAL)
+
+        # And it is not a global the WORLD uses for anything else. Gathered from
+        # the accessors rather than from a written-down list, so a block growing
+        # over it fails here.
+        #
+        # This set reaches no further than the world: the SCM's own scratch band
+        # and the marker scratch above the block are build_scm.py's and
+        # add_markers.py's, and what holds the flag clear of those is the equality
+        # above plus scripts/check_scm_mirrors.py comparing all three mirrors.
+        taken = set(range(scm.SEED_HASH_BASE,
+                          scm.SEED_HASH_BASE + scm.SEED_HASH_GLOBAL_COUNT))
+        taken.add(scm.APPLIED_INDEX_GLOBAL)
+        taken |= {scm.unlock_global(key) for key in scm.UNLOCK_KEYS}
+        taken |= set(scm.completion_watch().keys())
+        taken |= {scm.reward_global(key) for key in scm.REWARD_KEYS}
+        taken |= {scm.ownership_global(key) for key in scm.OWNERSHIP_KEYS}
+        taken |= {scm.ability_lock_flag_global(name) for name in scm.ABILITY_KEYS}
+        taken |= {scm.ability_unlock_global(name) for name in scm.ABILITY_KEYS}
+        taken |= set(scm.unlocked_district_globals(
+            frozenset(data.CONTENT_LOCK_ITEMS)))
+        taken |= {scm.PACKAGES_SHUFFLED_GLOBAL, scm.EMERGENCY_SHUFFLED_GLOBAL,
+                  scm.MINIMAP_SHUFFLED_GLOBAL, scm.MINIMAP_UNLOCK_GLOBAL,
+                  scm.RADIO_RANDOMIZED_GLOBAL, scm.RADIO_REQUEST_GLOBAL,
+                  scm.FINALE_WARP_GLOBAL}
+        self.assertNotIn(scm.FINALE_ACTIVE_GLOBAL, taken)
+
+        # It is not stamped by the config either. The applier leaves a stamped
+        # global alone in both directions, and a flag the finale raises has to be
+        # writable by the script.
+        for keys in (frozenset(), frozenset(data.CONTENT_LOCK_ITEMS)):
+            self.assertNotIn(scm.FINALE_ACTIVE_GLOBAL,
+                             scm.unlocked_district_globals(keys))
+        # And it is above every completion global, so the marker scratch the mod
+        # sizes from the top of the block cannot reach down onto it.
+        self.assertGreater(scm.FINALE_ACTIVE_GLOBAL,
+                           max(scm.completion_watch().keys()))
+
     def test_no_reserved_global_collisions(self) -> None:
         seed_hash = set(range(scm.SEED_HASH_BASE, scm.SEED_HASH_BASE + scm.SEED_HASH_GLOBAL_COUNT))
         unlocks = {scm.unlock_global(key) for key in scm.UNLOCK_KEYS}
@@ -3404,23 +4159,28 @@ class TestReservedGlobals(WorldTestBase):
         # The ASI hard-codes the packages-shuffled index too
         # (scm_game_state.cpp): it gates taking back the package cash the
         # executable pays, which no script gate can reach.
-        self.assertEqual(scm.PACKAGES_SHUFFLED_GLOBAL, 9391)
-        self.assertEqual(scm.ABILITY_LOCK_FLAG_BASE, 9434)
-        self.assertEqual(scm.ABILITY_UNLOCK_BASE, 9442)
-        self.assertEqual(scm.CONTENT_LOCK_FLAG_BASE, 9450)
-        self.assertEqual(scm.CONTENT_UNLOCK_BASE, 9455)
+        self.assertEqual(scm.PACKAGES_SHUFFLED_GLOBAL, 9533)
+        # The shops flag, which build_scm.py mirrors by literal as SHOPS_ENABLED
+        # and every piece of the shop withholding reads before it changes the
+        # world. It sits directly below the ability locks, so a shift moves both.
+        self.assertEqual(scm.SHOPS_ENABLED_GLOBAL, 9576)
+        self.assertEqual(scm.ABILITY_LOCK_FLAG_BASE, 9577)
+        self.assertEqual(scm.ABILITY_UNLOCK_BASE, 9585)
+        self.assertEqual(scm.CONTENT_LOCK_FLAG_BASE, 9593)
+        self.assertEqual(scm.CONTENT_UNLOCK_BASE, 9598)
         # The district content unlocks, the block every content gate and every
         # content hold actually reads. build_scm.py mirrors the base and the
         # class-major stride by literal, so a shift here has to move with it.
-        self.assertEqual(scm.DISTRICT_UNLOCK_BASE, 9460)
+        self.assertEqual(scm.DISTRICT_UNLOCK_BASE, 9603)
         self.assertEqual(scm.DISTRICT_UNLOCK_COUNT, 55)
         # The finale warp flag, hard-coded in the ASI (scm_game_state.cpp) and in
         # build_scm.py, which reads it in the APFIN watcher and in the mission
         # branch that jumps to the ending cutscene. It is also the foundation's
         # sizing line, which add_markers.py anchors on, so a shift here moves
         # four files at once.
-        self.assertEqual(scm.FINALE_WARP_GLOBAL, 9515)
-        self.assertEqual(scm.highest_reserved_global(), 9515)
+        self.assertEqual(scm.FINALE_WARP_GLOBAL, 9658)
+        self.assertEqual(scm.FINALE_ACTIVE_GLOBAL, 9659)
+        self.assertEqual(scm.highest_reserved_global(), 9659)
         self.assertEqual(scm.ABILITY_KEYS, data.ABILITY_ITEMS)
         self.assertEqual(scm.CONTENT_KEYS, data.CONTENT_ITEMS)
 
@@ -3460,7 +4220,7 @@ class TestReservedGlobals(WorldTestBase):
             self.assertEqual(scm.completion_global(name), global_index, name)
         # Every payout guard also reads the class-cash flag, so that a seed with
         # the class off pays vanilla; the same shift argument applies to it.
-        self.assertEqual(scm.SIDE_EVENTS_CASH_GLOBAL, 9430)
+        self.assertEqual(scm.SIDE_EVENTS_CASH_GLOBAL, 9572)
 
     def test_property_ownership_globals_match_the_hand_written_mirrors(self) -> None:
         # Each of these gates what its property gives: a safehouse's save
@@ -3474,23 +4234,23 @@ class TestReservedGlobals(WorldTestBase):
         # literal, so that shift fails here rather than in game, and the fix is
         # to move build_scm.py's OWNERSHIP_BASE with it.
         businesses = {
-            "Printworks": 9413,
-            "Sunshine Autos": 9414,
-            "Film Studio": 9415,
-            "Cherry Popper": 9416,
-            "Kaufman Cabs": 9417,
-            "Malibu Club": 9418,
-            "Boatyard": 9419,
-            "Pole Position": 9420,
+            "Printworks": 9555,
+            "Sunshine Autos": 9556,
+            "Film Studio": 9557,
+            "Cherry Popper": 9558,
+            "Kaufman Cabs": 9559,
+            "Malibu Club": 9560,
+            "Boatyard": 9561,
+            "Pole Position": 9562,
         }
         safehouses = {
-            "El Swanko Casa": 9421,
-            "Links View Apartment": 9422,
-            "Hyman Condo": 9423,
-            "Ocean Heights Apartment": 9424,
-            "1102 Washington Street": 9425,
-            "3321 Vice Point": 9426,
-            "Skumole Shack": 9427,
+            "El Swanko Casa": 9563,
+            "Links View Apartment": 9564,
+            "Hyman Condo": 9565,
+            "Ocean Heights Apartment": 9566,
+            "1102 Washington Street": 9567,
+            "3321 Vice Point": 9568,
+            "Skumole Shack": 9569,
         }
         for properties, items in ((businesses, data.BUSINESS_OWNERSHIP_ITEMS),
                                   (safehouses, data.SAFEHOUSE_OWNERSHIP_ITEMS)):
@@ -3573,6 +4333,45 @@ class TestReservedGlobals(WorldTestBase):
                         ITEM_NAME_TO_ID[item_name]]
                 }
                 self.assertEqual(stamped | covered, block, split)
+
+    def test_the_stamp_tells_absent_and_released_apart(self) -> None:
+        # Both stamped values pass every gate, which all ask ">= 1", so the game
+        # plays the same either way. The status page is what needs them apart: a
+        # district holding none of a class is not a district where that class
+        # became available, and reading it as released told the player there were
+        # rampages waiting in Leaf Links.
+        absent_pairs = {
+            scm.district_unlock_global(content_item, district)
+            for content_item in scm.CONTENT_KEYS
+            for district in scm.DISTRICT_KEYS
+            if district not in data.CONTENT_CLASS_DISTRICTS[content_item]
+        }
+        self.assertEqual(len(absent_pairs), 13)
+        one_key = frozenset({sorted(data.CONTENT_LOCK_ITEMS)[0]})
+        for selected in (frozenset(), frozenset(data.CONTENT_LOCK_ITEMS), one_key):
+            with self.subTest(selected=sorted(selected)):
+                stamped = scm.unlocked_district_globals(selected)
+                for global_index, value in stamped.items():
+                    self.assertGreaterEqual(value, 1, global_index)
+                    self.assertEqual(
+                        value,
+                        (scm.DISTRICT_ABSENT if global_index in absent_pairs
+                         else scm.DISTRICT_RELEASED),
+                        global_index)
+                # Absence is a fact about the city, so it is stamped whatever the
+                # seed selected. Released depends on the selection.
+                self.assertTrue(absent_pairs.issubset(stamped))
+
+    def test_no_district_global_is_stamped_the_held_value(self) -> None:
+        # Zero is held, and the stamp exists to release. Stamping one would hold
+        # content no item can ever release, so the class would sit part-held on
+        # the page forever and a pickup there would never come back.
+        for selected in (frozenset(), frozenset(data.CONTENT_LOCK_ITEMS)):
+            with self.subTest(selected=sorted(selected)):
+                values = set(scm.unlocked_district_globals(selected).values())
+                self.assertNotIn(0, values)
+                self.assertLessEqual(values, {scm.DISTRICT_RELEASED,
+                                              scm.DISTRICT_ABSENT})
 
     def test_package_districts_stay_where_the_audit_put_them(self) -> None:
         # A package's district decides which item releases it and which district
@@ -3699,7 +4498,7 @@ class TestReservedGlobals(WorldTestBase):
         self.assertEqual(district_data.STORE_DISTRICTS, stores)
         # The block those tables index into. build_scm.py mirrors the base and
         # derives the stride from the class count, so both are pinned.
-        self.assertEqual(scm.DISTRICT_UNLOCK_BASE, 9460)
+        self.assertEqual(scm.DISTRICT_UNLOCK_BASE, 9603)
         self.assertEqual(len(scm.DISTRICT_KEYS), len(districts))
         self.assertEqual(scm.CONTENT_KEYS.index(data.STUNT_JUMPS_ITEM), 2)
         self.assertEqual(scm.CONTENT_KEYS.index(data.ROBBABLE_STORES_ITEM), 4)
@@ -3744,7 +4543,7 @@ class TestReservedGlobals(WorldTestBase):
             self.assertEqual(scm.completion_global(name), global_index, name)
         # The race payout guards read the properties class-cash flag, so a seed
         # with the class off pays vanilla; the same shift argument applies to it.
-        self.assertEqual(scm.PROPERTIES_CASH_GLOBAL, 9433)
+        self.assertEqual(scm.PROPERTIES_CASH_GLOBAL, 9575)
 
     def test_the_script_gated_content_items_keep_their_offsets(self) -> None:
         # The two classes with no icon for the ASI to hold gate in the script
