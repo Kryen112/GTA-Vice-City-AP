@@ -269,32 +269,49 @@ def _cleo_problems(cleo_dir: pathlib.Path, scm: types.ModuleType,
     been; what it does catch is a block moving out from under a script.
     """
     reward_top = scm.REWARD_BASE + len(scm.REWARD_KEYS) - 1
-    bands: dict[str, tuple[int, int, str]] = {
+    # Phil's four stands, which the pickup watcher polls even though the shop
+    # class owns them: they are in-shop pickups the engine sells, so no shop
+    # thread can reach them. They are the last four rows of shop_data, so they
+    # are a contiguous run at the top of the shop block, and appickup.cs is
+    # allowed that run as well as the pickup run.
+    stand_globals = [
+        scm.completion_global(data.shop_data.shop_item_name(item))
+        for item in data.shop_data.SHOP_ITEMS
+        if item.thread in data.shop_data.SHOP_PICKUP_THREADS
+    ]
+    # A LIST of runs per script rather than one band, because that watcher writes
+    # into two blocks and one band spanning both would admit every shop global
+    # between them. A band that wide could not catch a stale script at all: the
+    # shift that made this necessary was ten globals and the gap is thirty-two.
+    bands: dict[str, tuple[tuple[tuple[int, int], ...], str]] = {
         # The reward globals and the two config flags that sit directly above.
-        "aprewd.cs": (scm.REWARD_BASE, scm.EMERGENCY_SHUFFLED_GLOBAL,
+        "aprewd.cs": (((scm.REWARD_BASE, scm.EMERGENCY_SHUFFLED_GLOBAL),),
                       f"the reward block and its config flags "
                       f"(${scm.REWARD_BASE}..${reward_top}, "
                       f"${scm.PACKAGES_SHUFFLED_GLOBAL}, "
                       f"${scm.EMERGENCY_SHUFFLED_GLOBAL})"),
         # The retune request, and the resolve map it is answered from.
-        "apradio.cs": (scm.RADIO_RANDOMIZED_GLOBAL, scm.RADIO_REQUEST_GLOBAL,
+        "apradio.cs": (((scm.RADIO_RANDOMIZED_GLOBAL, scm.RADIO_REQUEST_GLOBAL),),
                        f"the radio block "
                        f"(${scm.RADIO_RANDOMIZED_GLOBAL}.."
                        f"${scm.RADIO_REQUEST_GLOBAL})"),
         # Completion globals only: the watchers set checks, they read no rewards.
-        "apwatchers.cs": (scm.COMPLETION_BASE, scm.REWARD_BASE - 1,
+        "apwatchers.cs": (((scm.COMPLETION_BASE, scm.REWARD_BASE - 1),),
                           "the completion block"),
         # The pickup watcher reads each slot's handle, which is a vanilla global
-        # below the reserved block, and writes only its own slot's completion
-        # global, so its band is the pickup run inside the completion block.
-        "appickup.cs": (scm.completion_global(data.PICKUP_NAMES[0]),
-                        scm.completion_global(data.PICKUP_NAMES[-1]),
-                        "the ambient pickup completion globals"),
+        # below the reserved block, and writes only the completion global of the
+        # slot or stand it polled, so its runs are the pickup run inside the
+        # completion block and Phil's four stands at the top of the shop run.
+        "appickup.cs": (((scm.completion_global(data.PICKUP_NAMES[0]),
+                          scm.completion_global(data.PICKUP_NAMES[-1])),
+                         (min(stand_globals), max(stand_globals))),
+                        f"the ambient pickup completion globals and Phil's "
+                        f"stands (${min(stand_globals)}..${max(stand_globals)})"),
         # The area thread reads unlock globals and bookkeeping, both of which sit
         # below the completion block, so it may reach nothing from there up. Named
         # rather than left out, since a script this cannot see is a script nothing
         # checks.
-        "aparea.cs": (0, scm.COMPLETION_BASE - 1,
+        "aparea.cs": (((0, scm.COMPLETION_BASE - 1),),
                       "the unlock and bookkeeping globals below the completion "
                       "block"),
     }
@@ -304,7 +321,7 @@ def _cleo_problems(cleo_dir: pathlib.Path, scm: types.ModuleType,
     assert set(bands) == set(CLEO_SCRIPTS), sorted(set(bands) ^ set(CLEO_SCRIPTS))
 
     problems: list[str] = []
-    for name, (low, high, description) in bands.items():
+    for name, (runs, description) in bands.items():
         path = cleo_dir / name
         if not path.is_file():
             # Gitignored, so a checkout or a CI run has none. Nothing to judge.
@@ -313,7 +330,7 @@ def _cleo_problems(cleo_dir: pathlib.Path, scm: types.ModuleType,
         # and none of those moved, so the band applies from there up.
         stray = sorted(index for index in _reserved_references(path)
                        if index >= scm.COMPLETION_BASE
-                       and not low <= index <= high)
+                       and not any(low <= index <= high for low, high in runs))
         if stray:
             problems.append(
                 f"mod/cleo/{name}: reads ${stray[0]}"
@@ -400,6 +417,47 @@ def _self_test() -> None:
 
 
 DISTRICT_LIST = re.compile(r"^DISTRICTS = \[\n(.*?)^\]$", re.MULTILINE | re.DOTALL)
+
+
+def _match_tolerance_problems(asi_dir: pathlib.Path, data) -> list[str]:
+    """The one mirror that is a distance rather than a global.
+
+    The ASI matches a layout row to a pool entry by position, and how far it
+    looks decides which pickup a row can be paired with. The world holds the same
+    number and the two measured bounds it has to sit between, both taken over the
+    decompile by dump_pickups.py, so this compares the number and then re-checks
+    the bounds against the ASI's own copy: the world asserting them on import
+    proves nothing about the value the game actually uses.
+
+    Squared in the header, because that is what the matcher compares, so the
+    comparison is done squared too rather than through a square root that would
+    have to be spelled to the same precision on both sides.
+    """
+    header = asi_dir / "scm_pickup_layout.hpp"
+    if not header.is_file():
+        return [f"ASI: {header.name} is missing, so the match tolerance was "
+                f"not checked"]
+    text = header.read_text(encoding="utf-8")
+    match = re.search(r"kMatchDistanceSquared\s*=\s*(?P<value>[0-9.]+)\s*;", text)
+    if match is None:
+        return ["ASI: kMatchDistanceSquared not found, so nothing was checked"]
+    found = float(match.group("value"))
+    wanted = data.PICKUP_MATCH_TOLERANCE ** 2
+    problems: list[str] = []
+    if abs(found - wanted) > 1e-9:
+        problems.append(
+            f"ASI: kMatchDistanceSquared is {found}, the world derives {wanted} "
+            f"from a tolerance of {data.PICKUP_MATCH_TOLERANCE} units")
+    if found >= data.PICKUP_NEAREST_FOREIGN ** 2:
+        problems.append(
+            f"ASI: kMatchDistanceSquared of {found} reaches the closest pickup "
+            f"no table owns, {data.PICKUP_NEAREST_FOREIGN} units from a slot, so "
+            f"a slot could be matched to a pickup that is not it")
+    if found >= data.PICKUP_CLOSEST_SLOT_PAIR ** 2:
+        problems.append(
+            f"ASI: kMatchDistanceSquared of {found} reaches from one slot to the "
+            f"next, {data.PICKUP_CLOSEST_SLOT_PAIR} units away")
+    return problems
 
 
 def _district_list_problems(scm_dir: pathlib.Path, scm) -> list[str]:
@@ -514,6 +572,16 @@ def main() -> int:
         # onto whatever locations sit there instead, which is silent in game.
         ("add_markers.py", markers, "PICKUP_COMPLETION_BASE",
          scm.completion_global(data.PICKUP_NAMES[0])),
+        # The shop run sits INSIDE the completion block, directly above the
+        # pickup run, so it moves when pickup slots are added and stays put when
+        # shop items are. That is the trap: every base ABOVE the completion block
+        # moves by the whole class list, so a blanket shift of those leaves this
+        # one behind, and the shop items then write other locations' completion
+        # globals. build_scm.py holds it as a literal and is checked here;
+        # add_markers.py derives it from PICKUP_COMPLETION_BASE and the slot
+        # table, so there is nothing there to drift and nothing to pin.
+        ("build_scm.py", build, "SHOP_COMPLETION_BASE",
+         scm.completion_global(data.shop_data.SHOP_ITEM_NAMES[0])),
         ("ASI", asi, "kPackagesShuffledGlobal", scm.PACKAGES_SHUFFLED_GLOBAL),
         ("ASI", asi, "kRadioRandomizedGlobal", scm.RADIO_RANDOMIZED_GLOBAL),
         ("ASI", asi, "kRadioUnlockBase", scm.RADIO_UNLOCK_BASE),
@@ -555,6 +623,7 @@ def main() -> int:
     problems.extend(_cleo_problems(cleo_dir, scm, data))
     problems.extend(_literal_table_problems(scm_dir, scm))
     problems.extend(_district_list_problems(scm_dir, scm))
+    problems.extend(_match_tolerance_problems(asi_dir, data))
     for where, source, name, want in expected:
         if name not in source:
             problems.append(f"{where}: {name} not found, so nothing was checked")

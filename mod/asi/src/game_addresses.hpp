@@ -133,13 +133,20 @@ constexpr unsigned int kMissingTextBuffer10 = 0xA10A74;
 // and returns 1 without granting anything, which sends the caller to the charge.
 //
 // The callee is a two instruction getter, mov eax, [ecx+0x30]; ret, so it takes
-// its object in ecx and nothing on the stack, and the caller cleans nothing.
-// That is what lets the replacement declare __fastcall: ecx is the model info
-// and edx still holds the model id from 0x440D14, untouched between there and
-// the call, so the replacement is handed both without reading memory to find
-// out which model it is looking at.
+// its object in ecx and nothing on the stack, and the caller cleans nothing. A
+// hook over the call therefore has to answer in eax and nothing else, and it is
+// handed the same two things the getter was: ecx is the model info and edx still
+// holds the model id from 0x440D14, untouched between there and the call.
 constexpr unsigned int kPickupChargedPriceCallSite10 = 0x440D1B;
+constexpr unsigned int kPickupChargedPriceCallEnd10 = 0x440D20;
 constexpr unsigned int kPickupPriceGetterCallee10 = 0x629C20;
+
+// esi holds the PICKUP being priced at this site, which is what lets a stand be
+// priced from a type of its own rather than from the model showing on it. Read
+// off the instructions either side of the call: 0x440D26 takes the pickup type
+// from [esi+0x2e] and 0x440D5E takes its object from [esi+0x10], both the
+// offsets plugin-sdk gives CPickup, and nothing between 0x440D14 and the call
+// writes esi.
 
 // The getter has nine callers and only the two pinned here are prices. Two more
 // sit in the pickup update, 0x004408A9 and 0x00440A2F, and are deliberately left
@@ -158,12 +165,34 @@ constexpr unsigned int kPickupPriceGetterCallee10 = 0x629C20;
 // 0x4401DA belongs to the locked property type, whose switch at 0x440087 indexes
 // by the type less 0x10.
 //
-// It takes the same replacement as the purchase site, for the same reasons: ecx
-// is the model info from 0x43D827 and edx still holds the model id, put there by
+// It takes the same hook as the purchase site, for the same reasons: ecx is the
+// model info from 0x43D827 and edx still holds the model id, put there by
 // 0x43D81A and untouched in between. Without it the marker prices from the raw
 // field, which is zero, so a slot shows nothing to pay and then charges what the
 // purchase path answers.
 constexpr unsigned int kPickupShownPriceCallSite10 = 0x43D82E;
+constexpr unsigned int kPickupShownPriceCallEnd10 = 0x43D833;
+
+// The pickup is reachable here too, but not in a register of its own: ebx points
+// AT the pickup's object field, so the pickup is that field's offset below it.
+//
+// Proved from the call sites rather than inferred. This site is inside
+// CPickup::GiveUsAPickUpObject (0x43D3B0), whose prologue takes its first stack
+// argument into ebx at 0x43D3BB and keeps it (0x43D3CB, 0x43D45D and 0x43D4C5 all
+// write the created object through it). That function has exactly three callers,
+// 0x4401FF, 0x44170E and 0x441B53, and all three set the argument up the same
+// way: `lea eax, [esi+0x10]` and `lea ecx, [esi+0x14]`, pushed as the two object
+// out-parameters, with `mov ecx, esi` making the same esi the `this`. So ebx is
+// the pickup's own pObject field at every call there is, and 0x10 is the offset
+// plugin-sdk gives that field.
+//
+// [esp+4] holds the pickup outright at this site, being where the prologue saved
+// `this`, and it is deliberately NOT what is read: a hook's view of esp depends
+// on what the hook's own stub pushed, and ebx does not.
+//
+// The pool arithmetic behind the index is checked as well as bounded, so a build
+// where this stopped being true answers -1 and the stand prices at the marker's
+// figure rather than at some other stand's.
 
 // The three models the purchase path prices WITHOUT consulting the model info,
 // classic 1.0 executable only. Each holds a model id, filled at load from the

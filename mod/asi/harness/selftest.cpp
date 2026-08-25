@@ -840,6 +840,88 @@ int main() {
            "with no checks pending the layout already matches the pool");
   }
 
+  // How far the matcher looks, which is the one number a foreign pickup can
+  // reach a slot through. dump_pickups.py measures the closest same-type pickup
+  // no table of ours owns and the world refuses a tolerance that reaches it; the
+  // pair that made it tight is the body armour Rub Out leaves in the estate
+  // courtyard and the Tec-9 the finale places 0.94 units from it, both street
+  // type. These stand in for that pair at the same distance.
+  {
+    const std::vector<PickupTarget> targets = {
+        {0, -336.0, -573.7, 11.6, 2, 368, 0},
+    };
+    // Only the foreign pickup, at the distance the decompile measures. It must
+    // not be taken for the slot.
+    const std::vector<PickupPoolEntry> foreign = {
+        {-336.6208f, -572.994f, 11.6022f, 2, 281, 70},
+    };
+    const auto missed = PlanPickupLayout(targets, foreign, {true});
+    Expect(missed.rewrites.empty() && missed.unmatched_targets == 1,
+           "a same-type pickup 0.94 units away is not the slot");
+    // The slot's own entry, off by the last bits of a float rather than by a
+    // pickup's width, still matches.
+    const std::vector<PickupPoolEntry> own = {
+        {-336.0001f, -573.6999f, 11.6001f, 2, 368, 71},
+    };
+    const auto found = PlanPickupLayout(targets, own, {true});
+    Expect(found.rewrites.size() == 1 && found.unmatched_targets == 0 &&
+               found.rewrites[0].pool_index == 71,
+           "the slot's own entry matches through float round-tripping");
+    // Both in the pool at once, foreign entry FIRST, which is what the old
+    // first-within-tolerance walk would have taken had the tolerance let it.
+    const std::vector<PickupPoolEntry> both = {foreign[0], own[0]};
+    const auto nearest = PlanPickupLayout(targets, both, {true});
+    Expect(nearest.rewrites.size() == 1 &&
+               nearest.rewrites[0].pool_index == 71,
+           "the nearest entry wins, whatever order the pool is walked in");
+  }
+
+  // Stand pricing. A pending check wears one marker model wherever it is, so the
+  // pool slot is the only thing that can tell Phil's stands from the rest, and
+  // an override is what the shop class's promise about price rests on.
+  {
+    std::vector<PickupTarget> targets = {
+        // An ambient in-shop stand: a check, and priced like any marker.
+        {5, -113.2, -975.7, 10.4, 1, 366, 0},
+        // Phil's minigun stand: a check, and priced at what the minigun costs.
+        {6, -1105.9, 325.3, 11.1, 1, 290, 0},
+    };
+    targets[1].price_weapon_type = 33;
+    const std::vector<PickupPoolEntry> pool = {
+        {-113.2f, -975.7f, 10.4f, 1, 366, 80},
+        {-1105.9f, 325.3f, 11.1f, 1, 290, 81},
+    };
+    const auto pending = PlanPickupLayout(targets, pool, {true, true});
+    Expect(pending.price_overrides.size() == 1,
+           "only the stand carrying a price type overrides its price");
+    Expect(!pending.price_overrides.empty() &&
+               pending.price_overrides[0].pool_index == 81 &&
+               pending.price_overrides[0].weapon_type == 33,
+           "the override names the matched pool slot and the stand's own type");
+    // Taken, so the real model is back on the stand and the game's own price for
+    // that model is the stand's price again.
+    const auto taken = PlanPickupLayout(targets, pool, {false, false});
+    Expect(taken.price_overrides.empty(),
+           "a stand whose check is taken prices from its own model again");
+    // A stand the pool never offered has no slot to name, so it overrides
+    // nothing rather than naming a slot it did not match.
+    const auto orphan = PlanPickupLayout(targets, {}, {true, true});
+    Expect(orphan.price_overrides.empty(),
+           "an unmatched stand overrides no pool slot");
+    // The pure MODEL of the decision, on the two answers that matter. Not the
+    // live hook: that walks a store this harness cannot reach, because the walk
+    // and the store live in scm_game_state.cpp, which needs plugin-sdk and the
+    // game. What is pinned here is that a marker prices from whatever type it is
+    // handed, which is the half the store feeds.
+    Expect(PickupWeaponTypeForPrice(kPickupCheckMarkerModel, PickupFixedPriceModels{},
+                                    0, 33) == 33,
+           "a stand's marker prices from the stand's own weapon type");
+    Expect(PickupWeaponTypeForPrice(kPickupCheckMarkerModel, PickupFixedPriceModels{},
+                                    0, kPickupCheckMarkerWeaponType)
+               == kPickupCheckMarkerWeaponType,
+           "and every other marker prices at the ASI's own figure");
+  }
+
   // What an in-shop pickup prices from, in the order the purchase path resolves
   // it. The order is the whole of this: the three fixed models are compared
   // before anything reads a model info, so resolving them the other way round

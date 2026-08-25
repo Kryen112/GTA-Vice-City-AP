@@ -19,7 +19,8 @@ import os
 import re
 import sys
 
-# The world's own ambient pickup table, for the handles the pickup watcher polls.
+# The world's own pickup and shop tables, for the handles the pickup watcher
+# polls and for where Phil's four stands sit in the shop block.
 # A leaf module with no Archipelago imports, so this stays a standalone script.
 # Appended rather than inserted: that directory holds a dozen generically
 # named modules (data, items, options, regions, rules, scm) and putting it
@@ -27,6 +28,7 @@ import sys
 sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)),
                              "..", "..", "apworld", "gta_vice_city"))
 import pickup_data
+import shop_data
 
 SRC, DST = sys.argv[1], sys.argv[2]
 CLEO_OUT = sys.argv[3] if len(sys.argv) > 3 else None
@@ -102,19 +104,19 @@ STRANDS = {
     # completion global) and owned (the ownership global its AP item drives),
     # so the beam and blip stay hidden and the launcher stays unstarted until
     # the progressive, the purchase, and the ownership item all exist.
-    "Malibu": [("BANK1", [(9023, 1), (9341, 1), (9560, 1)]),
-               ("BANK2", [(9023, 2), (9341, 1), (9560, 1)]),
-               ("BANK3", [(9023, 3), (9341, 1), (9560, 1)]),
-               ("BANK4", [(9023, 4), (9341, 1), (9560, 1)])],
-    "FilmStudio": [("PORN1", [(9024, 1), (9338, 1), (9557, 1)]),
-                   ("PORN2", [(9024, 2), (9338, 1), (9557, 1)]),
-                   ("PORN3", [(9024, 3), (9338, 1), (9557, 1)]),
-                   ("PORN4", [(9024, 4), (9338, 1), (9557, 1)])],
-    "Printworks": [("COU1", [(9025, 1), (9336, 1), (9555, 1)]),
-                   ("COU2", [(9025, 2), (9336, 1), (9555, 1)])],
-    "KaufmanCabs": [("TWAR1", [(9026, 1), (9340, 1), (9559, 1)]),
-                    ("TWAR2", [(9026, 2), (9340, 1), (9559, 1)]),
-                    ("TWAR3", [(9026, 3), (9340, 1), (9559, 1)])],
+    "Malibu": [("BANK1", [(9023, 1), (9341, 1), (9570, 1)]),
+               ("BANK2", [(9023, 2), (9341, 1), (9570, 1)]),
+               ("BANK3", [(9023, 3), (9341, 1), (9570, 1)]),
+               ("BANK4", [(9023, 4), (9341, 1), (9570, 1)])],
+    "FilmStudio": [("PORN1", [(9024, 1), (9338, 1), (9567, 1)]),
+                   ("PORN2", [(9024, 2), (9338, 1), (9567, 1)]),
+                   ("PORN3", [(9024, 3), (9338, 1), (9567, 1)]),
+                   ("PORN4", [(9024, 4), (9338, 1), (9567, 1)])],
+    "Printworks": [("COU1", [(9025, 1), (9336, 1), (9565, 1)]),
+                   ("COU2", [(9025, 2), (9336, 1), (9565, 1)])],
+    "KaufmanCabs": [("TWAR1", [(9026, 1), (9340, 1), (9569, 1)]),
+                    ("TWAR2", [(9026, 2), (9340, 1), (9569, 1)]),
+                    ("TWAR3", [(9026, 3), (9340, 1), (9569, 1)])],
 }
 
 # Fresh scratch globals, all above the reserved block, whose top is the finale
@@ -122,13 +124,21 @@ STRANDS = {
 # global once, and this scratch starts one above it. Both halves of that
 # relation live here so they move together, and the write before DST is checked
 # against it. One handle, one started-flag, one shown-flag per managed mission.
-SIZING_GLOBAL = 9659
+SIZING_GLOBAL = 9669
 
 # The ambient pickup checks. Their completion globals are contiguous from
 # here, one per slot in pickup_data order, because the pickup class is the
 # last one in the world's registry and completion globals follow location id
 # order. The handles come from pickup_data itself rather than from a copy.
 PICKUP_COMPLETION_BASE = 9376
+
+# The shop checks, contiguous from here for the same reason: the shop class is
+# registered after the pickup class, so its completion globals follow the whole
+# pickup block. Only Phil's four are polled from here, and they are the LAST
+# four of the shop block, because shop_data lists them last; the other
+# thirty-two are sold by script threads that write their own completion global
+# where the sale happens.
+SHOP_COMPLETION_BASE = PICKUP_COMPLETION_BASE + len(pickup_data.PICKUP_SLOTS)
 
 # The first of the four globals the ASI packs the seed hash into. Non-zero means
 # the ASI has stamped this seed, which is what the pickup watcher waits for
@@ -523,16 +533,19 @@ for idx, (flag, comp) in enumerate(activity_flags):
 cleo += ["goto @AW_LOOP", ""]
 
 # --- Build the APPICK watcher -------------------------------------------------
-# One pass per frame over all 110 ambient slots, asking the game whether each
-# has been collected and latching its completion global when it has. The ASI
-# already polls every completion global, so this is the whole of pickup
-# detection: nothing else has to learn what a pickup is.
+# One pass per frame over every ambient slot and over Phil's four shop stands,
+# asking the game whether each has been collected and latching its completion
+# global when it has. The ASI already polls every completion global, so this is
+# the whole of pickup detection: nothing else has to learn what a pickup is.
 #
-# wait 0 rather than a slower pass because the flag is not a latch: an in-shop
-# slot respawns instantly and a normal one respawns on a timer, and once it is
-# back the flag reads false again. Vanilla polls this same opcode on the 13
-# bribe handles from a wait 0 loop, which is the only cadence the game itself
-# demonstrates.
+# wait 0 and not a slower pass, because the answer is CONSUMED by being read.
+# has_pickup_been_collected (CPickups::IsPickUpPickedUp, 0x441880) never looks
+# at the pickup pool: it scans a twenty-entry ring of recently collected
+# handles, and on a match it returns true and zeroes the entry it matched. So a
+# collection is an event sitting in a small ring rather than a flag on the
+# pickup, and a pass that skipped a frame could find the ring rewritten.
+# Vanilla polls this same opcode on the 13 bribe handles from a wait 0 loop,
+# which is the same conclusion the game itself came to.
 #
 # Its own file because a CLEO script runs from its own entry point and two
 # loops in one file would fall through into each other.
@@ -546,23 +559,61 @@ pickup_cleo = ["{$CLEO .cs}", "", "0000:", "", ":APPICK_LOOP", "wait 0"]
 # one thing that says the ASI has seen this seed.
 pickup_cleo += ["if ", f"  ${SEED_HASH_GLOBAL} > 0",
                 "goto_if_false @APPICK_LOOP"]
-for slot, handle in enumerate(pickup_data.PICKUP_HANDLE_GLOBALS):
-    completion = PICKUP_COMPLETION_BASE + slot
+# Each slot, then each shop stand, as (label, handle global, completion global,
+# whether the handle can still be zero). One list so the emitted pass has one
+# shape, and the labels stay unique across the two halves.
+polled: list[tuple[str, int, int, bool]] = [
+    (f"APPICK_{slot}", handle, PICKUP_COMPLETION_BASE + slot,
+     slot >= pickup_data.MISSION_CREATED_FIRST_SLOT)
+    for slot, handle in enumerate(pickup_data.PICKUP_HANDLE_GLOBALS)
+]
+# Phil's Place. Its stands are in-shop pickups the engine sells, so they are
+# detected here like any pickup even though the shop class owns the check. Their
+# completion globals are found by where shop_data lists them rather than by an
+# offset written down, so the four moving within that table cannot silently
+# point this at another shop's check.
+stand_handles = [stand[6] for stand in pickup_data.SHOP_STAND_SLOTS]
+stand_offsets = {item.script_global: index
+                 for index, item in enumerate(shop_data.SHOP_ITEMS)
+                 if item.thread in shop_data.SHOP_PICKUP_THREADS}
+assert sorted(stand_offsets) == sorted(stand_handles), (
+    f"shop_data lists pickup stands {sorted(stand_offsets)} and pickup_data "
+    f"holds {sorted(stand_handles)}, so a stand would be polled into another "
+    f"check's completion global")
+polled += [
+    (f"APPICK_STAND_{index}", handle,
+     SHOP_COMPLETION_BASE + stand_offsets[handle], True)
+    for index, handle in enumerate(stand_handles)
+]
+for label, handle, completion, may_be_zero in polled:
     # Set unconditionally while collected rather than testing the global
     # first: the write is idempotent, the ASI reads it as a latch, and one
     # condition per slot keeps the pass cheap.
+    #
+    # A handle that can still be zero is tested for that FIRST, and that is not
+    # tidiness. The ring the opcode scans is zeroed at boot and every read
+    # leaves a zero behind, so handle zero matches a spent entry and the opcode
+    # answers true: a stand polled before the mission that creates it would
+    # report itself collected on the first frame the seed hash is up, and hand
+    # over its item for nothing.
+    if may_be_zero:
+        pickup_cleo += ["if ", f"  ${handle} > 0", f"goto_if_false @{label}"]
     pickup_cleo += ["if ", f"  has_pickup_been_collected ${handle}",
-                    f"goto_if_false @APPICK_{slot}",
-                    f"${completion} = 1", f":APPICK_{slot}"]
+                    f"goto_if_false @{label}",
+                    f"${completion} = 1", f":{label}"]
 pickup_cleo += ["goto @APPICK_LOOP", ""]
 if CLEO_OUT:
     target = os.path.join(os.path.dirname(os.path.abspath(CLEO_OUT)),
                           "appickup.txt")
     with open(target, "wb") as handle_out:
         handle_out.write(nl.join(pickup_cleo).encode("latin-1"))
+    stand_globals = [SHOP_COMPLETION_BASE + stand_offsets[handle]
+                     for handle in stand_handles]
     print(f"wrote appickup.txt, {len(pickup_data.PICKUP_HANDLE_GLOBALS)} "
           f"slots polled into ${PICKUP_COMPLETION_BASE}.."
-          f"${PICKUP_COMPLETION_BASE + len(pickup_data.PICKUP_HANDLE_GLOBALS) - 1}")
+          f"${PICKUP_COMPLETION_BASE + len(pickup_data.PICKUP_HANDLE_GLOBALS) - 1}"
+          f" and {len(stand_handles)} shop stands into "
+          f"${min(stand_globals)}..${max(stand_globals)}")
 # A relocated thread may not name a model with #NAME. That syntax compiles to a
 # NEGATIVE number, and the game's create_object handler reads it as an index into
 # the model-name table the running script owns, then dereferences the result

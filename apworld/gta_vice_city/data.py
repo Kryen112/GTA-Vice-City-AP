@@ -1088,15 +1088,21 @@ MISSION_REGION_REQUIREMENTS: dict[str, list[str]] = {
 # each of these gets an event location carrying what reaching the mission takes,
 # and the tables below name the event.
 #
-# G-spotlight is a Film Studio mission, so with the properties class off its
-# progressive is not in the pool. Its event still stands: what it costs then is
-# everything the mission takes except the property and its unlocks, which is the
-# player's call on how the class-off case should read.
+# G-spotlight and The Job are venue missions, so with the properties class off
+# their progressives are not in the pool. Their events still stand: what one
+# costs then is everything the mission takes except the property and its
+# unlocks, which is the player's call on how the class-off case should read.
+# The Job is here for the knife it leaves on the pavement outside the Malibu
+# Club, which is a pickup that does not exist until it passes, and an event is
+# the only way a pickup can wait on a mission whose own class may be off.
+# Boomshine Saigon is here for the four stands it racks at Phil's Place, which
+# are shop checks the same way: the stands are not in the world before it.
 ROUTE_MISSIONS: list[str] = [
     "All Hands On Deck!", "Phnom Penh '86", "Rub Out", "G-spotlight",
     "Jury Fury", "Riot", "Treacherous Swine", "Mall Shootout",
     "Guardian Angels", "Four Iron", "The Chase", "Trojan Voodoo",
-    "Loose Ends", "Shakedown", "Bar Brawl",
+    "Loose Ends", "Shakedown", "Bar Brawl", "The Job",
+    "Boomshine Saigon",
 ]
 
 # Where the audit names a mission a check waits on, read off the sheet row by
@@ -1247,9 +1253,16 @@ STARFISH_PACKAGES: frozenset[str] = _districted_region_members(
 PACKAGE_COORDS: list[tuple[float, float, float]] = package_data.PACKAGE_COORDS
 
 # Ambient pickup slots for the randomize_pickups permutation, extracted from
-# the decompile by scripts/dump_pickups.py: the MAIN-section bribes plus the
-# Mission 0 street weapons, hearts, armors, and adrenalines. Each slot keeps
-# its position and pickup type; the permutation moves the model and ammo.
+# the decompile by scripts/dump_pickups.py: the MAIN-section bribes, the Mission
+# 0 street weapons, hearts, armors, and adrenalines, and the six a MISSION
+# creates and never removes, which stand in the world for the rest of the game
+# once their mission passes and so behave like any other ambient slot. Each slot
+# keeps its position and pickup type; the permutation moves the model and ammo.
+#
+# The six are last in the table, appended rather than placed where the decompile
+# puts them, which is what keeps every existing location id and completion global
+# where it was. What they cost instead is a mission term each, in
+# PICKUP_MISSION_REQUIREMENTS below.
 #
 # Bribes never land on shop-type slots. Not because the price breaks: an in-shop
 # pickup prices from a field that means a weapon type only for a weapon model, and
@@ -1263,22 +1276,64 @@ PICKUP_BRIBE_MODEL: int = pickup_data.BRIBE_MODEL
 PICKUP_SHOP_TYPE: int = pickup_data.SHOP_PICKUP_TYPE
 PICKUP_HANDLE_GLOBALS: list[int] = pickup_data.PICKUP_HANDLE_GLOBALS
 
+# The four in-shop stands Boomshine Saigon racks at Phil's Place. They are
+# pickups, so the pickup layout is what puts the AP marker on them and what puts
+# their model back once the check is taken; they are the SHOP class's, so the
+# location, the item and the toggle are all the shop table's. Keyed by handle
+# global here because that is the one field both tables carry.
+SHOP_STAND_SLOTS: list[tuple[float, float, float, int, int, int, int]] = (
+    pickup_data.SHOP_STAND_SLOTS)
+SHOP_STAND_ITEMS: dict[int, shop_data.ShopItem] = {
+    item.script_global: item for item in shop_data.SHOP_ITEMS
+    if item.thread in shop_data.SHOP_PICKUP_THREADS
+}
+assert sorted(SHOP_STAND_ITEMS) == sorted(stand[6] for stand in SHOP_STAND_SLOTS), (
+    f"{sorted(SHOP_STAND_ITEMS)} shop stands in shop_data and "
+    f"{sorted(stand[6] for stand in SHOP_STAND_SLOTS)} in the decompile"
+)
+
+# How far apart the ASI may look for the pool entry standing at a slot, and the
+# two measurements that bound it, all in game units. Mirrored in
+# scm_pickup_layout.hpp, which is what actually does the matching; the mirror
+# checker compares the two.
+#
+# Below the nearest same-type pickup no table of ours owns, or the matcher could
+# pair a slot with that pickup instead: the body armour Rub Out leaves in the
+# estate courtyard has the finale's Tec-9 less than a unit away, both street
+# type. Above nothing in particular, since the positions round-trip through JSON
+# as decimals and back to the same float the script literal compiled to, so what
+# the tolerance actually absorbs is a fraction of a unit at most.
+PICKUP_MATCH_TOLERANCE: float = 0.25
+PICKUP_CLOSEST_SLOT_PAIR: float = pickup_data.CLOSEST_SLOT_PAIR
+PICKUP_NEAREST_FOREIGN: float = pickup_data.NEAREST_FOREIGN_PICKUP
+assert PICKUP_MATCH_TOLERANCE < PICKUP_NEAREST_FOREIGN, (
+    f"a match tolerance of {PICKUP_MATCH_TOLERANCE} reaches the foreign pickup "
+    f"{PICKUP_NEAREST_FOREIGN} units from a slot, so a slot could be matched to "
+    f"a pickup that is not it"
+)
+assert PICKUP_MATCH_TOLERANCE < PICKUP_CLOSEST_SLOT_PAIR, (
+    f"a match tolerance of {PICKUP_MATCH_TOLERANCE} reaches from one slot to "
+    f"the next, {PICKUP_CLOSEST_SLOT_PAIR} units away"
+)
+
 # Every ambient slot is also a check, the first time it is taken, while
 # enable_pickups is on. Afterwards the slot behaves as randomize_pickups says:
 # shuffled when that option is on, vanilla when it is off. The two options
 # compose and neither overrides the other.
 
 # Whether any mod code reports an ambient pickup as taken. True since the
-# appickup CLEO watcher shipped: it polls all 110 slot handles and latches each
+# appickup CLEO watcher shipped: it polls every slot handle and latches each
 # slot's completion global, which the ASI already reads like any other check.
 MOD_REPORTS_PICKUPS: bool = True
 
 # The reach terms are audited now too, and they are in
 # PICKUP_ABILITY_REQUIREMENTS, PICKUP_ABILITY_ALTERNATIVES and
-# PICKUP_MISSION_REQUIREMENTS below: 20 of the 110 slots carry one and the rest
-# are walked to. Twenty and not twenty-one, because the Viceport bridge rail is
-# in the first two tables at once. Data in the requirement tables rather than a
-# flag anything reads, which is why there is no flag here for it.
+# PICKUP_MISSION_REQUIREMENTS below: 26 of the slots carry one and the rest are
+# walked to. Twenty of those were the original audit, twenty and not twenty-one
+# because the Viceport bridge rail is in the first two tables at once; the six
+# the missions create carry theirs because the pickup is not in the world before
+# the mission. Data in the requirement tables rather than a flag anything reads,
+# which is why there is no flag here for it.
 
 
 # One check per slot, so the count is the slot table's and not a number written
@@ -1556,13 +1611,30 @@ PICKUP_ABILITY_ALTERNATIVES: dict[int, list[list[str]]] = {
     103: [[AIR_VEHICLES_ITEM], [LAND_VEHICLES_ITEM]],
 }
 
-# The three pickup slots inside Diaz's mansion, which is shut until Rub Out
-# hands the place over. Their island is Starfish either way; what this adds is
-# the mission, which is the whole of the audit's row for them.
+# The pickup slots a mission stands between the player and.
+#
+# Two different reasons sit in one table, because the term is the same either
+# way. The first three are inside Diaz's mansion, which is shut until Rub Out
+# hands the place over: the pickup is there from a new game and the DOOR is what
+# waits. The last six are the permanent creations, and for those the pickup
+# itself does not exist until the mission passes, which is a harder gate than a
+# door and needs no separate expression.
+#
+# The six also need nothing else. Four are in the estate courtyard Rub Out hands
+# over, so the mission carries the island with it; the knife stands on the
+# pavement outside the Malibu Club; and the minigun is up the ruins of the drugs
+# factory, which the same mission that places it is what opens, the way slot 66
+# inside that factory already reads.
 PICKUP_MISSION_REQUIREMENTS: dict[int, list[str]] = {
     61: ["Rub Out"],
     62: ["Rub Out"],
     101: ["Rub Out"],
+    110: ["Rub Out"],
+    111: ["Rub Out"],
+    112: ["Rub Out"],
+    113: ["Rub Out"],
+    114: ["The Job"],
+    115: ["Trojan Voodoo"],
 }
 
 
@@ -1706,8 +1778,8 @@ def location_ability_requirements() -> dict[str, list[str]]:
         requirements[robbable_store_name(index)] = [WEAPON_EQUIP_ITEM]
     # Walking over a pickup takes no ability, so nothing here is about TAKING
     # one. Reaching one is a different question, and the hand audit has now
-    # answered it for all 110: 20 slots carry a reach term and the rest are
-    # walked to. A slot with no term is one the audit walked and found free,
+    # answered it for every slot: 20 carry a reach term, six more wait on the
+    # mission that creates them, and the rest are walked to. A slot with no term is one the audit walked and found free,
     # which is what it could not say while the terms were unwritten and the
     # fill was entitled to put progression on a rooftop nothing opened.
     #
@@ -1721,8 +1793,9 @@ def location_ability_requirements() -> dict[str, list[str]]:
         requirements[pickup_name(index)] = [
             *requirements.get(pickup_name(index), []), *items_needed]
     # Every shop item is bought, and with the wallet key selected the money pins
-    # to zero, so all 32 wait on the Wallet item. Amounts still gate nothing: the
-    # dearest is 6000 dollars and money is grindable once Tommy can hold it.
+    # to zero, so all 36 wait on the Wallet item. Amounts still gate nothing: the
+    # dearest is the minigun at Phil's Place, 10000 dollars from the game's own
+    # price table, and money is grindable once Tommy can hold it.
     for shop_item in shop_data.SHOP_ITEMS:
         requirements[shop_data.shop_item_name(shop_item)] = [WALLET_ITEM]
     for index in range(1, RAMPAGE_COUNT + 1):

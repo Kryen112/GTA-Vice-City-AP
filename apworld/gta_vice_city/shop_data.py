@@ -1,10 +1,20 @@
 """Weapon shop stock, read out of the stock main.scm decompile.
 
-Six threads sell weapons: three Ammu-Nations (AMMU1, AMMU2, AMMU3) and three
-tool stores (HARD1, HARD2, HARD3). Each creates its stock as world OBJECTS with
+Seven shops sell weapons, and they sell in two different ways.
+
+Six are script threads: three Ammu-Nations (AMMU1, AMMU2, AMMU3) and three tool
+stores (HARD1, HARD2, HARD3). Each creates its stock as world OBJECTS with
 `create_object`, holds them in its own script globals, and sells each one with
 the same four steps: a stand-near test, an affordability test, a grant, and a
-charge. None of it is pickups, so none of it is in pickup_data.py.
+charge. None of that is pickups.
+
+The seventh is PHIL, Phil's Place, and it is nothing but pickups: Boomshine
+Saigon creates four in-shop pickups and the ENGINE sells them, pricing each from
+CostOfWeapon and handing over the ammo in its own table. There is no thread to
+gate, no price in the script, and nothing to withhold in script either. So its
+four rows carry coordinates, model and ammo that pickup_data.SHOP_STAND_SLOTS
+holds too, and dump_pickups.py compares the two halves on every run;
+SHOP_PICKUP_THREADS is what tells the rest of the world which kind a row is.
 
 Every number here is the script's own. The prices are hard coded per site and
 are NOT the engine's CostOfWeapon table, which prices pickups: the table charges
@@ -50,6 +60,7 @@ SHOP_DISTRICTS: dict[str, str] = {
     "HARD1": "Washington Beach",
     "HARD2": "Vice Point",
     "HARD3": "Little Havana",
+    "PHIL": "Little Haiti",
 }
 
 SHOP_NAMES: dict[str, str] = {
@@ -59,7 +70,16 @@ SHOP_NAMES: dict[str, str] = {
     "HARD1": "Bunch of Tools",
     "HARD2": "Tooled Up",
     "HARD3": "Screw This",
+    "PHIL": "Phil's Place",
 }
+
+# The shops whose stock is in-shop PICKUPS the engine sells rather than objects a
+# script thread sells. Everything that reaches into a shop thread has to skip
+# these: there is no thread to relocate, no price to read out of the script and
+# no grant to withhold, because the engine does all three. What DOES apply to
+# them is the pickup layout, which is how their stands wear the AP marker and
+# revert once the check is taken.
+SHOP_PICKUP_THREADS: frozenset[str] = frozenset({"PHIL"})
 
 # The armour rows carry this instead of a weapon type, since they grant armour.
 ARMOUR_WEAPON_TYPE = -1
@@ -98,6 +118,14 @@ SHOP_STOCK_MISSIONS: dict[tuple[str, int], str] = {
     ("HARD1", 878): "Riot",                # $904
     ("HARD1", 879): "Treacherous Swine",   # $905
     ("HARD2", 879): "The Chase",           # $874
+    # Phil's four are stocked harder than out-of-stock: Boomshine Saigon is what
+    # CREATES them, so before it passes the stands are not in the world at all.
+    # The logic term is the same either way, which is why they are in this table
+    # rather than one of their own.
+    ("PHIL", 4345): "Boomshine Saigon",
+    ("PHIL", 4346): "Boomshine Saigon",
+    ("PHIL", 4347): "Boomshine Saigon",
+    ("PHIL", 4348): "Boomshine Saigon",
 }
 
 SHOP_ITEMS: list[ShopItem] = [
@@ -142,6 +170,17 @@ SHOP_ITEMS: list[ShopItem] = [
     ShopItem("HARD3", 877, 266, "cleaver", "Meat Cleaver", 8, 0, 50, -961.0, -691.9, 14.1),
     ShopItem("HARD3", 878, 267, "machete", "Machete", 9, 0, 100, -960.8, -693.0, 14.1),
     ShopItem("HARD3", 879, 269, "chnsaw", "Chainsaw", 11, 0, 500, -960.8, -694.0, 14.2),
+    # Phil's Place. The script global is the pickup handle Boomshine Saigon
+    # stores each stand in, the price is CostOfWeapon's entry for the weapon and
+    # the ammo is the engine's own table for it, so a purchase here is priced and
+    # stocked by the game and not by any line of script.
+    ShopItem("PHIL", 4345, 289, "M60", "M60", 32, 200, 8000, -1105.9, 335.3, 11.1),
+    ShopItem("PHIL", 4346, 287, "rocketla", "Rocket Launcher", 30, 8, 8000,
+             -1105.9, 330.3, 11.1),
+    ShopItem("PHIL", 4347, 290, "minigun", "Minigun", 33, 1000, 10000,
+             -1105.9, 325.3, 11.1),
+    ShopItem("PHIL", 4348, 291, "bomb", "Remote Grenades", 13, 8, 1000,
+             -1105.9, 320.3, 11.1),
 ]
 
 

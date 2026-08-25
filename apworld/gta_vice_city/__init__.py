@@ -907,9 +907,10 @@ class GTAViceCityWorld(World):
             # The permutation itself (None when off), so a tracker regeneration
             # replays the seed's pickup layout instead of rerolling it.
             "pickup_permutation": self.pickup_permutation,
-            # The target layout the ASI enforces: per ambient slot its position
-            # and pickup type plus the permuted model and ammo. Empty when off,
-            # so the ASI leaves every pickup vanilla.
+            # The target layout the ASI enforces: per stand its position and
+            # pickup type plus the model and ammo it ends up with, the ambient
+            # slots first and Phil's four shop stands after them. Empty when
+            # nothing wants it, so the ASI leaves every pickup vanilla.
             "pickup_layout": self._pickup_layout(),
             "trap_percentage": self.options.trap_percentage.value,
             "item_globals": {
@@ -958,19 +959,29 @@ class GTAViceCityWorld(World):
         }
 
     def _pickup_layout(self) -> list[list[float | int]]:
-        # One row per ambient slot: x, y, z, pickup type, the model and ammo that
-        # spot ends up with, then the completion global of the check on that slot,
-        # or 0 when the slot is not a check. The ASI matches rows to pickup pool
-        # entries by position and type, rewrites the entries whose model differs,
-        # and serves the AP marker instead while a row's completion global reads
-        # zero.
+        # One row per stand the engine sells or hands over: x, y, z, pickup type,
+        # the model and ammo that spot ends up with, then the completion global of
+        # the check on that spot, or 0 when it is not a check. The ASI matches
+        # rows to pickup pool entries by position and type, rewrites the entries
+        # whose model differs, and serves the AP marker instead while a row's
+        # completion global reads zero.
         #
-        # Sent when EITHER option wants it. The shuffle needs it to move models
-        # about; the check class needs it to know where the slots are and which
-        # are still to be taken. With neither on it stays empty, which is what
-        # keeps a vanilla seed vanilla.
+        # Two classes own rows here, which is why the two halves are built apart.
+        # The ambient slots are the pickup class's, and the shuffle moves models
+        # between them. Phil's four stands are the SHOP class's: they are in-shop
+        # pickups rather than the objects the other six shops sell, so nothing in
+        # the script can put a marker on them or withhold what they hand over,
+        # and the layout is the only thing that reaches them. Their model never
+        # moves, since shuffle_shops turns stock into checks and does not trade it
+        # about, and the price stays the stand's own either way.
+        #
+        # Sent when ANY of the three options wants it. The shuffle needs it to
+        # move models about; each check class needs it to know where its stands
+        # are and which are still to be taken. With none on it stays empty, which
+        # is what keeps a vanilla seed vanilla.
         checks_on = bool(self.options.enable_pickups.value)
-        if self.pickup_permutation is None and not checks_on:
+        shops_on = bool(self.options.shuffle_shops.value)
+        if self.pickup_permutation is None and not checks_on and not shops_on:
             return []
         layout: list[list[float | int]] = []
         for slot_index in range(data.PICKUP_COUNT):
@@ -982,7 +993,22 @@ class GTAViceCityWorld(World):
                 model, ammo = data.PICKUP_SLOTS[source_index][4:6]
             check_global = (scm.completion_global(data.pickup_name(slot_index))
                             if checks_on else 0)
-            layout.append([x, y, z, pickup_type, model, ammo, check_global])
+            # No price term: an ambient stand that charges is priced by the
+            # marker like every other, which is the ASI's own figure and not a
+            # promise about any shop.
+            layout.append([x, y, z, pickup_type, model, ammo, check_global, 0])
+        for stand in data.SHOP_STAND_SLOTS:
+            x, y, z, pickup_type, model, ammo, handle = stand
+            item = data.SHOP_STAND_ITEMS[handle]
+            check_global = (
+                scm.completion_global(data.shop_data.shop_item_name(item))
+                if shops_on else 0)
+            # The stand's own price index, so a pending check costs what the
+            # stand costs rather than what the marker costs. The shop class
+            # promises a purchase is priced the way vanilla priced it, and these
+            # four are the only stands in the layout the promise covers.
+            layout.append([x, y, z, pickup_type, model, ammo, check_global,
+                           item.weapon_type])
         return layout
 
     def write_spoiler(self, spoiler_handle: typing.TextIO) -> None:

@@ -51,7 +51,7 @@ version control.
   (`scm.py`, `data.py`, `rules.py`). `scripts/dump_scm_spec.py` prints the same
   spec derived directly from those tables; keep the two in agreement.
 - Venue mission gates (launch and marker) additionally require the venue
-  purchase's completion global and its ownership global (`$9555..$9569`, one
+  purchase's completion global and its ownership global (`$9565..$9579`, one
   per purchasable property in purchase order, ASI-written from the ownership
   items), so a venue strand stays hidden and unstartable until the property is
   bought and owned. In logic the purchase's stand-in is the items to pass
@@ -93,7 +93,7 @@ version control.
   vanilla flag `$847` it sets (which is also what stocks Ammu-Nation's sniper
   rifle): reaching it through the west gate is what stops a causeway item held
   without the island from flipping the mainland open before any route exists.
-- Class-cash flags `$9572..$9575` (side events, stunt jumps, rampages,
+- Class-cash flags `$9582..$9585` (side events, stunt jumps, rampages,
   properties; ASI-stamped from slot_data) gate the vanilla cash suppression:
   while a flag is one, the class's one-time completion cash and its on-screen
   amount are skipped (the AP check is the reward, mirrored back as filler);
@@ -106,17 +106,17 @@ version control.
   Repeatable earnings (emergency pay, till cash, race replay prizes, in-mission
   bonuses) are never touched, and a build-time audit pins every remaining
   payout so a new site fails the build instead of leaking. Reserved globals
-  above `$9659` are SCM-internal: `$9660` up are marker handles and
+  above `$9669` are SCM-internal: `$9670` up are marker handles and
   visibility flags. `$9004`, `$9006`, `$9007`, `$9008`, and `$9009` in the
   bookkeeping gap below `$9010` are SCM-internal scratch (the two island-gate
   once-guards, a package counter, and two reward once-guards). The ASI never
   reads or writes any of these.
-- Shop class flag: `$9576`, one while shuffle_shops is on, stamped by the
+- Shop class flag: `$9586`, one while shuffle_shops is on, stamped by the
   ASI from slot_data. The six relocated shop threads read it before they
   put the AP marker on a wall or withhold what a purchase hands over, so a
   seed without the class leaves every shop exactly vanilla.
-- Ability locks: `$9577..$9584` (one lock flag per ability item, ASI-stamped
-  from slot_data) and `$9585..$9592` (one unlock per item, ASI-written from
+- Ability locks: `$9587..$9594` (one lock flag per ability item, ASI-stamped
+  from slot_data) and `$9595..$9602` (one unlock per item, ASI-written from
   the received items) are ASI-facing only; no gate reads them. The ASI
   enforces each lock per frame while its flag is set and its unlock is zero
   (input masks, the wallet pin, the vehicle-entry cancel, and the weapon
@@ -137,13 +137,13 @@ version control.
   (follow the three `02 00 01` gotos from offset 0; the second target is the
   mission segment, whose layout is goto, dword target, one pad byte, then MAIN
   size, largest mission, mission count).
-- Content locks: `$9593..$9597` (one lock flag per content item, ASI-stamped
-  from slot_data) and `$9598..$9602` (one unlock per item), in the order
+- Content locks: `$9603..$9607` (one lock flag per content item, ASI-stamped
+  from slot_data) and `$9608..$9612` (one unlock per item), in the order
   hidden packages, rampages, stunt jumps, property purchases, robbable
   stores. No gate reads either range: the flags only tell the ASI which classes
   to list on its status page, and a whole-class release reaches the script
   through the district block below.
-- District content locks: `$9603..$9657`, one unlock per content class per
+- District content locks: `$9613..$9667`, one unlock per content class per
   district, class-major over eleven districts in the apworld's
   `district_data.DISTRICTS` order. This is the block every content gate and
   every content hold reads, whatever `split_content_locks` is set to, because
@@ -173,9 +173,9 @@ version control.
   gates at its own takeoff test (38 sites, since ids 25 and 26 each have two
   definitions) and each of the 15 stores at its own entry into the shared
   robbery handler. The top of this block is two below the highest reserved
-  global, which is the finale active flag `$9659` and is what the foundation's
-  sizing line references; the finale warp flag `$9658` sits between them.
-- Finale active: `$9659`, the top of the reserved block and so the foundation's
+  global, which is the finale active flag `$9669` and is what the foundation's
+  sizing line references; the finale warp flag `$9668` sits between them.
+- Finale active: `$9669`, the top of the reserved block and so the foundation's
   sizing line, with the marker scratch starting one above it. The finale raises
   it on its own first line and drops it at its single exit, and the ASI keeps the
   ambient pickup layout off the pool while it is raised: the mansion siege places
@@ -184,6 +184,21 @@ version control.
   starts with the layout live, and it sits above the boot thread's loop label so
   it runs once. The ASI drops it itself if it ever sees it raised with
   `$onmission` at zero, which is what a thread killed from outside would leave.
+- Ambient pickup checks: `appickup.cs` polls every slot handle from a `wait 0`
+  loop and latches that slot's completion global, and it polls Phil's four
+  in-shop stands the same way, into the last four globals of the SHOP block,
+  because those stands are pickups the engine sells rather than objects a shop
+  thread sells. `wait 0` and not slower: `has_pickup_been_collected`
+  (`CPickups::IsPickUpPickedUp`, `0x441880`) never looks at the pickup pool. It
+  scans a twenty-entry ring of recently collected handles and CLEARS the entry it
+  matched, so a collection is an event in a small ring rather than a flag on the
+  pickup. The same reading is why every handle a MISSION creates is tested for
+  being non-zero first: the ring is zeroed at boot and every read leaves a zero
+  behind, so asking about handle zero matches a spent entry and answers true, and
+  a stand polled before its mission ran would report itself collected on the
+  first frame the seed hash is up. The whole pass waits on that hash for a
+  separate reason, which is that the ASI's baseline of the completion globals
+  skips any global that starts non-zero.
 - Stunt jump dump: F7 in a loaded game writes `gtavc_ap_stuntjumps.txt` beside
   the executable. Vice City defines its 36 unique stunt jumps nowhere a build
   step can read, neither in the SCM nor as a static table in the executable;
@@ -209,7 +224,7 @@ version control.
   creates a pickup passes the in-shop type, and F8 inside an Ammu-Nation returns
   the ten stands and nothing else. So a shop's counter guns are not pickups, and
   nothing in this file reaches what they cost.
-- Finale warp: `$9658`. The hidden-packages goal is a macguffin hunt, so its
+- Finale warp: `$9668`. The hidden-packages goal is a macguffin hunt, so its
   last fragment plays the story's ending: the client asks for it on every
   status frame, the ASI raises this flag, and the boot-started APFIN watcher
   launches the finale on the conditions every vanilla launcher waits for and no
@@ -223,12 +238,12 @@ version control.
   have created, and nothing else, since the handles it does not own belong to
   other threads or are recreated past the jump. The build refuses a jump that
   skips a completion point or lands on a path reaching none.
-- Minimap shuffle: `$9570` (the shuffled flag) and `$9571` (the Minimap item
+- Minimap shuffle: `$9580` (the shuffled flag) and `$9581` (the Minimap item
   unlock) are ASI-facing only; no gate reads them. The ASI hides the radar
   disc while the flag is set and the unlock is zero, so the script carries
   nothing for them.
 - Radio randomization: the foundation initializes the resolve map
-  `$9545..$9553` to identity and the scripted `set_radio_channel` sites read it,
+  `$9555..$9563` to identity and the scripted `set_radio_channel` sites read it,
   so the script is vanilla until the ASI overwrites the map from the station
-  unlocks. The APRADIO watcher consumes the `$9554` retune request the ASI
+  unlocks. The APRADIO watcher consumes the `$9564` retune request the ASI
   posts (station id plus one, zero idle).

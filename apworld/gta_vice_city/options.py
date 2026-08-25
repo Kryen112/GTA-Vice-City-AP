@@ -103,49 +103,53 @@ class EnableRobbableStores(DefaultOnToggle):
 
 
 class EnablePickups(Toggle):
-    """If on, the 110 pickups lying around the world are checks the first time
+    """If on, the 116 pickups lying around the world are checks the first time
     each one is taken: street weapons, health, body armor, adrenaline and
-    police bribes. An untaken pickup shows an Archipelago marker, and once its
+    police bribes. Six of them are not lying there from the start, because a
+    mission puts them there and leaves them: the minigun on the ruined Haitian
+    drugs factory, four in the Vercetti Estate courtyard, and a knife outside
+    the Malibu Club. An untaken pickup shows an Archipelago marker, and once its
     check is taken it goes back to being an ordinary pickup, shuffled if
     randomize_pickups is on. Ten of them sit inside shops and charge a thousand
     dollars for the marker.
 
-    Off by default, because 110 extra checks change how a game plays. The 100
+    Off by default, because 116 extra checks change how a game plays. The 100
     percent goal ignores them, since the game never counted a health pickup off
     the street."""
     display_name = "Enable pickups"
     # The reach terms were missing when this shipped, deliberately, because the
     # walk that writes them needed the checks live to walk to. That walk has
-    # happened: 20 of the 110 carry a term now and the rest are walked to, so
-    # the docstring no longer warns about a pickup that can dead-end.
+    # happened: 20 carry an ability or route term, the six a mission creates wait
+    # on that mission, and the rest are walked to, so the docstring no longer
+    # warns about a pickup that can dead-end.
 
 
 class ShuffleShops(Toggle):
-    """If on, the 32 things the weapon shops sell are checks the first time each
-    one is bought. Six shops sell: three Ammu-Nations, with guns, grenades and
-    body armor, and three tool stores, with melee weapons. Each shop has its
-    own stock and its own prices, so the same weapon in two shops is two
-    separate checks. Every one of them needs the Wallet if you play with that
-    ability lock, since a shop charges.
+    """If on, the 36 things the weapon shops sell are checks the first time each
+    one is bought. Seven shops sell: three Ammu-Nations, with guns, grenades and
+    body armor, three tool stores, with melee weapons, and Phil's Place, which
+    racks a rocket launcher, an M60, a minigun and remote grenades once
+    Boomshine Saigon has passed. Each shop has its own stock and its own prices,
+    so the same weapon in two shops is two separate checks. Every one of them
+    needs the Wallet if you play with that ability lock, since a shop charges.
 
     While a check is pending the shop shows an Archipelago marker in place of
     the item. Buying it costs the shop's usual price and hands over nothing,
     and the stand then turns back into the real item, so buying again is an
-    ordinary purchase. With this off the shops are exactly vanilla.
+    ordinary purchase. Phil's four are priced by the game rather than by a
+    script, so a pending one there charges what that weapon costs at his
+    counter, the same as the other six shops. With this off the shops are
+    exactly vanilla.
 
     The 100 percent goal ignores them, since buying a shotgun never counted
     toward it.
 
-    LOGIC IS INCOMPLETE, and this one can cost you a seed rather than just a
-    check. 13 of the 32 only come into stock after a particular story mission,
-    and the rules do not know that yet. Eight of those sit in first-island
-    shops, which logic thinks you can reach immediately, so the item that
-    unlocks the very mission that stocks one can be placed behind it, and then
-    neither can be got. Play with a way to release items from the server.
-
-    The Vice Point sniper was a fourteenth and is handled: it stocks when the
-    mainland opens, so it asks for Mainland Access despite standing on the
-    first island."""
+    17 of the 36 only come into stock after a particular mission, and logic
+    knows which: 13 stand on the wall out of stock until a story mission sets the
+    flag their shop reads, and Phil's four are not in the world at all until
+    Boomshine Saigon passes. The Vice Point sniper is handled differently again,
+    because vanilla stocks it off the same flag the mainland crossing sets, so it
+    asks for Mainland Access despite standing on the first island."""
     display_name = "Shuffle shops"
 
 
@@ -178,10 +182,14 @@ class RandomizePickups(Toggle):
     """If on, the ambient world pickups shuffle among their own spots as one
     permutation: street weapons, health hearts, body armors, adrenaline pills,
     and police bribes trade places, a weapon's ammo traveling with it. Every
-    spot keeps its respawn behavior. Hidden packages, rampage icons, safehouse
-    reward spawns, property icons, shop stock, and mission-spawned pickups
-    stay vanilla, and no locations or items change: this is in-world flavor
-    only. If off, every pickup is fully vanilla."""
+    spot keeps its respawn behavior. The spots a mission leaves behind for good
+    are in it too, so the minigun on the ruined Haitian drugs factory, the four
+    pickups in the Vercetti Estate courtyard and the knife outside the Malibu
+    Club shuffle like any other once their mission has passed. Hidden packages,
+    rampage icons, safehouse reward spawns, property icons, shop stock, and the
+    pickups a mission places and clears again stay vanilla, and no locations or
+    items change: this is in-world flavor only. If off, every pickup is fully
+    vanilla."""
     display_name = "Randomize pickups"
 
 

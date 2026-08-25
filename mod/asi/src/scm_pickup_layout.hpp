@@ -201,11 +201,25 @@ struct PickupRewrite {
   int quantity = 0;
 };
 
-// One frame of layout planning: the rewrites to apply, plus how many layout
-// slots found no pool entry at all (left vanilla; the caller logs them once).
+// One stand the purchase path must price from a type of its own rather than from
+// the model showing on it, and the type to answer with.
+struct PickupPriceOverride {
+  int pool_index = 0;
+  int weapon_type = 0;
+};
+
+// One frame of layout planning: the rewrites to apply, the price overrides they
+// imply, plus how many layout slots found no pool entry at all (left vanilla;
+// the caller logs them once).
 struct PickupLayoutPlan {
   std::vector<PickupRewrite> rewrites;
   int unmatched_targets = 0;
+  // Here rather than in a pass of its own because finding which pool entry
+  // stands at a target is the expensive half and the rewrites already do it. A
+  // stand appears only while its check is pending: once taken, the real model is
+  // back on it and the game's own price for that model is the stand's price
+  // again.
+  std::vector<PickupPriceOverride> price_overrides;
 };
 
 // check_pending carries one flag per target, true while that slot's AP check is
@@ -218,13 +232,25 @@ inline PickupLayoutPlan PlanPickupLayout(
     const std::vector<PickupTarget>& targets,
     const std::vector<PickupPoolEntry>& pool_entries,
     const std::vector<bool>& check_pending = {}) {
-  // Within one unit (Euclidean) counts as the same slot. Two bounds keep a
-  // match unambiguous: the extractor refuses a table whose slots sit closer
-  // than 1.5 units (the nearest vanilla pair is 4.49 apart), and the nearest
-  // same-type pickup OUTSIDE the table is 1.91 units from a slot (a mission
-  // script places a body armor beside the Prawn Island heart), so the
-  // tolerance must stay below that; 1.0 only absorbs float round-tripping.
-  constexpr double kMatchDistanceSquared = 1.0;
+  // Within a quarter unit (Euclidean) counts as the same slot, mirrored from
+  // data.PICKUP_MATCH_TOLERANCE, which the mirror checker compares against this.
+  //
+  // Two measured bounds hold it there, both taken over the decompile by
+  // dump_pickups.py rather than written down: the closest pair of slots is 3.67
+  // units apart, and the closest same-type pickup that NO table of ours owns is
+  // 0.94 units from a slot. The second is the tight one and it used to be 1.91,
+  // which is why the tolerance used to be 1.0: the four pickups Rub Out leaves
+  // in the estate courtyard brought it down, because the body armour among them
+  // has the finale's Tec-9 less than a unit away and both are the street type.
+  // The finale holds the whole layout off the pool while it runs, so that pair
+  // never actually meets; the tolerance stays under it anyway, so the matcher
+  // does not depend on that.
+  //
+  // A quarter unit is far more than the positions need. They round-trip from the
+  // decompile through JSON as decimals and land on the same float the script
+  // literal compiled to, so what is being absorbed is the last bits of a float
+  // and nothing else.
+  constexpr double kMatchDistanceSquared = 0.0625;
   PickupLayoutPlan plan;
   for (std::size_t index = 0; index < targets.size(); ++index) {
     const PickupTarget& target = targets[index];
@@ -236,7 +262,13 @@ inline PickupLayoutPlan PlanPickupLayout(
     const int wanted_model =
         pending ? kPickupCheckMarkerModel : target.model;
     const int wanted_quantity = pending ? 0 : target.quantity;
-    bool matched = false;
+    // The NEAREST entry within the tolerance, not the first one found. The
+    // bounds above mean only the slot's own pickup can be inside a quarter unit
+    // of it, so the two choices agree on every table this ships with; taking the
+    // nearest is what makes that a property of the positions rather than of the
+    // order the pool happens to be walked in.
+    const PickupPoolEntry* match = nullptr;
+    double match_distance_squared = 0.0;
     for (const PickupPoolEntry& entry : pool_entries) {
       if (entry.pickup_type != target.pickup_type) continue;
       const double delta_x = entry.x - target.x;
@@ -245,14 +277,22 @@ inline PickupLayoutPlan PlanPickupLayout(
       const double distance_squared =
           delta_x * delta_x + delta_y * delta_y + delta_z * delta_z;
       if (distance_squared > kMatchDistanceSquared) continue;
-      matched = true;
-      if (entry.model != wanted_model) {
-        plan.rewrites.push_back(
-            {entry.pool_index, wanted_model, wanted_quantity});
-      }
-      break;
+      if (match != nullptr && distance_squared >= match_distance_squared) continue;
+      match = &entry;
+      match_distance_squared = distance_squared;
     }
-    if (!matched) ++plan.unmatched_targets;
+    if (match == nullptr) {
+      ++plan.unmatched_targets;
+      continue;
+    }
+    if (match->model != wanted_model) {
+      plan.rewrites.push_back(
+          {match->pool_index, wanted_model, wanted_quantity});
+    }
+    if (pending && target.price_weapon_type != 0) {
+      plan.price_overrides.push_back(
+          {match->pool_index, target.price_weapon_type});
+    }
   }
   return plan;
 }

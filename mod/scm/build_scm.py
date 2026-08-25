@@ -76,7 +76,7 @@ PURCHASES = [
 # test_property_ownership_globals_match_the_hand_written_mirrors pins all
 # fifteen ownership globals against the world's own layout, which is what
 # catches a location added anywhere earlier shifting the block.
-OWNERSHIP_BASE = 9555
+OWNERSHIP_BASE = 9565
 
 
 def purchase_index(buy_thread):
@@ -875,7 +875,14 @@ def add_store_completions():
 # globals are contiguous from here in the world's shop_data order, because the
 # shop class is appended last in the registry and completion globals follow
 # location id order.
-SHOP_COMPLETION_BASE = 9486
+#
+# This base sits INSIDE the completion block, above the pickup run, so it moves
+# by the size of that run and not by the size of the whole class list: adding
+# pickup slots moves it and adding shop items does not. That is why it does not
+# shift with the bases above the completion block, and why getting it wrong is
+# silent and total rather than obvious, since every shop item would then write
+# some other location's completion global.
+SHOP_COMPLETION_BASE = 9492
 
 # Whether a pending shop item hides what it sells: the wall wears the AP marker
 # in place of the item and the purchase hands over nothing until the check comes
@@ -904,7 +911,7 @@ SHOP_MARKER_MODEL = 376
 # pays out. Without it the script would act on the completion global alone,
 # which is allocated for every seed, and a class that is off would still change
 # the world.
-SHOPS_ENABLED = 9576
+SHOPS_ENABLED = 9586
 
 # (thread, script global, what it hands over, its own model) per shop item,
 # mirroring shop_data.SHOP_ITEMS in order. The third element is a weapon type,
@@ -2078,16 +2085,16 @@ def add_emergency_instrumentation():
 # Persistent-reward re-gating (Phase 3). When a reward group is shuffled (the
 # ASI stamps its config flag from slot_data), the vanilla grant is suppressed and
 # the APREWD applier drives it from the AP reward global instead. Indices match
-# scm.py: rewards $9518..$9532, packages_shuffled $9533, emergency_shuffled $9534.
+# scm.py: rewards $9528..$9542, packages_shuffled $9543, emergency_shuffled $9544.
 # $9008/$9009 are reserved once-guards for the two additive stat rewards.
 # The finale active flag, which tops the reserved block and so is the
 # foundation's sizing line: Sanny allocates script space up to the highest global
 # written, so the top of the block has to be written once or the flag itself
 # lands outside it. That same write initialises it, which a new game needs, since
 # the layout must be live before any finale runs.
-FINALE_ACTIVE = 9659
-PACKAGES_SHUFFLED = 9533
-EMERGENCY_SHUFFLED = 9534
+FINALE_ACTIVE = 9669
+PACKAGES_SHUFFLED = 9543
+EMERGENCY_SHUFFLED = 9544
 
 # Radio randomization, indices matching scm.py. The ASI writes the nine resolve
 # globals (station -> itself when its item is owned, else the next unlocked
@@ -2096,36 +2103,36 @@ EMERGENCY_SHUFFLED = 9534
 # which is vanilla until the ASI overwrites it. The request global carries an
 # ASI-posted retune to the APRADIO watcher, encoded station id plus one so the
 # zero-initialized global idles.
-RADIO_RESOLVE_BASE = 9545
-RADIO_REQUEST = 9554
+RADIO_RESOLVE_BASE = 9555
+RADIO_REQUEST = 9564
 
 # The minimap unlock global, index matching scm.py. ASI-facing only (its
-# shuffled flag sits at $9570 and this unlock at $9571; no gate reads either):
+# shuffled flag sits at $9580 and this unlock at $9581; no gate reads either):
 # the ASI hides the radar disc while the flag is set and this global is zero.
-MINIMAP_UNLOCK = 9571
+MINIMAP_UNLOCK = 9581
 
 # Class-cash config flags, indices matching scm.py. The ASI stamps each to one
 # when its check class is enabled, so the class's one-time completion cash is
 # suppressed (the AP check is the reward); at zero everything pays vanilla.
 # The properties flag gates the venue mission pass cash and Checkpoint
 # Charlie's first run.
-SIDE_EVENTS_ENABLED = 9572
-STUNT_JUMPS_ENABLED = 9573
-RAMPAGES_ENABLED = 9574
-PROPERTIES_ENABLED = 9575
+SIDE_EVENTS_ENABLED = 9582
+STUNT_JUMPS_ENABLED = 9583
+RAMPAGES_ENABLED = 9584
+PROPERTIES_ENABLED = 9585
 
 # The ability lock block, indices matching scm.py: eight lock flags at
-# $9576..$9583 then eight unlock globals at $9584..$9591, all ASI-facing only
+# $9586..$9593 then eight unlock globals at $9594..$9601, all ASI-facing only
 # (no gate reads them; the ASI enforces the locks per frame and they persist
 # inside saves), so the script names none of them.
 #
 # The content lock block follows it in the same shape: five lock flags at
-# $9592..$9596 then five unlock globals at $9597..$9601, in scm.CONTENT_KEYS
+# $9602..$9606 then five unlock globals at $9607..$9611, in scm.CONTENT_KEYS
 # order (hidden packages, rampages, stunt jumps, property purchases, robbable
 # stores). No gate reads these either: a whole-class release reaches the script
 # through the district block below, which is what a gate reads.
-CONTENT_LOCK_FLAG_BASE = 9593
-CONTENT_UNLOCK_BASE = 9598
+CONTENT_LOCK_FLAG_BASE = 9603
+CONTENT_UNLOCK_BASE = 9608
 
 # The district content unlock block follows: one global per class per district,
 # a uniform five by eleven grid indexed class-major, so a class and a district
@@ -2146,7 +2153,7 @@ CONTENT_UNLOCK_BASE = 9598
 # The districts holding lockable content, scm.DISTRICT_KEYS order, which is not
 # quite district_data.DISTRICTS: the Junk Yard is a district a pickup name says
 # and nothing here can gate, so it has no column.
-DISTRICT_UNLOCK_BASE = 9603
+DISTRICT_UNLOCK_BASE = 9613
 DISTRICTS = [
     "Ocean Beach", "Washington Beach",
     "Vice Point", "Starfish Island",
@@ -2210,12 +2217,12 @@ STORE_DISTRICTS = [
 # reward-global order (body armor, chainsaw, .357, flamethrower, sniper, minigun,
 # rocket launcher, sea sparrow, rhino, hunter).
 PACKAGE_REWARD_APPLY = [
-    (9518, "$1309 = 1"), (9519, "$1310 = 1"), (9520, "$1308 = 1"),
-    (9521, "$1311 = 1"), (9522, "$1312 = 1"), (9523, "$1313 = 1"),
-    (9524, "$1314 = 1"),
-    (9525, "switch_car_generator $1977 cars_to_generate_to 101"),
-    (9526, "switch_car_generator $1978 cars_to_generate_to 101"),
-    (9527, "switch_car_generator $1979 cars_to_generate_to 101"),
+    (9528, "$1309 = 1"), (9529, "$1310 = 1"), (9530, "$1308 = 1"),
+    (9531, "$1311 = 1"), (9532, "$1312 = 1"), (9533, "$1313 = 1"),
+    (9534, "$1314 = 1"),
+    (9535, "switch_car_generator $1977 cars_to_generate_to 101"),
+    (9536, "switch_car_generator $1978 cars_to_generate_to 101"),
+    (9537, "switch_car_generator $1979 cars_to_generate_to 101"),
 ]
 
 # The vanilla :PACKAGE grant blocks: label -> (the lines left to run, the count
@@ -2334,19 +2341,19 @@ def add_reward_applier():
     body += ["", ":APREWD_EMERGENCY",
              "if ", f"  ${EMERGENCY_SHUFFLED} == 1", "goto_if_false @APREWD_LOOP"]
     booleans = [
-        (9528, "set_player_never_gets_tired $player_char infinite_run_to True"),
-        (9529, "make_player_fire_proof $player_char fireproof 1"),
-        (9531, "set_all_taxis_have_nitro 1"),
+        (9538, "set_player_never_gets_tired $player_char infinite_run_to True"),
+        (9539, "make_player_fire_proof $player_char fireproof 1"),
+        (9541, "set_all_taxis_have_nitro 1"),
     ]
     for index, (reward, grant) in enumerate(booleans):
         body += ["if ", f"  ${reward} >= 1", f"goto_if_false @APREWD_ABIL_{index}",
                  grant, f":APREWD_ABIL_{index}"]
-    body += ["if ", "  $9530 >= 1", "goto_if_false @APREWD_ARMOUR",
+    body += ["if ", "  $9540 >= 1", "goto_if_false @APREWD_ARMOUR",
              "if ", "  $9008 == 0", "goto_if_false @APREWD_ARMOUR",
              "increase_player_max_armour $player_char max_armour += 50",
              "add_armour_to_char $player_actor armour_to 150",
              "$9008 = 1", ":APREWD_ARMOUR"]
-    body += ["if ", "  $9532 >= 1", "goto_if_false @APREWD_HEALTH",
+    body += ["if ", "  $9542 >= 1", "goto_if_false @APREWD_HEALTH",
              "if ", "  $9009 == 0", "goto_if_false @APREWD_HEALTH",
              "increase_player_max_health $player_char max_health += 50",
              "$9009 = 1", ":APREWD_HEALTH"]
@@ -2359,10 +2366,10 @@ def add_reward_applier():
 # ASI overwrites it) and reference the highest reserved global once so Sanny
 # sizes the whole $9000..N block as real zero-initialized globals. The last
 # line must equal scm.highest_reserved_global() (now the finale active flag
-# $9658: 26 unlocks + 482 completions + 15 reward globals + 3 config flags + 19
+# $9669: 26 unlocks + 492 completions + 15 reward globals + 3 config flags + 19
 # radio globals + 15 ownership globals + the minimap flag and unlock + 4
 # class-cash flags + 16 ability globals + 10 content globals + 55 district
-# content globals + the warp flag + the active flag, 649 in all, from $9010 up;
+# content globals + the warp flag + the active flag, 660 in all, from $9010 up;
 # the ten below that are the seed hash and the bookkeeping scratch).
 #
 # That last line does double duty for the active flag, which is the top: it is

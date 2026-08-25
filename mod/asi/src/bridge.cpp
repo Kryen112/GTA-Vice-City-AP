@@ -172,6 +172,11 @@ void BridgeClient::HandleMessage(const json& message) {
           if (row.size() > 6) {
             target.check_global = row.at(6).get<int>();
           }
+          // Eighth from the change that added Phil's shop stands. Absent, or
+          // zero, means the stand prices the way the game prices it.
+          if (row.size() > 7) {
+            target.price_weapon_type = row.at(7).get<int>();
+          }
           pickup_targets.push_back(target);
         }
       }

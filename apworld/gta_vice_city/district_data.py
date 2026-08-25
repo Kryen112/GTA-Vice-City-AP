@@ -214,7 +214,7 @@ PROPERTY_COORDS: dict[str, tuple[float, float, float]] = {
     "Skumole Shack": (-560.1, 703.6, 20.5),
 }
 
-# The 110 ambient pickup slots, in pickup_data.PICKUP_SLOTS order.
+# The 116 ambient pickup slots, in pickup_data.PICKUP_SLOTS order.
 #
 # AUDITED. These were derived once, each slot taking the district of its three
 # nearest audited anchors weighted by inverse horizontal distance, which agreed
@@ -341,4 +341,15 @@ PICKUP_DISTRICTS: list[str] = [
     "Little Haiti",  # 107
     "Little Haiti",  # 108
     "Downtown",  # 109
+    # The six a mission places and never takes away: the four Rub Out
+    # leaves in the estate courtyard, the knife The Job leaves outside the
+    # Malibu Club, and the minigun Trojan Voodoo leaves on the drugs
+    # factory. Each takes the district the audit already gave the
+    # locations around it.
+    "Starfish Island",  # 110
+    "Starfish Island",  # 111
+    "Starfish Island",  # 112
+    "Starfish Island",  # 113
+    "Vice Point",  # 114
+    "Little Haiti",  # 115
 ]

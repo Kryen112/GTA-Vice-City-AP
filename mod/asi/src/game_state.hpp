@@ -61,6 +61,13 @@ struct PickupTarget {
   int pickup_type = 0;
   int model = 0;
   int quantity = 0;
+  // The weapon type this stand prices from while it wears the AP marker, or 0
+  // to let the marker's own price stand. Only Phil's four carry one: they are
+  // in-shop pickups the engine sells, so the marker would price them at what it
+  // prices every marker at, and what the shop class promises is that a stand
+  // costs what it costs in vanilla. A price index and not an amount, because
+  // that is what the purchase path reads.
+  int price_weapon_type = 0;
 };
 
 // One line the client composed for the status page, because only the client knows

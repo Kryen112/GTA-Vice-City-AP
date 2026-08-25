@@ -4,6 +4,8 @@
 #include <array>
 #include <atomic>
 #include <cmath>
+#include <cstddef>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -72,16 +74,16 @@ constexpr int kAppliedIndexGlobal = 9005;
 // The hidden-packages shuffled flag, matching apworld scm.py: one while the
 // hidden-packages class is on, which is when its rewards are AP items and the
 // executable's own package cash has to go. A world test pins the index.
-constexpr int kPackagesShuffledGlobal = 9533;
+constexpr int kPackagesShuffledGlobal = 9543;
 // The radio contract, matching apworld scm.py: the randomized flag, nine
 // station unlock globals (engine station id order), nine resolve globals the
 // ASI recomputes each frame, and the retune request global the APRADIO
 // watcher consumes (encoded station id plus one, so the zero-initialized
 // global idles).
-constexpr int kRadioRandomizedGlobal = 9535;
-constexpr int kRadioUnlockBase = 9536;
-constexpr int kRadioResolveBase = 9545;
-constexpr int kRadioRequestGlobal = 9554;
+constexpr int kRadioRandomizedGlobal = 9545;
+constexpr int kRadioUnlockBase = 9546;
+constexpr int kRadioResolveBase = 9555;
+constexpr int kRadioRequestGlobal = 9564;
 // A script-channel request for station 9 selects the MP3 player, which the
 // game remaps to the city ambience: the radio-off soundscape. The ambience
 // track id equals the off position (10), so the commit's writeback leaves the
@@ -92,14 +94,14 @@ constexpr int kRadioAmbientRequest = 9;
 // Minimap item's unlock global. Both are ASI-facing only; the main.scm never
 // reads them, but as reserved globals they persist inside saves, so the
 // enforcement keeps working offline from a save.
-constexpr int kMinimapShuffledGlobal = 9570;
-constexpr int kMinimapUnlockGlobal = 9571;
+constexpr int kMinimapShuffledGlobal = 9580;
+constexpr int kMinimapUnlockGlobal = 9581;
 // The finale warp flag, one below the top of the reserved block in apworld
 // scm.py. The client raises it once the hidden-packages goal is met; the APFIN
 // watcher launches Keep Your Friends Close... from it, straight into the ending
 // cutscene. When the mission may start is the script's business, exactly as it
 // is for every vanilla launcher, so the mod only carries the ask across.
-constexpr int kFinaleWarpGlobal = 9658;
+constexpr int kFinaleWarpGlobal = 9668;
 
 // The three VANILLA globals the taxi and pizza rows read. Most constants here
 // are reserved globals this mod owns; these and the on-mission flag below belong
@@ -213,7 +215,7 @@ constexpr int kStuntJumpDumpKey = VK_F7;
 // mansion siege is on: the mission places its own pickups to be survived with,
 // and a shuffle that turned one of them into a melee weapon would be deciding
 // the ending.
-constexpr int kFinaleActiveGlobal = 9659;
+constexpr int kFinaleActiveGlobal = 9669;
 
 // $onmission, the game's own "a mission is running" flag, from Sanny's
 // CustomVariables for Vice City. Read only, and only to tell a finale still
@@ -408,15 +410,63 @@ std::string HexadecimalAddress(unsigned int address) {
   return text;
 }
 
+// The stands whose marker prices from a type of their own rather than from the
+// marker's, republished whole every frame by EnforcePickupLayout and read by the
+// two pricing hooks below.
+//
+// A fixed store and a count rather than a vector, because the hooks read it from
+// inside the game's own pickup update while the frame handler writes it: same
+// thread, so no ordering to arrange, but a container that reallocated would still
+// be a container a reader could be standing in. Eight entries is twice Phil's
+// Place, the only shop the layout prices; a layout asking for more loses the
+// extra, and the writer says so once rather than growing.
+constexpr int kMaxPickupPriceOverrides = 8;
+struct PickupPriceOverrideStore {
+  int count = 0;
+  int pool_index[kMaxPickupPriceOverrides] = {0};
+  int weapon_type[kMaxPickupPriceOverrides] = {0};
+};
+PickupPriceOverrideStore g_pickup_price_overrides;
+
+// The pool slot a pickup pointer names, or -1 for anything that is not one.
+//
+// Byte arithmetic against the pool's own address, and it checks the remainder as
+// well as the range: a pointer landing inside an entry rather than on one is a
+// pointer this has misread, and answering with the entry it landed in would price
+// some other stand.
+int PickupPoolIndexOf(std::uintptr_t address) {
+  const std::uintptr_t base =
+      reinterpret_cast<std::uintptr_t>(&CPickups::aPickUps[0]);
+  if (address < base) return -1;
+  const std::uintptr_t offset = address - base;
+  if (offset % sizeof(CPickup) != 0) return -1;
+  const std::uintptr_t index = offset / sizeof(CPickup);
+  if (index >= static_cast<std::uintptr_t>(kPickupPoolSize)) return -1;
+  return static_cast<int>(index);
+}
+
 // The weapon type an in-shop pickup prices from. Stands in for a two
 // instruction getter on the purchase path, mov eax, [ecx+0x30]; ret, so ecx is
 // the model info and edx still holds the model id the caller looked it up by.
 //
 // Only the marker is answered here. Everything else reads the field the getter
 // reads, so a real weapon prices exactly as it did.
-int __fastcall MarkerAwarePickupWeaponType(CSimpleModelInfo* model_info,
-                                           int model_id) {
-  if (model_id == kPickupCheckMarkerModel) return kPickupCheckMarkerWeaponType;
+//
+// Which marker, though, is now a question, and the pool slot is the answer. A
+// pending shop stand wears the same marker as every other pending slot, and what
+// the shop class promises is that buying at a stand costs what vanilla charged
+// there. So a slot named in the override store prices from the type the world
+// sent for it, and every other marker prices at the ASI's own figure.
+int MarkerAwarePickupWeaponType(CSimpleModelInfo* model_info, int model_id,
+                                int pool_index) {
+  if (model_id == kPickupCheckMarkerModel) {
+    for (int entry = 0; entry < g_pickup_price_overrides.count; ++entry) {
+      if (g_pickup_price_overrides.pool_index[entry] == pool_index) {
+        return g_pickup_price_overrides.weapon_type[entry];
+      }
+    }
+    return kPickupCheckMarkerWeaponType;
+  }
   // The field the getter this stands in for reads. plugin-sdk names it and
   // validates its offset, so the raw one is not spelled here.
   //
@@ -425,6 +475,45 @@ int __fastcall MarkerAwarePickupWeaponType(CSimpleModelInfo* model_info,
   // simple model's LOD parent share the one slot. That union is the game's own,
   // and reading it is exactly what both paths do whatever the model is.
   return model_info->m_nWeaponType;
+}
+
+// Whether a call site still holds the rel32 call to the price getter it was read
+// from. The previous shape of these patches got this for free, from what
+// injector handed back when it replaced the call; a hook over the same five
+// bytes cannot ask that, so the encoding is checked instead, which is the
+// stricter of the two: it pins the opcode as well as the target.
+// Hand the pricing hooks this frame's overrides, or none at all. Called on every
+// path out of the layout pass, the early returns included: an override left
+// standing after the layout stopped being enforced would price a stand from a
+// check that is no longer pending.
+void PublishPickupPriceOverrides(
+    const std::vector<PickupPriceOverride>& overrides, int* dropped) {
+  int count = 0;
+  for (const PickupPriceOverride& entry : overrides) {
+    if (count == kMaxPickupPriceOverrides) break;
+    g_pickup_price_overrides.pool_index[count] = entry.pool_index;
+    g_pickup_price_overrides.weapon_type[count] = entry.weapon_type;
+    ++count;
+  }
+  // Written last, so a reader between the two never walks entries this frame has
+  // not filled in yet. Reader and writer are the same thread, which is what makes
+  // one ordered write enough.
+  g_pickup_price_overrides.count = count;
+  if (dropped != nullptr) {
+    *dropped = static_cast<int>(overrides.size()) - count;
+  }
+}
+
+void ClearPickupPriceOverrides() {
+  g_pickup_price_overrides.count = 0;
+}
+
+bool CallSiteStillCallsPriceGetter(unsigned int site) {
+  if (*reinterpret_cast<const unsigned char*>(site) != 0xE8) return false;
+  const int relative = *reinterpret_cast<const int*>(site + 1);
+  const unsigned int target =
+      static_cast<unsigned int>(static_cast<int>(site) + 5 + relative);
+  return target == kPickupPriceGetterCallee10;
 }
 
 // Whether the foreground window belongs to this game, so a key pressed in
@@ -462,38 +551,74 @@ ScmGameState::ScmGameState(Logger logger) : logger_(std::move(logger)) {
   }
 
   // What an in-shop slot showing the AP check marker charges, and what it shows
-  // it charges. Two sites read the one getter, so both take the one replacement,
-  // and both are needed rather than either: the price a slot takes is resolved
-  // when the player touches it, the price it displays is stamped when its object
-  // is built, and patching only the first prices the marker at nothing on screen
-  // and then takes money for it.
+  // it charges. Two sites read the one getter, and both are needed rather than
+  // either: the price a slot takes is resolved when the player touches it, the
+  // price it displays is stamped when its object is built, and patching only the
+  // first prices the marker at nothing on screen and then takes money for it.
   //
-  // Each site is checked against what it must already point at, the same way the
-  // counter's is, and a site pointing anywhere else is put back. Exactly back
-  // only where the site held a rel32 CALL, which both pins do on the build the
-  // version guard admits. Three other shapes come back wrong in three ways: a
-  // rel32 jump as a call to the same target, an indirect call or jump as a rel32
-  // call to the right target over a six byte instruction, leaving the sixth byte
-  // orphaned, and anything injector does not decode, branch or not, as five
-  // bytes of call to nowhere. The guard is what keeps those off the table, not
-  // this restore.
+  // A hook over each site's five bytes rather than a replacement call, because
+  // the answer now depends on WHICH stand is being priced and the getter's two
+  // arguments cannot say: Phil's stands are in-shop pickups the engine sells, so
+  // the shop class's promise that a purchase costs what vanilla charged is a
+  // promise only this path can keep, and it needs the pickup. The pickup is in a
+  // register at each site, a different one at each, so there are two hooks; both
+  // then ask the same function.
   //
-  // They are installed independently so a pin that has moved costs only its own
-  // patch.
-  struct PricingSite {
-    unsigned int site;
-    const char* role;
-    const char* consequence;
-  };
+  // Integer only, like the vehicle gate below and for the same reason: the hook
+  // saves the general registers and the flags and no x87 state. A pool index is
+  // pointer arithmetic and the override lookup walks at most eight ints, so
+  // nothing here touches a float.
+  //
+  // Each is checked before it is touched, and by its own encoding rather than by
+  // where injector says it pointed: replacing a call gave that back for free and
+  // a hook over the same bytes cannot ask, so the five bytes are decoded instead,
+  // which pins the opcode as well as the target. Anything else at a pin is not
+  // the build these were read from and keeps its own code. Installed
+  // independently, so a pin that has moved costs only its own patch.
   static_assert(kPickupShownPriceCallSite10 != kPickupChargedPriceCallSite10,
                 "the charge and the display must be different calls, or one of "
                 "them is left unpatched");
-  const PricingSite pricing_sites[] = {
-      {kPickupChargedPriceCallSite10, "charged price",
-       "so a slot showing the marker sells for nothing"},
-      {kPickupShownPriceCallSite10, "shown price",
-       "so a slot showing the marker shows nothing to pay"},
-  };
+  if (!CallSiteStillCallsPriceGetter(kPickupChargedPriceCallSite10)) {
+    if (logger_) {
+      logger_("in-shop pickup charged price NOT redirected: the call site at "
+              + HexadecimalAddress(kPickupChargedPriceCallSite10)
+              + " is not the call it was read from, so a slot showing the "
+                "marker sells for nothing");
+    }
+  } else {
+    injector::MakeInline(
+        kPickupChargedPriceCallSite10, kPickupChargedPriceCallEnd10,
+        [](injector::reg_pack& regs) {
+          // ecx is the model info the caller looked up and edx the model id it
+          // looked it up by, exactly as the getter was handed them. esi is the
+          // pickup, which is the part the getter never saw.
+          regs.eax = static_cast<std::uintptr_t>(MarkerAwarePickupWeaponType(
+              reinterpret_cast<CSimpleModelInfo*>(regs.ecx),
+              static_cast<int>(regs.edx), PickupPoolIndexOf(regs.esi)));
+        });
+    if (logger_) logger_("in-shop pickup charged price redirected");
+  }
+  if (!CallSiteStillCallsPriceGetter(kPickupShownPriceCallSite10)) {
+    if (logger_) {
+      logger_("in-shop pickup shown price NOT redirected: the call site at "
+              + HexadecimalAddress(kPickupShownPriceCallSite10)
+              + " is not the call it was read from, so a slot showing the "
+                "marker shows nothing to pay");
+    }
+  } else {
+    injector::MakeInline(
+        kPickupShownPriceCallSite10, kPickupShownPriceCallEnd10,
+        [](injector::reg_pack& regs) {
+          // Same two registers as the charge site. The pickup is not in one of
+          // its own here: ebx points at the pickup's object field, so the pickup
+          // starts that field's offset below it.
+          regs.eax = static_cast<std::uintptr_t>(MarkerAwarePickupWeaponType(
+              reinterpret_cast<CSimpleModelInfo*>(regs.ecx),
+              static_cast<int>(regs.edx),
+              PickupPoolIndexOf(regs.ebx - offsetof(CPickup, pObject))));
+        });
+    if (logger_) logger_("in-shop pickup shown price redirected");
+  }
   // Letting a driver take an AP check. One instruction is replaced, the load of
   // the model the gate compares against, and the comparison and the branch after
   // it are left exactly as the game wrote them.
@@ -564,22 +689,6 @@ ScmGameState::ScmGameState(Logger logger) : logger_(std::move(logger)) {
       logger_("in-shop marker price is " + std::to_string(charged)
               + ", not the " + std::to_string(kPickupCheckMarkerPriceInDollars)
               + " its weapon type is chosen for");
-    }
-  }
-
-  for (const PricingSite& pricing : pricing_sites) {
-    const injector::memory_pointer_raw previous = injector::MakeCALL(
-        pricing.site, &MarkerAwarePickupWeaponType, true);
-    if (previous.as_int() != kPickupPriceGetterCallee10) {
-      injector::MakeCALL(pricing.site, previous, true);
-      if (logger_) {
-        logger_(std::string("in-shop pickup ") + pricing.role
-                + " NOT redirected: the call site points at "
-                + HexadecimalAddress(previous.as_int()) + ", "
-                + pricing.consequence);
-      }
-    } else if (logger_) {
-      logger_(std::string("in-shop pickup ") + pricing.role + " redirected");
     }
   }
 }
@@ -2013,7 +2122,10 @@ void ScmGameState::DumpPickupPool() {
 }
 
 void ScmGameState::EnforcePickupLayout() {
-  if (pickup_targets_.empty()) return;
+  if (pickup_targets_.empty()) {
+    ClearPickupPriceOverrides();
+    return;
+  }
   // Nothing is rewritten while the finale runs. The mansion siege places its
   // own pickups to be survived with, and one of the ambient slots stands in the
   // same grounds, so a shuffle reaching into that fight would be deciding the
@@ -2025,7 +2137,13 @@ void ScmGameState::EnforcePickupLayout() {
   // outside, so it is dropped here: left alone it would hold the layout off the
   // pool for the rest of the session and every marker with it.
   if (GetGlobal(kFinaleActiveGlobal) != 0) {
-    if (GetGlobal(kOnMissionGlobal) != 0) return;
+    if (GetGlobal(kOnMissionGlobal) != 0) {
+      // Held off the pool means held off the prices too: a stand priced from a
+      // marker nothing is putting there would be a figure with no stand behind
+      // it.
+      ClearPickupPriceOverrides();
+      return;
+    }
     SetGlobal(kFinaleActiveGlobal, 0);
     if (logger_) logger_("finale flag was left raised with no mission running, dropped");
   }
@@ -2063,6 +2181,16 @@ void ScmGameState::EnforcePickupLayout() {
     logger_("pickup layout: " + std::to_string(plan.unmatched_targets) + " of " +
             std::to_string(pickup_targets_.size()) +
             " slots not found in the pool, left vanilla");
+  }
+  // Before the rewrites, so the frame that first puts a marker on a stand has
+  // already said what that stand charges.
+  int dropped_overrides = 0;
+  PublishPickupPriceOverrides(plan.price_overrides, &dropped_overrides);
+  if (dropped_overrides > 0 && !pickup_price_overflow_logged_ && logger_) {
+    pickup_price_overflow_logged_ = true;
+    logger_("pickup layout: " + std::to_string(dropped_overrides) +
+            " stand price override(s) past the store's room, so that many "
+            "pending shop stands charge the marker's price");
   }
   for (const PickupRewrite& rewrite : plan.rewrites) {
     CPickup& pickup = CPickups::aPickUps[rewrite.pool_index];
@@ -2255,6 +2383,9 @@ void ScmGameState::OnGameFrame() {
     // The unmatched-slot diagnostic counts frames per game, so a fresh game
     // gets its own creation window and its own single report.
     pickup_enforce_frames_ = 0;
+    // Nothing is pending in a game that is not running, and the next loaded
+    // frame republishes from its own layout pass.
+    ClearPickupPriceOverrides();
     // The percentage belongs to the game that earned it, so the next loaded
     // frame reports its own reading whatever this one was. A value already read
     // and not yet pumped stays queued, exactly as the outbound checks do: the

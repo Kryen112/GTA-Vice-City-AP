@@ -344,6 +344,10 @@ class ScmGameState : public GameState {
   // unmatched-slot diagnostic fires once, past the init mission's pickup
   // creation window. Reset on the game boundary and on a fresh config.
   int pickup_enforce_frames_ = 0;
+  // One report and no more when a layout asks for more stand price overrides
+  // than the store holds, the way the unmatched-slot count is one report: it
+  // would otherwise be a line every frame.
+  bool pickup_price_overflow_logged_ = false;
   // The game's completion percentage: the one the bridge has already sent, and
   // the one waiting to go. Negative means neither, so the first frame of a
   // loaded game reports what it reads and a frame that reads the same number as

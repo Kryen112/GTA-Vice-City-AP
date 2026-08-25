@@ -382,10 +382,10 @@ class TestRadioStationsOn(WorldTestBase):
             )
 
     def test_reserved_block_stays_below_the_marker_globals(self) -> None:
-        # $9660 up is SCM-internal (marker handles and visibility flags, whose
+        # $9670 up is SCM-internal (marker handles and visibility flags, whose
         # bases live in add_markers.py); the reserved contract must never grow
-        # into it. The district content unlocks took $9603..$9657, the finale warp
-        # flag $9658 and the finale active flag $9659, which is why
+        # into it. The district content unlocks took $9613..$9667, the finale warp
+        # flag $9668 and the finale active flag $9669, which is why
         # add_markers.py's HANDLE_BASE moved with them: a reserved block growing
         # into the marker scratch would have the ASI writing over live marker
         # handles.
@@ -394,7 +394,7 @@ class TestRadioStationsOn(WorldTestBase):
         # reward block sits directly above the completion block, so a class
         # appended to the registry leaves the unlock and completion globals alone
         # and pushes everything from the rewards up by its own size.
-        self.assertLess(scm.highest_reserved_global(), 9660)
+        self.assertLess(scm.highest_reserved_global(), 9670)
 
 
 class TestRadioStationsOff(WorldTestBase):
@@ -510,14 +510,21 @@ class TestPickupRandomizerOn(WorldTestBase):
         self.assertTrue(slot_data["randomize_pickups"])
         self.assertEqual(slot_data["pickup_permutation"], self.world.pickup_permutation)
         layout = slot_data["pickup_layout"]
-        self.assertEqual(len(layout), len(data.PICKUP_SLOTS))
+        # The ambient slots, then Phil's four stands, which ride the same layout
+        # because they are pickups even though the shop class owns them.
+        self.assertEqual(len(layout),
+                         len(data.PICKUP_SLOTS) + len(data.SHOP_STAND_SLOTS))
+        layout = layout[:len(data.PICKUP_SLOTS)]
         for slot_index, row in enumerate(layout):
             x, y, z, pickup_type, _model, _ammo = data.PICKUP_SLOTS[slot_index]
             source = data.PICKUP_SLOTS[self.world.pickup_permutation[slot_index]]
             # The seventh element is the completion global of the check on this
             # slot, and zero here because the class is off in this seed: the
-            # shuffle alone makes no slot a check.
-            self.assertEqual(row, [x, y, z, pickup_type, source[4], source[5], 0])
+            # shuffle alone makes no slot a check. The eighth is the price index
+            # a stand charges from while it wears the marker, and no ambient slot
+            # carries one: that term belongs to the shop class alone.
+            self.assertEqual(row,
+                             [x, y, z, pickup_type, source[4], source[5], 0, 0])
 
     def test_forced_shop_conflict_is_swapped_away(self) -> None:
         # The fix branch only runs when the shuffle happens to drop a bribe on
@@ -690,7 +697,35 @@ class TestShops(WorldTestBase):
                  for location in self.multiworld.get_locations(self.player)}
         for name in data.shop_data.SHOP_ITEM_NAMES:
             self.assertIn(name, names)
-        self.assertEqual(len(data.shop_data.SHOP_ITEM_NAMES), 32)
+        # 32 things the six script-thread shops sell, plus the four in-shop
+        # pickups Boomshine Saigon racks at Phil's Place, which the engine sells
+        # and the pickup layout reaches instead.
+        self.assertEqual(len(data.shop_data.SHOP_ITEM_NAMES), 36)
+        self.assertEqual(len(data.SHOP_STAND_SLOTS), 4)
+
+    def test_phils_stands_price_from_their_own_weapon_type(self) -> None:
+        # The one thing the shop class promises that the pickup layout has to
+        # carry: a pending stand charges what the stand charges. Every other
+        # pending slot prices at the ASI's own figure for the marker, so a stand
+        # whose price index went missing would quietly discount three of these
+        # four by thousands.
+        layout = self.world.fill_slot_data()["pickup_layout"]
+        stands = layout[len(data.PICKUP_SLOTS):]
+        self.assertEqual(len(stands), 4)
+        for row, stand in zip(stands, data.SHOP_STAND_SLOTS, strict=True):
+            item = data.SHOP_STAND_ITEMS[stand[6]]
+            self.assertNotEqual(row[6], 0, item.display_name)
+            self.assertEqual(row[7], item.weapon_type, item.display_name)
+        # Every ambient row carries none, so the term is the stands' alone.
+        for row in layout[:len(data.PICKUP_SLOTS)]:
+            self.assertEqual(row[7], 0)
+        # The prices themselves are the game's, read out of CostOfWeapon rather
+        # than invented, and the dearest of them is what makes the override
+        # worth having: the marker's own price is a thousand.
+        prices = {item.display_name: item.price
+                  for item in data.SHOP_STAND_ITEMS.values()}
+        self.assertEqual(prices, {"M60": 8000, "Rocket Launcher": 8000,
+                                  "Minigun": 10000, "Remote Grenades": 1000})
 
     def test_stock_the_crossing_opens_gates_on_the_crossing(self) -> None:
         # Reaching a shop and it having the thing in stock are two questions.
@@ -773,13 +808,14 @@ class TestShops(WorldTestBase):
         self.assertTrue(self.can_reach_location(shotgun))
 
     def test_a_shop_sits_on_the_island_it_stands_in(self) -> None:
-        # Two of the six shops are on the mainland, so eleven of the thirty two
-        # wait on the crossing, and the sniper waits with them for its stock
-        # rather than its island. Written out rather than counted from the same
-        # table the code reads, so a district moving is a failure here.
+        # Three of the seven shops are on the mainland, so fifteen of the
+        # thirty six wait on the crossing, and the sniper waits with them for its
+        # stock rather than its island. Written out rather than counted from the
+        # same table the code reads, so a district moving is a failure here.
         mainland = {name for name in data.shop_data.SHOP_ITEM_NAMES
-                    if " - Downtown - " in name or " - Little Havana - " in name}
-        self.assertEqual(len(mainland), 11)
+                    if " - Downtown - " in name or " - Little Havana - " in name
+                    or " - Little Haiti - " in name}
+        self.assertEqual(len(mainland), 15)
         for name in data.shop_data.SHOP_ITEM_NAMES:
             region = LOCATION_REGIONS[name]
             expected = (data.REGION_MAINLAND
@@ -817,6 +853,16 @@ class TestShopsOff(WorldTestBase):
                  for location in self.multiworld.get_locations(self.player)}
         for name in data.shop_data.SHOP_ITEM_NAMES:
             self.assertNotIn(name, names)
+
+    def test_no_layout_at_all_leaves_phils_stands_alone(self) -> None:
+        # Phil's four are in-shop pickups, so the pickup layout is the only
+        # thing that could put a marker on them and no script flag reaches them.
+        # This seed has every pickup option off as well, so the layout is empty
+        # and the ASI enforces nothing: the stands are the game's, priced and
+        # stocked by it. The composed case, a layout emitted for the pickup
+        # options with the shop class still off, is pinned where those options
+        # are on.
+        self.assertEqual(self.world.fill_slot_data()["pickup_layout"], [])
 
 
 class TestHundredPercentWithShops(WorldTestBase):
@@ -896,13 +942,22 @@ class TestPickupChecksOn(WorldTestBase):
             self.assertTrue(self.can_reach_region(region), region)
 
     def test_the_mansion_pickups_wait_for_rub_out(self) -> None:
-        # The three inside Diaz's mansion are the exception to the rule above:
-        # the island is open and the front door is not, so reaching the island
-        # is not enough and the mission that hands the mansion over is the term.
+        # The slots that wait on a mission are the exception to the rule above:
+        # reaching the island is not enough. Three are inside Diaz's mansion,
+        # where the island is open and the front door is not, and six are the
+        # permanent creations, which are not in the world at all until their
+        # mission passes. Every one of them still refuses on the island alone,
+        # which is what this walks.
+        self.assertEqual(len(data.PICKUP_MISSION_REQUIREMENTS), 9)
         self.collect_by_name(["Mainland Access", "Starfish Island Access"])
-        mansion = [data.pickup_name(index)
-                   for index in data.PICKUP_MISSION_REQUIREMENTS]
-        self.assertEqual(len(mansion), 3)
+        # The seven Rub Out holds: the three behind the mansion door and the four
+        # it leaves in the courtyard. The other two wait on The Job and on
+        # Trojan Voodoo, which are other strands and other tests; what this one
+        # walks is the mission term doing its work at all.
+        mansion = [data.pickup_name(index) for index, missions
+                   in data.PICKUP_MISSION_REQUIREMENTS.items()
+                   if missions == ["Rub Out"]]
+        self.assertEqual(len(mansion), 7)
         for name in mansion:
             self.assertTrue(self.can_reach_region(LOCATION_REGIONS[name]), name)
             self.assertFalse(self.can_reach_location(name), name)
@@ -1045,8 +1100,13 @@ class TestExclusionSeam(WorldTestBase):
         # Sphere-0 room drops by the start-island pickups, and the opener score
         # with it: an excluded location is not room for progression, so neither
         # count may include it.
+        # Start-island slots that are sphere-0 room, which is not the same as
+        # start-island slots: the knife outside the Malibu Club stands on the
+        # start island and is not room for anything until The Job has passed,
+        # because until then it is not in the world.
         start_island = sum(1 for index in range(data.PICKUP_COUNT)
-                           if data.pickup_region(index) == data.REGION_VICE_CITY)
+                           if data.pickup_region(index) == data.REGION_VICE_CITY
+                           and index not in data.PICKUP_MISSION_REQUIREMENTS)
         self.assertGreater(start_island, 0)
         self.assertEqual(base_free - free, start_island)
         self.assertLess(opener, base_opener)
@@ -1205,7 +1265,17 @@ class TestPickupChecksComposeWithTheRandomizer(WorldTestBase):
         slot_data = self.world.fill_slot_data()
         self.assertTrue(slot_data["enable_pickups"])
         self.assertTrue(slot_data["randomize_pickups"])
-        self.assertEqual(len(slot_data["pickup_layout"]), len(data.PICKUP_SLOTS))
+        # One row per ambient slot, then one per Phil's Place stand. The stands
+        # are in the layout whatever the pickup options say, because the marker
+        # on them belongs to the shop class.
+        self.assertEqual(len(slot_data["pickup_layout"]),
+                         len(data.PICKUP_SLOTS) + len(data.SHOP_STAND_SLOTS))
+        # The shop class is off in this seed, so no stand row is a check, and
+        # each keeps the model the game racks there.
+        for row, stand in zip(slot_data["pickup_layout"][len(data.PICKUP_SLOTS):],
+                              data.SHOP_STAND_SLOTS, strict=True):
+            self.assertEqual(row[6], 0)
+            self.assertEqual(row[4], stand[4])
 
 
 class TestAbilityLocksAll(WorldTestBase):
@@ -1868,10 +1938,19 @@ class TestAbilityLocksAll(WorldTestBase):
             "The Chase": {data.REGION_STARFISH},
             "Bar Brawl": {data.REGION_STARFISH, data.REGION_MAINLAND},
             "Shakedown": {data.REGION_STARFISH, data.REGION_MAINLAND},
+            # Phil's four stands, which Boomshine Saigon creates rather than
+            # racks. Phil's Place is on the mainland and so is Gun Runner before
+            # it, so the mainland is the whole of it.
+            "Boomshine Saigon": {data.REGION_MAINLAND},
             # The three a collectible waits on rather than a shop.
             "Four Iron": set(),
             "Trojan Voodoo": {data.REGION_MAINLAND},
             "Loose Ends": {data.REGION_MAINLAND},
+            # The knife outside the Malibu Club. The club is on the start island
+            # and the strand's own missions before it are not, which is the same
+            # shape as All Hands On Deck! above: the pickup sits where a player
+            # who has never crossed can stand, and it takes the mainland anyway.
+            "The Job": {data.REGION_VICE_CITY, data.REGION_MAINLAND},
         }
         for mission in data.ROUTE_MISSIONS:
             giver = MISSION_GIVER[mission]
@@ -4161,7 +4240,10 @@ class TestTables(WorldTestBase):
         # 15 property purchases, the venue mission strands, and the six
         # Sunshine Autos races, which are venue activities rather than a strand.
         self.assertEqual(len(classes["properties"][1]), 40)
-        self.assertEqual(len(classes["pickups"][1]), 110)
+        # 110 the init mission places and six a mission leaves behind.
+        self.assertEqual(len(classes["pickups"][1]), 116)
+        # 32 the six shop threads sell and Phil's four in-shop pickups.
+        self.assertEqual(len(classes["shops"][1]), 36)
 
     def test_venue_strands_are_not_story_missions(self) -> None:
         # The venue strands moved to the Properties class, so their missions
@@ -4209,13 +4291,16 @@ class TestTables(WorldTestBase):
             "Downtown Chopper Checkpoint", "Little Haiti Chopper Checkpoint",
             "Ocean Beach Chopper Checkpoint", "Vice Point Chopper Checkpoint",
             *(data.stunt_jump_name(index) for index in (12, 13, 14, 25, 26)),
-            *(data.pickup_name(index) for index in (61, 62, 101)),
+            *(data.pickup_name(index)
+              for index in (61, 62, 101, 110, 111, 112, 113, 114, 115)),
             *(data.shop_data.shop_item_name(item)
               for item in data.shop_data.SHOP_ITEMS
               if (item.thread, item.script_global)
               in data.shop_data.SHOP_STOCK_MISSIONS),
         ]))
-        self.assertEqual(len(data.shop_data.SHOP_STOCK_MISSIONS), 13)
+        # Thirteen the script gates out of stock, plus Phil's four, which the
+        # mission does not gate so much as create.
+        self.assertEqual(len(data.shop_data.SHOP_STOCK_MISSIONS), 17)
         for location, missions in data.LOCATION_MISSION_REQUIREMENTS.items():
             with self.subTest(location=location):
                 self.assertTrue(missions)
@@ -4256,6 +4341,12 @@ class TestTables(WorldTestBase):
             ("HARD1", 878): "Riot",                # $904, LAWYER4
             ("HARD1", 879): "Treacherous Swine",   # $905, GENERL1
             ("HARD2", 879): "The Chase",           # $874, BARON1
+            # Not out-of-stock gating at all: PHIL2 creates these four stands,
+            # so before Boomshine Saigon passes there is nothing on the wall.
+            ("PHIL", 4345): "Boomshine Saigon",    # PHIL2
+            ("PHIL", 4346): "Boomshine Saigon",    # PHIL2
+            ("PHIL", 4347): "Boomshine Saigon",    # PHIL2
+            ("PHIL", 4348): "Boomshine Saigon",    # PHIL2
         })
         # And each key names a row that exists, so a typo cannot silently gate
         # nothing. The Vice Point sniper is deliberately absent: its flag is the
@@ -4471,28 +4562,28 @@ class TestReservedGlobals(WorldTestBase):
         # The ASI hard-codes the packages-shuffled index too
         # (scm_game_state.cpp): it gates taking back the package cash the
         # executable pays, which no script gate can reach.
-        self.assertEqual(scm.PACKAGES_SHUFFLED_GLOBAL, 9533)
+        self.assertEqual(scm.PACKAGES_SHUFFLED_GLOBAL, 9543)
         # The shops flag, which build_scm.py mirrors by literal as SHOPS_ENABLED
         # and every piece of the shop withholding reads before it changes the
         # world. It sits directly below the ability locks, so a shift moves both.
-        self.assertEqual(scm.SHOPS_ENABLED_GLOBAL, 9576)
-        self.assertEqual(scm.ABILITY_LOCK_FLAG_BASE, 9577)
-        self.assertEqual(scm.ABILITY_UNLOCK_BASE, 9585)
-        self.assertEqual(scm.CONTENT_LOCK_FLAG_BASE, 9593)
-        self.assertEqual(scm.CONTENT_UNLOCK_BASE, 9598)
+        self.assertEqual(scm.SHOPS_ENABLED_GLOBAL, 9586)
+        self.assertEqual(scm.ABILITY_LOCK_FLAG_BASE, 9587)
+        self.assertEqual(scm.ABILITY_UNLOCK_BASE, 9595)
+        self.assertEqual(scm.CONTENT_LOCK_FLAG_BASE, 9603)
+        self.assertEqual(scm.CONTENT_UNLOCK_BASE, 9608)
         # The district content unlocks, the block every content gate and every
         # content hold actually reads. build_scm.py mirrors the base and the
         # class-major stride by literal, so a shift here has to move with it.
-        self.assertEqual(scm.DISTRICT_UNLOCK_BASE, 9603)
+        self.assertEqual(scm.DISTRICT_UNLOCK_BASE, 9613)
         self.assertEqual(scm.DISTRICT_UNLOCK_COUNT, 55)
         # The finale warp flag, hard-coded in the ASI (scm_game_state.cpp) and in
         # build_scm.py, which reads it in the APFIN watcher and in the mission
         # branch that jumps to the ending cutscene. It is also the foundation's
         # sizing line, which add_markers.py anchors on, so a shift here moves
         # four files at once.
-        self.assertEqual(scm.FINALE_WARP_GLOBAL, 9658)
-        self.assertEqual(scm.FINALE_ACTIVE_GLOBAL, 9659)
-        self.assertEqual(scm.highest_reserved_global(), 9659)
+        self.assertEqual(scm.FINALE_WARP_GLOBAL, 9668)
+        self.assertEqual(scm.FINALE_ACTIVE_GLOBAL, 9669)
+        self.assertEqual(scm.highest_reserved_global(), 9669)
         self.assertEqual(scm.ABILITY_KEYS, data.ABILITY_ITEMS)
         self.assertEqual(scm.CONTENT_KEYS, data.CONTENT_ITEMS)
 
@@ -4532,7 +4623,7 @@ class TestReservedGlobals(WorldTestBase):
             self.assertEqual(scm.completion_global(name), global_index, name)
         # Every payout guard also reads the class-cash flag, so that a seed with
         # the class off pays vanilla; the same shift argument applies to it.
-        self.assertEqual(scm.SIDE_EVENTS_CASH_GLOBAL, 9572)
+        self.assertEqual(scm.SIDE_EVENTS_CASH_GLOBAL, 9582)
 
     def test_property_ownership_globals_match_the_hand_written_mirrors(self) -> None:
         # Each of these gates what its property gives: a safehouse's save
@@ -4546,23 +4637,23 @@ class TestReservedGlobals(WorldTestBase):
         # literal, so that shift fails here rather than in game, and the fix is
         # to move build_scm.py's OWNERSHIP_BASE with it.
         businesses = {
-            "Printworks": 9555,
-            "Sunshine Autos": 9556,
-            "Film Studio": 9557,
-            "Cherry Popper": 9558,
-            "Kaufman Cabs": 9559,
-            "Malibu Club": 9560,
-            "Boatyard": 9561,
-            "Pole Position": 9562,
+            "Printworks": 9565,
+            "Sunshine Autos": 9566,
+            "Film Studio": 9567,
+            "Cherry Popper": 9568,
+            "Kaufman Cabs": 9569,
+            "Malibu Club": 9570,
+            "Boatyard": 9571,
+            "Pole Position": 9572,
         }
         safehouses = {
-            "El Swanko Casa": 9563,
-            "Links View Apartment": 9564,
-            "Hyman Condo": 9565,
-            "Ocean Heights Apartment": 9566,
-            "1102 Washington Street": 9567,
-            "3321 Vice Point": 9568,
-            "Skumole Shack": 9569,
+            "El Swanko Casa": 9573,
+            "Links View Apartment": 9574,
+            "Hyman Condo": 9575,
+            "Ocean Heights Apartment": 9576,
+            "1102 Washington Street": 9577,
+            "3321 Vice Point": 9578,
+            "Skumole Shack": 9579,
         }
         for properties, items in ((businesses, data.BUSINESS_OWNERSHIP_ITEMS),
                                   (safehouses, data.SAFEHOUSE_OWNERSHIP_ITEMS)):
@@ -4850,7 +4941,7 @@ class TestReservedGlobals(WorldTestBase):
         self.assertEqual(district_data.STORE_DISTRICTS, stores)
         # The block those tables index into. build_scm.py mirrors the base and
         # derives the stride from the class count, so both are pinned.
-        self.assertEqual(scm.DISTRICT_UNLOCK_BASE, 9603)
+        self.assertEqual(scm.DISTRICT_UNLOCK_BASE, 9613)
         self.assertEqual(len(scm.DISTRICT_KEYS), len(districts))
         self.assertEqual(scm.CONTENT_KEYS.index(data.STUNT_JUMPS_ITEM), 2)
         self.assertEqual(scm.CONTENT_KEYS.index(data.ROBBABLE_STORES_ITEM), 4)
@@ -4895,7 +4986,7 @@ class TestReservedGlobals(WorldTestBase):
             self.assertEqual(scm.completion_global(name), global_index, name)
         # The race payout guards read the properties class-cash flag, so a seed
         # with the class off pays vanilla; the same shift argument applies to it.
-        self.assertEqual(scm.PROPERTIES_CASH_GLOBAL, 9575)
+        self.assertEqual(scm.PROPERTIES_CASH_GLOBAL, 9585)
 
     def test_the_script_gated_content_items_keep_their_offsets(self) -> None:
         # The two classes with no icon for the ASI to hold gate in the script

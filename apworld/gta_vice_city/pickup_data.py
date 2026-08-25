@@ -123,6 +123,12 @@ PICKUP_SLOTS: list[tuple[float, float, float, int, int, int]] = [
     (-882.0, 111.2, 9.3, 15, 367, 0),
     (-857.1, -83.6, 11.5, 1, 367, 0),
     (-839.0, 740.6, 11.3, 1, 367, 0),
+    (-330.9, -569.7, 11.6, 15, 280, 120),
+    (-335.9, -569.5, 11.6, 15, 277, 50),
+    (-330.702, -573.366, 11.6, 2, 366, 0),
+    (-336.0, -573.7, 11.6, 2, 368, 0),
+    (468.5, -54.2, 15.7, 2, 263, 0),
+    (-1184.17, 102.62, 17.5, 15, 290, 100),
 ]
 
 PICKUP_MODEL_NAMES: dict[int, str] = {
@@ -152,6 +158,7 @@ PICKUP_MODEL_NAMES: dict[int, str] = {
     287: "Rocket Launcher",
     288: "Flamethrower",
     289: "M60",
+    290: "Minigun",
     291: "Detonator Grenades",
     366: "Health",
     367: "Adrenaline",
@@ -159,13 +166,18 @@ PICKUP_MODEL_NAMES: dict[int, str] = {
     375: "Police Bribe",
 }
 
-# The global each slot's creation stores its pickup handle in,
-# in PICKUP_SLOTS order. Vanilla globals, so they never move.
-# Nothing reads them yet; they are the game's own name for a
-# slot. Two slots have their pickup re-created by a mission, and
-# one of those re-creations puts it somewhere else, so a reader
-# has to check the pickup a handle resolves to still stands
-# where the slot does. See data.py.
+# The global each slot's creation stores its pickup handle in, in
+# PICKUP_SLOTS order. Vanilla globals, so they never move. The APPICK
+# watcher polls every one of them; a handle is the game's own name
+# for a slot and there is nothing else to detect a taken pickup by.
+#
+# Two things a reader has to know. Two slots have their pickup
+# re-created by a mission, and one of those re-creations puts it
+# somewhere else, so a reader has to check that the pickup a handle
+# resolves to still stands where the slot does. And every handle from
+# MISSION_CREATED_FIRST_SLOT up reads ZERO until its mission runs,
+# which is a state the collected test must never be asked about. See
+# data.py.
 PICKUP_HANDLE_GLOBALS: list[int] = [
     110, 111, 112, 113, 114, 115, 116, 117, 118, 119,
     120, 121, 122, 2035, 1999, 2000, 2001, 2002, 2003, 2004,
@@ -178,6 +190,7 @@ PICKUP_HANDLE_GLOBALS: list[int] = [
     2066, 2067, 2068, 2069, 2070, 2071, 2072, 2073, 2074, 2076,
     2077, 2078, 2079, 2075, 2080, 2081, 2082, 2083, 2084, 2085,
     2086, 2087, 2088, 2089, 2090, 2091, 2092, 2093, 2094, 2095,
+    77, 78, 79, 80, 1307, 5671,
 ]
 
 # The name of each slot, from the hand audit of every location, in
@@ -296,7 +309,57 @@ PICKUP_NAMES: list[str] = [
     "Pickup - Little Haiti - Adrenaline under some stairs east of Auntie Poulet's",
     "Pickup - Little Haiti - Adrenaline inside Ryton Aide",
     "Pickup - Downtown - Adrenaline inside the Dispensary",
+    "Pickup - Starfish Island - M4 in the Vercetti Estate courtyard",
+    "Pickup - Starfish Island - Shotgun in the Vercetti Estate courtyard",
+    "Pickup - Starfish Island - Health in the Vercetti Estate courtyard",
+    "Pickup - Starfish Island - Body Armor in the Vercetti Estate courtyard",
+    "Pickup - Vice Point - Knife outside the Malibu Club",
+    "Pickup - Little Haiti - Minigun on the ruined Haitian drugs factory",
 ]
+
+# The permanent mission creations the SHOP class owns rather than
+# the pickup class: the four in-shop stands Boomshine Saigon racks
+# at Phil's Place. Each row is (x, y, z, pickup type, vanilla
+# model, vanilla ammo, handle global). They are here because this
+# is what reads the decompile; their prices and display names are
+# hand-written in shop_data.py, which a run cross-checks against
+# these coordinates.
+SHOP_STAND_SLOTS: list[tuple[float, float, float, int, int, int, int]] = [
+    (-1105.9, 335.3, 11.1, 1, 289, 0, 4345),
+    (-1105.9, 330.3, 11.1, 1, 287, 0, 4346),
+    (-1105.9, 325.3, 11.1, 1, 290, 0, 4347),
+    (-1105.9, 320.3, 11.1, 1, 291, 0, 4348),
+]
+
+# The two measurements that bound how far apart a position match
+# may look, both taken over the decompile rather than written down.
+#
+# The matcher pairs a slot with a pool entry by position and type,
+# so the tolerance has to sit BELOW the closest same-type pickup no
+# table of ours owns, or the matcher could pair a slot with that
+# one, and it may sit anywhere below the closest pair of slots. The
+# foreign bound is the tight one and it is not comfortable: the
+# body armour Rub Out leaves in the estate courtyard and the Tec-9
+# the finale places to be survived with are both street type and
+# less than a unit apart. The finale holds the whole layout off the
+# pool while it runs, so that pair never actually meets, but the
+# tolerance is kept under it anyway rather than resting on that.
+CLOSEST_SLOT_PAIR = 3.67
+NEAREST_FOREIGN_PICKUP = 0.94
+
+# The first slot a MISSION creates rather than the init mission.
+# Everything below it exists from a new game; everything from it up has
+# a handle global reading zero until its mission passes.
+#
+# Whatever polls a handle has to skip the zeros, and not as a
+# tidiness: has_pickup_been_collected (0x441880) does not look at the
+# pickup pool at all. It scans the twenty-entry ring of recently
+# collected handles, returns true on a match and CLEARS the entry it
+# matched. The ring is zeroed at boot and every read leaves a zero
+# behind, so asking about handle zero matches a spent entry and
+# answers true. A slot polled before its mission runs would report
+# itself collected on the first frame.
+MISSION_CREATED_FIRST_SLOT = 110
 
 BRIBE_MODEL = 375
 SHOP_PICKUP_TYPE = 1
