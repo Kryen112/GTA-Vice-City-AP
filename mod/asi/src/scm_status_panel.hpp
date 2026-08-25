@@ -164,13 +164,16 @@ struct StatusPanelState {
   std::vector<StatusRow> strand_rows;
 };
 
-// How many characters a wrapped line may carry. A column is 188 of the
-// frontend's own units and a proportional character averages a little over five
-// of them at the page's own text scale, so twenty-eight characters is about 150
-// units: a column's width with room to spare. It is a count standing in for a
-// width, which the drawing backs up by folding a line at the column's right edge
-// rather than letting it cross the gutter.
-constexpr std::size_t kWrappedLineChars = 28;
+// How many characters a wrapped line may carry. A column is 146 of the
+// frontend's own units, and measured off the drawn page a character averages
+// about 5.4 of them at the page's design text size, a space no narrower than
+// that, so twenty-five characters is about 135 units: a column's width with room
+// to spare. It is a count standing in for a width, and nothing depends on it
+// being exactly right, because FitPanelLines re-breaks whatever overruns a column
+// before the page is laid out. What the budget decides is where a break READS
+// best, since a line broken here carries the list's own indent and a line broken
+// there starts at the column edge.
+constexpr std::size_t kWrappedLineChars = 25;
 
 // A prefixed list of names, wrapped into as many lines as it takes. Every line
 // is label-less, so every line is drawn from the column's own left edge: the
@@ -564,6 +567,13 @@ struct PanelLine {
   // never opens a column.
   bool heading = false;
   bool blank = false;
+  // A value the fitting moved off its label's line, drawn against the column's
+  // right edge where it would have sat had it fitted beside the label.
+  bool value_alone = false;
+  // A line the fitting broke out of the one above it, which is what keeps the two
+  // in the same column: a value at the head of one column with its label at the
+  // foot of the last names nothing at all.
+  bool joined_above = false;
 };
 
 inline std::vector<PanelLine> FlattenPanel(const std::vector<StatusSection>& sections) {
@@ -580,10 +590,166 @@ inline std::vector<PanelLine> FlattenPanel(const std::vector<StatusSection>& sec
   return lines;
 }
 
+// How wide a string draws, in whatever unit the layout is measured in. The
+// drawing hands in the font's own measure at the page's design size; the console
+// self-test hands in one of its own, so the fitting runs without a font.
+using TextWidth = float (*)(const std::string&);
+
+// The pieces a line's text breaks into, each narrow enough for its column: the
+// text itself where it already fits, and as many pieces as it takes where it does
+// not, broken at its own spaces.
+//
+// A continuation is set in under the line it continues. A wrapped list's own
+// continuations already carry leading spaces, so a piece broken out of one keeps
+// them; the line the list's prefix rides on carries none, so its continuations are
+// set in as far as that prefix runs, which is where the composer's own wrapping
+// puts them. A word wider than a column is a piece of its own: it has no space to
+// break at, so the font cannot fold it either, and it draws across the gutter
+// rather than being hidden.
+inline std::vector<std::string> BreakToWidth(const std::string& text, float width,
+                                             TextWidth measure) {
+  std::vector<std::string> pieces;
+  const std::size_t opening = text.find_first_not_of(' ');
+  if (measure(text) <= width || opening == std::string::npos) {
+    pieces.push_back(text);
+    return pieces;
+  }
+  const std::string opening_indent(opening, ' ');
+  std::string continuation = opening_indent;
+  if (opening == 0) {
+    // A prefix is a name, a colon and a space, which is the one shape the
+    // composer's own wrapping indents under.
+    const std::size_t colon = text.find(':');
+    if (colon != std::string::npos && colon + 1 < text.size() &&
+        text[colon + 1] == ' ') {
+      const std::string prefix(colon + 2, ' ');
+      // An indent worth half a column leaves too little of the column for the
+      // words it sets in, so a colon that late in a line is not a prefix worth
+      // following.
+      if (measure(prefix) * 2.0f < width) continuation = prefix;
+    }
+  }
+  std::string current;
+  std::size_t index = opening;
+  while (index < text.size()) {
+    const std::size_t space = text.find(' ', index);
+    const std::size_t length =
+        space == std::string::npos ? std::string::npos : space - index;
+    const std::string word = text.substr(index, length);
+    index = space == std::string::npos ? text.size() : space + 1;
+    if (word.empty()) continue;
+    // The first word of a piece always goes on it, however wide it is, and only
+    // the first piece opens where the line itself opened.
+    if (current.empty()) {
+      current = (pieces.empty() ? opening_indent : continuation) + word;
+      continue;
+    }
+    const std::string grown = current + " " + word;
+    if (measure(grown) > width) {
+      pieces.push_back(current);
+      current = continuation + word;
+      continue;
+    }
+    current = grown;
+  }
+  if (!current.empty()) pieces.push_back(current);
+  return pieces;
+}
+
+// The panel's lines, each one narrowed until it draws on a single line.
+//
+// The drawing gives every line one row, and the font folds a line that reaches the
+// column's edge at its last space, so a line wider than its column lands its tail
+// on the row below and prints over it. This is the pass that makes one line per row
+// true: a label and a value too wide to share a row are split so the value takes
+// the next row on its own, against the column's right edge where it would have sat
+// beside the label, and any text still wider than its column is broken at its own
+// spaces.
+//
+// Measured at the design size, which is the largest the page ever draws at, so a
+// line that fits here fits at every size the fitting can pick. Headings take a
+// measure of their own, because they draw in another face: the taller the band the
+// panel is given, the larger the whole page draws, and a heading measured under the
+// body face would be the one line left free to fold.
+inline std::vector<PanelLine> FitPanelLines(const std::vector<PanelLine>& lines,
+                                            float column_width, float label_gap,
+                                            TextWidth measure,
+                                            TextWidth heading_measure) {
+  std::vector<PanelLine> fitted;
+  fitted.reserve(lines.size());
+  // Every piece a line breaks into after the first belongs with the one before it,
+  // so the dealing keeps them in one column.
+  const auto push = [&fitted](PanelLine line, std::size_t piece) {
+    line.joined_above = piece > 0;
+    fitted.push_back(std::move(line));
+  };
+  for (const PanelLine& line : lines) {
+    if (line.blank) {
+      fitted.push_back(line);
+      continue;
+    }
+    if (line.heading) {
+      std::size_t piece = 0;
+      for (const std::string& text :
+           BreakToWidth(line.label, column_width, heading_measure)) {
+        PanelLine part = line;
+        part.label = text;
+        push(part, piece++);
+      }
+      continue;
+    }
+    if (line.label.empty()) {
+      if (line.value.empty()) {
+        fitted.push_back(line);
+        continue;
+      }
+      std::size_t piece = 0;
+      for (const std::string& text :
+           BreakToWidth(line.value, column_width, measure)) {
+        PanelLine part = line;
+        part.value = text;
+        push(part, piece++);
+      }
+      continue;
+    }
+    if (!line.value.empty() &&
+        measure(line.label) + label_gap + measure(line.value) <= column_width) {
+      fitted.push_back(line);
+      continue;
+    }
+    // The label takes the rows it needs, and the value the row after them.
+    std::size_t piece = 0;
+    for (const std::string& text :
+         BreakToWidth(line.label, column_width, measure)) {
+      PanelLine part = line;
+      part.label = text;
+      part.value.clear();
+      push(part, piece++);
+    }
+    if (line.value.empty()) continue;
+    for (const std::string& text :
+         BreakToWidth(line.value, column_width, measure)) {
+      PanelLine part = line;
+      part.label.clear();
+      part.value = text;
+      part.value_alone = true;
+      push(part, piece++);
+    }
+  }
+  return fitted;
+}
+
 // The panel's lines dealt into columns of even height, in reading order: down one
-// column and on to the next. A column never opens with a blank line and never
-// ends with a heading, so a block's title always sits above at least one of its
-// own lines.
+// column and on to the next. A column never opens with a blank line and never ends
+// with a heading, so a block's title always sits above at least one of its own
+// lines; and a run of lines the fitting broke out of one line is kept in a single
+// column, so a value it moved off its label's row still stands under that label.
+//
+// That last one holds unless the run is longer than a column's own share, which has
+// to break somewhere: the dealing then leaves one line behind and carries the rest
+// on, so the only column that can open on a broken-out line is one whose neighbour
+// holds a single line. No page any seed composes comes near it, since the longest
+// run is a label and its value and a share is many times that.
 inline std::vector<std::vector<PanelLine>> PlanPanelColumns(
     const std::vector<PanelLine>& lines, int column_count) {
   std::vector<std::vector<PanelLine>> columns;
@@ -605,6 +771,14 @@ inline std::vector<std::vector<PanelLine>> PlanPanelColumns(
       target.push_back(lines[next]);
       ++next;
     }
+    // The fitting can turn one row into several, a label too wide for its column
+    // and the value it no longer shares a row with. A column must not open on one
+    // of those, so the whole run moves on together. One line is always left behind,
+    // since a run longer than the column has to break somewhere.
+    while (next < lines.size() && lines[next].joined_above && target.size() > 1) {
+      --next;
+      target.pop_back();
+    }
     // A heading last in a column would title lines that are not there; it moves
     // to the next column with them.
     while (!target.empty() && target.back().heading && next <= lines.size()) {
@@ -623,6 +797,27 @@ inline int TallestColumn(const std::vector<std::vector<PanelLine>>& columns) {
     if (rows > tallest) tallest = rows;
   }
   return tallest;
+}
+
+// The row height the panel draws at: the design height, or as much less as it
+// takes for the tallest column to fit the band the cover leaves. Every seed's
+// page therefore fits whole, and only a seed that configured everything is drawn
+// tighter than the rest.
+inline float FittedRowHeight(int rows, float band_height,
+                            float design_row_height) {
+  if (rows <= 0) return design_row_height;
+  const float fitted = band_height / static_cast<float>(rows);
+  return fitted < design_row_height ? fitted : design_row_height;
+}
+
+// What the text scales by when the rows had to be drawn tighter than the design.
+// A glyph is taller than its row's share of the band otherwise: the seed that
+// fills the page would draw its lines into each other. Tying the scale to the row
+// height is also what keeps the fitting's own measurements true, since a line
+// measured at the design size only ever draws narrower than that.
+inline float FittedTextScale(float row_height, float design_row_height) {
+  if (design_row_height <= 0.0f) return 1.0f;
+  return row_height < design_row_height ? row_height / design_row_height : 1.0f;
 }
 
 }  // namespace gtavc

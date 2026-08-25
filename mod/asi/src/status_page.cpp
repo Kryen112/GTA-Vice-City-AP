@@ -18,7 +18,8 @@ namespace {
 
 // The page the panel borrows. The briefs page is the cheapest one to cover: its
 // content is the last few mission brief lines, it keeps its own entry on the
-// pause menu, and its back entry stands high enough to stay clear of the panel.
+// pause menu, and it carries one entry of its own, a back row the panel can stand
+// at the foot of the screen and leave showing there.
 constexpr int kPanelHostPage = MENUPAGE_BRIEFS;
 // The pause page entry the panel takes. Quit Game holds it in a vanilla game and
 // moves one down, which is why the entry after it must be free.
@@ -32,21 +33,36 @@ constexpr char kQuitEntryKey[] = "FEP_QUI";
 // The heading the panel draws over the borrowed page's own title.
 constexpr char kPanelTitle[] = "ARCHIPELAGO";
 
+// The borrowed page's own back entry: the row it is, the key it carries, and
+// where the vanilla table stands it up. The panel covers the page above that
+// entry and below it, so the further down the entry stands the more of the page
+// the rows have, and the entry is lowered to the foot of the screen for exactly
+// that. Everything else about it stays the game's own: its action, its input, its
+// label, and the menu's own hit test, which reads the position this moves.
+constexpr int kBackEntry = 0;
+constexpr char kBackEntryKey[] = "FEDS_TB";
+constexpr unsigned short kBackEntryVanillaX = 190;
+constexpr unsigned short kBackEntryVanillaY = 320;
+constexpr unsigned short kBackEntryLoweredY = 406;
+// What the entry's own highlight bar covers, either side of the entry's position.
+// The bar is the one thing on the borrowed page the panel leaves showing, so the
+// cover stops above it and starts again below it. Measured off the drawn page at
+// ten units above and twenty-two below, and taken a unit tighter than that in both
+// directions so the cover LAPS the bar's own edges rather than meeting them: a
+// flat grey bar loses nothing to a unit of cover, where a unit of daylight between
+// the two would show the page underneath.
+constexpr float kHighlightBarAbove = 9.0f;
+constexpr float kHighlightBarBelow = 21.0f;
+
 // The virtual screen the frontend lays out in, which the game stretches to
 // whatever resolution is running. The menu table's own positions are in these
 // units, so the panel's are too.
 constexpr float kVirtualWidth = 640.0f;
 constexpr float kVirtualHeight = 448.0f;
-// The band the cover leaves alone: the borrowed page's back entry stands at y 320
-// and stays the game's own, visible and highlighted and clickable. Everything
-// above and below that band is covered, so a brief line long enough to reach
-// under the panel cannot show either.
-constexpr float kCoverBottom = 310.0f;
-constexpr float kBackEntryBottom = 342.0f;
 
-// Where the panel draws, in those units. Two columns: a label starts at the
-// column's left edge and its value ends at the column's right edge, and a value
-// that would reach the label is moved right of it, so the two can never overlap
+// Where the panel draws, in those units. A row is a label at the column's left
+// edge and a value ending just short of its right edge, and a pair too wide to
+// share a row is split before the page is laid out, so the two can never meet
 // however long either gets.
 struct PanelGeometry {
   float first_column_x;
@@ -65,27 +81,40 @@ struct PanelGeometry {
 // whole page to fit the busiest seed rather than only its own lines.
 constexpr int kColumnCount = 4;
 constexpr PanelGeometry kGeometry = {
-    18.0f, 156.0f, 146.0f, 84.0f, 13.0f, 0.38f, 0.64f,
+    18.0f, 156.0f, 146.0f, 60.0f, 13.0f, 0.38f, 0.64f,
 };
+// Where the page's own title sits, above the first row.
+constexpr float kTitleY = 28.0f;
+// The gap between a label and the value that shares its row, and how far short of
+// the column's right edge a value stops. The inset is what keeps a value off the
+// wrap edge: a value right-justified onto the edge itself REACHES it, and the font
+// answers by folding the value's last word onto the row below.
+constexpr float kLabelGap = 5.0f;
+constexpr float kValueInset = 2.0f;
+// What a heading draws at, against the rows around it.
+constexpr float kHeadingScale = 0.9f;
 
-// The row height the panel draws at: the geometry's own, or as much less as it
-// takes for the taller column to fit above the cover's bottom. Every seed's page
-// therefore fits whole, and only a seed that configured everything is drawn
-// tighter than the rest.
-float FittedRowHeight(int tallest_column_rows) {
-  const float available = kCoverBottom - kGeometry.top_y;
-  if (tallest_column_rows <= 0) return kGeometry.row_height;
-  const float fitted = available / static_cast<float>(tallest_column_rows);
-  return fitted < kGeometry.row_height ? fitted : kGeometry.row_height;
-}
-
-// What the text scales by when the rows had to be drawn tighter than the design.
-// A glyph is taller than its row's share of the screen otherwise: the seed that
-// fills the page would draw its lines into each other.
-float FittedTextScale(float row_height) {
-  return row_height < kGeometry.row_height ? row_height / kGeometry.row_height
-                                           : 1.0f;
-}
+// The relations the one-line-per-row guarantee rests on. A line narrowed to its
+// column stops short of the wrap edge a gutter further out, and the inset pulls a
+// value further inside that again; the last column ends inside the screen, so
+// nothing it draws is clipped away; and the entry, wherever it is allowed to stand,
+// leaves room for the rows above it and for its own bar below. Asserted here
+// because this is where the numbers are, and the console self-test cannot compile
+// this file.
+static_assert(kGeometry.column_width < kGeometry.column_pitch,
+              "a line narrowed to its column must stop short of the wrap edge");
+static_assert(kGeometry.first_column_x +
+                      kGeometry.column_pitch * (kColumnCount - 1) +
+                      kGeometry.column_width <= kVirtualWidth,
+              "the last column must end inside the screen");
+static_assert(kBackEntryLoweredY - kHighlightBarAbove >
+                  kGeometry.top_y + kGeometry.row_height,
+              "the lowered entry must leave the rows a band to draw in");
+static_assert(kBackEntryVanillaY - kHighlightBarAbove >
+                  kGeometry.top_y + kGeometry.row_height,
+              "and so must the place the panel falls back on");
+static_assert(kBackEntryLoweredY + kHighlightBarBelow <= kVirtualHeight,
+              "the lowered entry's own highlight bar must end inside the screen");
 
 float StretchX(float x) {
   return x * static_cast<float>(RsGlobal.maximumWidth) / kVirtualWidth;
@@ -121,6 +150,28 @@ const wchar_t* Widen(const std::string& text) {
   return buffer;
 }
 
+// How wide a line draws at the page's design text size, which is what the
+// fitting measures against. The size is the design's own rather than the fitted
+// one, so the answer does not depend on the fitting it feeds; the fitted size is
+// only ever smaller, so a line that fits here fits when it is drawn. The face and
+// the size are set here rather than by the caller, because a width measured under
+// another face is a wrong answer that looks like a right one.
+float DesignTextWidth(const std::string& text) {
+  CFont::SetFontStyle(FONT_STANDARD);
+  CFont::SetScale(StretchX(kGeometry.scale_x), StretchY(kGeometry.scale_y));
+  return CFont::GetStringWidth(Widen(text), true);
+}
+
+// The same, for the face a heading draws in. A heading is short, but the page draws
+// larger the taller its band is, so the one line the fitting could not measure
+// would be the one line left free to fold.
+float DesignHeadingWidth(const std::string& text) {
+  CFont::SetFontStyle(FONT_HEADING);
+  CFont::SetScale(StretchX(kGeometry.scale_x * kHeadingScale),
+                  StretchY(kGeometry.scale_y * kHeadingScale));
+  return CFont::GetStringWidth(Widen(text), true);
+}
+
 CRGBA HeadingColor(int alpha) {
   return CRGBA(255, 205, 90, static_cast<unsigned char>(alpha));
 }
@@ -141,31 +192,39 @@ CRGBA ToneColor(StatusTone tone, int alpha) {
   }
 }
 
-// One column of lines, from its own top downward. A line with no label is a
-// wrapped line, drawn from the column's own left edge across its whole width,
-// which is what lets a list of names read as a sentence instead of taking a line
-// each; a line with both is a label and a value, the value ending at the column's
-// right edge unless the pair is wide enough to meet, in which case the value
-// starts just right of the label.
+// One column of lines, from its own top downward, one row a line. A line with no
+// label is a wrapped line, drawn from the column's own left edge across its whole
+// width, which is what lets a list of names read as a sentence instead of taking a
+// line each; a line with both is a label and a value, the value ending just short
+// of the column's right edge. A pair too wide to share a row never reaches here,
+// since the fitting split it before the columns were dealt, which is what lets one
+// line take exactly one row.
 void DrawColumn(const std::vector<PanelLine>& lines, float column_x,
-                float row_height, int alpha) {
+                float row_height, float bottom, int alpha) {
   float y = kGeometry.top_y;
-  const float scale = FittedTextScale(row_height);
+  const float scale = FittedTextScale(row_height, kGeometry.row_height);
   const float left = StretchX(column_x);
   const float right_edge = StretchX(column_x + kGeometry.column_width);
-  // A line too long for its column folds inside the column rather than running
-  // across the gutter into the next one.
-  CFont::SetWrapx(right_edge);
+  const float inset = StretchX(kValueInset);
+  // The net under the fitting, which has already narrowed every line to its own
+  // column: a gutter's worth of slack past that column, so it catches nothing the
+  // fitting accepted and still holds a line to one column where a measured width
+  // and the font disagree. The last column stops at the screen instead. A word
+  // wider than the whole column reaches neither: the font has nowhere to fold it,
+  // so it draws across the gutter, which is the one thing here that is meant to
+  // overrun.
+  const float wrap_at = column_x + kGeometry.column_pitch;
+  CFont::SetWrapx(StretchX(wrap_at < kVirtualWidth ? wrap_at : kVirtualWidth));
   for (const PanelLine& line : lines) {
-    if (y > kCoverBottom) return;
+    if (y > bottom) return;
     if (line.blank) {
       y += row_height;
       continue;
     }
     if (line.heading) {
       CFont::SetFontStyle(FONT_HEADING);
-      CFont::SetScale(StretchX(kGeometry.scale_x * scale * 0.9f),
-                      StretchY(kGeometry.scale_y * scale * 0.9f));
+      CFont::SetScale(StretchX(kGeometry.scale_x * scale * kHeadingScale),
+                      StretchY(kGeometry.scale_y * scale * kHeadingScale));
       CFont::SetColor(HeadingColor(alpha));
       CFont::PrintString(left, StretchY(y), Widen(line.label));
       y += row_height;
@@ -176,7 +235,18 @@ void DrawColumn(const std::vector<PanelLine>& lines, float column_x,
                     StretchY(kGeometry.scale_y * scale));
     if (line.label.empty()) {
       CFont::SetColor(ToneColor(line.tone, alpha));
-      CFont::PrintString(left, StretchY(y), Widen(line.value));
+      const wchar_t* value = Widen(line.value);
+      // A value the fitting moved off its label's row keeps the place it would
+      // have had beside it, against the column's right edge. One wider than the
+      // whole column starts at the left edge instead, so its front is readable
+      // rather than its tail.
+      float x = left;
+      if (line.value_alone) {
+        const float value_x =
+            right_edge - inset - CFont::GetStringWidth(value, true);
+        x = value_x > left ? value_x : left;
+      }
+      CFont::PrintString(x, StretchY(y), value);
       y += row_height;
       continue;
     }
@@ -186,10 +256,14 @@ void DrawColumn(const std::vector<PanelLine>& lines, float column_x,
     if (!line.value.empty()) {
       const wchar_t* value = Widen(line.value);
       const float label_end = left + CFont::GetStringWidth(label, true);
-      const float value_x = right_edge - CFont::GetStringWidth(value, true);
+      const float value_x = right_edge - inset - CFont::GetStringWidth(value, true);
+      // The fitting accepted this pair, so the value's own place is clear of the
+      // label; the clamp only ever holds where a measured width and the font
+      // disagree by more than the gap.
       CFont::SetColor(ToneColor(line.tone, alpha));
-      CFont::PrintString(value_x > label_end ? value_x : label_end + StretchX(5.0f),
-                         StretchY(y), value);
+      CFont::PrintString(
+          value_x > label_end ? value_x : label_end + StretchX(kLabelGap),
+          StretchY(y), value);
     }
     y += row_height;
   }
@@ -247,6 +321,61 @@ void StatusPage::Install() {
                 : "status page: the pause menu is not the one this build knows, "
                   "so no entry was added");
   }
+  // Only worth doing where the panel can be reached: without the entry the
+  // borrowed page is never anything but its own, and lowering its back row would
+  // move a vanilla page's own button for nothing.
+  if (!owns_entry_) return;
+  const bool lowered = LowerBackEntry();
+  if (logger_) {
+    logger_(lowered ? "status page: the borrowed page's back entry stands at the "
+                      "foot of the panel"
+                    : "status page: the borrowed page's back entry is not where "
+                      "this build puts it, so the panel keeps the shorter band");
+  }
+}
+
+bool StatusPage::LowerBackEntry() {
+  CMenuScreen::CMenuEntry& back =
+      aScreens[kPanelHostPage].m_aEntries[kBackEntry];
+  // The entry must be the one the game built, standing where the vanilla table
+  // stands it. Anything else is another mod's table or this move already made,
+  // and neither is ours to write over.
+  const bool entry_is_vanilla =
+      std::strncmp(back.m_EntryName, kBackEntryKey,
+                   sizeof(back.m_EntryName)) == 0 &&
+      back.m_nX == kBackEntryVanillaX && back.m_nY == kBackEntryVanillaY;
+  if (!entry_is_vanilla) return false;
+  // A position the table already carries is left alone by the draw, which only
+  // fills in a zero one, so this write stands for the session.
+  back.m_nY = kBackEntryLoweredY;
+  return true;
+}
+
+float StatusPage::BackEntryY() const {
+  // Read from the table rather than remembered, so the cover follows the entry
+  // wherever it actually stands: a cover that believes it was moved and an entry
+  // that was not would hide the back button and show a strip of the page.
+  //
+  // A position with no band above it is not one to lay a page out against, since
+  // the row height comes out of that band and a band of nothing is a row height of
+  // nothing. So a position the panel cannot use falls back on the place the vanilla
+  // table puts this entry, which the assertions above hold to a band the rows fit
+  // in. That covers a position of zero and a foreign one alike, and the panel then
+  // draws where it always did rather than not at all.
+  const float written =
+      static_cast<float>(aScreens[kPanelHostPage].m_aEntries[kBackEntry].m_nY);
+  const bool leaves_a_band =
+      written - kHighlightBarAbove > kGeometry.top_y + kGeometry.row_height &&
+      written + kHighlightBarBelow <= kVirtualHeight;
+  return leaves_a_band ? written : static_cast<float>(kBackEntryVanillaY);
+}
+
+float StatusPage::CoverBottom() const {
+  return BackEntryY() - kHighlightBarAbove;
+}
+
+float StatusPage::HighlightBarBottom() const {
+  return BackEntryY() + kHighlightBarBelow;
 }
 
 bool StatusPage::ClaimEntry() {
@@ -326,9 +455,7 @@ PanelFrame StatusPage::Follow() {
 
 void StatusPage::Draw(const std::vector<StatusSection>& sections) const {
   const int alpha = FrontEndMenuManager.FadeIn(255);
-  const std::vector<std::vector<PanelLine>> columns =
-      PlanPanelColumns(FlattenPanel(sections), kColumnCount);
-  const float row_height = FittedRowHeight(TallestColumn(columns));
+  const float cover_bottom = CoverBottom();
 
   // The borrowed page's own title and brief lines go under an opaque cover before
   // any of the panel goes on top. The font banks its glyphs and the game flushes
@@ -340,15 +467,17 @@ void StatusPage::Draw(const std::vector<StatusSection>& sections) const {
   CFont::DrawFonts();
   const CRGBA cover(6, 8, 24, static_cast<unsigned char>(alpha));
   CSprite2d::DrawRect(
-      CRect(0.0f, 0.0f, StretchX(kVirtualWidth), StretchY(kCoverBottom)), cover);
+      CRect(0.0f, 0.0f, StretchX(kVirtualWidth), StretchY(cover_bottom)), cover);
   CSprite2d::DrawRect(
-      CRect(0.0f, StretchY(kBackEntryBottom), StretchX(kVirtualWidth),
+      CRect(0.0f, StretchY(HighlightBarBottom()), StretchX(kVirtualWidth),
             StretchY(kVirtualHeight)),
       cover);
 
   // Left to right, top to bottom, proportional, no wrapping and no shadow: the
   // panel is a list to read rather than a menu to look at. The menu's own drawing
-  // sets every one of these per string, so nothing here has to be put back.
+  // sets every one of these per string, so nothing here has to be put back. These
+  // go in before anything is measured, since a width read under another set of
+  // them is a wrong answer that looks like a right one.
   CFont::SetJustifyOff();
   CFont::SetCentreOff();
   CFont::SetRightJustifyOff();
@@ -356,13 +485,23 @@ void StatusPage::Draw(const std::vector<StatusSection>& sections) const {
   CFont::SetPropOn();
   CFont::SetDropShadowPosition(0);
 
+  // Every line narrowed to its column first, so the columns are dealt and the row
+  // height fitted against the rows the page really draws rather than the rows it
+  // was composed of.
+  const std::vector<std::vector<PanelLine>> columns = PlanPanelColumns(
+      FitPanelLines(FlattenPanel(sections), StretchX(kGeometry.column_width),
+                    StretchX(kLabelGap), DesignTextWidth, DesignHeadingWidth),
+      kColumnCount);
+  const float row_height = FittedRowHeight(
+      TallestColumn(columns), cover_bottom - kGeometry.top_y, kGeometry.row_height);
+
   CFont::SetFontStyle(FONT_HEADING);
   CFont::SetScale(StretchX(0.7f), StretchY(1.2f));
   CFont::SetColor(HeadingColor(alpha));
   CFont::SetCentreOn();
   CFont::SetCentreSize(StretchX(kVirtualWidth));
   CFont::SetWrapx(StretchX(kVirtualWidth));
-  CFont::PrintString(StretchX(kVirtualWidth / 2.0f), StretchY(40.0f),
+  CFont::PrintString(StretchX(kVirtualWidth / 2.0f), StretchY(kTitleY),
                      Widen(kPanelTitle));
   CFont::SetCentreOff();
 
@@ -370,7 +509,7 @@ void StatusPage::Draw(const std::vector<StatusSection>& sections) const {
     DrawColumn(columns[column],
                kGeometry.first_column_x +
                    kGeometry.column_pitch * static_cast<float>(column),
-               row_height, alpha);
+               row_height, cover_bottom, alpha);
   }
 
   // The panel's own glyphs are flushed before the pointer, so the pointer is
