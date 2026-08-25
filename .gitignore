@@ -27,6 +27,9 @@ mod/asi/plugin/obj/
 mod/scm/main.scm
 mod/cleo/*.cs
 
+# The decision log and research, local to this machine
+notes/
+
 # Editor / OS
 .vscode/
 .idea/

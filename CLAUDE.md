@@ -5,8 +5,10 @@ PLAN.md owns scope. NEXT_APWORLD_PLAYBOOK.md owns process. notes/INDEX.md is
 the decision log: read the relevant note before re-deciding anything it
 covers, and record new non-obvious decisions there.
 
-PLAN.md and notes/ are deliberately untracked. Never stage, commit, or
-gitignore them. Stage explicit paths only; never `git add -A` or `git add .`.
+PLAN.md and notes/ are deliberately untracked. Never stage or commit them.
+notes/ has a .gitignore entry, so it stays out of `git status`; PLAN.md has
+none, so it keeps showing there. Stage explicit paths only; never `git add -A`
+or `git add .`.
 
 ## Layout
 - `apworld/gta_vice_city/`: the AP world package. Hand-written Python, no
@@ -77,8 +79,27 @@ gitignore them. Stage explicit paths only; never `git add -A` or `git add .`.
   those rewards wait with it. `content_locks` therefore belongs to the
   in-world-modifier family with `randomize_pickups` and `shuffle_minimap`,
   not to the check-class family.
-- The 100% goal requires every check class enabled; generation rejects it
-  otherwise.
+  `shuffle_emergency_rewards` is in that family too, and for the same reason: it
+  takes the emergency chains' payouts into the item pool whether or not their
+  levels are checks, so with `enable_emergency_vehicles` off the chains still
+  play and simply stop paying out. Whether something is a CHECK and who hands
+  over its REWARD are separate questions, and only the class toggle answers the
+  first. The flag it stamps suppresses the vanilla grant and arms the applier
+  together, so it must never be set without the items that replace what it
+  suppresses: one option drives both, which is what makes that impossible.
+- The 100% goal requires every check class HOLDING CONTENT the game's own
+  completion stat counts to be enabled; generation rejects it otherwise. Holding
+  some is the test, not holding only some: the emergency class carries 56
+  checks and the stat counts five, one per activity completed, ignoring every
+  intermediate milestone, and the goal still demands the class. `enable_pickups`
+  is deliberately not one of those classes because the stat counts NOTHING it
+  holds, so demanding it would make the goal mean something the game does not.
+  The exemption is total, not just from the precondition: the goal is the
+  GAME's percentage, so it counts exactly what the game's stat counts, and a
+  class the stat never counted stays out of the completion condition even when
+  the seed has it on. Shop items will be the same. A new class belongs to one
+  list or the other in options.py, and a test refuses one that belongs to
+  neither.
 - New game per seed. Received state re-derives from AP server state on
   every load and reconnect, never from in-memory bookkeeping alone.
   One-shot grants re-apply only past the saved applied-index; items lost to
