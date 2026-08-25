@@ -40,6 +40,9 @@ class ShopItem(NamedTuple):
 
 # The district each thread stands in, and what the shop is called. Two shops
 # share Vice Point, one of each kind, so the shop name is what separates them.
+# The tool stores carry their own signs rather than a class name: the game calls
+# them Bunch of Tools, Tooled Up and Screw This, and the store-robbery table
+# already names the last two.
 SHOP_DISTRICTS: dict[str, str] = {
     "AMMU1": "Ocean Beach",
     "AMMU2": "Vice Point",
@@ -53,9 +56,9 @@ SHOP_NAMES: dict[str, str] = {
     "AMMU1": "Ammu-Nation",
     "AMMU2": "Ammu-Nation",
     "AMMU3": "Ammu-Nation",
-    "HARD1": "Tool Store",
-    "HARD2": "Tool Store",
-    "HARD3": "Tool Store",
+    "HARD1": "Bunch of Tools",
+    "HARD2": "Tooled Up",
+    "HARD3": "Screw This",
 }
 
 # The armour rows carry this instead of a weapon type, since they grant armour.
@@ -68,12 +71,41 @@ ARMOUR_WEAPON_TYPE = -1
 # shop table is.
 CROSSING_STOCKED_ITEMS = frozenset({("AMMU2", 892)})
 
+# What a shop racks only once a mission has passed, keyed the same way. Each
+# shop thread guards the item's price with a vanilla flag and prints the
+# out-of-stock line instead while the flag is zero, so the item stands on the
+# wall and cannot be bought; the mission that sets the flag is the gate. Read
+# out of the stock decompile rather than off a wiki, which is what settles the
+# three the hand audit adds and the script does not have: the Downtown body
+# armour and both Little Havana items are ungated there, so they are absent
+# here.
+#
+# The Vice Point sniper is NOT here. Its flag is $847, the one the mainland
+# crossing sets, so under this mod its stock arrives with the crossing and not
+# with the mission that flips $847 in vanilla; CROSSING_STOCKED_ITEMS above is
+# what carries it.
+SHOP_STOCK_MISSIONS: dict[tuple[str, int], str] = {
+    ("AMMU1", 891): "Mall Shootout",       # $902
+    ("AMMU1", 892): "Guardian Angels",     # $903
+    ("AMMU1", 893): "Jury Fury",           # $867
+    ("AMMU2", 891): "The Chase",           # $868
+    ("AMMU2", 895): "Jury Fury",           # $867
+    ("AMMU3", 889): "Rub Out",             # $907
+    ("AMMU3", 890): "Rub Out",             # $906
+    ("AMMU3", 891): "Bar Brawl",           # $848
+    ("AMMU3", 892): "Rub Out",             # $855
+    ("AMMU3", 893): "Shakedown",           # $856
+    ("HARD1", 878): "Riot",                # $904
+    ("HARD1", 879): "Treacherous Swine",   # $905
+    ("HARD2", 879): "The Chase",           # $874
+}
+
 SHOP_ITEMS: list[ShopItem] = [
     # Ocean Beach Ammu-Nation.
     ShopItem("AMMU1", 889, 274, "colt45", "Pistol", 17, 9999, 100, -60.8, -1488.1, 12.2),
-    ShopItem("AMMU1", 890, 283, "ingramsl", "Tec-9", 24, 9999, 300, -62.3, -1488.2, 12.2),
+    ShopItem("AMMU1", 890, 283, "ingramsl", "Mac 10", 24, 9999, 300, -62.3, -1488.2, 12.2),
     ShopItem("AMMU1", 891, 277, "chromegun", "Shotgun", 19, 9999, 500, -64.0, -1488.2, 12.2),
-    ShopItem("AMMU1", 892, 276, "ruger", "Ruger", 27, 9999, 1000, -65.4, -1488.2, 12.2),
+    ShopItem("AMMU1", 892, 276, "ruger", "Kruger", 27, 9999, 1000, -65.4, -1488.2, 12.2),
     ShopItem("AMMU1", 893, 368, "bodyarmour", "Body Armour",
              ARMOUR_WEAPON_TYPE, 200, 200, -66.6, -1488.0, 12.1),
     # Vice Point Ammu-Nation, inside North Point Mall.
@@ -85,11 +117,11 @@ SHOP_ITEMS: list[ShopItem] = [
     ShopItem("AMMU2", 895, 368, "bodyarmour", "Body Armour",
              ARMOUR_WEAPON_TYPE, 200, 200, 362.1, 1049.5, 20.9),
     # Downtown Ammu-Nation, the expensive one.
-    ShopItem("AMMU3", 889, 275, "python", "Python", 18, 9999, 2000, -683.6, 1200.5, 12.9),
-    ShopItem("AMMU3", 890, 284, "mp5lng", "MP5", 25, 9999, 3000, -683.6, 1202.0, 12.9),
-    ShopItem("AMMU3", 891, 278, "shotgspa", "SPAS-12", 20, 9999, 4000, -683.6, 1203.4, 12.9),
+    ShopItem("AMMU3", 889, 275, "python", ".357", 18, 9999, 2000, -683.6, 1200.5, 12.9),
+    ShopItem("AMMU3", 890, 284, "mp5lng", "MP", 25, 9999, 3000, -683.6, 1202.0, 12.9),
+    ShopItem("AMMU3", 891, 278, "shotgspa", "S.P.A.S. 12", 20, 9999, 4000, -683.6, 1203.4, 12.9),
     ShopItem("AMMU3", 892, 280, "m4", "M4", 26, 9999, 5000, -683.6, 1205.0, 12.9),
-    ShopItem("AMMU3", 893, 286, "laser", "Laser Sniper", 29, 9999, 6000, -683.6, 1206.5, 12.8),
+    ShopItem("AMMU3", 893, 286, "laser", ".308 Sniper", 29, 9999, 6000, -683.6, 1206.5, 12.8),
     ShopItem("AMMU3", 894, 368, "bodyarmour", "Body Armour",
              ARMOUR_WEAPON_TYPE, 200, 200, -683.5, 1208.2, 12.8),
     # Washington Beach tool store.

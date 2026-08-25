@@ -399,6 +399,31 @@ def _self_test() -> None:
     assert _decode_reserved(bytes([0x02, 0x04, 0x00])) == set()
 
 
+DISTRICT_LIST = re.compile(r"^DISTRICTS = \[\n(.*?)^\]$", re.MULTILINE | re.DOTALL)
+
+
+def _district_list_problems(scm_dir: pathlib.Path, scm) -> list[str]:
+    """build_scm.py's district list against scm.DISTRICT_KEYS, name by name.
+
+    The list fixes which global each per-site gate reads, so a name in the wrong
+    place gates the wrong part of town, silently and only in game. Comparing the
+    LENGTHS would not see that, which is all the ASI's kDistrictCount can do, and
+    this list is no longer a copy of district_data.DISTRICTS either: the Junk
+    Yard is a district of the map that holds nothing a content key covers, so it
+    has no column here. Two lists that are alike but not identical are exactly
+    the pair worth checking by name.
+    """
+    source = scm_dir / "build_scm.py"
+    match = DISTRICT_LIST.search(source.read_text(encoding="utf-8"))
+    if match is None:
+        return [f"{source.name}: no DISTRICTS list found, so nothing was checked"]
+    mirrored = re.findall(r'"([^"]+)"', match.group(1))
+    if mirrored == list(scm.DISTRICT_KEYS):
+        return []
+    return [f"{source.name}: DISTRICTS is {mirrored}, the world derives "
+            f"{list(scm.DISTRICT_KEYS)}"]
+
+
 def main() -> int:
     _self_test()
     root = archipelago_root()
@@ -529,6 +554,7 @@ def main() -> int:
     problems: list[str] = list(asi_collisions)
     problems.extend(_cleo_problems(cleo_dir, scm, data))
     problems.extend(_literal_table_problems(scm_dir, scm))
+    problems.extend(_district_list_problems(scm_dir, scm))
     for where, source, name, want in expected:
         if name not in source:
             problems.append(f"{where}: {name} not found, so nothing was checked")

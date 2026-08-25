@@ -369,16 +369,18 @@ CONTENT_DISTRICT_TABLES: dict[str, list[str]] = {
 
 # Which districts hold each class, in DISTRICTS order. A class-district pair
 # with nothing in it gets no item, which is why the PER_CLASS pool is 42 and not
-# five times eleven. Thirteen pairs are empty: packages reach all eleven
-# districts, rampages and stunt jumps nine each, properties eight and stores
-# five. Leaf Links holds packages alone.
+# five times twelve. Eighteen pairs are empty: packages reach eleven of the
+# twelve districts, rampages and stunt jumps nine each, properties eight and
+# stores five. Leaf Links holds packages alone and the Junk Yard holds none of
+# the five, only ambient pickups, which no content key covers.
 CONTENT_CLASS_DISTRICTS: dict[str, list[str]] = {
     item: [district for district in district_data.DISTRICTS if district in set(table)]
     for item, table in CONTENT_DISTRICT_TABLES.items()
 }
 
-# Every district that holds anything lockable, in DISTRICTS order. All eleven
-# do, so PER_DISTRICT is eleven items, but this is derived rather than assumed.
+# Every district that holds anything lockable, in DISTRICTS order. Eleven of the
+# twelve do, the Junk Yard being the exception, so PER_DISTRICT is eleven items,
+# but this is derived rather than assumed.
 CONTENT_DISTRICTS: list[str] = [
     district for district in district_data.DISTRICTS
     if any(district in districts for districts in CONTENT_CLASS_DISTRICTS.values())
@@ -675,7 +677,7 @@ STUNT_JUMP_NAMES: list[str] = [
     "Unique Stunt Jump - Escobar International - Runway marker north of red radar dish",
     "Unique Stunt Jump - Escobar International - Eastern aircraft staircase over the airbridge",
     "Unique Stunt Jump - Prawn Island - To Film Studio",
-    "Unique Stunt Jump - Vice Point - Construction site",
+    "Unique Stunt Jump - Vice Point - Avery's construction site",
     "Unique Stunt Jump - Downtown - Large staircase going over Ammu-Nation",
     "Unique Stunt Jump - Downtown - First G-spotlight jump",
     "Unique Stunt Jump - Downtown - Second G-spotlight jump",
@@ -688,7 +690,7 @@ STUNT_JUMP_NAMES: list[str] = [
     "Unique Stunt Jump - Ocean Beach - Parking Garage east of Hospital",
     "Unique Stunt Jump - Washington Beach - Over northern bridge",
     "Unique Stunt Jump - Ocean Beach - Cone Crazy parking lot rooftop",
-    "Unique Stunt Jump - Ocean Beach - Gas station stairs",
+    "Unique Stunt Jump - Ocean Beach - Stairs north of Pay 'n' Spray",
     "Unique Stunt Jump - Ocean Beach - Pink roof south of Gas station",
     "Unique Stunt Jump - Ocean Beach - Cortez's docks south",
     "Unique Stunt Jump - Ocean Beach - Cortez's docks north",
@@ -755,7 +757,7 @@ ROBBABLE_STORE_NAMES: list[str] = [
     "Store Robbery - Little Havana - Calleggi Delicatessen Restaurant",
     "Store Robbery - Downtown - The Jewelers",
     "Store Robbery - Downtown - Dispensary",
-    "Store Robbery - Little Haiti - Hyton Aide",
+    "Store Robbery - Little Haiti - Ryton Aide",
     "Store Robbery - Vice Point - The Jewelers",
     "Store Robbery - Vice Point - Dispensary",
     "Store Robbery - Vice Point - Corner store",
@@ -1007,7 +1009,7 @@ STARFISH_MISSIONS: frozenset[str] = frozenset({
 # Leaf Links belong to the start island even though they are separate land;
 # Starfish Island is its own gated area.
 MAINLAND_DISTRICTS: frozenset[str] = frozenset({
-    "Downtown", "Little Haiti", "Little Havana", "Viceport",
+    "Downtown", "Little Haiti", "Junk Yard", "Little Havana", "Viceport",
     "Escobar International",
 })
 STARFISH_DISTRICTS: frozenset[str] = frozenset({"Starfish Island"})
@@ -1062,11 +1064,14 @@ MISSION_CROSSING_REQUIREMENTS: dict[str, str] = {
 }
 
 MISSION_REGION_REQUIREMENTS: dict[str, list[str]] = {
-    # The eight below are played on the mainland while their own region is the
+    # The nine below are played on the mainland while their own region is the
     # start island or Starfish. Four of them carry Starfish Island Access
     # already, through the property sale requirements, which is a different
-    # island and opens no bridge.
+    # island and opens no bridge. The Fastest Boat is Diaz's, so its own region
+    # is the mansion's island, but the boat it steals is in the Viceport
+    # boatyard.
     "Sir, Yes Sir!": [REGION_MAINLAND],
+    "The Fastest Boat": [REGION_MAINLAND],
     "Death Row": [REGION_MAINLAND],
     "Two Bit Hit": [REGION_MAINLAND],
     "The Shootist": [REGION_MAINLAND],
@@ -1078,9 +1083,10 @@ MISSION_REGION_REQUIREMENTS: dict[str, list[str]] = {
 
 
 # Missions whose passing something else needs: a way onto an island, a vehicle
-# that spawns afterwards, or a place the mission opens up. Passing a mission is
-# not an item a seed can place, so each of these gets an event location carrying
-# what reaching the mission takes, and the tables below name the event.
+# that spawns afterwards, a place the mission opens up, or a weapon a shop only
+# racks once it passes. Passing a mission is not an item a seed can place, so
+# each of these gets an event location carrying what reaching the mission takes,
+# and the tables below name the event.
 #
 # G-spotlight is a Film Studio mission, so with the properties class off its
 # progressive is not in the pool. Its event still stands: what it costs then is
@@ -1088,6 +1094,9 @@ MISSION_REGION_REQUIREMENTS: dict[str, list[str]] = {
 # player's call on how the class-off case should read.
 ROUTE_MISSIONS: list[str] = [
     "All Hands On Deck!", "Phnom Penh '86", "Rub Out", "G-spotlight",
+    "Jury Fury", "Riot", "Treacherous Swine", "Mall Shootout",
+    "Guardian Angels", "Four Iron", "The Chase", "Trojan Voodoo",
+    "Loose Ends", "Shakedown", "Bar Brawl",
 ]
 
 # Where the audit names a mission a check waits on, read off the sheet row by
@@ -1264,25 +1273,33 @@ PICKUP_HANDLE_GLOBALS: list[int] = pickup_data.PICKUP_HANDLE_GLOBALS
 # slot's completion global, which the ASI already reads like any other check.
 MOD_REPORTS_PICKUPS: bool = True
 
-# What is still NOT audited: the reach terms. Each slot sits on its verified
-# island, but nothing yet says a rooftop slot needs Jump or a ship needs a
-# boat, the way 23 audited packages and rampages do. That is data the hand
-# audit adds to the requirement tables, not a flag anything reads, which is
-# why there is no flag here for it.
+# The reach terms are audited now too, and they are in
+# PICKUP_ABILITY_REQUIREMENTS, PICKUP_ABILITY_ALTERNATIVES and
+# PICKUP_MISSION_REQUIREMENTS below: 20 of the 110 slots carry one and the rest
+# are walked to. Twenty and not twenty-one, because the Viceport bridge rail is
+# in the first two tables at once. Data in the requirement tables rather than a
+# flag anything reads, which is why there is no flag here for it.
 
 
 # One check per slot, so the count is the slot table's and not a number written
 # down twice.
 PICKUP_COUNT: int = len(pickup_data.PICKUP_SLOTS)
 
-# The derived district table must cover the slot table exactly. The zip below is
-# strict, so either table being longer raises there on its own, and this assert
-# adds no safety the zip lacks. It is kept for its message: the zip names an
-# argument number and which way it is wrong, while this names the two counts,
-# which is what tells the incoming hand audit what it left the wrong length.
+# The district table must cover the slot table exactly. The zip in the region
+# derivation is strict, so either table being longer raises there on its own,
+# and this assert adds no safety that lacks. It is kept for its message: the zip
+# names an argument number and which way it is wrong, while this names the two
+# counts, which is what tells a re-audit what it left the wrong length.
 assert len(district_data.PICKUP_DISTRICTS) == PICKUP_COUNT, (
     f"{len(district_data.PICKUP_DISTRICTS)} pickup districts for "
     f"{PICKUP_COUNT} slots"
+)
+# The name table the same way. Both are keyed by slot index and neither derives
+# from the other, so a table the wrong length renames every slot past the gap,
+# and a name table that is LONGER goes unnoticed otherwise: the region loop walks
+# range(PICKUP_COUNT) and drops the extras without a word.
+assert len(pickup_data.PICKUP_NAMES) == PICKUP_COUNT, (
+    f"{len(pickup_data.PICKUP_NAMES)} pickup names for {PICKUP_COUNT} slots"
 )
 
 # The ten in-shop stands charge for what they give, so their checks need the
@@ -1331,46 +1348,13 @@ def pickup_handle_global(index: int) -> int:
     return pickup_data.PICKUP_HANDLE_GLOBALS[index]
 
 
-def _pickup_names() -> list[str]:
-    """One name per slot, numbered only where district and item are not enough.
-
-    The district is what tells a player where to go, but 55 of the 110 share a
-    district and an item: five read "Pickup - Downtown - Health" on their own.
-    Those take a numeric suffix, which is PROVISIONAL. The hand audit replaces it
-    with a landmark the way the package names read. A corrected district can also
-    make a stem that was unique collide, or free one that collided, so the audit
-    can rename a slot that carries no suffix today and renumber the group it
-    joins. Two model names already end in a space and two digits, S.P.A.S. 12 and
-    Ingram Mac 10, which is exactly the shape a suffix takes, so a name ending
-    that way is not by itself a suffixed one. Several more end in a digit without
-    the space, M4 and M60 and Tec-9 among them, and those cannot collide.
-
-    The item half is the slot's VANILLA model and stays that way whatever
-    randomize_pickups rolls, so with that option on a slot named for a health
-    heart can hand over a shotgun. Names key the id table, so they cannot depend
-    on the seed; what the name promises is the place, not the prize.
-    """
-    stems = [
-        f"Pickup - {district} - {PICKUP_MODEL_NAMES[model]}"
-        for district, (_x, _y, _z, _pickup_type, model, _ammo)
-        in zip(district_data.PICKUP_DISTRICTS, pickup_data.PICKUP_SLOTS,
-               strict=True)
-    ]
-    shared: dict[str, int] = {}
-    for stem in stems:
-        shared[stem] = shared.get(stem, 0) + 1
-    seen: dict[str, int] = {}
-    names: list[str] = []
-    for stem in stems:
-        if shared[stem] == 1:
-            names.append(stem)
-            continue
-        seen[stem] = seen.get(stem, 0) + 1
-        names.append(f"{stem} {seen[stem]:02d}")
-    return names
-
-
-PICKUP_NAMES: list[str] = _pickup_names()
+# One name per slot, from the hand audit, the way the package names read: the
+# district the slot is in and then where in it to look, so a name alone takes a
+# player to the pickup.
+#
+# The district the name says is the district table's own, and a test compares
+# them slot by slot, since the two came from one audit and are stored apart.
+PICKUP_NAMES: list[str] = list(pickup_data.PICKUP_NAMES)
 
 
 def pickup_name(index: int) -> str:
@@ -1461,14 +1445,13 @@ RAMPAGE_ABILITY_EXTRAS: dict[int, list[str]] = {
     23: [LAND_VEHICLES_ITEM],
 }
 
-# Packages a player cannot simply walk to: five need a jump, one of them over the
-# wall around the Starfish northeast pool, and three are only reachable from the
-# air.
+# Packages a player cannot simply walk to. Four need a jump and one an aircraft
+# outright; the other four the audit used to put here are one-of rows instead,
+# and they are in PACKAGE_ABILITY_ALTERNATIVES: 21 and 40 because a helicopter
+# has to come from somewhere and a route is what says where, and 54 because the
+# wall around the Starfish northeast pool can be flown over as well as jumped.
 PACKAGE_ABILITY_REQUIREMENTS: dict[int, list[str]] = {
     18: [JUMP_ITEM],
-    21: [AIR_VEHICLES_ITEM],
-    40: [AIR_VEHICLES_ITEM],
-    54: [JUMP_ITEM],
     57: [JUMP_ITEM],
     74: [JUMP_ITEM],
     81: [AIR_VEHICLES_ITEM],
@@ -1500,15 +1483,36 @@ MISSION_ABILITY_ALTERNATIVES: dict[str, list[list[str]]] = {
     "Hit the Courier": [[LAND_VEHICLES_ITEM], [AIR_VEHICLES_ITEM]],
 }
 
+# The five ways onto Leaf Links the audit gives, which the golf course's five
+# packages and its three ambient pickups all carry: drive in, fly in, sail in,
+# jump the fence, or walk in through the gate Four Iron opens.
+LEAF_LINKS_ROUTES: list[list[str]] = [
+    [LAND_VEHICLES_ITEM],
+    [AIR_VEHICLES_ITEM],
+    [SEA_VEHICLES_ITEM],
+    [JUMP_ITEM],
+    [mission_passed_item_name("Four Iron")],
+]
+
 # Packages that can be got at more than one way: the first two sit out in the
-# water, the rest are on roofs a car can be jumped off or a helicopter landed on.
+# water, most of the rest are on roofs a car can be jumped off or a helicopter
+# landed on, and five are inside Leaf Links.
 PACKAGE_ABILITY_ALTERNATIVES: dict[int, list[list[str]]] = {
     3: [[AIR_VEHICLES_ITEM], [SEA_VEHICLES_ITEM]],
     4: [[AIR_VEHICLES_ITEM], [SEA_VEHICLES_ITEM]],
     7: [[AIR_VEHICLES_ITEM], [LAND_VEHICLES_ITEM]],
     12: [[AIR_VEHICLES_ITEM], [LAND_VEHICLES_ITEM]],
+    21: [[AIR_VEHICLES_ITEM]],
+    25: [[AIR_VEHICLES_ITEM], [mission_passed_item_name("Treacherous Swine")]],
+    40: [[AIR_VEHICLES_ITEM]],
     41: [[AIR_VEHICLES_ITEM], [LAND_VEHICLES_ITEM]],
     42: [[AIR_VEHICLES_ITEM], [LAND_VEHICLES_ITEM]],
+    46: LEAF_LINKS_ROUTES,
+    47: LEAF_LINKS_ROUTES,
+    48: LEAF_LINKS_ROUTES,
+    49: LEAF_LINKS_ROUTES,
+    50: LEAF_LINKS_ROUTES,
+    54: [[AIR_VEHICLES_ITEM], [JUMP_ITEM]],
     65: [[AIR_VEHICLES_ITEM], [LAND_VEHICLES_ITEM]],
     86: [[AIR_VEHICLES_ITEM], [LAND_VEHICLES_ITEM], [SPRINT_ITEM, JUMP_ITEM]],
     89: [[AIR_VEHICLES_ITEM], [LAND_VEHICLES_ITEM]],
@@ -1516,6 +1520,51 @@ PACKAGE_ABILITY_ALTERNATIVES: dict[int, list[list[str]]] = {
     92: [[AIR_VEHICLES_ITEM], [LAND_VEHICLES_ITEM]],
     100: [[AIR_VEHICLES_ITEM], [LAND_VEHICLES_ITEM]],
 }
+
+# The ambient pickup slots the audit gives a reach term, by slot index. Walking
+# over a pickup takes nothing; getting to one is the question these answer, and
+# only the slots the audit writes a term on are here.
+#
+# The three bribes are over ramps a car has to take, and the Viceport sniper is
+# on the bridge rail, which takes a jump and then either a car to jump off or a
+# sprint into it.
+PICKUP_ABILITY_REQUIREMENTS: dict[int, list[str]] = {
+    8: [LAND_VEHICLES_ITEM],
+    10: [LAND_VEHICLES_ITEM],
+    12: [LAND_VEHICLES_ITEM],
+    41: [JUMP_ITEM],
+}
+
+# The pickup slots with several ways in, same shape as the package table. Three
+# are inside Leaf Links and one is the Viceport bridge rail, reached off a car or
+# at a run; the other ten are roofs, which is why so many read "a helicopter or
+# the mission that leaves one standing there".
+PICKUP_ABILITY_ALTERNATIVES: dict[int, list[list[str]]] = {
+    22: [[AIR_VEHICLES_ITEM], [JUMP_ITEM]],
+    31: [[AIR_VEHICLES_ITEM], [LAND_VEHICLES_ITEM]],
+    33: LEAF_LINKS_ROUTES,
+    41: [[LAND_VEHICLES_ITEM], [SPRINT_ITEM]],
+    46: [[AIR_VEHICLES_ITEM], [LAND_VEHICLES_ITEM]],
+    59: LEAF_LINKS_ROUTES,
+    64: [[AIR_VEHICLES_ITEM], [LAND_VEHICLES_ITEM]],
+    65: [[AIR_VEHICLES_ITEM], [mission_passed_item_name("G-spotlight")]],
+    66: [[AIR_VEHICLES_ITEM], [mission_passed_item_name("Trojan Voodoo")]],
+    69: [[AIR_VEHICLES_ITEM], [mission_passed_item_name("Loose Ends")]],
+    85: LEAF_LINKS_ROUTES,
+    86: [[AIR_VEHICLES_ITEM], [LAND_VEHICLES_ITEM]],
+    87: [[AIR_VEHICLES_ITEM], [mission_passed_item_name("G-spotlight")]],
+    103: [[AIR_VEHICLES_ITEM], [LAND_VEHICLES_ITEM]],
+}
+
+# The three pickup slots inside Diaz's mansion, which is shut until Rub Out
+# hands the place over. Their island is Starfish either way; what this adds is
+# the mission, which is the whole of the audit's row for them.
+PICKUP_MISSION_REQUIREMENTS: dict[int, list[str]] = {
+    61: ["Rub Out"],
+    62: ["Rub Out"],
+    101: ["Rub Out"],
+}
+
 
 # Two rampages whose icon cannot be walked to. There are four rocket launcher
 # rampages and two of them are in Viceport, so these are named by index and by
@@ -1595,6 +1644,7 @@ def sourced_route_locations() -> frozenset[str]:
     return frozenset(
         [hidden_package_name(index) for index in PACKAGE_ABILITY_ALTERNATIVES]
         + [rampage_name(index) for index in RAMPAGE_ABILITY_ALTERNATIVES]
+        + [pickup_name(index) for index in PICKUP_ABILITY_ALTERNATIVES]
     )
 
 
@@ -1614,6 +1664,8 @@ def location_ability_alternatives() -> dict[str, list[list[str]]]:
         alternatives[hidden_package_name(index)] = [list(route) for route in routes]
     for index, routes in RAMPAGE_ABILITY_ALTERNATIVES.items():
         alternatives[rampage_name(index)] = [list(route) for route in routes]
+    for index, routes in PICKUP_ABILITY_ALTERNATIVES.items():
+        alternatives[pickup_name(index)] = [list(route) for route in routes]
     return alternatives
 
 
@@ -1630,7 +1682,7 @@ def location_ability_requirements() -> dict[str, list[str]]:
     robbing a store takes aiming a
     weapon (bare fists cannot); a weapon rampage wields its handed weapon while
     the two run-them-down rampages take a land vehicle, with five rampages
-    needing more than that; seven hidden packages cannot be walked to; a
+    needing more than that; five hidden packages cannot be walked to; a
     safehouse purchase takes holdable money (a business purchase carries
     the wallet through the property-sale requirements instead); and each Sunshine
     Autos race is driven in the player's own car, since the launcher takes them
@@ -1653,40 +1705,21 @@ def location_ability_requirements() -> dict[str, list[str]]:
     for index in range(1, ROBBABLE_STORE_COUNT + 1):
         requirements[robbable_store_name(index)] = [WEAPON_EQUIP_ITEM]
     # Walking over a pickup takes no ability, so nothing here is about TAKING
-    # one. Reaching one is a different question and this table does not answer
-    # it yet. The shipped audit puts a REACH term on 23 places: 19 of the 100
-    # packages, through PACKAGE_ABILITY_REQUIREMENTS and the one-of routes in
-    # PACKAGE_ABILITY_ALTERNATIVES, and 4 of the 35 rampages, being 14 and 19
-    # plus the two in RAMPAGE_ABILITY_ALTERNATIVES. The other three rampages
-    # carrying a term are the drive-bys, and needing a car to DO a rampage is not
-    # needing one to reach its icon, which is the distinction this paragraph is
-    # about. The 23 are roofs, water, a billboard, a pool, an airplane, a ship,
-    # the inside of a mall shop, and one under a sculpture. Ambient slots sit in
-    # the same city and some sit in the same kind of place, so the hundred
-    # ordinary slots carry no term because none is KNOWN, not because none can
-    # exist.
-    #
-    # THIS SHIPS, and nothing guards it. There is no refusal in generate_early
-    # and the pickups are ordinary locations that may hold progression, so a
-    # missing term here is a seed that can dead-end: the fill is entitled to put
-    # a progression item on a rooftop slot whose way up the seed has not handed
-    # over. enable_pickups says so in its own help text.
-    #
-    # It ships that way on purpose. The walk that resolves it needs the checks
-    # live to walk to, and holding the pickups to filler until then was what made
-    # story missions plus pickups alone refuse to generate, since it left the fill
-    # nowhere to put progression at all.
-    #
-    # The hand audit is what resolves it, by walking all 110 and filling the
-    # needs_ability column in notes/pickup-audit.csv. Nothing here guesses which
-    # slots need a term: a derived shortlist would only tell the walk what to
-    # expect, and an unflagged slot would read as settled when nothing had
-    # checked it.
+    # one. Reaching one is a different question, and the hand audit has now
+    # answered it for all 110: 20 slots carry a reach term and the rest are
+    # walked to. A slot with no term is one the audit walked and found free,
+    # which is what it could not say while the terms were unwritten and the
+    # fill was entitled to put progression on a rooftop nothing opened.
     #
     # The ten in-shop stands charge for what they give, and with the wallet key
     # selected the money pins to zero, so those alone wait on the Wallet item.
     for index in PICKUP_PAY_STAND_INDICES:
         requirements[pickup_name(index)] = [WALLET_ITEM]
+    # Then the reach terms the hand audit found, added to whatever a slot
+    # already carries, since a pay stand can also be somewhere hard to get to.
+    for index, items_needed in PICKUP_ABILITY_REQUIREMENTS.items():
+        requirements[pickup_name(index)] = [
+            *requirements.get(pickup_name(index), []), *items_needed]
     # Every shop item is bought, and with the wallet key selected the money pins
     # to zero, so all 32 wait on the Wallet item. Amounts still gate nothing: the
     # dearest is 6000 dollars and money is grindable once Tommy can hold it.
@@ -1714,6 +1747,12 @@ SOURCED_ROUTE_LOCATIONS: frozenset[str] = sourced_route_locations()
 LOCATION_MISSION_REQUIREMENTS: dict[str, list[str]] = {
     **CHOPPER_MISSION_REQUIREMENTS,
     **stunt_jump_mission_requirements(),
+    **{pickup_name(index): list(missions)
+       for index, missions in PICKUP_MISSION_REQUIREMENTS.items()},
+    **{shop_data.shop_item_name(item): [shop_data.SHOP_STOCK_MISSIONS[key]]
+       for item in shop_data.SHOP_ITEMS
+       for key in [(item.thread, item.script_global)]
+       if key in shop_data.SHOP_STOCK_MISSIONS},
 }
 
 

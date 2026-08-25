@@ -2143,6 +2143,9 @@ CONTENT_UNLOCK_BASE = 9598
 # Three of the five classes are pickups, so holding them belongs to the ASI and
 # the script needs nothing for them. The other two have no icon to hold, so
 # their gates belong to the script, and these are the globals those gates read.
+# The districts holding lockable content, scm.DISTRICT_KEYS order, which is not
+# quite district_data.DISTRICTS: the Junk Yard is a district a pickup name says
+# and nothing here can gate, so it has no column.
 DISTRICT_UNLOCK_BASE = 9603
 DISTRICTS = [
     "Ocean Beach", "Washington Beach",

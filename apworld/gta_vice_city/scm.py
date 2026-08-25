@@ -163,7 +163,14 @@ CONTENT_UNLOCK_BASE = CONTENT_LOCK_FLAG_BASE + len(CONTENT_KEYS)
 
 # District content unlock globals: one per class per district, a uniform grid
 # rather than only the pairs that hold something, so a class and a district
-# index by formula and the block's size never depends on the audit.
+# index by formula.
+#
+# The districts here are the ones holding something a content key covers, not
+# every district on the map. The Junk Yard is the difference: it holds two
+# ambient pickups and nothing of the five classes, so no gate could ever read
+# its column and reserving one would push the block into the marker scratch for
+# a district with nothing to hold. Every district that HAS content of a class
+# still gets its cell, empty pairs included, so the formula stands.
 #
 # These are what the game actually reads, at every granularity. An item releases
 # the globals it covers (content_district_globals below), so a whole-class item
@@ -171,7 +178,7 @@ CONTENT_UNLOCK_BASE = CONTENT_LOCK_FLAG_BASE + len(CONTENT_KEYS)
 # seed chose: one code path, and no gate has to ask. The per-class unlock
 # globals above stay, still driven by item_globals, since they are what tells the
 # ASI a whole class went at once for its own status listing.
-DISTRICT_KEYS: list[str] = list(district_data.DISTRICTS)
+DISTRICT_KEYS: list[str] = list(data.CONTENT_DISTRICTS)
 DISTRICT_UNLOCK_BASE = CONTENT_UNLOCK_BASE + len(CONTENT_KEYS)
 DISTRICT_UNLOCK_COUNT = len(CONTENT_KEYS) * len(DISTRICT_KEYS)
 

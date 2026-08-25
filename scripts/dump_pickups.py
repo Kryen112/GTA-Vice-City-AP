@@ -19,6 +19,10 @@ module holds coordinates, model and pickup-type ids, the global each creation
 stores its pickup handle in, and the in-game name of each model that appears, so
 that the world can name a location after what stands there.
 
+One table in it is NOT derived. PICKUP_NAMES is the hand audit's own and lives
+nowhere else, so a run carries the existing one forward and refuses when its
+length no longer matches the slot table.
+
 Usage:
     python scripts/dump_pickups.py path/to/clean.txt apworld/gta_vice_city/pickup_data.py
 """
@@ -26,6 +30,7 @@ Usage:
 from __future__ import annotations
 
 import math
+import pathlib
 import re
 import sys
 
@@ -173,8 +178,54 @@ def check_separation(slots: list[tuple[float, float, float, int, int, int]]) -> 
     return minimum
 
 
+NAME_TABLE = re.compile(r"^PICKUP_NAMES: list\[str\] = \[\n(.*?)^\]$",
+                        re.MULTILINE | re.DOTALL)
+NAME_ROW = re.compile(r'^    "(.*)",$', re.MULTILINE)
+
+
+def carried_names(output_path: str, expected: int) -> list[str]:
+    """The hand-audited PICKUP_NAMES already in the module, carried forward.
+
+    The names come from the walk of all 110 slots and are in no decompile, so
+    there is nothing to re-derive them from. A run that dropped them would
+    destroy the audit silently; instead they are read back out of the file being
+    replaced, and anything short of a table this run can reproduce refuses the
+    run rather than writing one that has slipped against its coordinates.
+
+    Three ways to lose them and only one is a count: a table the wrong length, a
+    table this cannot see at all, and a row a hand edit or a formatter wrapped
+    across two lines, which reads as one row whose name is the tail fragment.
+    All three refuse, which is why every line inside the table has to match and
+    not merely enough of them. Writing the module for the first time is the one
+    quiet case, and it is the one where the file is not there at all.
+    """
+    source = pathlib.Path(output_path)
+    try:
+        text = source.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return []
+    table = NAME_TABLE.search(text)
+    if table is None:
+        raise SystemExit(
+            f"# {output_path} is there and holds no PICKUP_NAMES this can read, "
+            f"so the hand audit would be dropped. Restore the table, or delete "
+            f"the file if the names really are meant to go.")
+    body = [line for line in table.group(1).splitlines() if line.strip()]
+    names = NAME_ROW.findall(table.group(1))
+    if len(names) != len(body):
+        raise SystemExit(
+            f"# {output_path} has {len(body) - len(names)} line(s) inside "
+            f"PICKUP_NAMES this cannot read as a name, most likely a row wrapped "
+            f"across two lines, and reading past them would truncate a name")
+    if len(names) != expected:
+        raise SystemExit(
+            f"# {output_path} holds {len(names)} pickup names for {expected} "
+            f"slots, refusing rather than writing a table out of step")
+    return names
+
+
 def render_module(slots: list[tuple[float, float, float, int, int, int]],
-                  handles: list[int]) -> str:
+                  handles: list[int], names: list[str]) -> str:
     lines = [MODULE_DOCSTRING, "", "from __future__ import annotations", ""]
     lines.append("PICKUP_SLOTS: list[tuple[float, float, float, int, int, int]] = [")
     for x, y, z, pickup_type, model, ammo in slots:
@@ -199,6 +250,17 @@ def render_module(slots: list[tuple[float, float, float, int, int, int]],
         lines.append(f"    {row},")
     lines.append("]")
     lines.append("")
+    if names:
+        lines.append(
+            "# The name of each slot, from the hand audit of every location, in\n"
+            "# PICKUP_SLOTS order. Not from the decompile, which says nothing about\n"
+            "# where a slot is in words: this table is carried forward across a\n"
+            "# regeneration. The district half is the audit's own, so\n"
+            "# district_data.PICKUP_DISTRICTS says the same one.")
+        lines.append("PICKUP_NAMES: list[str] = [")
+        lines.extend(f'    "{name}",' for name in names)
+        lines.append("]")
+        lines.append("")
     lines.append("BRIBE_MODEL = 375")
     lines.append("SHOP_PICKUP_TYPE = 1")
     lines.append("")
@@ -230,6 +292,9 @@ def main(source_path: str, output_path: str) -> int:
         print("# pair closer than the matching tolerance allows, refusing",
               file=sys.stderr)
         return 1
+    # Read before the open below truncates the file the names are in.
+    names = carried_names(output_path, len(slots))
+    print(f"# carried {len(names)} audited names forward", file=sys.stderr)
 
     # CRLF unconditionally, matching the tree. Writing LF into a CRLF tree makes
     # a regenerated file a whole-file diff that hides the real change. Reading
@@ -238,7 +303,7 @@ def main(source_path: str, output_path: str) -> int:
     # that machine forever. The decompile is read the other way, detecting its
     # endings, because that file belongs to someone else; this one is ours.
     with open(output_path, "w", encoding="utf-8", newline="\r\n") as handle:
-        handle.write(render_module(slots, handles))
+        handle.write(render_module(slots, handles, names))
     return 0
 
 

@@ -112,18 +112,12 @@ class EnablePickups(Toggle):
 
     Off by default, because 110 extra checks change how a game plays. The 100
     percent goal ignores them, since the game never counted a health pickup off
-    the street.
-
-    LOGIC IS INCOMPLETE. A few pickups need something to reach, a boat or a way
-    onto a roof, and the rules do not know that yet. Play with a way to release
-    items from the server in case one dead-ends."""
+    the street."""
     display_name = "Enable pickups"
-    # Offered with the reach terms still missing, deliberately, because the walk
-    # that writes them needs the checks live to walk to. The pickups were held to
-    # filler for exactly this reason once; that came off at the player's word so
-    # story missions plus pickups alone could generate, which the filler rule
-    # refused for want of anywhere to put progression. The docstring says so
-    # plainly rather than leaving it a surprise.
+    # The reach terms were missing when this shipped, deliberately, because the
+    # walk that writes them needed the checks live to walk to. That walk has
+    # happened: 20 of the 110 carry a term now and the rest are walked to, so
+    # the docstring no longer warns about a pickup that can dead-end.
 
 
 class ShuffleShops(Toggle):

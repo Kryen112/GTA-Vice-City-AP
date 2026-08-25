@@ -49,6 +49,16 @@ from ..options import (
     EnableSideEvents,
 )
 
+_ALL_ABILITY_LOCKS: list[str] = [
+    "sprint", "jump", "crouch", "vehicles", "weapon_equip", "wallet",
+]
+
+_ALL_CONTENT_LOCKS: list[str] = [
+    "hidden_packages", "rampages", "stunt_jumps", "properties",
+    "robbable_stores",
+]
+
+
 # The fields _restore_options reads unconditionally, so a passthrough test only
 # has to name what it is actually about.
 _TRACKER_SLOT_DATA: dict = {
@@ -61,6 +71,35 @@ _TRACKER_SLOT_DATA: dict = {
 class TestDefault(WorldTestBase):
     game = "Grand Theft Auto Vice City"
     # Default options: final-mission goal, hidden packages on.
+
+    def test_a_sourced_route_binds_with_no_ability_key_selected(self) -> None:
+        # A route's VEHICLE drops out when its key is unselected, since the item
+        # is not in the pool and the vehicle is free; the SOURCE does not, and
+        # that is the half these three packages are about. Three start-island
+        # roofs the audit reaches only by helicopter, and no helicopter is on the
+        # start island until the mainland opens or Rub Out leaves the Vice Point
+        # Sparrow. So they gate on the mainland in a DEFAULT seed, where nothing
+        # is locked at all, which is the case every other route test misses by
+        # running with the keys on.
+        roofs = [data.hidden_package_name(index) for index in (21, 25, 40)]
+        for name in roofs:
+            self.assertFalse(self.can_reach_location(name), name)
+        self.collect_by_name(["Mainland Access"])
+        for name in roofs:
+            self.assertTrue(self.can_reach_location(name), name)
+
+    def test_a_route_of_only_free_abilities_gates_nothing(self) -> None:
+        # The other half of the same rule, and the reason the three above are
+        # not simply mainland checks: a route naming only ability items is free
+        # once none of them is locked, so the whole requirement is dropped. Two
+        # of Leaf Links' five are that, the car and the fence, and either alone
+        # opens the golf course in a default seed. The other three are not: the
+        # helicopter and the boat carry a source, and Four Iron is a mission, so
+        # a route can name something that is not an ability and still bind, which
+        # is exactly what the test above is about.
+        for index in (46, 47, 48, 49, 50):
+            name = data.hidden_package_name(index)
+            self.assertTrue(self.can_reach_location(name), name)
 
 
 class TestHiddenPackagesGoal(WorldTestBase):
@@ -632,6 +671,15 @@ class TestHundredPercentWithPickups(WorldTestBase):
 # The one shop item whose stock, not whose shop, waits on the crossing.
 CROSSING_STOCKED_SHOP_ITEM = "Shop - Vice Point - Ammu-Nation - Sniper Rifle"
 
+# The items a shop only racks once a mission has passed, read off the same table
+# the rules read, since the point of these tests is what reaching one costs and
+# not which rows the table holds; test_a_mission_a_check_waits_on_has_an_event
+# is where the membership is written out.
+STOCK_GATED_SHOP_ITEMS = frozenset(
+    data.shop_data.shop_item_name(item) for item in data.shop_data.SHOP_ITEMS
+    if (item.thread, item.script_global) in data.shop_data.SHOP_STOCK_MISSIONS
+)
+
 
 class TestShops(WorldTestBase):
     game = "Grand Theft Auto Vice City"
@@ -693,8 +741,11 @@ class TestShops(WorldTestBase):
         for name in data.shop_data.SHOP_ITEM_NAMES:
             self.assertFalse(self.can_reach_location(name), name)
         self.collect_by_name([data.WALLET_ITEM])
+        # Thirteen more wait on the mission that racks them, which no item can
+        # hand over, so the wallet opens the other nineteen and stops there.
         for name in data.shop_data.SHOP_ITEM_NAMES:
-            self.assertTrue(self.can_reach_location(name), name)
+            self.assertEqual(self.can_reach_location(name),
+                             name not in STOCK_GATED_SHOP_ITEMS, name)
 
     def test_a_mainland_shop_also_needs_the_crossing(self) -> None:
         # The eleven Downtown and Little Havana items wait on the crossing as
@@ -704,8 +755,22 @@ class TestShops(WorldTestBase):
         self.collect_by_name([data.WALLET_ITEM])
         for name in data.shop_data.SHOP_ITEM_NAMES:
             waits = (" - Downtown - " in name or " - Little Havana - " in name
-                     or name == CROSSING_STOCKED_SHOP_ITEM)
+                     or name == CROSSING_STOCKED_SHOP_ITEM
+                     or name in STOCK_GATED_SHOP_ITEMS)
             self.assertEqual(self.can_reach_location(name), not waits, name)
+
+    def test_a_stock_gated_item_opens_with_its_mission(self) -> None:
+        # The gate is the mission, not the shop: the Ocean Beach shotgun sits on
+        # the starting island beside two items the wallet alone opens, and waits
+        # for Mall Shootout because that is what puts it on the rack.
+        self.collect_by_name([data.WALLET_ITEM])
+        shotgun = "Shop - Ocean Beach - Ammu-Nation - Shotgun"
+        self.assertIn(shotgun, STOCK_GATED_SHOP_ITEMS)
+        self.assertFalse(self.can_reach_location(shotgun))
+        # Two Cortez progressives reach Mall Shootout, and passing it takes the
+        # car and the weapon its own row names.
+        self.collect_by_name(["Progressive Cortez", "Progressive Cortez"])
+        self.assertTrue(self.can_reach_location(shotgun))
 
     def test_a_shop_sits_on_the_island_it_stands_in(self) -> None:
         # Two of the six shops are on the mainland, so eleven of the thirty two
@@ -800,9 +865,19 @@ class TestPickupChecksOn(WorldTestBase):
         # island it stands on and nothing else. Asserted against the region rather
         # than a list of items, because naming the items would restate the area
         # rules here and pass while saying nothing about the pickups.
+        #
+        # Ordinary means the pay stands are out, since those want the wallet, and
+        # so are the three inside Diaz's mansion, which want Rub Out passed: an
+        # island is not the whole of what reaching those costs. The audit's
+        # several-routes slots stay in: with no ability key selected most of them
+        # have a route of ability items alone, which is then free, and the four
+        # whose other route names a mission keep a threshold that their own
+        # region already satisfies, since all four are mainland slots and the
+        # mainland is one of the sources the air route resolves to.
         ordinary = [(name, data.pickup_region(index))
                     for index, name in enumerate(data.PICKUP_NAMES)
-                    if index not in data.PICKUP_PAY_STAND_INDICES]
+                    if index not in data.PICKUP_PAY_STAND_INDICES
+                    and index not in data.PICKUP_MISSION_REQUIREMENTS]
         self.assertEqual({region for _name, region in ordinary},
                          {data.REGION_VICE_CITY, data.REGION_MAINLAND,
                           data.REGION_STARFISH})
@@ -820,11 +895,114 @@ class TestPickupChecksOn(WorldTestBase):
                        data.REGION_STARFISH):
             self.assertTrue(self.can_reach_region(region), region)
 
+    def test_the_mansion_pickups_wait_for_rub_out(self) -> None:
+        # The three inside Diaz's mansion are the exception to the rule above:
+        # the island is open and the front door is not, so reaching the island
+        # is not enough and the mission that hands the mansion over is the term.
+        self.collect_by_name(["Mainland Access", "Starfish Island Access"])
+        mansion = [data.pickup_name(index)
+                   for index in data.PICKUP_MISSION_REQUIREMENTS]
+        self.assertEqual(len(mansion), 3)
+        for name in mansion:
+            self.assertTrue(self.can_reach_region(LOCATION_REGIONS[name]), name)
+            self.assertFalse(self.can_reach_location(name), name)
+        # Rub Out is Diaz's fifth, and passing it is what the event stands for.
+        self.collect_by_name(["Progressive Diaz"] * 5
+                             + ["Progressive Cortez"] * 4
+                             + ["Progressive Death Row"])
+        for name in mansion:
+            self.assertTrue(self.can_reach_location(name), name)
+
     def test_slot_data_carries_the_class(self) -> None:
         # The played seed has to record the setting, for a tracker regeneration
         # and for whatever the client chooses to forward. Forwarding it to the
         # ASI is a separate step in client/context.py and belongs to the mod half.
         self.assertTrue(self.world.fill_slot_data()["enable_pickups"])
+
+
+class TestPickupReach(WorldTestBase):
+    # The pickup checks with every ability locked, which is where the audit's
+    # reach terms bind hardest. TestDefault covers the other case, the routes
+    # that still bind with no key selected because a source is not an ability.
+    game = "Grand Theft Auto Vice City"
+    options: ClassVar[dict] = {
+        "enable_pickups": True,
+        "ability_locks": _ALL_ABILITY_LOCKS,
+    }
+
+    def test_the_audited_pickups_need_what_reaching_them_takes(self) -> None:
+        # The reach terms the pickup audit added. The counts are pinned because
+        # the other ninety-odd slots carrying nothing is the claim that matters:
+        # a slot with no term is one the audit walked and found free, not one
+        # nobody looked at.
+        self.assertEqual(len(data.PICKUP_ABILITY_REQUIREMENTS), 4)
+        self.assertEqual(len(data.PICKUP_ABILITY_ALTERNATIVES), 14)
+        for index, items in data.PICKUP_ABILITY_REQUIREMENTS.items():
+            name = data.pickup_name(index)
+            with self.subTest(pickup=name):
+                for item in items:
+                    self.assertIn(item, data.LOCATION_ABILITY_REQUIREMENTS[name])
+        # The Viceport sniper is the one slot in both tables: on the bridge rail,
+        # so a jump outright and then either a car to jump from or a run-up.
+        sniper = data.pickup_name(41)
+        self.assertIn(data.JUMP_ITEM, data.LOCATION_ABILITY_REQUIREMENTS[sniper])
+        self.assertEqual(data.LOCATION_ABILITY_ALTERNATIVES[sniper],
+                         [[data.LAND_VEHICLES_ITEM], [data.SPRINT_ITEM]])
+        self.collect_by_name(["Mainland Access", data.JUMP_ITEM])
+        self.assertFalse(self.can_reach_location(sniper))
+        self.collect_by_name([data.SPRINT_ITEM])
+        self.assertTrue(self.can_reach_location(sniper))
+
+    def test_the_leaf_links_pickups_take_the_same_five_ways_in(self) -> None:
+        # The three ambient slots inside the golf course carry the package
+        # table's routes, so the wall is one fact and not two.
+        inside = [data.pickup_name(index) for index in (33, 59, 85)]
+        for name in inside:
+            self.assertEqual(data.LOCATION_ABILITY_ALTERNATIVES[name],
+                             data.LEAF_LINKS_ROUTES)
+            self.assertFalse(self.can_reach_location(name), name)
+        self.collect_by_name([data.JUMP_ITEM])
+        for name in inside:
+            self.assertTrue(self.can_reach_location(name), name)
+
+    def test_a_roof_pickup_takes_the_helicopter_or_the_mission(self) -> None:
+        # Four slots the audit reaches by air or by the mission that leaves an
+        # aircraft standing there. The mission side is what makes them worth
+        # writing down: with the vehicles key selected and no helicopter placed,
+        # the mission is the only way and a bare Air Vehicles term would have hidden
+        # that.
+        roofs = {
+            data.pickup_name(65): "G-spotlight",
+            data.pickup_name(66): "Trojan Voodoo",
+            data.pickup_name(69): "Loose Ends",
+            data.pickup_name(87): "G-spotlight",
+        }
+        self.collect_by_name(["Mainland Access"])
+        for name, mission in roofs.items():
+            with self.subTest(pickup=name):
+                self.assertEqual(
+                    data.LOCATION_ABILITY_ALTERNATIVES[name],
+                    [[data.AIR_VEHICLES_ITEM],
+                     [data.mission_passed_item_name(mission)]])
+                self.assertIn(mission, data.ROUTE_MISSIONS)
+                self.assertFalse(self.can_reach_location(name), name)
+        # The mission half first, with no helicopter anywhere, since that is the
+        # half a bare Air Vehicles term would have hidden. Trojan Voodoo is the
+        # cheapest of the three: Umberto's last, behind Auntie Poulet's third.
+        haitian_factory = data.pickup_name(66)
+        self.collect_by_name(
+            ["Progressive Umberto Robina"] * 4
+            + ["Progressive Auntie Poulet"] * 3
+            + [data.LAND_VEHICLES_ITEM, data.SEA_VEHICLES_ITEM,
+               data.WEAPON_EQUIP_ITEM])
+        self.assertTrue(self.can_reach_location(haitian_factory))
+        for name in roofs:
+            if name != haitian_factory:
+                self.assertFalse(self.can_reach_location(name), name)
+        # And the helicopter opens the other three without their missions.
+        self.collect_by_name([data.AIR_VEHICLES_ITEM])
+        for name in roofs:
+            self.assertTrue(self.can_reach_location(name), name)
 
 
 class TestExclusionSeam(WorldTestBase):
@@ -945,19 +1123,20 @@ class TestPickupDistrictTable(WorldTestBase):
     options: ClassVar[dict] = {"enable_pickups": True}
 
     def test_the_district_table_covers_every_slot(self) -> None:
-        # The strict zip in _pickup_names already raises whichever table is the
-        # longer, so this guards nothing the zip does not; it names the two counts
-        # where the zip names an argument number, which is what tells the hand
-        # audit, the change most likely to leave a table the wrong length, what
-        # it left wrong.
+        # Both tables are keyed by slot index and neither is derived from the
+        # other, so either being the wrong length silently renames or misplaces
+        # every slot after the gap. data.py asserts both counts at import, which
+        # is what actually stops a bad table being used; this names them where
+        # the assert message names a count, and covers the names as well.
         self.assertEqual(len(district_data.PICKUP_DISTRICTS),
                          len(data.PICKUP_SLOTS))
+        self.assertEqual(len(data.PICKUP_NAMES), len(data.PICKUP_SLOTS))
         for district in district_data.PICKUP_DISTRICTS:
             self.assertIn(district, district_data.DISTRICTS, district)
 
     def test_no_pickup_sits_on_the_wrong_island(self) -> None:
-        # The district table is derived and about 90 percent accurate, and through
-        # the region it decides which island gate a check waits behind. An
+        # The district table is the hand audit's, and through the region it
+        # decides which island gate a check waits behind. An
         # intra-island error only misnames a location; a cross-island one puts a
         # check in logic on the start island while the pickup itself sits behind
         # Mainland Access, which is a seed that cannot be finished.
@@ -1027,16 +1206,6 @@ class TestPickupChecksComposeWithTheRandomizer(WorldTestBase):
         self.assertTrue(slot_data["enable_pickups"])
         self.assertTrue(slot_data["randomize_pickups"])
         self.assertEqual(len(slot_data["pickup_layout"]), len(data.PICKUP_SLOTS))
-
-
-_ALL_ABILITY_LOCKS: list[str] = [
-    "sprint", "jump", "crouch", "vehicles", "weapon_equip", "wallet",
-]
-
-_ALL_CONTENT_LOCKS: list[str] = [
-    "hidden_packages", "rampages", "stunt_jumps", "properties",
-    "robbable_stores",
-]
 
 
 class TestAbilityLocksAll(WorldTestBase):
@@ -1284,20 +1453,93 @@ class TestAbilityLocksAll(WorldTestBase):
         self.collect_by_name([data.WEAPON_EQUIP_ITEM])
         self.assertTrue(self.can_reach_location("Vigilante Level 01"))
 
+    def test_leaf_links_has_five_ways_in_and_eight_checks_behind_them(self) -> None:
+        # The golf course is walled, so the audit gives it five ways in and every
+        # check inside carries all five: drive, fly, sail, jump the fence, or walk
+        # through the gate Four Iron opens. One table, so the eight cannot drift
+        # apart, and each of the five is a route on its own rather than a term.
+        self.assertEqual(len(data.LEAF_LINKS_ROUTES), 5)
+        for route in data.LEAF_LINKS_ROUTES:
+            self.assertEqual(len(route), 1)
+        inside = ([data.hidden_package_name(index) for index in (46, 47, 48, 49, 50)]
+                  + [data.pickup_name(index) for index in (33, 59, 85)])
+        for name in inside:
+            with self.subTest(location=name):
+                self.assertEqual(data.LOCATION_ABILITY_ALTERNATIVES[name],
+                                 data.LEAF_LINKS_ROUTES)
+        # Reaching them is asserted on the five packages, the checks this seed
+        # has; TestPickupReach walks the same five ways in for the three pickups.
+        packages = inside[:5]
+        for name in packages:
+            self.assertFalse(self.can_reach_location(name), name)
+        # Any one of the five opens all of them, and the jump is the cheapest.
+        self.collect_by_name([data.JUMP_ITEM])
+        for name in packages:
+            self.assertTrue(self.can_reach_location(name), name)
+
+    def test_a_helicopter_route_says_where_the_helicopter_is(self) -> None:
+        # Two start-island packages read "a helicopter" in the audit and then say
+        # where one is, which is the whole point: holding Air Vehicles is being
+        # ALLOWED to fly, not having something to fly. Left as a bare term they
+        # would be free the moment the vehicles key handed the item over, with no
+        # aircraft within reach.
+        rooftops = [data.hidden_package_name(index) for index in (21, 40)]
+        for name in rooftops:
+            self.assertNotIn(name, data.LOCATION_ABILITY_REQUIREMENTS)
+            self.assertEqual(data.LOCATION_ABILITY_ALTERNATIVES[name],
+                             [[data.AIR_VEHICLES_ITEM]])
+            self.assertIn(name, data.SOURCED_ROUTE_LOCATIONS)
+        self.collect_by_name([data.AIR_VEHICLES_ITEM])
+        for name in rooftops:
+            self.assertFalse(self.can_reach_location(name), name)
+        self.collect_by_name(["Mainland Access"])
+        for name in rooftops:
+            self.assertTrue(self.can_reach_location(name), name)
+
+    def test_the_starfish_pool_wall_can_be_flown_as_well_as_jumped(self) -> None:
+        # Package 54 is the ONE rule this audit pass made looser rather than
+        # stricter: it was a flat Jump and the sheet gives a helicopter beside
+        # it. Written out because a loosening is the direction that strands
+        # items, so if the audit row is wrong this is the test that has to
+        # change with it. Reaching Starfish by air already costs a helicopter
+        # and a way to the mainland, so the air route cannot open the island for
+        # itself and there is no cycle.
+        pool = data.hidden_package_name(54)
+        self.assertEqual(pool,
+                         "Hidden Package - Starfish Island - Northeast pool")
+        self.assertNotIn(pool, data.LOCATION_ABILITY_REQUIREMENTS)
+        self.assertEqual(data.LOCATION_ABILITY_ALTERNATIVES[pool],
+                         [[data.AIR_VEHICLES_ITEM], [data.JUMP_ITEM]])
+        self.collect_by_name(["Starfish Island Access"])
+        self.assertFalse(self.can_reach_location(pool))
+        # Both halves are walked, and the air one is put back afterwards rather
+        # than left standing, since it is the loosening and a test that opened
+        # the pool by jumping would say nothing about it.
+        jump = self.collect_by_name([data.JUMP_ITEM])
+        self.assertTrue(self.can_reach_location(pool))
+        self.remove(jump)
+        self.assertFalse(self.can_reach_location(pool))
+        # A helicopter with nowhere to have come from does not open it: the route
+        # is sourced, so it only pays once the mainland is reachable.
+        self.collect_by_name([data.AIR_VEHICLES_ITEM])
+        self.assertFalse(self.can_reach_location(pool))
+        self.collect_by_name(["Mainland Access"])
+        self.assertTrue(self.can_reach_location(pool))
+
     def test_the_unwalkable_packages_need_their_ability(self) -> None:
-        # Eight packages cannot be walked to at all: five want a jump, one of
-        # those over the wall around the Starfish northeast pool, and three are
-        # reachable only from the air. Twelve more have several ways in. The
-        # remaining eighty-one need nothing, which is what keeps an ability-locked
-        # seed wide, so the counts are pinned here as well as the terms.
-        self.assertEqual(len(data.PACKAGE_ABILITY_REQUIREMENTS), 8)
-        self.assertEqual(len(data.PACKAGE_ABILITY_ALTERNATIVES), 12)
+        # Five packages cannot be walked to at all: four want a jump and one is
+        # reachable only from the air. Twenty-one more have several ways in, the
+        # five inside Leaf Links among them. The remaining seventy-five need
+        # nothing, which is what keeps an ability-locked seed wide, so the counts
+        # are pinned here as well as the terms.
+        self.assertEqual(len(data.PACKAGE_ABILITY_REQUIREMENTS), 5)
+        self.assertEqual(len(data.PACKAGE_ABILITY_ALTERNATIVES), 21)
         awkward = (set(data.PACKAGE_ABILITY_REQUIREMENTS)
                    | set(data.PACKAGE_ABILITY_ALTERNATIVES))
         # Package 92 is in both tables, needing a jump and then either a car or a
-        # helicopter, so nineteen packages are awkward and not twenty.
-        self.assertEqual(len(awkward), 19)
-        self.assertEqual(data.HIDDEN_PACKAGE_COUNT - len(awkward), 81)
+        # helicopter, so twenty-five packages are awkward and not twenty-six.
+        self.assertEqual(len(awkward), 25)
+        self.assertEqual(data.HIDDEN_PACKAGE_COUNT - len(awkward), 75)
         self.collect_by_name(["Mainland Access", "Starfish Island Access"])
         for index, items in data.PACKAGE_ABILITY_REQUIREMENTS.items():
             name = data.hidden_package_name(index)
@@ -1615,6 +1857,21 @@ class TestAbilityLocksAll(WorldTestBase):
             "Phnom Penh '86": {data.REGION_STARFISH},
             "Rub Out": {data.REGION_STARFISH, data.REGION_MAINLAND},
             "G-spotlight": {data.REGION_VICE_CITY, data.REGION_MAINLAND},
+            # The shop stock gates. The four Rosenberg and Cortez ones are on the
+            # start island and cost no area item at all, which is what lets a
+            # shop item behind one still open early.
+            "Jury Fury": set(),
+            "Riot": set(),
+            "Treacherous Swine": set(),
+            "Mall Shootout": set(),
+            "Guardian Angels": set(),
+            "The Chase": {data.REGION_STARFISH},
+            "Bar Brawl": {data.REGION_STARFISH, data.REGION_MAINLAND},
+            "Shakedown": {data.REGION_STARFISH, data.REGION_MAINLAND},
+            # The three a collectible waits on rather than a shop.
+            "Four Iron": set(),
+            "Trojan Voodoo": {data.REGION_MAINLAND},
+            "Loose Ends": {data.REGION_MAINLAND},
         }
         for mission in data.ROUTE_MISSIONS:
             giver = MISSION_GIVER[mission]
@@ -1670,6 +1927,22 @@ class TestAbilityLocksAll(WorldTestBase):
                     for region in data.MISSION_REGION_REQUIREMENTS.get(mission, []):
                         self.assertIn(region, covered)
                     self.assertNotIn(mission, data.LOCATION_ABILITY_ALTERNATIVES)
+
+    def test_the_fastest_boat_is_played_on_the_mainland(self) -> None:
+        # Diaz's third, so its own region is the mansion's island, but the boat
+        # it steals is in the Viceport boatyard and the audit says so. Nothing
+        # else in Diaz's strand names the mainland, so without this entry the
+        # fill could put Mainland Access itself behind the mission, and the two
+        # missions after it inherit the same hole.
+        self.assertIn(data.REGION_MAINLAND,
+                      data.MISSION_REGION_REQUIREMENTS["The Fastest Boat"])
+        self.assertEqual(LOCATION_REGIONS["The Fastest Boat"],
+                         data.REGION_STARFISH)
+        for mission in ("The Fastest Boat", "Supply & Demand", "Rub Out"):
+            with self.subTest(mission=mission):
+                self.assertIn(
+                    data.REGION_MAINLAND,
+                    rules._inherited_regions(mission, "Diaz"))
 
     def test_venue_race_mission_needs_its_vehicle(self) -> None:
         # The Driver is a forced car race, so its own rule names the car. No
@@ -3928,13 +4201,21 @@ class TestTables(WorldTestBase):
 
     def test_a_mission_a_check_waits_on_has_an_event(self) -> None:
         # A location naming a mission needs that mission to be one of the events,
-        # or the term would name an item nothing places. The chopper checkpoints
-        # and the five stunt jumps are the table, and nothing else is in it.
+        # or the term would name an item nothing places. Four groups are in the
+        # table and nothing else: the chopper checkpoints, five stunt jumps, the
+        # three pickups inside Diaz's mansion, and the thirteen shop items whose
+        # stock a mission racks.
         self.assertEqual(sorted(data.LOCATION_MISSION_REQUIREMENTS), sorted([
             "Downtown Chopper Checkpoint", "Little Haiti Chopper Checkpoint",
             "Ocean Beach Chopper Checkpoint", "Vice Point Chopper Checkpoint",
             *(data.stunt_jump_name(index) for index in (12, 13, 14, 25, 26)),
+            *(data.pickup_name(index) for index in (61, 62, 101)),
+            *(data.shop_data.shop_item_name(item)
+              for item in data.shop_data.SHOP_ITEMS
+              if (item.thread, item.script_global)
+              in data.shop_data.SHOP_STOCK_MISSIONS),
         ]))
+        self.assertEqual(len(data.shop_data.SHOP_STOCK_MISSIONS), 13)
         for location, missions in data.LOCATION_MISSION_REQUIREMENTS.items():
             with self.subTest(location=location):
                 self.assertTrue(missions)
@@ -3953,6 +4234,37 @@ class TestTables(WorldTestBase):
         self.assertEqual(
             data.LOCATION_MISSION_REQUIREMENTS["Downtown Chopper Checkpoint"],
             ["G-spotlight"])
+
+    def test_each_shop_stock_gate_names_the_mission_that_racks_it(self) -> None:
+        # Thirteen decompile facts, one per gated item, written out here rather
+        # than read off the table the rules read: a wrong mission on any row is
+        # a check gated behind the wrong half of the story and nothing else can
+        # see it. Each shop thread guards the item's price with the vanilla flag
+        # in the comment and prints the out-of-stock line while it is zero, so
+        # the flag's setter thread is the gate.
+        self.assertEqual(data.shop_data.SHOP_STOCK_MISSIONS, {
+            ("AMMU1", 891): "Mall Shootout",       # $902, COL2
+            ("AMMU1", 892): "Guardian Angels",     # $903, GENERL3
+            ("AMMU1", 893): "Jury Fury",           # $867, LAWYER3
+            ("AMMU2", 891): "The Chase",           # $868, BARON1
+            ("AMMU2", 895): "Jury Fury",           # $867, LAWYER3
+            ("AMMU3", 889): "Rub Out",             # $907, BARON5
+            ("AMMU3", 890): "Rub Out",             # $906, BARON5
+            ("AMMU3", 891): "Bar Brawl",           # $848, PROTEC2
+            ("AMMU3", 892): "Rub Out",             # $855, BARON5
+            ("AMMU3", 893): "Shakedown",           # $856, PROTEC1
+            ("HARD1", 878): "Riot",                # $904, LAWYER4
+            ("HARD1", 879): "Treacherous Swine",   # $905, GENERL1
+            ("HARD2", 879): "The Chase",           # $874, BARON1
+        })
+        # And each key names a row that exists, so a typo cannot silently gate
+        # nothing. The Vice Point sniper is deliberately absent: its flag is the
+        # one the crossing sets, so shop_item_region carries it instead.
+        rows = {(item.thread, item.script_global)
+                for item in data.shop_data.SHOP_ITEMS}
+        self.assertLessEqual(set(data.shop_data.SHOP_STOCK_MISSIONS), rows)
+        self.assertFalse(set(data.shop_data.SHOP_STOCK_MISSIONS)
+                         & data.shop_data.CROSSING_STOCKED_ITEMS)
 
     def test_a_weapon_is_called_what_the_pc_game_calls_it(self) -> None:
         # The two names a rename got wrong by reaching for the common spelling.
@@ -4399,6 +4711,29 @@ class TestReservedGlobals(WorldTestBase):
         self.assertEqual(district_data.PACKAGE_DISTRICTS[40], "Prawn Island")
         self.assertEqual(district_data.PACKAGE_DISTRICTS[41], "Prawn Island")
 
+    def test_the_junk_yard_holds_nothing_a_content_key_covers(self) -> None:
+        # It is a district because a pickup name says so, and pickups are no
+        # content class, so it holds nothing lockable. That is what keeps it out
+        # of the district unlock grid, and out of the item pool at every
+        # granularity: a district item covering nothing would be an item the
+        # player receives for no reason and a global no gate reads.
+        self.assertIn("Junk Yard", district_data.DISTRICTS)
+        self.assertIn("Junk Yard", data.MAINLAND_DISTRICTS)
+        for table in data.CONTENT_DISTRICT_TABLES.values():
+            self.assertNotIn("Junk Yard", table)
+        self.assertNotIn("Junk Yard", data.CONTENT_DISTRICTS)
+        self.assertNotIn("Junk Yard", scm.DISTRICT_KEYS)
+        self.assertNotIn(data.district_content_item_name("Junk Yard"),
+                         data.all_district_content_items())
+        # Two ambient slots are what it does hold, and both are on the mainland
+        # like the district itself.
+        slots = [index for index, district
+                 in enumerate(district_data.PICKUP_DISTRICTS)
+                 if district == "Junk Yard"]
+        self.assertEqual(len(slots), 2)
+        for index in slots:
+            self.assertEqual(data.pickup_region(index), data.REGION_MAINLAND)
+
     def test_every_district_is_on_a_named_island(self) -> None:
         # Which island a district is on is what gates every collectible in it,
         # and it is derived rather than stored, so an unclassified district would
@@ -4441,6 +4776,16 @@ class TestReservedGlobals(WorldTestBase):
                     # fails here.
                     named = district_data.NAME_DISTRICT_FOLDS.get(parts[1], parts[1])
                     self.assertEqual(named, data.location_district(name), name)
+        # The pickups are the same fact stored the same way apart, a name table
+        # beside an index-keyed district table, and no content key covers them so
+        # location_district answers None: their district table is what to compare
+        # against, and what it decides is the island each slot gates on.
+        for index, name in enumerate(data.PICKUP_NAMES):
+            with self.subTest(location=name):
+                parts = name.split(" - ")
+                self.assertEqual(parts[0], "Pickup", name)
+                self.assertEqual(parts[1], district_data.PICKUP_DISTRICTS[index],
+                                 name)
 
     def test_no_two_locations_share_a_name(self) -> None:
         # The rename replaced 186 numbered names with sentences, and the id table
@@ -4464,6 +4809,11 @@ class TestReservedGlobals(WorldTestBase):
         # town, silently and only in game, so both copies are pinned here: when
         # this fails, the generated data moved and build_scm.py must move with
         # it.
+        #
+        # The mirrored list is scm.DISTRICT_KEYS, the districts that hold
+        # something a content key covers. The Junk Yard is on the map and in
+        # district_data.DISTRICTS but holds only ambient pickups, so it has no
+        # column in the grid and is not here.
         districts = [
             "Ocean Beach", "Washington Beach",
             "Vice Point", "Starfish Island",
@@ -4472,7 +4822,9 @@ class TestReservedGlobals(WorldTestBase):
             "Little Havana", "Viceport",
             "Escobar International",
         ]
-        self.assertEqual(district_data.DISTRICTS, districts)
+        self.assertEqual(scm.DISTRICT_KEYS, districts)
+        self.assertEqual(district_data.DISTRICTS,
+                         [*districts[:8], "Junk Yard", *districts[8:]])
         jumps = [
             "Escobar International", "Escobar International", "Escobar International",
             "Escobar International", "Escobar International", "Escobar International",

@@ -121,15 +121,12 @@ for _name in data.MAINLAND_STUNT_JUMPS:
     LOCATION_REGIONS[_name] = data.REGION_MAINLAND
 # A pickup's region comes from its own district rather than from a membership
 # list, since every district is known for all 110 of them and the districts are
-# what the names already read from. Derived rather than audited, so a wrong
-# district here is a wrong region too: see district_data.PICKUP_DISTRICTS.
+# what the names read. Audited now, and cross-checked besides: the region every
+# district maps to is verified for all 110 against the nearest audited anchor,
+# at a minimum margin of 92 units, so the island gate holds even where a district
+# name is later corrected. That is what lets these hold progression: a wrong name
+# misnames a check, a wrong island would strand one.
 for _index in range(data.PICKUP_COUNT):
-    # The island a slot actually sits on. The district NAME here is derived and
-    # about 90 per cent accurate, but the REGION it maps to is verified for all
-    # 110 against the nearest audited anchor, at a minimum margin of 92 units,
-    # so the island gate is sound even for a slot whose district name the hand
-    # audit will correct. That is what lets these hold progression: a wrong
-    # name misnames a check, a wrong island would strand one.
     LOCATION_REGIONS[data.pickup_name(_index)] = data.pickup_region(_index)
 # A shop's region comes from its district too, so the two mainland shops wait on
 # the crossing and the four on the starting island do not.

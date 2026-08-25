@@ -18,6 +18,9 @@ from __future__ import annotations
 
 # Districts in a fixed order: item ids follow it, so it never reorders. Ordered
 # the way a player crosses the map, the start island first and then the mainland.
+# The Junk Yard is the one district holding nothing lockable: two ambient pickups
+# and no package, rampage, jump, store or property. It is here because a pickup
+# name says it, and a name has to name a district the tables know.
 
 DISTRICTS: list[str] = [
     "Ocean Beach",
@@ -28,6 +31,7 @@ DISTRICTS: list[str] = [
     "Leaf Links",
     "Downtown",
     "Little Haiti",
+    "Junk Yard",
     "Little Havana",
     "Viceport",
     "Escobar International",
@@ -212,29 +216,20 @@ PROPERTY_COORDS: dict[str, tuple[float, float, float]] = {
 
 # The 110 ambient pickup slots, in pickup_data.PICKUP_SLOTS order.
 #
-# DERIVED, not audited, and the only derived table here besides the properties.
-# Each slot takes the district of its three nearest audited anchors, the 100
-# packages and the 35 rampages, weighted by inverse HORIZONTAL distance; the
-# same recipe in three dimensions disagrees with this table at slot 16, so the
-# metric is part of the recipe and not an aside.
+# AUDITED. These were derived once, each slot taking the district of its three
+# nearest audited anchors weighted by inverse horizontal distance, which agreed
+# with the anchors leave-one-out 90.4 per cent of the time. The hand audit has
+# since walked all 110 and named each one, and it moved four, every one of them
+# between mainland districts: two into the Junk Yard, which nothing else in the
+# world is in. So the derivation missed by four rather than by the eight it
+# expected to, and it is gone; this table is the audit's answer and
+# pickup_data.PICKUP_NAMES says the same district for each slot.
 #
-# Measured against those anchors leave-one-out it agrees 90.4 per cent of the
-# time (122 of 135). Distance to the nearest anchor carries signal: 94.9 per cent
-# within 100 units against 86.8 per cent beyond it, and 94.1 against 84.0 at
-# 125. What that does NOT give is a cut past which a slot is safe, since even
-# the closest bucket is only about 95 per cent; what it gives the hand audit is
-# an order to work in, farthest anchor first. The slots sit closer to their
-# anchors than the anchors do to each other, a median of 74.6 against 110.3, so
-# the flat rate understates them and eight wrong is the better expectation than
-# eleven.
-#
-# They are here so the class can be built and played, and the hand audit
-# replaces them. A test pins every slot to the island of its nearest anchor, so
-# the audit can move a district within a region but not between regions without
-# saying so. That test measures nearest in three dimensions, which is a
-# different metric from the derivation above and a deliberately blunter one: it
-# only has to separate islands, which sit far enough apart that the vertical
-# term cannot move a slot across the gap.
+# A test pins every slot to the island of its nearest anchor, so a later
+# correction can move a district within a region but not between regions
+# without saying so. That test measures nearest in three dimensions, which is a
+# deliberately blunt metric: it only has to separate islands, which sit far
+# enough apart that the vertical term cannot move a slot across the gap.
 PICKUP_DISTRICTS: list[str] = [
     "Vice Point",  # 0
     "Ocean Beach",  # 1
@@ -284,8 +279,8 @@ PICKUP_DISTRICTS: list[str] = [
     "Escobar International",  # 45
     "Escobar International",  # 46
     "Little Havana",  # 47
-    "Little Havana",  # 48
-    "Little Haiti",  # 49
+    "Little Haiti",  # 48
+    "Junk Yard",  # 49
     "Little Havana",  # 50
     "Ocean Beach",  # 51
     "Ocean Beach",  # 52
@@ -303,7 +298,7 @@ PICKUP_DISTRICTS: list[str] = [
     "Downtown",  # 64
     "Downtown",  # 65
     "Little Haiti",  # 66
-    "Little Haiti",  # 67
+    "Junk Yard",  # 67
     "Little Havana",  # 68
     "Little Havana",  # 69
     "Viceport",  # 70
@@ -328,7 +323,7 @@ PICKUP_DISTRICTS: list[str] = [
     "Little Haiti",  # 89
     "Downtown",  # 90
     "Viceport",  # 91
-    "Viceport",  # 92
+    "Escobar International",  # 92
     "Little Havana",  # 93
     "Ocean Beach",  # 94
     "Washington Beach",  # 95
