@@ -65,7 +65,13 @@ Client to ASI:
                               one-shot grants only past its saved applied-index.
     checked  {locations}      AP location ids already checked (resync), so the
                               ASI does not re-send them
-    toast    {text}           a player-facing message for the in-game toast queue
+    toast    {segments}       one row for the in-game toast stack, as
+                              [text, colour name] pairs with the newline marker
+                              where the row breaks onto its next line. The client
+                              composes it because only it knows which slot is
+                              ours, how the server classified the item, and what
+                              the location is called; the mod owns the colour
+                              each name draws in.
     status   {checks_done,     what only the client knows, for the pause menu's
               checks_total,     status page: how many of this seed's locations
               items_received,   are checked, how many it has, how many items have
@@ -100,7 +106,7 @@ import base64
 import hashlib
 import json
 
-PROTOCOL_VERSION = 3
+PROTOCOL_VERSION = 4
 
 # A single frame, including its trailing newline, never exceeds this many bytes.
 MAX_FRAME_BYTES = 4096
@@ -192,8 +198,42 @@ def checked_message(locations: list[int]) -> dict:
     return {"type": CHECKED, "locations": list(locations)}
 
 
-def toast_message(text: str) -> dict:
-    return {"type": TOAST, "text": text}
+# The colour names a toast segment may carry, which the mod resolves to its own
+# RGB. Names rather than hex, so a colour that reads badly over Vice City's sky is
+# one edit in the mod and no change on the wire.
+#
+# The roles are Archipelago's own, from NetUtils.py's JSONtoTextParser: a row reads
+# the same way in game as it does in the client window and in every tracker.
+TOAST_OWN_SLOT = "own_slot"
+TOAST_OTHER_SLOT = "other_slot"
+TOAST_PROGRESSION = "progression"
+TOAST_USEFUL = "useful"
+TOAST_TRAP = "trap"
+TOAST_FILLER = "filler"
+TOAST_LOCATION = "location"
+TOAST_CONNECTIVE = "connective"
+# Not a colour: the marker that breaks a row onto its next line. Carries no text.
+TOAST_NEWLINE = "newline"
+
+TOAST_COLORS = frozenset({
+    TOAST_OWN_SLOT, TOAST_OTHER_SLOT, TOAST_PROGRESSION, TOAST_USEFUL,
+    TOAST_TRAP, TOAST_FILLER, TOAST_LOCATION, TOAST_CONNECTIVE, TOAST_NEWLINE,
+})
+
+
+def toast_newline() -> tuple[str, str]:
+    """The line break, as a segment. Its text is empty: it is a layout marker."""
+    return ("", TOAST_NEWLINE)
+
+
+def toast_message(segments: list[tuple[str, str]]) -> dict:
+    """One in-game toast row, as [text, colour name] pairs.
+
+    A flat list rather than a list of lines, with TOAST_NEWLINE where the row
+    breaks, which is the shape the mod's own row builder takes.
+    """
+    return {"type": TOAST,
+            "segments": [[text, color] for text, color in segments]}
 
 
 def status_message(checks_done: int, checks_total: int, items_received: int,

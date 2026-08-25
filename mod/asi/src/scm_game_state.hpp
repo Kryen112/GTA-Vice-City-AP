@@ -53,8 +53,9 @@ class ScmGameState : public GameState {
   void StampSeedHash(const std::string& expected) override;
   void ApplyItems(const std::vector<std::pair<std::int64_t, std::int64_t>>& items) override;
   void MarkChecked(const std::vector<std::int64_t>& locations) override;
-  void ShowToast(const std::string& text) override;
-  void ShowStickyToast(const std::string& text) override;
+  void ShowToast(const ToastRow& row) override;
+  void ShowNotice(ToastNotice notice, const std::string& text) override;
+  void ClearNotice(ToastNotice notice) override;
   void SetClientConnected(bool connected) override;
   void SetClientStatus(const ClientStatus& status) override;
   std::vector<std::int64_t> TakeNewChecks() override;
@@ -64,6 +65,18 @@ class ScmGameState : public GameState {
 
   // Called from the game frame. All SCM memory access is here.
   void OnGameFrame();
+
+  // Called from the frame's HUD draw, after the game's own HUD and before the
+  // font buffer is flushed, so the rows land in the same frame. Advances the
+  // stack and draws it, in that order, because a row admitted this frame should
+  // be visible this frame rather than on the next one.
+  //
+  // The advance lives here rather than in OnGameFrame because a row's lifetime is
+  // screen time: it may only run down on frames the row was actually drawn on.
+  // The caller gates this on the game wanting its HUD drawn, so a cutscene stops
+  // the stack rather than draining it unseen, and the backlog is still there
+  // afterwards because that is where it belongs.
+  void DrawToasts();
 
   // Called from the pre-world-process hook, before the player ped reads the
   // pad this frame. Applies only the ability locks that constrain input.
@@ -205,22 +218,15 @@ class ScmGameState : public GameState {
   // a weapon-rampage icon is held by either the weapon equip or the rampages
   // key while the two run-them-down icons answer only to the latter.
   void EnforceHeldPickups(const AbilityLocks& locked, const ContentLocks& held);
-  // Announces each class on its held-to-released edge. Every class is silent
-  // while held (a held jump reads as a failed landing, a held store as not
-  // aiming, a held pickup is simply absent), so the release edge is the only
-  // place a player is told why the world just changed.
-  void ReportReleasedContent(const ContentLocks& held,
-                             const std::array<int, kContentCount>& lock_flags);
   // The globals every configured route reads, one vector each: the item that
   // opens the route, and the second item its route needs. Both read ScriptSpace,
   // so both run on the game frame under the frame's lock.
   std::vector<int> RouteUnlockValues();
   std::vector<int> RouteNeedsValues();
-  // Announces a route that just opened, or one whose item arrived while the
-  // second item its route needs is still missing. Every seed has a way to the
-  // mainland, so this runs whatever the seed locks.
-  void ReportOpenedRoutes();
-  // Shows the blocked-attempt toast for one ability, rate-limited per ability.
+  // Shows the blocked-attempt message for one ability, rate-limited per ability.
+  // On the game's own brief-message channel and not the toast stack: it answers a
+  // press the player just made rather than reporting a multiworld event, and it is
+  // the only thing that explains why the button did nothing.
   void ToastAbilityBlocked(int ability);
   // Keeps the ambient pickup pool on the configured layout: matches each
   // layout slot to a pool entry by position and type and rewrites the model
@@ -246,14 +252,18 @@ class ScmGameState : public GameState {
   // completion is a change away from a zero baseline. Captured once per game.
   std::map<int, int> baseline_;
   std::vector<std::int64_t> outbound_checks_;
-  std::vector<std::string> pending_toasts_;
-  // Lines that wait for a game rather than for the next post. The frontend
-  // cannot display a message, and the game boundary clears the ordinary queue,
-  // so a handshake refusal would otherwise be lost to the log alone.
-  std::vector<std::string> sticky_toasts_;
-  // When the next post may hand the game a message, so a backlog waits in the
-  // queue above instead of in the game's own few-slot one.
-  unsigned int next_toast_ms_ = 0;
+  // The toast stack: what is on screen, what is waiting, and the notices holding
+  // their place. The frame advances it and the HUD draw reads it, both on the game
+  // thread and both under mutex_, since the bridge thread adds to it.
+  ToastStackState toasts_;
+  // Where the stack draws. Read once at construction from the optional file beside
+  // the module, so a player tuning it restarts the game rather than the mod
+  // re-reading a file every frame.
+  ToastGeometry toast_geometry_;
+  // The rows the stack has shown, newest first, for the pause page. The stack is a
+  // marquee, so this is the only place in game a row can be read again. Kept
+  // across a game boundary: it is a record of the multiworld and not of a game.
+  std::vector<ToastRow> recent_toasts_;
   std::string pending_stamp_;
   std::string cached_seed_hash_;
   bool items_dirty_ = false;
@@ -318,24 +328,12 @@ class ScmGameState : public GameState {
   // Reset on the game boundary with the other per-game state.
   int kill_frenzy_model_ = -1;
   bool kill_frenzy_lookup_logged_ = false;
-  // Whether each content class was held last frame, so a release is announced
-  // once rather than every frame. Reset on the game boundary, so a class
-  // released before a reload does not announce itself again.
-  ContentLocks content_was_held_{};
-  // The mainland routes this seed made, and what each was doing when last seen,
-  // so an opened route is announced once and the status page can list them.
+  // The mainland routes this seed made, so the status page can list them.
   std::vector<MainlandRoute> mainland_routes_;
-  std::vector<RouteState> route_was_;
   // The last pool action logged per held pickup class, so the log names which
   // classes the walk reached and in which direction without repeating itself
   // every frame. Reset on the game boundary.
   std::array<PickupHoldAction, kHeldPickupClassCount> held_class_logged_{};
-  // Whether the release baseline has been taken. The first frame a game is
-  // observed sets the baseline instead of announcing from it, so a save that
-  // already holds a content item stays quiet while a class released during play
-  // always announces exactly once.
-  bool content_baseline_ready_ = false;
-  bool route_baseline_ready_ = false;
   // Whether the world was loaded last frame, so a new game or a save load
   // re-derives the unlock globals from the received items instead of
   // trusting whatever the save restored.

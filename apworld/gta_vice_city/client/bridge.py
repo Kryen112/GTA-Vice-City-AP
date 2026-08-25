@@ -118,8 +118,8 @@ class AsiBridge:
     async def send_checked(self, locations: list[int]) -> None:
         await self.send(protocol.checked_message(locations))
 
-    async def send_toast(self, text: str) -> None:
-        await self.send(protocol.toast_message(text))
+    async def send_toast(self, segments: list[tuple[str, str]]) -> None:
+        await self.send(protocol.toast_message(segments))
 
     async def send_status(self, checks_done: int, checks_total: int,
                           items_received: int, goal_reached: bool,

@@ -14,6 +14,7 @@
 #include "scm_finale_warp.hpp"
 #include "scm_packages.hpp"
 #include "scm_stunt_jumps.hpp"
+#include "toast_stack.hpp"
 
 #include <plugin.h>
 #include <CFont.h>
@@ -127,17 +128,26 @@ constexpr int kPickupPoolSize = 336;
 // also advances per frame), so slots still being placed at the start are
 // never reported as missing.
 constexpr int kPickupUnmatchedLogFrame = 600;
-// The text storage a posted toast keeps. plugin-sdk's narrow entry point
+// The text storage a posted brief message keeps. plugin-sdk's narrow entry point
 // converts through one function-local static buffer that every caller in the
 // process shares, and the game keeps the pointer it was handed for as long as
 // the message is queued, so a later post rewrote the text of a message still on
 // screen. The game holds that pointer in two places at once, its brief-message
 // queue of eight and the five-entry previous-brief history the pause menu reads,
-// so a ring past thirteen keeps every live message's text its own. Each buffer
-// holds a full message.
+// so a ring past thirteen keeps every live message's text its own.
+//
+// This channel carries the blocked-attempt line and the developer dumps, all of
+// them written here rather than arriving from the server, so the character bound
+// is generous rather than derived; PostToast truncates anything longer, which is
+// the safe direction for text the mod wrote itself.
+constexpr std::size_t kBriefMessageLiveElsewhere = 13;
+// How long one of these holds the screen. The game's own default for a script
+// print, and the value this channel has always used.
+constexpr unsigned int kBriefMessageDurationMs = 4000;
 constexpr std::size_t kToastBufferChars = 256;
 constexpr std::size_t kToastBufferCount = 16;
-static_assert(kToastMaxChars < kToastBufferChars, "a message must fit a buffer");
+static_assert(kToastBufferCount > kBriefMessageLiveElsewhere,
+              "the ring must outlast every message the game can hold at once");
 
 // Whether the vehicle plays the police scanner instead of its station byte,
 // mirroring the game's own test: the fixed model set, then the siren flag,
@@ -320,9 +330,13 @@ void __cdecl PrintMoneyCounter(float x, float y, const wchar_t* text) {
   CFont::SetProportional(false);
 }
 
-// Posts one brief message with text the mod owns for as long as the game can
-// hold the pointer. The game reads the pointer it was handed, so the storage
-// outlives the call by a full ring.
+// Posts one of the game's own brief messages, with text the mod owns for as long
+// as the game can hold the pointer. The game reads the pointer it was handed, so
+// the storage outlives the call by a full ring.
+//
+// This is not the toast stack and carries nothing from the multiworld: the
+// blocked-attempt line, which answers a press the player just made, and the
+// developer dumps.
 void PostToast(const std::string& text) {
   static std::array<std::array<wchar_t, kToastBufferChars>, kToastBufferCount>
       buffers{};
@@ -333,14 +347,14 @@ void PostToast(const std::string& text) {
       std::min(text.size(), kToastBufferChars - 1);
   for (std::size_t index = 0; index < length; ++index) {
     // The tilde opens the game's own formatting token, which its formatter
-    // expands in place inside a buffer of its own. Toast text carries item and
-    // player names from the server verbatim, so the escape is neutralised here
-    // rather than trusted to stay short.
+    // expands in place inside a buffer of its own. This channel's text is the
+    // mod's own, so the escape is belt and braces rather than a defence against
+    // the server; it stays because a later caller here would not think to add it.
     const unsigned char character = static_cast<unsigned char>(text[index]);
     buffer[index] = character == '~' ? L' ' : static_cast<wchar_t>(character);
   }
   buffer[length] = 0;
-  CMessages::AddMessage(buffer, kToastDurationMs, 0);
+  CMessages::AddMessage(buffer, kBriefMessageDurationMs, 0);
 }
 
 // Destroys a game entity the way the game does: the deleting destructor at
@@ -526,6 +540,12 @@ bool GameWindowHasFocus() {
 }  // namespace
 
 ScmGameState::ScmGameState(Logger logger) : logger_(std::move(logger)) {
+  // Where the toast stack draws, from the optional file beside the module. Read
+  // once here rather than per frame: a player tuning it restarts the game, which
+  // is what every other file the mod reads asks of them too. An absent file is
+  // the normal case and says nothing.
+  toast_geometry_ = LoadToastGeometry();
+
   // The counter's print is redirected once, at load, and the flag decides what
   // it prints from then on, so no seed and no lock state changes the code. A
   // seed that locks nothing keeps a vanilla counter because the replacement
@@ -750,11 +770,7 @@ void ScmGameState::ApplyConfig(const std::map<std::int64_t, int>& item_globals,
   // Marking them stale here rather than relying on an item resync following
   // is what keeps the tally from outliving the config it was built from.
   items_dirty_ = true;
-  // A fresh route set is a fresh baseline: the next observation records what
-  // this seed already holds instead of announcing it.
   mainland_routes_ = routes;
-  route_was_.clear();
-  route_baseline_ready_ = false;
   pickup_enforce_frames_ = 0;
   // A fresh connection is a fresh client, which may never have been told this
   // game's percentage, so the next frame reports it again.
@@ -942,10 +958,12 @@ void ScmGameState::ToastAbilityBlocked(int ability) {
   }
   ability_toast_shown_[ability] = true;
   ability_toast_last_ms_[ability] = now;
-  // Queued, not shown here: the frame's own toast drain owns the message
-  // strings and their lifetime, so every toast takes one path. The caller
-  // already holds the lock, so the queue is touched directly.
-  pending_toasts_.push_back(text);
+  // The game's own brief-message channel, not the toast stack. This answers a
+  // press the player just made, so it belongs beside the game's own feedback
+  // rather than in a list of what the multiworld is doing, and it must not take a
+  // slot from the rows the stack exists for. PostToast copies into its own ring,
+  // so the string's lifetime is not this frame's problem.
+  PostToast(text);
 }
 
 void ScmGameState::EnforceHeldPickups(const AbilityLocks& locked,
@@ -1061,47 +1079,6 @@ std::vector<int> ScmGameState::RouteNeedsValues() {
   return values;
 }
 
-void ScmGameState::ReportOpenedRoutes() {
-  if (mainland_routes_.empty()) return;
-  const RouteReportPlan plan =
-      PlanRouteReports(mainland_routes_, RouteUnlockValues(), RouteNeedsValues(),
-                       route_was_, route_baseline_ready_);
-  // A refused plan carries no state, so it is not a baseline either: claiming
-  // one would make the next frame's first real reading an edge.
-  if (plan.next_was.size() != mainland_routes_.size()) return;
-  route_was_ = plan.next_was;
-  route_baseline_ready_ = true;
-  for (const std::string& line : plan.announce) pending_toasts_.push_back(line);
-}
-
-void ScmGameState::ReportReleasedContent(
-    const ContentLocks& held, const std::array<int, kContentCount>& lock_flags) {
-  const ContentReleasePlan plan = PlanContentReleases(
-      held, lock_flags, content_was_held_, content_baseline_ready_);
-  content_was_held_ = plan.next_was_held;
-  content_baseline_ready_ = true;
-  for (int index = 0; index < kContentCount; ++index) {
-    // A whole-class item releases every district at once, so it announces once
-    // with no district named; a split item releases one, and where matters more
-    // than what. Counted first so the two cases can be told apart.
-    int released_here = 0;
-    int last_district = 0;
-    for (int district = 0; district < kDistrictCount; ++district) {
-      if (!plan.announce[ContentDistrictSlot(index, district)]) continue;
-      ++released_here;
-      last_district = district;
-    }
-    if (released_here == 0) continue;
-    if (released_here == 1) {
-      pending_toasts_.push_back(std::string(kDistrictNames[last_district]) + " " +
-                                kContentNames[index] + " are now available.");
-    } else {
-      pending_toasts_.push_back(std::string(kContentNames[index]) +
-                                " are now available.");
-    }
-  }
-}
-
 AbilityLocks ScmGameState::ReadAbilityLocks(
     std::array<int, kAbilityCount>& lock_flags) {
   std::array<int, kAbilityCount> unlocks{};
@@ -1191,18 +1168,9 @@ void ScmGameState::EnforceLocks() {
   // and reading NO WALLET YET over real money.
   g_money_reads_locked.store(locked[kAbilityWallet], std::memory_order_relaxed);
 
-  // The routes are not a lock family: every seed has a way to the mainland, so
-  // both halves of reporting one sit above the early return. A seed selecting no
-  // lock key at all is the default, and its routes still open and still list.
-  ReportOpenedRoutes();
-
   // No key of either family selected this seed: fully vanilla, nothing to
   // enforce.
   if (!any_flag_set) return;
-
-  // A class released since the last frame repopulates the world silently, so
-  // say so once: three of the five classes have no other feedback.
-  ReportReleasedContent(held, content_flags);
 
   if (locked[kAbilityWallet]) {
     // Tommy cannot hold money: everything earned or received while the
@@ -1606,24 +1574,59 @@ void ScmGameState::MarkChecked(const std::vector<std::int64_t>& locations) {
   }
 }
 
-void ScmGameState::ShowToast(const std::string& text) {
+void ScmGameState::ShowToast(const ToastRow& row) {
   std::lock_guard<std::mutex> lock(mutex_);
-  // Bounded against a flood of inbound item toasts, by refusing the newest
-  // rather than evicting the head: a release line that did not fit the last post
-  // waits at the head, and it is one-shot, while the client window keeps the
-  // whole item history.
-  if (pending_toasts_.size() >= kToastQueueMax) return;
-  pending_toasts_.push_back(text);
+  if (row.empty()) return;
+  // The queue is meant to hold everything: a release of a whole multiworld is
+  // hundreds of rows and every one of them is the only in-game record that item
+  // moved. The bound is a runaway backstop far above any real release, and it
+  // drops the newest rather than the oldest, so the record stays in order.
+  if (toasts_.waiting.size() < kToastQueueMax) {
+    toasts_.waiting.push_back(QueuedToast(row));
+  }
+  // The record the pause page reads, newest first, whether or not the row has
+  // been drawn yet: a player who paused during a flood should see what is coming.
+  recent_toasts_.insert(recent_toasts_.begin(), row);
+  if (recent_toasts_.size() > kRecentToastMax) recent_toasts_.resize(kRecentToastMax);
 }
 
-void ScmGameState::ShowStickyToast(const std::string& text) {
+void ScmGameState::ShowNotice(ToastNotice notice, const std::string& text) {
   std::lock_guard<std::mutex> lock(mutex_);
-  sticky_toasts_.push_back(text);
+  // One row per kind, so a reconnect loop leaves one line rather than a wall of
+  // identical ones. Drawn in the trap colour: both notices are a state the player
+  // has to act on, and that is the palette's own word for bad news.
+  toasts_.notices[ToastNoticeSlot(notice)] =
+      PlainToastRow(text, ToastRole::kTrap);
+  // New text has not been cut to the band yet, whatever the last notice in this
+  // slot had done.
+  toasts_.notices_fitted[ToastNoticeSlot(notice)] = false;
+}
+
+void ScmGameState::ClearNotice(ToastNotice notice) {
+  std::lock_guard<std::mutex> lock(mutex_);
+  toasts_.notices[ToastNoticeSlot(notice)] = ToastRow{};
+  toasts_.notices_fitted[ToastNoticeSlot(notice)] = false;
 }
 
 void ScmGameState::SetClientConnected(bool connected) {
   std::lock_guard<std::mutex> lock(mutex_);
   client_connected_ = connected;
+  // The bridge going down is the one state a player cannot see from anywhere in
+  // game: checks keep being found and go nowhere. The row holds until the socket
+  // is back rather than expiring, and it clears itself here, so the reconnect the
+  // bridge does on its own takes the row with it.
+  const std::size_t slot = ToastNoticeSlot(ToastNotice::kBridgeDown);
+  // Not while a refusal is up. A refused session ends, so the socket closing is
+  // what a refusal LOOKS like from here, and saying the client disconnected would
+  // be false (it is up, answering, and refusing) as well as burying the line that
+  // explains what actually happened.
+  const bool refused =
+      !toasts_.notices[ToastNoticeSlot(ToastNotice::kHandshakeRefusal)].empty();
+  toasts_.notices[slot] =
+      (connected || refused) ? ToastRow{}
+                             : PlainToastRow("Archipelago client disconnected.",
+                                             ToastRole::kTrap);
+  toasts_.notices_fitted[slot] = false;
 }
 
 void ScmGameState::SetClientStatus(const ClientStatus& status) {
@@ -1652,6 +1655,10 @@ StatusPanelState ScmGameState::BuildStatusPanelState() {
                                  row.done ? StatusTone::kOpen : StatusTone::kPlain});
   }
   state.seed_hash = cached_seed_hash_;
+  // What the stack has shown, newest first. Above the no-game return with the
+  // other lines that come from outside the game: it is a record of the multiworld
+  // rather than of a game, so it reads the same in the frontend as in play.
+  state.recent_rows = recent_toasts_;
   // Only touch the game's script memory once a stamped game is actually
   // running, the same rule the frame and the input hook follow: in the frontend
   // ScriptSpace holds no meaningful state, and a page listing locks read from it
@@ -1678,6 +1685,7 @@ StatusPanelState ScmGameState::BuildStatusPanelState() {
   const std::vector<int> needs_values = RouteNeedsValues();
   for (std::size_t index = 0; index < mainland_routes_.size(); ++index) {
     state.route_labels.push_back(mainland_routes_[index].label);
+    state.route_needs_labels.push_back(mainland_routes_[index].needs_label);
     state.route_states.push_back(RouteStateOf(
         mainland_routes_[index], unlock_values[index], needs_values[index]));
   }
@@ -2360,25 +2368,19 @@ void ScmGameState::OnGameFrame() {
     // The model table belongs to the game that loaded it.
     kill_frenzy_model_ = -1;
     kill_frenzy_lookup_logged_ = false;
-    content_was_held_ = ContentLocks{};
     held_class_logged_ = {};
-    // Lines the bridge queued while the frontend was up belong to no game: the
-    // post runs past the not-active return, so they would otherwise land as a
-    // burst on the first frame of the next one. Sticky lines are exempt, since
-    // they exist precisely to wait for a game to display them in.
-    pending_toasts_.clear();
-    next_toast_ms_ = 0;
-    content_baseline_ready_ = false;
+    // Rows the bridge queued while the frontend was up belong to no game: the
+    // stack only advances on a game frame, so they would otherwise land as a
+    // burst on the first frame of the next one. The notices are exempt, since
+    // they exist precisely to wait for a game to be readable in, and so is the
+    // recent list, which is a record rather than a queue.
+    toasts_.visible.clear();
+    toasts_.waiting.clear();
     // The frame handler keeps this true to the seed while it runs, so this is
     // for the case where it does not run at all: a game with no stamped seed
     // hash never reaches it, and the counter would otherwise still be answering
     // for the game before.
     g_money_reads_locked.store(false, std::memory_order_relaxed);
-    // The routes belong to the game that observed them, exactly as the content
-    // classes do: kept across the boundary, a fresh game would read them absent
-    // for a frame and then re-announce every route already held.
-    route_was_.clear();
-    route_baseline_ready_ = false;
     world_was_loaded_ = false;
     // The unmatched-slot diagnostic counts frames per game, so a fresh game
     // gets its own creation window and its own single report.
@@ -2631,29 +2633,28 @@ void ScmGameState::OnGameFrame() {
     if (percentage != reported_percentage_) pending_percentage_ = percentage;
   }
 
-  // A game is running, so anything that was waiting for one joins the queue at
-  // the head: a handshake refusal explains why nothing else will work.
-  if (!sticky_toasts_.empty()) {
-    pending_toasts_.insert(pending_toasts_.begin(), sticky_toasts_.begin(),
-                           sticky_toasts_.end());
-    sticky_toasts_.clear();
-  }
+  // The toast stack is neither advanced nor drawn here. It belongs to the HUD
+  // draw, which runs on every frame a game is up rather than only on the frames
+  // this handler reaches, so the stack keeps draining through a cutscene instead
+  // of handing the player its backlog afterwards.
+}
 
-  // Post what is pending, joined so a burst does not hold the screen for a
-  // multiple of a message's time, and paced on a message's own life: the game
-  // displays queued messages in sequence and refuses whatever overflows its own
-  // queue, so a backlog waits here instead, where nothing is dropped. A release
-  // line is one-shot and carries the only explanation the player gets for
-  // content appearing.
-  const unsigned int now = RealTimeMs();
-  if (!pending_toasts_.empty() && static_cast<int>(now - next_toast_ms_) >= 0) {
-    const ToastBatch batch =
-        PlanToastBatch(pending_toasts_, kToastMaxChars, kToastMessagesPerPost);
-    for (const std::string& message : batch.messages) PostToast(message);
-    pending_toasts_.erase(pending_toasts_.begin(),
-                          pending_toasts_.begin() + batch.consumed);
-    if (!batch.messages.empty()) next_toast_ms_ = now + kToastDurationMs;
-  }
+void ScmGameState::DrawToasts() {
+  std::lock_guard<std::mutex> lock(mutex_);
+  // One lock over the whole thing, so the bridge thread cannot add a row between
+  // the advance deciding what fits and the drawing laying it out.
+  //
+  // The stack is handed over whole rather than as a list of rows because the
+  // drawing owns the cutting: only it has the font to measure with, and a row's
+  // line count is not final until its lines have been cut, which is what the
+  // advance measures the band in. So DrawToastStack cuts, then this advances, then
+  // it draws.
+  DrawToastStack(toasts_, toast_geometry_, 255,
+                 [this](ToastStackState& state) {
+                   AdvanceToastStack(state, RealTimeMs(),
+                                     ToastLineCapacity(toast_geometry_),
+                                     toast_geometry_.lifetime_ms);
+                 });
 }
 
 }  // namespace gtavc

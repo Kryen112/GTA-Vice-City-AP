@@ -234,41 +234,8 @@ inline float UnsunkHeight(float z) {
   return IsPickupSunk(z) ? z + kPickupLowerOffset : z;
 }
 
-// One frame of release reporting. Three classes repopulate the world silently
-// when their item lands, so the held-to-released edge is the only place a player
-// learns why. Two failure modes have to be avoided at once:
-//
-// Announce on the first frame a game is observed and every loaded save
-// re-announces whatever it already had. Wait for the unlock globals to be
-// derived before trusting the state and a player whose FIRST item of the game
-// is the content item loses the announcement, because the derive and the first
-// observation are then the same frame.
-//
-// So the first observation is taken as the baseline rather than announced, and
-// every edge after it speaks. A save whose globals already hold the item reads
-// released at that first observation and stays quiet; a save written before the
-// item arrived reads held, then releases, and correctly announces.
-struct ContentReleasePlan {
-  ContentLocks next_was_held{};
-  std::array<bool, kContentCount * kDistrictCount> announce{};
-};
-
-inline ContentReleasePlan PlanContentReleases(
-    const ContentLocks& held, const std::array<int, kContentCount>& lock_flags,
-    const ContentLocks& was_held, bool baseline_ready) {
-  ContentReleasePlan plan;
-  plan.next_was_held = held;
-  if (!baseline_ready) return plan;
-  for (int index = 0; index < kContentCount; ++index) {
-    if (lock_flags[index] == 0) continue;
-    for (int district = 0; district < kDistrictCount; ++district) {
-      const std::size_t slot = ContentDistrictSlot(index, district);
-      plan.announce[slot] = was_held[slot] && !held[slot];
-    }
-  }
-  return plan;
-}
-
+// What the pickup walk does with one pool entry: leave it where it is, sink it
+// out of reach while its class is held, or bring it back.
 enum class PickupHoldAction { kLeaveAlone, kLower, kRaise };
 
 // `removed` is the game's own flag for a pickup it has taken away, collected

@@ -249,27 +249,97 @@ class GTAViceCityContext(CommonContext):
         # toast, so completing a check shows what it sent or found.
         if args.get("type") != "ItemSend" or self.is_uninteresting_item_send(args):
             return
-        text = self._item_toast_text(args)
-        if text:
-            self._schedule(self._send_toast(text))
+        segments = self._item_toast_segments(args)
+        if segments:
+            self._schedule(self._send_toast(segments))
 
-    def _item_toast_text(self, args: dict) -> str | None:
+    def _item_color(self, flags: int, own_item_name: str | None) -> str:
+        """The colour an item's name draws in, from its classification flags.
+
+        Archipelago's own priority, from NetUtils.py's `_handle_item_name`:
+        progression, then useful, then trap, then filler. Deliberately not the
+        trap-first order some worlds use, because a colour that disagrees with the
+        client window and the tracker is worse than an emphasis that is slightly
+        wrong.
+
+        `own_item_name` is set only for an item WE receive, and recovers the class
+        of a cheat-sent one: `/send` and `!getitem` build a NetworkItem whose
+        flags default to 0, so every one of our own items would otherwise read as
+        filler. ItemClassification shares the network flag bits, so the looked-up
+        classification feeds the same test. An item we merely route onward keeps
+        relying on flags, since this table is only ever ours.
+        """
+        # Imported here rather than at module scope, the way the strand rows reach
+        # data: items pulls in BaseClasses, and the client should not need the
+        # whole world imported to open a socket.
+        from .. import items
+        if not flags & 0b111 and own_item_name in items.ITEM_CLASSIFICATIONS:
+            flags = int(items.ITEM_CLASSIFICATIONS[own_item_name])
+        if flags & 0b001:
+            return protocol.TOAST_PROGRESSION
+        if flags & 0b010:
+            return protocol.TOAST_USEFUL
+        if flags & 0b100:
+            return protocol.TOAST_TRAP
+        return protocol.TOAST_FILLER
+
+    def _item_toast_segments(self, args: dict) -> list[tuple[str, str]] | None:
+        """One item movement as the coloured segments the in-game stack draws.
+
+        Modelled on the Harry Potter 2 world's own toasts, which is the closest
+        prior art in the multiworld, with one deliberate difference: it names our
+        slot and this says "You". The word still draws in the own-slot magenta, so
+        the role survives the second-person wording, and a single-player game
+        addressing its player reads better than one addressing a slot name.
+
+        The location goes on a second line in parentheses, which is HP2's layout.
+        A movement with no location is a cheat-sent item, and then there is
+        nothing to name.
+        """
         item = args["item"]
         receiving = args["receiving"]
         item_name = self.item_names.lookup_in_slot(item.item, receiving)
         found_it = self.slot_concerns_self(item.player)
         got_it = self.slot_concerns_self(receiving)
+        # "You" carries the colour Archipelago gives a player their own name in, so
+        # the second-person wording keeps the role rather than dropping it.
+        you = ("You", protocol.TOAST_OWN_SLOT)
+        item_segment = (item_name,
+                        self._item_color(item.flags, item_name if got_it else None))
         if found_it and got_it:
-            return f"You found your {item_name}"
-        if found_it:
-            return f"You sent {item_name} to {self.player_names.get(receiving, str(receiving))}"
-        if got_it:
-            return f"{self.player_names.get(item.player, str(item.player))} found your {item_name}"
-        return None
+            segments = [you, (" found your ", protocol.TOAST_CONNECTIVE),
+                        item_segment]
+        elif found_it:
+            segments = [
+                you, (" sent ", protocol.TOAST_CONNECTIVE), item_segment,
+                (" to ", protocol.TOAST_CONNECTIVE),
+                (self._player_name(receiving), protocol.TOAST_OTHER_SLOT),
+            ]
+        elif got_it:
+            segments = [
+                you, (" received ", protocol.TOAST_CONNECTIVE),
+                item_segment, (" from ", protocol.TOAST_CONNECTIVE),
+                (self._player_name(item.player), protocol.TOAST_OTHER_SLOT),
+            ]
+        else:
+            return None
+        # The location is the finder's, so it is looked up in the finder's slot.
+        location = ""
+        if item.location > 0:
+            location = self.location_names.lookup_in_slot(item.location, item.player) or ""
+        if location:
+            segments += [protocol.toast_newline(),
+                         ("(", protocol.TOAST_CONNECTIVE),
+                         (location, protocol.TOAST_LOCATION),
+                         (")", protocol.TOAST_CONNECTIVE)]
+        return segments
 
-    async def _send_toast(self, text: str) -> None:
+    def _player_name(self, slot: int) -> str:
+        return self.player_names.get(slot, str(slot))
+
+    async def _send_toast(self, segments: list[tuple[str, str]]) -> None:
         if self.bridge.connected:
-            await self.bridge.send_toast(text)
+            await self.bridge.send_toast(segments)
 
     def _received_item_pairs(self) -> list[tuple[int, int]]:
         return [(index, item.item) for index, item in enumerate(self.items_received)]

@@ -28,6 +28,27 @@ from worlds.gta_vice_city.client.bridge import AsiBridge  # noqa: E402
 EXPECTED_HASH = "interophash01"
 RESYNC_ITEMS = [(0, 111), (1, 222), (2, 333)]
 RESYNC_CHECKED = [542000000, 542000001]
+
+# One toast row, in the shape protocol.toast_message writes and the C++ side reads
+# by key and by pair position. The seam is worth a case of its own: a rename on
+# either side degrades to a caught json exception and a log line, so toasts would
+# vanish in game with nothing failing anywhere. Every role the mod knows appears,
+# so a name dropped from either table is caught too.
+#
+# The harness reports a row as its lines joined by " | ", so what comes back proves
+# both the newline marker breaking the row and the segment order inside each line.
+TOAST_SEGMENTS = [
+    ("You", protocol.TOAST_OWN_SLOT),
+    (" sent ", protocol.TOAST_CONNECTIVE),
+    ("Minigun", protocol.TOAST_PROGRESSION),
+    (" to ", protocol.TOAST_CONNECTIVE),
+    ("PlayerTwo", protocol.TOAST_OTHER_SLOT),
+    protocol.toast_newline(),
+    ("(", protocol.TOAST_CONNECTIVE),
+    ("Hidden Package 42", protocol.TOAST_LOCATION),
+    (")", protocol.TOAST_CONNECTIVE),
+]
+EXPECTED_TOAST = "You sent Minigun to PlayerTwo | (Hidden Package 42)"
 EMITTED_CHECK = 542000042
 EMITTED_PERCENTAGE = 93
 CONFIG = {
@@ -154,6 +175,7 @@ class Recorder:
         await bridge.send_checked(RESYNC_CHECKED)
         await bridge.send_status(*STATUS, STATUS_GOAL_ROWS, STATUS_STRAND_ROWS,
                                  STATUS_FINALE_WARP)
+        await bridge.send_toast(TOAST_SEGMENTS)
 
 
 async def run(harness: str) -> int:
@@ -198,6 +220,15 @@ async def run(harness: str) -> int:
         failures.append(f"items {summary.get('items')} != {RESYNC_ITEMS}")
     if summary.get("checked") != RESYNC_CHECKED:
         failures.append(f"checked {summary.get('checked')} != {RESYNC_CHECKED}")
+    if summary.get("toasts") != [EXPECTED_TOAST]:
+        failures.append(f"toasts {summary.get('toasts')} != [{EXPECTED_TOAST!r}]")
+    # A welcomed session clears the handshake-refusal notice on its way through, so
+    # a player refused for one game and welcomed into the next does not keep
+    # reading that the seed was refused. Both slots empty is what proves the clear
+    # ran on this path and did not raise anything of its own.
+    if summary.get("notices") != ["", ""]:
+        failures.append(f"notices {summary.get('notices')} are not both clear "
+                        f"after a welcome")
     if summary.get("status") != list(STATUS):
         failures.append(f"status {summary.get('status')} != {list(STATUS)}")
     if summary.get("status_finale_warp") is not STATUS_FINALE_WARP:

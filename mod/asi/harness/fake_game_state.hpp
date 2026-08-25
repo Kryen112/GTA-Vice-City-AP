@@ -4,6 +4,7 @@
 // the harness main thread both touch it.
 #pragma once
 
+#include <array>
 #include <mutex>
 #include <string>
 #include <utility>
@@ -62,12 +63,30 @@ class FakeGameState : public GameState {
     checked_ = locations;
   }
 
-  void ShowToast(const std::string& text) override {
+  // Flattened to one string per row, because what the interop check is about is
+  // that the Python side and the C++ side agree on the frame: the colours and the
+  // line breaks are the console self-test's business, and it drives the row
+  // builder directly. The break is kept visible so a row that lost its second
+  // line still reads as different from one that never had one.
+  void ShowToast(const ToastRow& row) override {
     std::lock_guard<std::mutex> lock(mutex_);
+    std::string text;
+    for (const std::vector<ToastSegment>& line : row.lines) {
+      if (!text.empty()) text += " | ";
+      text += ToastLineText(line);
+    }
     toasts_.push_back(text);
   }
 
-  void ShowStickyToast(const std::string& text) override { ShowToast(text); }
+  void ShowNotice(ToastNotice notice, const std::string& text) override {
+    std::lock_guard<std::mutex> lock(mutex_);
+    notices_[ToastNoticeSlot(notice)] = text;
+  }
+
+  void ClearNotice(ToastNotice notice) override {
+    std::lock_guard<std::mutex> lock(mutex_);
+    notices_[ToastNoticeSlot(notice)].clear();
+  }
 
   void SetClientConnected(bool connected) override {
     std::lock_guard<std::mutex> lock(mutex_);
@@ -123,6 +142,14 @@ class FakeGameState : public GameState {
   std::string StampedSeedHash() {
     std::lock_guard<std::mutex> lock(mutex_);
     return stamped_seed_hash_;
+  }
+
+  // The notices, so a session can assert what the handshake left behind: the
+  // welcome path clears the refusal slot, and both being empty afterwards is what
+  // says that clear ran. Empty means the slot carries none.
+  std::array<std::string, kToastNoticeCount> Notices() {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return notices_;
   }
 
   std::vector<std::pair<std::int64_t, std::int64_t>> AppliedItems() {
@@ -201,6 +228,7 @@ class FakeGameState : public GameState {
   std::vector<std::pair<std::int64_t, std::int64_t>> applied_items_;
   std::vector<std::int64_t> checked_;
   std::vector<std::string> toasts_;
+  std::array<std::string, kToastNoticeCount> notices_{};
   std::vector<std::int64_t> pending_checks_;
   bool goal_pending_ = false;
   int pending_percentage_ = -1;

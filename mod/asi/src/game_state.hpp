@@ -15,6 +15,7 @@
 // carries, and the headers holding them are game-free like this one.
 #include "scm_content_locks.hpp"
 #include "scm_crossings.hpp"
+#include "scm_toasts.hpp"
 
 namespace gtavc {
 
@@ -143,14 +144,17 @@ class GameState {
   // Location ids AP already has checked, so the game does not re-send them.
   virtual void MarkChecked(const std::vector<std::int64_t>& locations) = 0;
 
-  // A player-facing message for the in-game toast queue.
-  virtual void ShowToast(const std::string& text) = 0;
+  // A player-facing row for the in-game toast stack, already built into its
+  // coloured segments by the client, since only the client knows which slot is
+  // ours and how the server classified an item.
+  virtual void ShowToast(const ToastRow& row) = 0;
 
-  // The same, for a message that must survive until a game is running: the
-  // handshake refusal arrives while the player is still in the frontend, where
-  // no message can be displayed, and it is the only thing that explains why
-  // nothing in the game will work.
-  virtual void ShowStickyToast(const std::string& text) = 0;
+  // A row that holds its place until something clears it, addressed by what it is
+  // about so a repeat replaces rather than stacks. The handshake refusal arrives
+  // while the player is still in the frontend, where nothing can be drawn at all,
+  // and it is the only thing that explains why nothing in the game will work.
+  virtual void ShowNotice(ToastNotice notice, const std::string& text) = 0;
+  virtual void ClearNotice(ToastNotice notice) = 0;
 
   // Whether the client's socket is up, for the pause menu's status page. The
   // page is drawn while the game frame does not run, so it cannot infer this

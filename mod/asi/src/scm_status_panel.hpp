@@ -22,6 +22,7 @@
 #include "scm_content_locks.hpp"
 #include "scm_crossings.hpp"
 #include "scm_radio.hpp"
+#include "scm_toasts.hpp"
 
 namespace gtavc {
 
@@ -77,6 +78,16 @@ struct StatusRow {
   std::string label;
   std::string value;
   StatusTone tone = StatusTone::kPlain;
+  // A row the RECENT block composed, carrying its own colours instead of a tone.
+  // A row with segments has no label and no value: the segments ARE its text, and
+  // the drawing prints them one after another rather than as a label-value pair.
+  // Every other row leaves this empty and draws exactly as it always did, which
+  // is what keeps the flattening, the fitting and the column dealing untouched.
+  std::vector<ToastSegment> segments;
+  // Whether this row belongs with the one above it, which is what keeps the two in
+  // one column. A composer knows this where the fitting cannot work it out: a
+  // toast row's location line means nothing without the sentence over it.
+  bool joined_above = false;
 };
 
 // A titled block of rows. The first block carries no heading: it is the seed's
@@ -130,6 +141,9 @@ struct StatusPanelState {
   // crossing when the seed split them, and Starfish Island last.
   std::vector<std::string> route_labels;
   std::vector<RouteState> route_states;
+  // What a waiting route is waiting for, one entry per route and empty for a
+  // route that waits for nothing. Only the causeway has one.
+  std::vector<std::string> route_needs_labels;
 
   bool radio_randomized = false;
   std::array<bool, kRadioStationCount> radio_unlocked{};
@@ -162,6 +176,12 @@ struct StatusPanelState {
   // for and how far each mission strand has come. Empty until a client says.
   std::vector<StatusRow> goal_rows;
   std::vector<StatusRow> strand_rows;
+
+  // The item movements the in-game stack has shown, newest first. The stack is a
+  // marquee, so a row seen while driving is gone by the time the player can look
+  // at it; this is where it went. Held by the mod rather than asked of the client,
+  // since the mod already has every row it drew.
+  std::vector<ToastRow> recent_rows;
 };
 
 // How many characters a wrapped line may carry. A column is 146 of the
@@ -430,11 +450,16 @@ inline StatusSection ComposeRouteSection(const StatusPanelState& state) {
                                 ? state.route_labels.size()
                                 : state.route_states.size();
   for (std::size_t index = 0; index < count; ++index) {
-    const char* value = "shut";
+    std::string value = "shut";
     if (state.route_states[index] == RouteState::kOpen) {
       value = "open";
     } else if (state.route_states[index] == RouteState::kWaiting) {
-      value = "needs its island";
+      // The label where the seed sent one. A route waiting with no label named is
+      // a config a client one field older sent, so the generic line stands in.
+      value = index < state.route_needs_labels.size() &&
+                      !state.route_needs_labels[index].empty()
+                  ? "needs " + state.route_needs_labels[index]
+                  : "needs its island";
     }
     section.rows.push_back({state.route_labels[index], value,
                             state.route_states[index] == RouteState::kOpen
@@ -481,9 +506,62 @@ inline StatusSection ComposeMinimapSection(const StatusPanelState& state) {
   return section;
 }
 
+// How many spaces a recent row's continuation lines are set in by, matching the
+// indent the in-game stack gives them so a row reads the same way in both places.
+// A count of spaces rather than a width, because the panel composes text and the
+// fitting measures it afterwards.
+constexpr std::size_t kRecentContinuationSpaces = 2;
+
+// The most lines RECENT may add to the page. The row height comes from the
+// TALLEST column and the whole page's text size is fitted to it, so an unbounded
+// history would shrink every other block the moment a single item moved. Held
+// under a column's own share, so RECENT costs the page nothing it was not already
+// laying out. The ring behind it keeps more rows than this: the budget decides how
+// many are shown, not how many are remembered.
+constexpr std::size_t kRecentMaxLines = 14;
+
+// The item movements the stack has shown, newest first, in the same colours it
+// drew them in.
+//
+// One panel line per line of a row, so a two-line row takes two rows here as
+// well: the sentence, then its location set in beneath it. A row's lines are kept
+// in their own order, unlike the stack's, because a list read top to bottom wants
+// the sentence above its location and the stack only reverses them because it
+// climbs.
+inline StatusSection ComposeRecentSection(const StatusPanelState& state) {
+  StatusSection section;
+  if (state.recent_rows.empty()) return section;
+  section.heading = "RECENT";
+  for (const ToastRow& row : state.recent_rows) {
+    // Whole rows only. Half a row is a sentence with no location or a location
+    // with no sentence, and the second is worse than leaving the row out.
+    if (section.rows.size() + row.lines.size() > kRecentMaxLines) break;
+    for (std::size_t index = 0; index < row.lines.size(); ++index) {
+      StatusRow panel_row;
+      if (index > 0) {
+        panel_row.segments.push_back(
+            {std::string(kRecentContinuationSpaces, ' '), ToastRole::kConnective});
+      }
+      for (const ToastSegment& segment : row.lines[index]) {
+        panel_row.segments.push_back(segment);
+      }
+      // A line with nothing on it at all. BuildToastRow drops empty lines, so a row
+      // reaching here has none, and this is a guard against a row built some other
+      // way rather than a case the stack produces.
+      if (panel_row.segments.empty()) continue;
+      // Every line after a row's first belongs with the one above it, so the
+      // column dealing keeps them together: a location at the head of one column
+      // with its sentence at the foot of the last names nothing at all.
+      panel_row.joined_above = index > 0;
+      section.rows.push_back(panel_row);
+    }
+  }
+  return section;
+}
+
 // The whole panel, in reading order. A block with no rows is dropped rather than
-// drawn as a heading over nothing: a seed that locks no ability has no abilities
-// block at all.
+// drawn as a heading over nothing: a seed that locks no abilities has no ABILITIES
+// block at all, rather than one saying so.
 inline std::vector<StatusSection> ComposeStatusPanel(const StatusPanelState& state) {
   std::vector<StatusSection> sections;
   for (const StatusSection& section :
@@ -491,7 +569,7 @@ inline std::vector<StatusSection> ComposeStatusPanel(const StatusPanelState& sta
         ComposeStrandSection(state), ComposeAbilitySection(state),
         ComposeContentSection(state), ComposeRewardSection(state),
         ComposeRouteSection(state), ComposeRadioSection(state),
-        ComposeMinimapSection(state)}) {
+        ComposeMinimapSection(state), ComposeRecentSection(state)}) {
     if (!section.rows.empty()) sections.push_back(section);
   }
   return sections;
@@ -574,86 +652,36 @@ struct PanelLine {
   // in the same column: a value at the head of one column with its label at the
   // foot of the last names nothing at all.
   bool joined_above = false;
+  // A recent row's own coloured text. A line with segments carries no label and no
+  // value, so every other line in the panel is unaffected by its presence.
+  std::vector<ToastSegment> segments;
 };
 
 inline std::vector<PanelLine> FlattenPanel(const std::vector<StatusSection>& sections) {
   std::vector<PanelLine> lines;
   for (const StatusSection& section : sections) {
-    if (!lines.empty()) lines.push_back({"", "", StatusTone::kPlain, false, true});
+    if (!lines.empty()) {
+      PanelLine blank;
+      blank.blank = true;
+      lines.push_back(blank);
+    }
     if (!section.heading.empty()) {
-      lines.push_back({section.heading, "", StatusTone::kPlain, true, false});
+      PanelLine heading;
+      heading.label = section.heading;
+      heading.heading = true;
+      lines.push_back(heading);
     }
     for (const StatusRow& row : section.rows) {
-      lines.push_back({row.label, row.value, row.tone, false, false});
+      PanelLine line;
+      line.label = row.label;
+      line.value = row.value;
+      line.tone = row.tone;
+      line.segments = row.segments;
+      line.joined_above = row.joined_above;
+      lines.push_back(line);
     }
   }
   return lines;
-}
-
-// How wide a string draws, in whatever unit the layout is measured in. The
-// drawing hands in the font's own measure at the page's design size; the console
-// self-test hands in one of its own, so the fitting runs without a font.
-using TextWidth = float (*)(const std::string&);
-
-// The pieces a line's text breaks into, each narrow enough for its column: the
-// text itself where it already fits, and as many pieces as it takes where it does
-// not, broken at its own spaces.
-//
-// A continuation is set in under the line it continues. A wrapped list's own
-// continuations already carry leading spaces, so a piece broken out of one keeps
-// them; the line the list's prefix rides on carries none, so its continuations are
-// set in as far as that prefix runs, which is where the composer's own wrapping
-// puts them. A word wider than a column is a piece of its own: it has no space to
-// break at, so the font cannot fold it either, and it draws across the gutter
-// rather than being hidden.
-inline std::vector<std::string> BreakToWidth(const std::string& text, float width,
-                                             TextWidth measure) {
-  std::vector<std::string> pieces;
-  const std::size_t opening = text.find_first_not_of(' ');
-  if (measure(text) <= width || opening == std::string::npos) {
-    pieces.push_back(text);
-    return pieces;
-  }
-  const std::string opening_indent(opening, ' ');
-  std::string continuation = opening_indent;
-  if (opening == 0) {
-    // A prefix is a name, a colon and a space, which is the one shape the
-    // composer's own wrapping indents under.
-    const std::size_t colon = text.find(':');
-    if (colon != std::string::npos && colon + 1 < text.size() &&
-        text[colon + 1] == ' ') {
-      const std::string prefix(colon + 2, ' ');
-      // An indent worth half a column leaves too little of the column for the
-      // words it sets in, so a colon that late in a line is not a prefix worth
-      // following.
-      if (measure(prefix) * 2.0f < width) continuation = prefix;
-    }
-  }
-  std::string current;
-  std::size_t index = opening;
-  while (index < text.size()) {
-    const std::size_t space = text.find(' ', index);
-    const std::size_t length =
-        space == std::string::npos ? std::string::npos : space - index;
-    const std::string word = text.substr(index, length);
-    index = space == std::string::npos ? text.size() : space + 1;
-    if (word.empty()) continue;
-    // The first word of a piece always goes on it, however wide it is, and only
-    // the first piece opens where the line itself opened.
-    if (current.empty()) {
-      current = (pieces.empty() ? opening_indent : continuation) + word;
-      continue;
-    }
-    const std::string grown = current + " " + word;
-    if (measure(grown) > width) {
-      pieces.push_back(current);
-      current = continuation + word;
-      continue;
-    }
-    current = grown;
-  }
-  if (!current.empty()) pieces.push_back(current);
-  return pieces;
 }
 
 // The panel's lines, each one narrowed until it draws on a single line.
@@ -679,13 +707,26 @@ inline std::vector<PanelLine> FitPanelLines(const std::vector<PanelLine>& lines,
   fitted.reserve(lines.size());
   // Every piece a line breaks into after the first belongs with the one before it,
   // so the dealing keeps them in one column.
+  // A piece past the first belongs with the piece before it. A line that ARRIVED
+  // joined stays joined through its first piece as well: the composer knew
+  // something the breaking cannot see, which is that this line means nothing
+  // without the one above it.
   const auto push = [&fitted](PanelLine line, std::size_t piece) {
-    line.joined_above = piece > 0;
+    line.joined_above = line.joined_above || piece > 0;
     fitted.push_back(std::move(line));
   };
   for (const PanelLine& line : lines) {
     if (line.blank) {
       fitted.push_back(line);
+      continue;
+    }
+    // A segmented line is cut to its column rather than broken across rows, so it
+    // reaches the drawing as exactly one line and the one-line-per-row guarantee
+    // holds for it the same way it holds for everything else.
+    if (!line.segments.empty()) {
+      PanelLine part = line;
+      part.segments = FitSegmentLine(line.segments, column_width, measure);
+      fitted.push_back(part);
       continue;
     }
     if (line.heading) {

@@ -73,7 +73,8 @@ bool BridgeClient::RunSession() {
           const std::string type = message.value("type", std::string());
           if (type == msg::kRefused) {
             const std::string reason = message.value("reason", std::string());
-            game_->ShowStickyToast("Archipelago refused this game: " + reason);
+            game_->ShowNotice(ToastNotice::kHandshakeRefusal,
+                              "Archipelago refused this game: " + reason);
             logger_("refused by client: " + reason);
             return false;
           }
@@ -82,6 +83,11 @@ bool BridgeClient::RunSession() {
             return false;
           }
           game_->StampSeedHash(message.value("seed_hash", std::string()));
+          // A refusal earlier in this process was about a game that is no longer
+          // running: a player told the wrong save was loaded, who then starts the
+          // right game, is welcomed here and must not keep reading that the seed
+          // was refused for the rest of the session.
+          game_->ClearNotice(ToastNotice::kHandshakeRefusal);
           welcomed = true;
           game_->SetClientConnected(true);
           logger_("welcomed by client");
@@ -242,7 +248,16 @@ void BridgeClient::HandleMessage(const json& message) {
       }
       game_->MarkChecked(locations);
     } else if (type == msg::kToast) {
-      game_->ShowToast(message.value("text", std::string()));
+      // The client composes the row: only it knows which slot is ours and how the
+      // server classified the item, and only it can name the location. What
+      // arrives is a flat list of [text, colour name] pairs with the newline
+      // marker where the row breaks, which the model builds into lines.
+      std::vector<std::pair<std::string, std::string>> segments;
+      for (const json& entry : message.at("segments")) {
+        segments.emplace_back(entry.at(0).get<std::string>(),
+                              entry.at(1).get<std::string>());
+      }
+      game_->ShowToast(BuildToastRow(segments));
     } else if (type == msg::kStatus) {
       ClientStatus status;
       status.checks_done = message.value("checks_done", 0);

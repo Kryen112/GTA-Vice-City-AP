@@ -56,6 +56,7 @@ int main(int argc, char** argv) {
   }
   summary["checked"] = game.Checked();
   summary["toasts"] = game.Toasts();
+  summary["notices"] = game.Notices();
   summary["item_globals"] = json::object();
   for (const auto& entry : game.ItemGlobals()) {
     summary["item_globals"][std::to_string(entry.first)] = entry.second;

@@ -2,9 +2,11 @@
 
 #include <cstddef>
 #include <cstring>
+#include <limits>
 #include <utility>
 
 #include "game_addresses.hpp"
+#include "hud_text.hpp"
 
 #include <plugin.h>
 #include <CFont.h>
@@ -53,12 +55,6 @@ constexpr unsigned short kBackEntryLoweredY = 406;
 // the two would show the page underneath.
 constexpr float kHighlightBarAbove = 9.0f;
 constexpr float kHighlightBarBelow = 21.0f;
-
-// The virtual screen the frontend lays out in, which the game stretches to
-// whatever resolution is running. The menu table's own positions are in these
-// units, so the panel's are too.
-constexpr float kVirtualWidth = 640.0f;
-constexpr float kVirtualHeight = 448.0f;
 
 // Where the panel draws, in those units. A row is a label at the column's left
 // edge and a value ending just short of its right edge, and a pair too wide to
@@ -116,40 +112,6 @@ static_assert(kBackEntryVanillaY - kHighlightBarAbove >
 static_assert(kBackEntryLoweredY + kHighlightBarBelow <= kVirtualHeight,
               "the lowered entry's own highlight bar must end inside the screen");
 
-float StretchX(float x) {
-  return x * static_cast<float>(RsGlobal.maximumWidth) / kVirtualWidth;
-}
-
-float StretchY(float y) {
-  return y * static_cast<float>(RsGlobal.maximumHeight) / kVirtualHeight;
-}
-
-// The text the panel hands the game. CFont takes wide characters and the panel
-// composes narrow ones, so each row is widened into storage of the mod's own.
-// The font reads the string during the print rather than keeping the pointer
-// (unlike the message queue, which is why the toasts own a ring of their own),
-// so the ring here is only insurance: one buffer would do, and a ring costs
-// nothing.
-const wchar_t* Widen(const std::string& text) {
-  constexpr std::size_t kBufferChars = 96;
-  constexpr std::size_t kBufferCount = 128;
-  static wchar_t buffers[kBufferCount][kBufferChars];
-  static std::size_t next_buffer = 0;
-  wchar_t* buffer = buffers[next_buffer];
-  next_buffer = (next_buffer + 1) % kBufferCount;
-  const std::size_t length =
-      text.size() < kBufferChars - 1 ? text.size() : kBufferChars - 1;
-  for (std::size_t index = 0; index < length; ++index) {
-    // The tilde opens the game's own formatting token, which the font expands in
-    // place. Route labels and the seed hash are the panel's only text from
-    // outside the mod, and neither is worth trusting to stay tilde-free.
-    const unsigned char character = static_cast<unsigned char>(text[index]);
-    buffer[index] = character == '~' ? L' ' : static_cast<wchar_t>(character);
-  }
-  buffer[length] = 0;
-  return buffer;
-}
-
 // How wide a line draws at the page's design text size, which is what the
 // fitting measures against. The size is the design's own rather than the fitted
 // one, so the answer does not depend on the fitting it feeds; the fitted size is
@@ -157,6 +119,10 @@ const wchar_t* Widen(const std::string& text) {
 // the size are set here rather than by the caller, because a width measured under
 // another face is a wrong answer that looks like a right one.
 float DesignTextWidth(const std::string& text) {
+  // Past the widening bound the answer would be the width of the string's front
+  // rather than of the string, so it is refused instead: the fitting then breaks
+  // or cuts until it is asking about something it can measure whole.
+  if (text.size() > kWidenMaxChars) return std::numeric_limits<float>::max();
   CFont::SetFontStyle(FONT_STANDARD);
   CFont::SetScale(StretchX(kGeometry.scale_x), StretchY(kGeometry.scale_y));
   return CFont::GetStringWidth(Widen(text), true);
@@ -166,6 +132,7 @@ float DesignTextWidth(const std::string& text) {
 // larger the taller its band is, so the one line the fitting could not measure
 // would be the one line left free to fold.
 float DesignHeadingWidth(const std::string& text) {
+  if (text.size() > kWidenMaxChars) return std::numeric_limits<float>::max();
   CFont::SetFontStyle(FONT_HEADING);
   CFont::SetScale(StretchX(kGeometry.scale_x * kHeadingScale),
                   StretchY(kGeometry.scale_y * kHeadingScale));
@@ -233,6 +200,23 @@ void DrawColumn(const std::vector<PanelLine>& lines, float column_x,
     CFont::SetFontStyle(FONT_STANDARD);
     CFont::SetScale(StretchX(kGeometry.scale_x * scale),
                     StretchY(kGeometry.scale_y * scale));
+    // A recent row: its own colours, printed one segment after another from the
+    // column's left edge. Each segment advances by its own measured width, which
+    // is exact for that segment; the width of the whole LINE is never summed from
+    // these, since summing per-segment widths drifts. The fitting already cut this
+    // line to the column, so nothing here can reach the wrap edge.
+    if (!line.segments.empty()) {
+      float x = left;
+      for (const ToastSegment& segment : line.segments) {
+        if (segment.text.empty()) continue;
+        const wchar_t* text = Widen(segment.text);
+        CFont::SetColor(ToastRoleColor(segment.role, alpha));
+        CFont::PrintString(x, StretchY(y), text);
+        x += CFont::GetStringWidth(text, true);
+      }
+      y += row_height;
+      continue;
+    }
     if (line.label.empty()) {
       CFont::SetColor(ToneColor(line.tone, alpha));
       const wchar_t* value = Widen(line.value);

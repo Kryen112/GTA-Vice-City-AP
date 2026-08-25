@@ -7,6 +7,8 @@
 #include <limits>
 #include <map>
 #include <set>
+#include <string>
+#include <utility>
 #include <vector>
 
 #include "../src/protocol.hpp"
@@ -1270,54 +1272,6 @@ int main() {
     Expect(ClassifyHeldPickup(3, 7, -1) == HeldPickupClass::kNone,
            "and a rampage entry is left alone, retried next frame");
   }
-
-  // Release reporting. Two opposite failure modes to avoid: announcing from the
-  // first observed frame (every loaded save would re-announce what it already
-  // had) and suppressing the first real edge (a hundred packages would reappear
-  // unexplained). The first observation is the baseline; every edge after it
-  // speaks.
-  {
-    const std::size_t ocean_beach = ContentDistrictSlot(kContentHiddenPackages, 0);
-    const std::size_t vice_point = ContentDistrictSlot(kContentHiddenPackages, 2);
-    std::array<int, kContentCount> flags{};
-    flags[kContentHiddenPackages] = 1;
-    ContentLocks held{};
-    held[ocean_beach] = true;
-    held[vice_point] = true;
-    ContentLocks none{};
-
-    // First observation on a new game: held, and silent.
-    ContentReleasePlan plan = PlanContentReleases(held, flags, none, false);
-    Expect(!plan.announce[ocean_beach],
-           "the first observed frame is the baseline, not an announcement");
-    Expect(plan.next_was_held[ocean_beach],
-           "and it records the district as held");
-
-    // One district's item lands: that district speaks, and the one still held
-    // stays quiet. A split seed releases a class a district at a time, so an
-    // announcement that spoke for the whole class would be a lie.
-    ContentLocks ocean_released = held;
-    ocean_released[ocean_beach] = false;
-    plan = PlanContentReleases(ocean_released, flags, plan.next_was_held, true);
-    Expect(plan.announce[ocean_beach], "the released district announces");
-    Expect(!plan.announce[vice_point], "the one still held says nothing");
-    plan = PlanContentReleases(ocean_released, flags, plan.next_was_held, true);
-    Expect(!plan.announce[ocean_beach],
-           "and never again while it stays released");
-
-    // A save that already holds the item reads released at the first
-    // observation, so it stays quiet.
-    plan = PlanContentReleases(none, flags, held, false);
-    Expect(!plan.announce[ocean_beach],
-           "a save already carrying the item does not re-announce");
-
-    // An unconfigured class never speaks, whatever the state does.
-    std::array<int, kContentCount> unselected{};
-    plan = PlanContentReleases(none, unselected, held, true);
-    Expect(!plan.announce[ocean_beach],
-           "an unselected key never announces, the toggle invariant");
-  }
-
   // The two lock families union on a rampage icon: either alone holds it, and
   // the two run-them-down icons answer only to the rampages content key, since
   // they hand no weapon.
@@ -1452,146 +1406,534 @@ int main() {
            "a wrapped clock still toasts once the cooldown elapses");
   }
 
-  // Toast batching. The game keeps a pointer to the text of every message it
-  // has queued and plays them in sequence, so lines pending together are joined
-  // into one message. Nothing may be dropped: a release line is one-shot.
+
+  // The toast stack. Nothing may be dropped and nothing may overflow the band,
+  // and what makes both true at once is that a row's clock starts when it becomes
+  // VISIBLE rather than when it arrived: the band stays full, every row gets its
+  // whole lifetime, and the queue drains at the band's own rate.
   {
-    // The message cap is a parameter, so the cases below drive it at a value
-    // that shows both the cap and the carry; the shipped value has its own case.
-    constexpr std::size_t kTestMessagesPerPost = 3;
-    const ToastBatch none = PlanToastBatch({}, kToastMaxChars, kTestMessagesPerPost);
-    Expect(none.messages.empty() && none.consumed == 0, "nothing pending posts nothing");
+    const auto row = [](std::size_t lines) {
+      ToastRow built;
+      for (std::size_t line = 0; line < lines; ++line) {
+        built.lines.push_back({{"text", ToastRole::kConnective}});
+      }
+      return built;
+    };
 
-    const ToastBatch one = PlanToastBatch({"Rampages are now available."},
-                                          kToastMaxChars, kTestMessagesPerPost);
-    Expect(one.messages.size() == 1 && one.consumed == 1 &&
-               one.messages[0] == "Rampages are now available.",
-           "a single line posts as itself");
+    // The band's capacity comes out of the geometry, so the measured default is
+    // what the drain rate is reasoned about. The anchor sits above the radar's top
+    // edge and the ceiling clears the help box.
+    ToastGeometry geometry;
+    Expect(ToastLineCapacity(geometry) == 9,
+           "the measured band holds nine lines, which is four two-line rows");
+    ToastGeometry narrow;
+    narrow.ceiling_y = narrow.anchor_y;
+    Expect(ToastLineCapacity(narrow) == 1,
+           "a band with no height still holds one line, so a notice is never lost");
+    ToastGeometry inverted;
+    inverted.ceiling_y = inverted.anchor_y + 100.0f;
+    Expect(ToastLineCapacity(inverted) == 1,
+           "an inverted band holds one line rather than a negative count");
 
-    const ToastBatch joined = PlanToastBatch({"first", "second"}, kToastMaxChars,
-                                             kTestMessagesPerPost);
-    Expect(joined.messages.size() == 1 && joined.consumed == 2 &&
-               joined.messages[0] ==
-                   std::string("first") + std::string(kToastSeparator) + "second",
-           "lines pending together join into one message");
+    // A row's lifetime runs from the frame it was admitted on, not from the frame
+    // it arrived on. This is the whole mechanism, so it is asserted directly: a row
+    // that waited a full lifetime in the queue still gets its own on screen.
+    {
+      ToastStackState state;
+      state.waiting.push_back(QueuedToast(row(1)));
+      state.waiting.push_back(QueuedToast(row(1)));
+      AdvanceToastStack(state, 1000, 1, kToastLifetimeMs);
+      Expect(state.visible.size() == 1 && state.waiting.size() == 1,
+             "a one-line band shows one row and holds the rest");
+      Expect(state.visible[0].shown_at_ms == 1000,
+             "an admitted row's clock starts when it is admitted");
+      // One millisecond short of the lifetime: still on screen, and the row behind
+      // it still waiting.
+      AdvanceToastStack(state, 1000 + kToastLifetimeMs - 1, 1, kToastLifetimeMs);
+      Expect(state.visible.size() == 1 && state.waiting.size() == 1,
+             "a row holds its slot for its whole lifetime");
+      AdvanceToastStack(state, 1000 + kToastLifetimeMs, 1, kToastLifetimeMs);
+      Expect(state.visible.size() == 1 && state.waiting.empty(),
+             "the slot frees and the next row takes it in the same frame");
+      Expect(state.visible[0].shown_at_ms == 1000 + kToastLifetimeMs,
+             "the row that waited gets its own full lifetime, not what is left");
+    }
 
-    // An empty line would hold a message slot for its whole duration showing
-    // nothing, so it is consumed without being posted.
-    const ToastBatch empties = PlanToastBatch({"", "text", ""}, kToastMaxChars,
-                                              kTestMessagesPerPost);
-    Expect(empties.messages.size() == 1 && empties.messages[0] == "text" &&
-               empties.consumed == 3,
-           "empty lines are consumed and never posted");
+    // Nothing is dropped, however big the burst. Two hundred rows through a
+    // nine-line band is the release case, and the count out must equal the count in.
+    {
+      ToastStackState state;
+      for (int index = 0; index < 200; ++index) state.waiting.push_back(QueuedToast(row(2)));
+      std::size_t shown = 0;
+      unsigned int now = 0;
+      for (int frame = 0; frame < 500; ++frame) {
+        // Counted off the QUEUE rather than off the visible list: a frame expires
+        // and admits at once, so the visible count can be unchanged across a frame
+        // that showed four new rows.
+        const std::size_t waiting_before = state.waiting.size();
+        AdvanceToastStack(state, now, 9, kToastLifetimeMs);
+        shown += waiting_before - state.waiting.size();
+        now += kToastLifetimeMs;
+      }
+      Expect(state.waiting.empty(), "a two hundred row release drains completely");
+      Expect(shown == 200, "every row of the release was shown, none dropped");
+    }
 
-    // The boundary: two lines that exactly fill one message stay in one.
-    const std::string half(kToastMaxChars / 2 - 2, 'a');
-    const ToastBatch exact = PlanToastBatch({half, half}, kToastMaxChars,
-                                            kTestMessagesPerPost);
-    Expect(exact.messages.size() == 1 && exact.consumed == 2 &&
-               exact.messages[0].size() <= kToastMaxChars,
-           "a pair that just fits stays one message");
+    // A row is admitted whole. A two-line row waits for two free lines rather than
+    // showing its sentence without its location, and admission stops at the first
+    // row that does not fit rather than reaching past it for a shorter one, since
+    // arrival order is the only order these rows have.
+    {
+      ToastStackState state;
+      state.waiting.push_back(QueuedToast(row(1)));
+      state.waiting.push_back(QueuedToast(row(2)));
+      state.waiting.push_back(QueuedToast(row(1)));
+      AdvanceToastStack(state, 0, 2, kToastLifetimeMs);
+      Expect(state.visible.size() == 1 && state.waiting.size() == 2,
+             "a two-line row waits for two free lines rather than showing half "
+             "of itself behind a row already up");
+      AdvanceToastStack(state, 0, 4, kToastLifetimeMs);
+      Expect(state.visible.size() == 3, "a band of four fits all three rows");
+    }
 
-    // One past it spills into the next message rather than truncating.
-    const std::string most(kToastMaxChars - 2, 'b');
-    const ToastBatch spill = PlanToastBatch({most, most}, kToastMaxChars,
-                                            kTestMessagesPerPost);
-    Expect(spill.messages.size() == 2 && spill.consumed == 2 &&
-               spill.messages[0] == most && spill.messages[1] == most,
-           "a line that does not fit starts the next message");
+    // The band is never overflowed. Whatever arrives, the lines on screen stay
+    // inside the capacity, because a row over the screen is worse than a row late.
+    {
+      ToastStackState state;
+      for (int index = 0; index < 50; ++index) state.waiting.push_back(QueuedToast(row(2)));
+      for (int frame = 0; frame < 20; ++frame) {
+        AdvanceToastStack(state, static_cast<unsigned int>(frame) * 100, 9,
+                          kToastLifetimeMs);
+        std::size_t lines = 0;
+        for (const LiveToast& live : state.visible) lines += live.row.line_count();
+        Expect(lines <= 9, "the band never holds more lines than it has");
+      }
+    }
 
-    // A single line longer than a whole message is truncated, never dropped.
-    const ToastBatch huge = PlanToastBatch({std::string(kToastMaxChars + 50, 'c')},
-                                           kToastMaxChars, kTestMessagesPerPost);
-    Expect(huge.messages.size() == 1 && huge.consumed == 1 &&
-               huge.messages[0].size() == kToastMaxChars,
-           "an over-long line is truncated to one message");
+    // A notice arriving under rows already up takes its lines off the band whether
+    // they were free or not. The OLDEST rows go, from the front, because they are
+    // the ones that have been read: a row that has held the screen is not lost the
+    // way an unshown one is, and leaving them would push the top of the stack past
+    // the ceiling where the drawing clips it away unseen for the rest of its life.
+    {
+      ToastStackState state;
+      for (int index = 0; index < 3; ++index) {
+        state.waiting.push_back(
+            QueuedToast(PlainToastRow(std::to_string(index), ToastRole::kConnective)));
+      }
+      AdvanceToastStack(state, 0, 3, kToastLifetimeMs);
+      Expect(state.visible.size() == 3, "three one-line rows fill a band of three");
+      state.notices[ToastNoticeSlot(ToastNotice::kBridgeDown)] =
+          PlainToastRow("disconnected", ToastRole::kTrap);
+      AdvanceToastStack(state, 1, 3, kToastLifetimeMs);
+      Expect(state.visible.size() == 2,
+             "a notice arriving takes its line from the rows already up");
+      Expect(ToastLineText(state.visible[0].row.lines[0]) == "1",
+             "and it takes the oldest, which is the one that has been read");
+    }
 
-    // Past the per-frame cap the rest stays queued, so the next frame posts it.
-    const std::vector<std::string> flood(6, most);
-    const ToastBatch capped = PlanToastBatch(flood, kToastMaxChars, kTestMessagesPerPost);
-    Expect(capped.messages.size() == kTestMessagesPerPost &&
-               capped.consumed == kTestMessagesPerPost,
-           "the per-frame cap holds and consumes only what it posted");
-    const ToastBatch rest = PlanToastBatch(
-        std::vector<std::string>(flood.begin() + capped.consumed, flood.end()),
-        kToastMaxChars, kTestMessagesPerPost);
-    Expect(rest.messages.size() == 3 && rest.consumed == 3,
-           "and the carried remainder posts on the next frame");
+    // A notice holds its place forever, and takes its lines off the band. Where the
+    // band is large enough the rest still rotates; where it is not, the notices own
+    // it, because a row admitted onto a band with no room for it would start its
+    // lifetime and be clipped away unseen.
+    {
+      ToastStackState state;
+      state.notices[ToastNoticeSlot(ToastNotice::kHandshakeRefusal)] =
+          PlainToastRow("refused", ToastRole::kTrap);
+      Expect(ToastNoticeLines(state) == 1, "an active notice holds one line");
+      state.waiting.push_back(QueuedToast(row(1)));
+      AdvanceToastStack(state, 0, 2, kToastLifetimeMs);
+      Expect(state.visible.size() == 1,
+             "a notice leaves the rest of the band to the rotating rows");
+      AdvanceToastStack(state, kToastLifetimeMs * 10, 2, kToastLifetimeMs);
+      Expect(!state.notices[ToastNoticeSlot(ToastNotice::kHandshakeRefusal)].empty(),
+             "a notice never expires, however long it has been up");
 
-    // What ships: one message a post, so the game's own queue never overflows
-    // and the rest of the queue waits here instead of being refused there.
-    const ToastBatch shipped = PlanToastBatch({"first", most, "third"},
-                                              kToastMaxChars,
-                                              kToastMessagesPerPost);
-    Expect(shipped.messages.size() == 1 && shipped.consumed == 1 &&
-               shipped.messages[0] == "first",
-           "a post hands the game one message and leaves the rest queued");
+      ToastStackState crowded;
+      crowded.notices[ToastNoticeSlot(ToastNotice::kHandshakeRefusal)] =
+          PlainToastRow("refused", ToastRole::kTrap);
+      crowded.notices[ToastNoticeSlot(ToastNotice::kBridgeDown)] =
+          PlainToastRow("disconnected", ToastRole::kTrap);
+      crowded.waiting.push_back(QueuedToast(row(1)));
+      AdvanceToastStack(crowded, 0, 3, kToastLifetimeMs);
+      Expect(crowded.visible.size() == 1,
+             "two notices leave the rest of a band that has a rest");
+      // And a band with no rest gives the notices everything, evicting the row
+      // rather than leaving it where the drawing would clip it away unseen.
+      AdvanceToastStack(crowded, 0, 2, kToastLifetimeMs);
+      Expect(crowded.visible.empty(),
+             "a band the notices fill takes back the line a row was holding");
+    }
 
-    // A zero cap would consume nothing, which stalls the queue rather than
-    // losing it.
-    const ToastBatch stalled = PlanToastBatch({"first"}, kToastMaxChars, 0);
-    Expect(stalled.messages.empty() && stalled.consumed == 0,
-           "a zero cap posts nothing and consumes nothing");
+    // The draw order: the notices lowest, at the anchor, then the rotating rows
+    // newest first as the stack climbs. So the newest row sits where the eye
+    // already is and the notices never move.
+    {
+      ToastStackState state;
+      state.notices[ToastNoticeSlot(ToastNotice::kBridgeDown)] =
+          PlainToastRow("notice", ToastRole::kTrap);
+      state.waiting.push_back(QueuedToast(PlainToastRow("older", ToastRole::kConnective)));
+      state.waiting.push_back(QueuedToast(PlainToastRow("newer", ToastRole::kConnective)));
+      AdvanceToastStack(state, 0, 9, kToastLifetimeMs);
+      const std::vector<const ToastRow*> order = ToastDrawOrder(state);
+      Expect(order.size() == 3, "every live row is drawn");
+      Expect(order[0]->lines[0][0].text == "notice",
+             "the notice draws at the anchor");
+      Expect(order[1]->lines[0][0].text == "newer",
+             "the newest rotating row draws above it");
+      Expect(order[2]->lines[0][0].text == "older",
+             "and the older row above that, so the stack climbs into the past");
+    }
+
+    // Building a row from the wire. The newline marker is a layout break and not a
+    // segment, empty lines are never spent on nothing, and both bounds hold, so a
+    // malformed frame costs a truncated row rather than the band.
+    {
+      const ToastRow built = BuildToastRow({
+          {"You", "own_slot"},
+          {" sent ", "connective"},
+          {"Minigun", "progression"},
+          {"", "newline"},
+          {"(", "connective"},
+          {"Hidden Package 42", "location"},
+          {")", "connective"},
+      });
+      Expect(built.lines.size() == 2, "the newline marker breaks the row in two");
+      Expect(built.lines[0].size() == 3 && built.lines[1].size() == 3,
+             "the segments land on the right side of the break");
+      Expect(built.lines[0][0].role == ToastRole::kOwnSlot,
+             "our own slot keeps the magenta role behind the word You");
+      Expect(built.lines[1][1].role == ToastRole::kLocation,
+             "the location keeps its own role");
+
+      Expect(BuildToastRow({{"", "newline"}, {"", "newline"}}).empty(),
+             "a row of nothing but breaks is not a row");
+      Expect(BuildToastRow({{"text", "connective"}, {"", "newline"}}).lines.size() == 1,
+             "a trailing break does not spend a line on nothing");
+      Expect(ToastRoleFromName("nonsense") == ToastRole::kConnective,
+             "an unknown colour name draws readably rather than not at all");
+
+      std::vector<std::pair<std::string, std::string>> many;
+      for (std::size_t index = 0; index < kToastMaxSegments + 10; ++index) {
+        many.push_back({"x", "connective"});
+      }
+      const ToastRow bounded = BuildToastRow(many);
+      Expect(bounded.lines.size() == 1 &&
+                 bounded.lines[0].size() == kToastMaxSegments,
+             "a row past the segment bound is truncated, not unbounded");
+
+      std::vector<std::pair<std::string, std::string>> deep;
+      for (std::size_t index = 0; index < kToastMaxLines + 5; ++index) {
+        deep.push_back({"x", "connective"});
+        deep.push_back({"", "newline"});
+      }
+      Expect(BuildToastRow(deep).lines.size() <= kToastMaxLines,
+             "a row past the line bound cannot take the whole band");
+    }
+
+    // A line's text is the concatenation the width is measured from, which is what
+    // keeps the layout off a per-segment sum.
+    {
+      const std::vector<ToastSegment> line = {
+          {"You", ToastRole::kOwnSlot},
+          {" found your ", ToastRole::kConnective},
+          {"Body Armour", ToastRole::kProgression},
+      };
+      Expect(ToastLineText(line) == "You found your Body Armour",
+             "a line measures as the string it draws");
+    }
   }
 
-  // The mainland routes. One item opening every crossing and one item per
-  // crossing are the same reporting problem, so the world sends whichever it
-  // made and this only renders it. A route with a second requirement is the
-  // Starfish causeway, whose gate stands on the island: the item alone opens
-  // nothing, and saying it did would send the player to a shut gate.
+  // Cutting a line to the band. This is what stops CFont folding an over-wide
+  // line at its wrap edge and landing the tail glyph-on-glyph over the row below,
+  // so every case that decides whether a line fits is asserted here.
   {
-    std::vector<MainlandRoute> routes = {
-        MainlandRoute{9032, "Prawn Island Bridge", 0, ""},
-        MainlandRoute{9035, "Starfish Island Causeway", 9031,
-                      "Starfish Island Access"},
+    // A character is one unit wide, which makes a width a character count and the
+    // assertions readable.
+    const auto measure = +[](const std::string& text) {
+      return static_cast<float>(text.size());
     };
-    const std::vector<int> nothing = {0, 0};
-    std::vector<RouteState> was;
+    const auto text_of = [](const std::vector<ToastSegment>& line) {
+      return ToastLineText(line);
+    };
 
-    // First observation on a new game: silent, and the baseline recorded.
-    RouteReportPlan plan =
-        PlanRouteReports(routes, nothing, nothing, was, false);
-    Expect(plan.announce.empty(),
-           "the first observed frame is the baseline, not an announcement");
-    Expect(plan.next_was.size() == 2 &&
-               plan.next_was[0] == RouteState::kAbsent,
-           "and it records both routes as absent");
+    const std::vector<ToastSegment> line = {
+        {"You", ToastRole::kOwnSlot},
+        {" found your ", ToastRole::kConnective},
+        {"Body Armour", ToastRole::kProgression},
+    };
+    Expect(text_of(FitSegmentLine(line, 100.0f, measure)) ==
+               "You found your Body Armour",
+           "a line inside the band is left alone");
 
-    // A bridge item lands: its edge speaks once, and only for that bridge.
-    plan = PlanRouteReports(routes, {1, 0}, nothing, plan.next_was, true);
-    Expect(plan.announce.size() == 1 &&
-               plan.announce[0] == "Prawn Island Bridge is open.",
-           "an opened bridge announces itself on its edge");
-    plan = PlanRouteReports(routes, {1, 0}, nothing, plan.next_was, true);
-    Expect(plan.announce.empty(), "and never again while it stays open");
+    // Cut, never folded, and the cut is marked. 20 units of a 26 character line.
+    const std::vector<ToastSegment> cut = FitSegmentLine(line, 20.0f, measure);
+    Expect(text_of(cut).size() <= 20,
+           "a cut line fits the band it was cut to");
+    Expect(text_of(cut).rfind(kToastEllipsis) ==
+               text_of(cut).size() - std::string(kToastEllipsis).size(),
+           "a cut line says it was cut");
+    Expect(text_of(cut).compare(0, 3, "You") == 0,
+           "the cut takes the tail, so the front of the line still reads");
 
-    // The causeway item lands without the island: it is not open, and the
-    // announcement says what is still missing rather than claiming a route.
-    plan = PlanRouteReports(routes, {1, 1}, {0, 0}, plan.next_was, true);
-    Expect(plan.announce.size() == 1 &&
-               plan.announce[0] ==
-                   "Starfish Island Causeway needs Starfish Island Access.",
-           "a route waiting on a second item says so");
-    Expect(plan.next_was[1] == RouteState::kWaiting,
-           "and records it as waiting, not open");
+    // The ellipsis lands in whatever segment survives, so it draws in that
+    // segment's own colour rather than an invented one. At this width the cut
+    // lands inside the item name, so that is the colour it must take.
+    Expect(cut.back().role == ToastRole::kProgression,
+           "the ellipsis keeps the colour of the segment it lands in");
 
-    // The island arrives: now it really is a route.
-    plan = PlanRouteReports(routes, {1, 1}, {0, 1}, plan.next_was, true);
-    Expect(plan.announce.size() == 1 &&
-               plan.announce[0] == "Starfish Island Causeway is open.",
-           "the waiting route opens once its second item lands");
+    // A band narrower than the ellipsis itself still terminates, and gives back
+    // something rather than looping.
+    const std::vector<ToastSegment> crushed = FitSegmentLine(line, 1.0f, measure);
+    Expect(crushed.empty() || text_of(crushed).size() <= 4,
+           "a band narrower than the ellipsis still terminates");
 
-    // A save already holding both reads open at its first observation, so it
-    // stays quiet, the same rule the content classes follow.
-    plan = PlanRouteReports(routes, {1, 1}, {0, 1}, was, false);
-    Expect(plan.announce.empty(),
-           "a save already carrying the routes does not re-announce");
+    // Whole rows, and only once. The flag is what keeps the in-game stack off a
+    // per-character walk on every frame a long row is up.
+    {
+      ToastStackState state;
+      ToastRow row;
+      row.lines.push_back(line);
+      row.lines.push_back({{"(", ToastRole::kConnective},
+                           {"A Very Long Location Name Indeed", ToastRole::kLocation},
+                           {")", ToastRole::kConnective}});
+      state.visible.push_back({row, 0});
+      state.notices[ToastNoticeSlot(ToastNotice::kHandshakeRefusal)] =
+          PlainToastRow("Archipelago refused this game: the save belongs to "
+                        "another multiworld",
+                        ToastRole::kTrap);
+      FitToastStack(state, 20.0f, 20.0f, 9, measure);
+      Expect(state.visible[0].fitted, "a fitted row records that it was fitted");
+      Expect(state.notices_fitted[ToastNoticeSlot(ToastNotice::kHandshakeRefusal)],
+             "so does a fitted notice");
+      for (const std::vector<ToastSegment>& fitted : state.visible[0].row.lines) {
+        Expect(ToastLineText(fitted).size() <= 20,
+               "every line of a row is cut, not just the first");
+      }
+      const ToastRow& refusal =
+          state.notices[ToastNoticeSlot(ToastNotice::kHandshakeRefusal)];
+      for (const std::vector<ToastSegment>& fitted : refusal.lines) {
+        Expect(ToastLineText(fitted).size() <= 20,
+               "the handshake refusal is brought inside the band like anything "
+               "else, since it never expires and would otherwise fold over the "
+               "radar for the session");
+      }
+      // BROKEN, not cut. A refusal names the reason nothing in the seed will work,
+      // and "Archipelago refused this game: " alone is most of a line, so cutting
+      // it would leave the one row that must be readable saying nothing.
+      Expect(refusal.lines.size() > 1,
+             "a notice is broken across lines rather than cut to its first");
+      Expect(refusal.lines.size() <= kToastMaxLines,
+             "and still cannot take the whole band, however long its text");
+      Expect(refusal.lines[0][0].role == ToastRole::kTrap,
+             "every line of a broken notice keeps the notice's own colour");
 
-    // Mismatched inputs are a caller error, not a crash: nothing is announced
-    // and nothing is recorded, so a half-applied config cannot speak.
-    plan = PlanRouteReports(routes, {1}, nothing, was, true);
-    Expect(plan.announce.empty() && plan.next_was.empty(),
-           "a route list out of step with its values reports nothing");
+      // Fitting again changes nothing, which is what makes it safe to call every
+      // frame.
+      const std::string once = ToastLineText(state.visible[0].row.lines[0]);
+      FitToastStack(state, 20.0f, 20.0f, 9, measure);
+      Expect(ToastLineText(state.visible[0].row.lines[0]) == once,
+             "a row already fitted is not cut a second time");
+    }
+  }
+
+  // Breaking a notice has to use BOTH widths too. Breaking the whole text against
+  // the first line's width fills every piece to it, and the pieces bound for the
+  // indented lines then have to be cut back, which puts an ellipsis in the middle
+  // of the one row that must be readable. Driven with the widths UNEQUAL, since
+  // equal widths are the one setting where that cannot show.
+  {
+    const auto measure = +[](const std::string& text) {
+      return static_cast<float>(text.size());
+    };
+    ToastStackState state;
+    state.notices[ToastNoticeSlot(ToastNotice::kHandshakeRefusal)] = PlainToastRow(
+        "Archipelago refused this game: this save belongs to a different "
+        "multiworld, so start a new game for this seed",
+        ToastRole::kTrap);
+    FitToastStack(state, 40.0f, 30.0f, 9, measure);
+    const ToastRow& refusal =
+        state.notices[ToastNoticeSlot(ToastNotice::kHandshakeRefusal)];
+    Expect(refusal.lines.size() > 1, "a long notice is broken across lines");
+    for (std::size_t index = 0; index < refusal.lines.size(); ++index) {
+      const std::string text = ToastLineText(refusal.lines[index]);
+      Expect(text.size() <= (index == 0 ? 40u : 30u),
+             "every broken line fits the width it draws in");
+      Expect(text.find(kToastEllipsis) == std::string::npos,
+             "and none of them is cut, which is the whole point of breaking a "
+             "notice rather than cutting it");
+    }
+    // The words survive in order. What is drawn, joined back up, is what was set.
+    std::string rejoined;
+    for (const std::vector<ToastSegment>& line : refusal.lines) {
+      if (!rejoined.empty()) rejoined += " ";
+      rejoined += ToastLineText(line);
+    }
+    Expect(rejoined.find("start a new game for this seed") != std::string::npos,
+           "the reason survives to the end of the notice");
+  }
+
+  // A row's first line starts at the anchor and every line after it is set in, so
+  // they do NOT have the same width. Cutting a continuation line to the first
+  // line's width lands it a whole indent past the wrap edge, where CFont folds it
+  // onto the row below, which is the one thing this whole cut exists to stop.
+  {
+    const auto measure = +[](const std::string& text) {
+      return static_cast<float>(text.size());
+    };
+    ToastStackState state;
+    ToastRow row;
+    row.lines.push_back({{"0123456789012345678901234567890123456789",
+                          ToastRole::kConnective}});
+    row.lines.push_back({{"0123456789012345678901234567890123456789",
+                          ToastRole::kLocation}});
+    state.visible.push_back({row, 0});
+    FitToastStack(state, 30.0f, 20.0f, 9, measure);
+    const ToastRow& fitted = state.visible[0].row;
+    Expect(ToastLineText(fitted.lines[0]).size() <= 30,
+           "the first line is cut to the width it draws in");
+    Expect(ToastLineText(fitted.lines[1]).size() <= 20,
+           "and a continuation line to its own narrower width, not the first's");
+  }
+
+  // The settings file a module reads is derived from its own name, so the two
+  // cannot drift if the build renames its output.
+  {
+    Expect(SettingsPathForModule("C:\\Games\\GtaVcAp.VC.asi") ==
+               "C:\\Games\\GtaVcAp.VC.ini",
+           "the module's extension is replaced, not its dotted name");
+    Expect(SettingsPathForModule("C:\\Games\\plugin") ==
+               "C:\\Games\\plugin.ini",
+           "a module with no extension gets one rather than nothing");
+    Expect(SettingsPathForModule("C:\\Games.v2\\plugin") ==
+               "C:\\Games.v2\\plugin.ini",
+           "a dot in a directory name is not the module's extension");
+    Expect(SettingsPathForModule("").empty(),
+           "an unnamed module reads no file at all");
+  }
+
+  // The optional file that tunes the stack. Absent is the normal case, so every
+  // way a hand edit can go wrong has to leave a geometry that still draws.
+  {
+    const ToastGeometry defaults;
+    Expect(ParseToastGeometry({}).anchor_y == defaults.anchor_y,
+           "an empty file is the compiled-in defaults");
+    Expect(ParseToastGeometry({"anchor_y = 200"}).anchor_y == defaults.anchor_y,
+           "a setting outside the section is ignored");
+
+    ToastGeometry read = ParseToastGeometry({
+        "; a comment",
+        "[other]",
+        "anchor_y = 999",
+        "[toasts]",
+        "  anchor_y  =  200  ",
+        "width = 300 # trailing comment",
+        "line_height = 20",
+        "lifetime_ms = 6000",
+        "nonsense = 4",
+        "scale_x = not a number",
+    });
+    Expect(read.anchor_y == 200.0f, "whitespace either side of a value is dropped");
+    Expect(read.width == 300.0f, "a trailing comment is not part of the value");
+    Expect(read.line_height == 20.0f && read.lifetime_ms == 6000,
+           "every key the file names is applied");
+    Expect(read.scale_x == defaults.scale_x,
+           "a value that is not a whole number leaves its setting alone");
+
+    Expect(ParseToastGeometry({"[toasts]", "width = 3 4"}).width == defaults.width,
+           "a value with a trailing token is not taken as its prefix");
+    Expect(ParseToastGeometry({"[toasts]", "lifetime_ms = -5"}).lifetime_ms ==
+               defaults.lifetime_ms,
+           "a negative duration leaves its setting alone rather than wrapping");
+
+    // NaN is the one value every bound below would pass unchanged, because every
+    // comparison against it is false. A NaN band then makes the line count a cast
+    // from a NaN, which admits the whole queue onto a stack whose ceiling test can
+    // never be true.
+    for (const char* spelling : {"nan", "-nan", "NAN", "inf", "-inf"}) {
+      const ToastGeometry hostile =
+          ParseToastGeometry({"[toasts]", std::string("anchor_y = ") + spelling});
+      Expect(hostile.anchor_y == defaults.anchor_y,
+             "a value that is not a finite number leaves its setting alone");
+      Expect(ToastLineCapacity(hostile) >= 1 &&
+                 ToastLineCapacity(hostile) <= 128,
+             "the band a hostile file produces is still a band");
+    }
+
+    // The bounds. A file may move the stack but never lose it off the screen.
+    const ToastGeometry far_out = ParseToastGeometry({
+        "[toasts]", "anchor_x = 5000", "anchor_y = 5000", "width = 5000",
+        "scale_x = 50", "scale_y = 0", "line_height = 0",
+        "lifetime_ms = 100000000",
+    });
+    Expect(far_out.anchor_x >= 0.0f && far_out.anchor_x < kVirtualScreenWidth,
+           "the anchor stays on the screen");
+    Expect(far_out.anchor_x + far_out.width <= kVirtualScreenWidth,
+           "and the stack ends on the screen");
+    Expect(far_out.anchor_y < kVirtualScreenHeight, "so does the anchor's row");
+    Expect(far_out.scale_x <= kToastMaxScale && far_out.scale_y >= kToastMinScale,
+           "the text stays a size that can be read");
+    Expect(far_out.line_height >= kToastMinLineHeight,
+           "a line keeps a height, so the band is a count and not a division by "
+           "nothing");
+    Expect(far_out.lifetime_ms <= kToastMaxLifetimeMs,
+           "a row cannot be made to hold the screen forever");
+
+    // An inverted band is ordered rather than left negative, so the ceiling is
+    // never above the anchor.
+    const ToastGeometry swapped =
+        ParseToastGeometry({"[toasts]", "anchor_y = 100", "ceiling_y = 400"});
+    Expect(swapped.ceiling_y <= swapped.anchor_y,
+           "the ceiling is never above the anchor it is measured from");
+    Expect(ToastLineCapacity(swapped) >= 1, "and the band still holds a line");
+  }
+
+  // A band too small for what is in it. Neither of these is reachable with the
+  // measured geometry, and both are reachable through the file, so both are the
+  // model's problem rather than the bounds'.
+  {
+    const auto row = [](std::size_t lines) {
+      ToastRow built;
+      for (std::size_t line = 0; line < lines; ++line) {
+        built.lines.push_back({{"text", ToastRole::kConnective}});
+      }
+      return built;
+    };
+
+    // Two notices in a one-line band: the notices own it, and nothing rotating is
+    // admitted, because a row admitted here would start its lifetime and then be
+    // clipped at the ceiling without ever being drawn.
+    ToastStackState crowded;
+    crowded.notices[ToastNoticeSlot(ToastNotice::kHandshakeRefusal)] =
+        PlainToastRow("refused", ToastRole::kTrap);
+    crowded.notices[ToastNoticeSlot(ToastNotice::kBridgeDown)] =
+        PlainToastRow("disconnected", ToastRole::kTrap);
+    crowded.waiting.push_back(QueuedToast(row(1)));
+    AdvanceToastStack(crowded, 0, 1, kToastLifetimeMs);
+    Expect(crowded.visible.empty(),
+           "a band the notices fill admits nothing, rather than admitting a row "
+           "the drawing would clip away unseen");
+    Expect(crowded.waiting.size() == 1, "and the row it did not admit is kept");
+
+    // A row taller than the whole rotating band. It shows anyway when nothing else
+    // is up, because a queue that never drains says nothing at all, and it shows
+    // its LEADING lines: the drawing stacks a row's lines upward from its last, so
+    // an untrimmed row would show its location with the sentence clipped away.
+    ToastStackState stalled;
+    ToastRow tall;
+    tall.lines.push_back({{"sentence", ToastRole::kConnective}});
+    tall.lines.push_back({{"(location)", ToastRole::kLocation}});
+    stalled.waiting.push_back(QueuedToast(tall));
+    stalled.waiting.push_back(QueuedToast(row(1)));
+    AdvanceToastStack(stalled, 0, 1, kToastLifetimeMs);
+    Expect(stalled.visible.size() == 1,
+           "a row too tall for the band is still shown when nothing else is up");
+    Expect(stalled.visible[0].row.lines.size() == 1 &&
+               ToastLineText(stalled.visible[0].row.lines[0]) == "sentence",
+           "and it is the sentence that survives, never an orphan location");
+    AdvanceToastStack(stalled, kToastLifetimeMs, 1, kToastLifetimeMs);
+    Expect(stalled.waiting.empty(),
+           "so the queue behind it drains instead of stalling forever");
   }
 
   // The pause menu's status page. Sections are found by heading rather than by
@@ -1885,6 +2227,20 @@ int main() {
                routes.rows[1].value == "needs its island",
            "each route reads out what it is doing");
 
+    // And it NAMES what it is waiting for where the seed sent a label, which is
+    // the only place that is said now that nothing announces a route.
+    state.route_needs_labels = {"", "Starfish Island Access"};
+    Expect(Section(ComposeStatusPanel(state), "CROSSINGS").rows[1].value ==
+               "needs Starfish Island Access",
+           "a waiting route names the item it waits for");
+    // A client one field older sends no labels at all, and the generic line stands
+    // in rather than the row reading as waiting for nothing.
+    state.route_needs_labels.clear();
+    Expect(Section(ComposeStatusPanel(state), "CROSSINGS").rows[1].value ==
+               "needs its island",
+           "and falls back where no label was sent");
+    state.route_needs_labels = {"", "Starfish Island Access"};
+
     // A route list out of step with its states is a caller error, not a crash:
     // the rows stop at the shorter of the two.
     state.route_states = {RouteState::kOpen};
@@ -1916,6 +2272,71 @@ int main() {
     Expect(Section(sections, "MINIMAP").rows.size() == 1 &&
                Section(sections, "MINIMAP").rows[0].value == "HIDDEN",
            "and the radar says whether the item has arrived");
+
+    // The pause page's RECENT block. The in-game stack is a marquee, so this is the
+    // only place a row seen while driving can be read again, and it has to cost the
+    // rest of the page nothing.
+    {
+      const auto movement = [](const std::string& item, const std::string& location) {
+        ToastRow row;
+        row.lines.push_back({{"You", ToastRole::kOwnSlot},
+                             {" found your ", ToastRole::kConnective},
+                             {item, ToastRole::kProgression}});
+        if (!location.empty()) {
+          row.lines.push_back({{"(", ToastRole::kConnective},
+                               {location, ToastRole::kLocation},
+                               {")", ToastRole::kConnective}});
+        }
+        return row;
+      };
+
+      StatusPanelState state;
+      Expect(!HasSection(ComposeStatusPanel(state), "RECENT"),
+             "a seed that has moved no item has no RECENT block at all");
+
+      state.recent_rows = {movement("Body Armour", "Cherry Popper Fourth Delivery")};
+      const StatusSection recent = Section(ComposeStatusPanel(state), "RECENT");
+      Expect(recent.rows.size() == 2,
+             "a two-line row is two rows here, the sentence and its location");
+      Expect(recent.rows[0].label.empty() && recent.rows[0].value.empty(),
+             "a segmented row carries no label and no value, so every other row on "
+             "the page is unaffected by its presence");
+      Expect(recent.rows[0].segments[0].role == ToastRole::kOwnSlot,
+             "and it keeps the colours the stack drew it in");
+      Expect(!recent.rows[0].joined_above && recent.rows[1].joined_above,
+             "the location line belongs with the sentence above it, so the column "
+             "dealing cannot put one at the head of a column and the other at the "
+             "foot of the last");
+
+      // The lines are in reading order here, unlike the stack, which reverses them
+      // because it climbs.
+      Expect(ToastLineText(state.recent_rows[0].lines[0]) ==
+                 "You found your Body Armour",
+             "the sentence is the first line of the row");
+
+      // Bounded. The row height comes from the tallest column and the whole page's
+      // text size is fitted to it, so an unbounded history would shrink every other
+      // block the moment a single item moved.
+      state.recent_rows.clear();
+      for (int index = 0; index < 40; ++index) {
+        state.recent_rows.push_back(movement("Item", "Somewhere"));
+      }
+      const StatusSection capped = Section(ComposeStatusPanel(state), "RECENT");
+      Expect(capped.rows.size() <= kRecentMaxLines,
+             "RECENT never takes more of the page than its budget");
+      Expect(capped.rows.size() % 2 == 0,
+             "and it stops on a whole row, never on a location with no sentence");
+
+      // A one-line row (a cheat-sent item names no location) still fits the budget
+      // exactly rather than being refused for being an odd size.
+      state.recent_rows.clear();
+      for (int index = 0; index < 40; ++index) {
+        state.recent_rows.push_back(movement("Item", ""));
+      }
+      Expect(Section(ComposeStatusPanel(state), "RECENT").rows.size() ==
+                 kRecentMaxLines,
+             "one-line rows fill the budget to the line");
+    }
 
     // The comparison the two sets above exist for.
     for (const std::string& heading : asked_headings) {

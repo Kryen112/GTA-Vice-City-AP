@@ -19,6 +19,7 @@ from unittest import mock
 
 from ... import GTAViceCityWorld, installer
 from .. import context as context_module
+from .. import protocol
 
 
 @contextmanager
@@ -498,42 +499,148 @@ class TestItemToast(unittest.TestCase):
         context.slot_info = {}
         context.player_names = {1: "Me", 2: "PlayerTwo"}
 
-    def _text(self, item_player: int, receiving: int) -> str | None:
-        async def scenario() -> str | None:
+    def _segments(self, item_player: int, receiving: int, flags: int = 1,
+                  location: int = 100, location_name: str = "Cortez Mission") -> list | None:
+        async def scenario() -> list | None:
             with _fake_settings(""):
                 from NetUtils import NetworkItem
                 context = _context()
                 self._setup(context)
                 with mock.patch.object(context.item_names, "lookup_in_slot",
-                                       return_value="Progressive Cortez"):
-                    return context._item_toast_text(
+                                       return_value="Progressive Cortez"), \
+                     mock.patch.object(context.location_names, "lookup_in_slot",
+                                       return_value=location_name):
+                    return context._item_toast_segments(
                         {"type": "ItemSend", "receiving": receiving,
-                         "item": NetworkItem(42, 100, item_player, 0)})
+                         "item": NetworkItem(42, location, item_player, flags)})
 
         return asyncio.run(scenario())
 
+    def _text(self, *args, **kwargs) -> str | None:
+        # The sentence a row reads as, which is what the phrasing assertions are
+        # about; the colours are asserted separately so a wording change and a
+        # palette change cannot be mistaken for each other.
+        segments = self._segments(*args, **kwargs)
+        if segments is None:
+            return None
+        return "".join(text for text, color in segments
+                       if color != protocol.TOAST_NEWLINE)
+
     def test_found_own_item(self) -> None:
-        self.assertEqual(self._text(1, 1), "You found your Progressive Cortez")
+        self.assertEqual(self._text(1, 1),
+                         "You found your Progressive Cortez(Cortez Mission)")
 
     def test_sent_to_another_player(self) -> None:
-        self.assertEqual(self._text(1, 2), "You sent Progressive Cortez to PlayerTwo")
+        self.assertEqual(self._text(1, 2),
+                         "You sent Progressive Cortez to PlayerTwo(Cortez Mission)")
 
-    def test_another_player_found_mine(self) -> None:
-        self.assertEqual(self._text(2, 1), "PlayerTwo found your Progressive Cortez")
+    def test_received_from_another_player(self) -> None:
+        self.assertEqual(self._text(2, 1),
+                         "You received Progressive Cortez from PlayerTwo(Cortez Mission)")
+
+    def test_between_two_other_players_is_not_a_row(self) -> None:
+        self.assertIsNone(self._segments(2, 3))
+
+    def test_our_own_slot_keeps_the_own_slot_role(self) -> None:
+        # The word standing in for our slot carries the colour Archipelago gives
+        # the player's own name, which is the whole reason the wording can be
+        # second person without losing the role.
+        for item_player, receiving in ((1, 1), (1, 2), (2, 1)):
+            segments = self._segments(item_player, receiving)
+            self.assertEqual(segments[0], ("You", protocol.TOAST_OWN_SLOT))
+
+    def test_the_location_is_its_own_line_and_its_own_colour(self) -> None:
+        segments = self._segments(1, 1)
+        self.assertIn(protocol.toast_newline(), segments)
+        # Everything after the break is the parenthesised location.
+        tail = segments[segments.index(protocol.toast_newline()) + 1:]
+        self.assertEqual(tail, [("(", protocol.TOAST_CONNECTIVE),
+                                ("Cortez Mission", protocol.TOAST_LOCATION),
+                                (")", protocol.TOAST_CONNECTIVE)])
+
+    def test_a_row_with_no_location_has_no_second_line(self) -> None:
+        # A cheat-sent item has no location, and then there is nothing to name.
+        segments = self._segments(1, 1, location=0)
+        self.assertNotIn(protocol.toast_newline(), segments)
+        self.assertEqual(self._text(1, 1, location=0),
+                         "You found your Progressive Cortez")
+
+    def test_every_colour_is_one_the_mod_knows(self) -> None:
+        for item_player, receiving in ((1, 1), (1, 2), (2, 1)):
+            for _text, color in self._segments(item_player, receiving):
+                self.assertIn(color, protocol.TOAST_COLORS)
+
+    def test_the_item_colour_follows_archipelagos_own_priority(self) -> None:
+        # progression, then useful, then trap, then filler, which is what
+        # NetUtils.py's own parser does. Deliberately not trap-first: a colour
+        # disagreeing with the client window is worse than a wrong emphasis.
+        cases = {
+            0b001: protocol.TOAST_PROGRESSION,
+            0b010: protocol.TOAST_USEFUL,
+            0b100: protocol.TOAST_TRAP,
+            0b011: protocol.TOAST_PROGRESSION,
+            0b110: protocol.TOAST_USEFUL,
+            0b101: protocol.TOAST_PROGRESSION,
+        }
+        for flags, expected in cases.items():
+            segments = self._segments(1, 2, flags=flags)
+            item = next(color for text, color in segments
+                        if text == "Progressive Cortez")
+            self.assertEqual(item, expected, f"flags {flags:#05b}")
+
+    def test_an_unclassified_item_of_ours_recovers_its_class(self) -> None:
+        # /send and !getitem build a NetworkItem whose flags default to 0, so
+        # every one of our own items would otherwise read as filler. An item we
+        # only route onward cannot be recovered, since the table is ours alone.
+        from ... import items
+        name = next(iter(items.ITEM_CLASSIFICATIONS))
+        recovered = int(items.ITEM_CLASSIFICATIONS[name])
+
+        async def scenario() -> tuple[str, str]:
+            with _fake_settings(""):
+                from NetUtils import NetworkItem
+                context = _context()
+                self._setup(context)
+                with mock.patch.object(context.item_names, "lookup_in_slot",
+                                       return_value=name), \
+                     mock.patch.object(context.location_names, "lookup_in_slot",
+                                       return_value="Somewhere"):
+                    mine = context._item_toast_segments(
+                        {"type": "ItemSend", "receiving": 1,
+                         "item": NetworkItem(42, 100, 2, 0)})
+                    theirs = context._item_toast_segments(
+                        {"type": "ItemSend", "receiving": 2,
+                         "item": NetworkItem(42, 100, 1, 0)})
+            mine_color = next(c for t, c in mine if t == name)
+            theirs_color = next(c for t, c in theirs if t == name)
+            return mine_color, theirs_color
+
+        mine_color, theirs_color = asyncio.run(scenario())
+        expected = {0b001: protocol.TOAST_PROGRESSION,
+                    0b010: protocol.TOAST_USEFUL,
+                    0b100: protocol.TOAST_TRAP}
+        wanted = protocol.TOAST_FILLER
+        for bit, color in expected.items():
+            if recovered & bit:
+                wanted = color
+                break
+        self.assertEqual(mine_color, wanted)
+        self.assertEqual(theirs_color, protocol.TOAST_FILLER)
 
     def test_send_toast_only_when_the_mod_is_connected(self) -> None:
         async def scenario() -> None:
             with _fake_settings(""):
                 context = _context()
+                row = [("hi", protocol.TOAST_CONNECTIVE)]
                 with mock.patch.object(type(context.bridge), "connected",
                                        new_callable=mock.PropertyMock) as connected, \
                      mock.patch.object(context.bridge, "send_toast") as send_toast:
                     connected.return_value = False
-                    await context._send_toast("hi")
+                    await context._send_toast(row)
                     send_toast.assert_not_called()
                     connected.return_value = True
-                    await context._send_toast("hi")
-                    send_toast.assert_awaited_once_with("hi")
+                    await context._send_toast(row)
+                    send_toast.assert_awaited_once_with(row)
 
         asyncio.run(scenario())
 
@@ -545,7 +652,8 @@ class TestItemToast(unittest.TestCase):
                 self._setup(context)
                 with mock.patch.object(context, "_schedule") as schedule, \
                      mock.patch.object(context, "_send_toast", mock.Mock()), \
-                     mock.patch.object(context, "_item_toast_text", return_value="X"):
+                     mock.patch.object(context, "_item_toast_segments",
+                                       return_value=[("X", protocol.TOAST_CONNECTIVE)]):
                     context.on_print_json(
                         {"type": "ItemSend", "receiving": 2, "data": [],
                          "item": NetworkItem(42, 100, 1, 0)})

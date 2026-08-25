@@ -13,6 +13,9 @@
 #include <windows.h>
 
 #include <plugin.h>
+#include <CCamera.h>
+#include <CDraw.h>
+#include <CHud.h>
 
 #include "bridge.hpp"
 #include "game_addresses.hpp"
@@ -92,6 +95,16 @@ struct AsiMain {
     // hook above, which is why the panel cannot ride on that one; the frontend is
     // the case drawn with no game frame at all.
     Events::menuDrawingEvent += [] { instance.OnMenuDraw(); };
+    // The toast stack rides plugin-sdk's HUD draw, which hooks the CHud::Draw call
+    // in the frame's own 2D pass (VC 10EN 0x4A64D0). It fires after the game's own
+    // HUD and before the font buffer is flushed at 0x4A64F8, so rows printed from
+    // it reach the screen in the same frame and land on top of the HUD rather than
+    // under it.
+    //
+    // Not the game process hook, which runs earlier in the frame and where a print
+    // would be flushed before the HUD drew over it; and not the pre-world hook,
+    // which is before any drawing at all.
+    Events::drawHudEvent += [] { instance.OnDrawHud(); };
     bridge.Start();
   }
 
@@ -101,6 +114,19 @@ struct AsiMain {
   void OnGameStarted() { game.OnGameStarted(); }
 
   void OnBeforeWorldProcess() { game.OnBeforeWorldProcess(); }
+
+  void OnDrawHud() {
+    // The game decides when its HUD is worth drawing and the stack follows that,
+    // because the reasons are the same: a cutscene, a fade and a script that hid
+    // the HUD are all frames the player is not being asked to read anything on.
+    // The rows keep their remaining time either way, since the stack only advances
+    // when it is drawn.
+    if (!CHud::m_Wants_To_Draw_Hud) return;
+    // And not over a fade. The HUD draw runs whatever the fade is doing, so a row
+    // would otherwise print over a black screen or the load blur.
+    if (CDraw::FadeValue != 0 || TheCamera.m_bFading) return;
+    game.DrawToasts();
+  }
 
   void OnMenuDraw() {
     // The claim runs here rather than in the constructor: the menu table is the
