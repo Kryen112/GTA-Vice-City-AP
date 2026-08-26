@@ -430,7 +430,7 @@ remove_thread("APACT")
 # mission launcher per managed mission, and a label belongs to the file it
 # compiles in, so it cannot follow until something else can start those threads.
 PORTABLE_THREADS = [("APAREA", "aparea"), ("APREWD", "aprewd"),
-                    ("APRADIO", "apradio")]
+                    ("APRADIO", "apradio"), ("APPAD", "appad")]
 ported = []
 for label, filename in PORTABLE_THREADS:
     body = remove_thread(label)

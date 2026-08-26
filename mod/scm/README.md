@@ -263,8 +263,11 @@ version control.
   and vanilla shuts all three of its doors again at that mission's teardown, so
   the route the logic names would be a window inside one mission rather than a
   reach. `open_gonzalez_pad_door` reopens all three at that teardown, in the
-  placements the mission's own start uses, and leaves Martha's Mug Shot's two
-  teardowns opening the middle door alone, since that is the only one it swaps.
+  placements the mission's own start uses, and reopens the middle door at
+  Martha's Mug Shot's two teardowns as well, that being the only one it swaps.
+  Those two are required rather than tidy: left vanilla they shut the landing
+  behind a player who has already passed Treacherous Swine, breaking the route a
+  second time.
   The creation at a new game and the mid-mission eject stay vanilla, so the pad
   is shut until the mission opens it. The three doors stand at three heights,
   z 23.9, z 31.2 and z 35.2, which the mission itself pins: the upper two match
@@ -275,3 +278,17 @@ version control.
   `notes/2026-08-26-gonzalez-pad-door.md` argues for: gating it on the packages
   class would put the vanilla hundred-package reward behind the same missable
   whenever that class is off and the packages content key on.
+- The pad's warps: open doors are only half of that route, because the building
+  has no walkable interior at all. Treacherous Swine carries the player up from
+  the street doorway and back down from either upper doorway, fading and setting
+  coordinates, and `add_pad_warp_watcher` keeps that pair alive afterwards as the
+  APPAD thread: the mission's own boxes, sphere markers, destinations and
+  headings, live whenever its vanilla passed flag is set and no mission is
+  running. Reading that flag rather than anything this build writes is what makes
+  it work in a save whose mission is already behind it. After a lift up it waits
+  for the player to leave both upper doorways, since the mission's up destination
+  stands inside one of its own down boxes and the mission walks the player out of
+  it where this has nothing to walk them with. APPAD relocates to `appad.cs` like
+  the other portable threads, for the usual buffer reason and a second one:
+  keeping it out of `main.scm` leaves that file's size alone, so shipping it
+  cannot shift an offset a save in progress still points at.

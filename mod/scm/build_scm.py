@@ -444,17 +444,23 @@ def open_gonzalez_pad_door():
     helicopter the only way back.
 
     All three doors reopen, in the placements the mission's own start uses.
-    Those are where the doors really stand, and the mission says so itself: the
-    upper two each sit inside one of the two doorway boxes it watches for the
-    player stepping off the pad, at z 35.2 and z 31.2. The closed models share a
-    bake origin at 465.375 30.336 33.181 instead, which is neither doorway, so
-    their coordinates are never read as a position.
+    Those are where the doors really stand, and the mission marks two of them
+    itself, drawing a sphere over each upper doorway at 461.7 31.5 29.9 and
+    454.1 31.3 33.8, one flight apart. The closed models share a bake origin at
+    465.375 30.336 33.181 instead, which is neither doorway, so a closed
+    coordinate is never read as a position here.
 
-    Martha's Mug Shot swaps the middle door alone for its party, which is on the
-    lower landing rather than the pad, so its two teardowns leave that one open
-    and touch nothing else. A seed that plays it first reaches the landing and
-    no further, and the pad waits for Treacherous Swine the way the logic term
-    says.
+    Martha's Mug Shot swaps the middle door alone, for a party on the lower
+    landing rather than on the pad, and its two teardowns have to reopen it for
+    the same reason this one does: left vanilla they would shut the landing
+    behind a player who has already passed Treacherous Swine and break the route
+    a second time. Playing it FIRST reaches the landing and no further, so the
+    pad still waits for Treacherous Swine the way the logic term says.
+
+    What no part of the script settles is whether the flight between the landing
+    floor and the pad floor can be walked. Both missions warp across it rather
+    than walking it, so that is an in-game question, and the route the world
+    keeps for this package rests on the answer.
 
     The creation at a new game is left alone, so the pad is shut until the
     mission opens it, and so is the mission's own eject, which drops the player
@@ -474,16 +480,23 @@ def open_gonzalez_pad_door():
     def creation(handle, placement):
         return f"create_object_no_offset {handle} = init_object {placement}"
 
-    # Every open placement is one the game writes itself, so a door put where
-    # the player cannot use it fails the build rather than the playthrough.
-    for _handle, _closed, opened in doors:
-        assert any(line.endswith(opened) for line in SOURCE_LINES), (
-            f"pad door: the decompile never writes {opened}")
+    # Every open placement is one the game writes itself, and for the door this
+    # table pairs it with. The mission's start deletes a handle and creates that
+    # handle's open door on the very next line, so the pairing is the game's
+    # own, and a table that crossed two doors would put a model at the wrong
+    # doorway. Asserting the placement alone would not see that, since all three
+    # placements are in the file either way.
+    for handle, _closed, opened in doors:
+        assert any(line == f"delete_object {handle}"
+                   and lines[index + 1].endswith(opened)
+                   for index, line in enumerate(lines[:-1])), (
+            f"pad door: the decompile never opens {handle} with {opened}")
 
     # Treacherous Swine's teardown, the one that runs on a pass and on a fail
     # alike, named by the pool cover it deletes right after the doors.
     cover = [i for i, ln in enumerate(lines) if ln == "delete_object $2257"]
     assert len(cover) == 1, f"pad door: the pool cover delete matched {len(cover)}"
+    assert cover[0] >= 6, "pad door: the pool cover delete has no door block before it"
     teardown = cover[0] - 6
     for index, (handle, closed, opened) in enumerate(doors):
         at = teardown + index * 2
@@ -520,6 +533,111 @@ def open_gonzalez_pad_door():
     for site in kinds["party"]:
         lines[site] = creation("$1815", doors[1][2])
     edits.append("left the doors onto Gonzalez's pad open after Treacherous Swine")
+
+
+# Gonzalez's pad is reached by script and not on foot: the building has no
+# walkable interior, and Treacherous Swine moves the player both ways itself,
+# fading and setting coordinates. So the open doors are only half of what the
+# audited route needs, and these are the other half, the mission's own triggers,
+# sphere markers and destinations kept alive after it ends. Every one is
+# asserted against the decompile before it is written, so a value that has moved
+# fails the build rather than teleporting a player into the ground.
+#
+# The near box is this watcher's own and is deliberately not the mission's: it
+# only decides when to poll and draw, and its floor sits below the street so the
+# marker at the front door is drawn to a player standing outside it.
+PAD_NEAR_BOX = "479.9 -1.4 5.0 450.3 59.5 45.0"
+PAD_UP_BOX = "476.5 27.3 11.28 474.8 33.0 14.3"
+PAD_UP_TARGET = "454.4 31.3 33.86"
+PAD_UP_HEADING = "270.0"
+PAD_DOWN_BOXES = ["463.22 32.4 30.2 462.04 30.47 32.5",
+                  "455.9 30.33 33.83 454.15 32.56 36.57"]
+PAD_DOWN_TARGET = "479.5 30.11 10.07"
+PAD_DOWN_HEADING = "274.5"
+PAD_SPHERES = ["475.5 30.3 11.0", "461.7 31.5 29.9", "454.1 31.3 33.8"]
+PAD_PASSED_FLAG = "$passed_COL1_Treacherous_Swine"
+
+
+def add_pad_warp_watcher():
+    """The pad's two warps, kept after Treacherous Swine hands them back.
+
+    The mission carries the player up from the street doorway and down from
+    either upper doorway, and nothing in the building can be walked, so passing
+    it takes the only way to hidden package 25 away again. This is that pair as
+    a watcher: the same boxes, the same destinations and headings, the same fade,
+    live whenever the mission has passed and no mission is running.
+
+    Waiting for the player to leave both upper doorways after a lift up is what
+    keeps the two from fighting. The mission's own up destination stands inside
+    one of its down boxes, since the mission walks the player out of the doorway
+    itself and this has nothing to walk them with.
+
+    Gated on the vanilla passed flag rather than on anything this build writes,
+    so it reads true in a save whose mission is already behind it.
+    """
+    sphere_lines = [f"draw_sphere {sphere} radius 3.0" for sphere in PAD_SPHERES]
+    borrowed = [f"is_player_in_area_3d $player_char 0 {PAD_UP_BOX}",
+                *(f"is_player_in_area_3d $player_char 0 {box}"
+                  for box in PAD_DOWN_BOXES),
+                f"set_player_coordinates $player_char at {PAD_UP_TARGET}",
+                f"set_player_coordinates $player_char at {PAD_DOWN_TARGET}",
+                f"set_player_heading $player_char z_angle_to {PAD_UP_HEADING}",
+                f"set_player_heading $player_char z_angle_to {PAD_DOWN_HEADING}",
+                *sphere_lines]
+    # A condition is negated where the mission waits for the player to arrive, so
+    # the comparison drops a leading not: what is being pinned is the box, not
+    # the sense the mission happens to read it in.
+    written = {source.strip().removeprefix("not ") for source in SOURCE_LINES}
+    for line in borrowed:
+        assert line in written, (
+            f"pad warp: the decompile never writes {line!r}")
+    assert any(source.strip() == f"{PAD_PASSED_FLAG} == 1"
+               for source in SOURCE_LINES), (
+        f"pad warp: {PAD_PASSED_FLAG} is not the flag this decompile reads")
+
+    near = f"is_player_in_area_3d $player_char 0 {PAD_NEAR_BOX}"
+    body = ["", ":APPAD", "script_name 'APPAD'", "",
+            ":APPAD_LOOP", "wait 250",
+            "if ", f"  {PAD_PASSED_FLAG} == 1", "goto_if_false @APPAD_LOOP",
+            "if ", "  $onmission == 0", "goto_if_false @APPAD_LOOP",
+            "if ", f"  {near}", "goto_if_false @APPAD_LOOP",
+            "", ":APPAD_NEAR", "wait 0",
+            "if ", "  $onmission == 0", "goto_if_false @APPAD_LOOP",
+            "if ", f"  {near}", "goto_if_false @APPAD_LOOP",
+            *sphere_lines,
+            "if ", f"  is_player_in_area_3d $player_char 0 {PAD_UP_BOX}",
+            "goto_if_false @APPAD_DOWN",
+            "gosub @APPAD_FADE",
+            f"set_player_coordinates $player_char at {PAD_UP_TARGET}",
+            f"set_player_heading $player_char z_angle_to {PAD_UP_HEADING}",
+            "do_fade 1 500",
+            "", ":APPAD_CLEAR", "wait 0",
+            "if ", "  $onmission == 0", "goto_if_false @APPAD_LOOP",
+            "if or",
+            *(f"  is_player_in_area_3d $player_char 0 {box}"
+              for box in PAD_DOWN_BOXES),
+            "goto_if_false @APPAD_NEAR",
+            *sphere_lines,
+            "goto @APPAD_CLEAR",
+            "", ":APPAD_DOWN",
+            "if or",
+            *(f"  is_player_in_area_3d $player_char 0 {box}"
+              for box in PAD_DOWN_BOXES),
+            "goto_if_false @APPAD_NEAR",
+            "gosub @APPAD_FADE",
+            f"set_player_coordinates $player_char at {PAD_DOWN_TARGET}",
+            f"set_player_heading $player_char z_angle_to {PAD_DOWN_HEADING}",
+            "do_fade 1 500",
+            "goto @APPAD_NEAR",
+            "", ":APPAD_FADE",
+            "set_fading_colour 0 0 1", "do_fade 0 500",
+            "", ":APPAD_FADING",
+            "if ", "  get_fading_status ", "goto_if_false @APPAD_FADED",
+            "wait 0", "goto @APPAD_FADING",
+            "", ":APPAD_FADED", "return "]
+    insert_before(":GEN1", body, "APPAD pad warp watcher thread")
+    insert_after("start_new_script @HOT ", ["start_new_script @APPAD "],
+                 "boot start @APPAD")
 
 
 # Property purchases: each buy mission-let is a post-purchase cutscene, so mark
@@ -2595,6 +2713,7 @@ add_area_watcher(mainland_shared, mainland_crossings,
                  sever_starfish_east_open(), west_gate_open)
 add_package_watcher()
 open_gonzalez_pad_door()
+add_pad_warp_watcher()
 add_finale_flag()
 add_finale_warp()
 add_purchase_completions()

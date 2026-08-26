@@ -50,6 +50,10 @@ SHIPPED_PAYLOAD_PATHS = (
     "cleo/aparea.cs",
     "cleo/aprewd.cs",
     "cleo/apradio.cs",
+    # The pad warps, which ship the same way and for a second reason besides the
+    # buffer: keeping them out of main.scm leaves its size alone, so adding them
+    # cannot shift a script offset a save in progress still points at.
+    "cleo/appad.cs",
     # The six weapon shop threads, one file each, the same reason as the three
     # above. They gosub subroutines that live in one of the six, so every file
     # carries a copy of that one's body; the copies are reachable only through

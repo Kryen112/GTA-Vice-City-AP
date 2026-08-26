@@ -38,6 +38,7 @@ REPOSITORY_ROOT = pathlib.Path(__file__).resolve().parent.parent
 # are declared once here rather than written down again in the message, where
 # they went stale the moment a site was added.
 CLEO_SCRIPTS = ("aprewd.cs", "apradio.cs", "apwatchers.cs", "aparea.cs",
+                "appad.cs",
                 "appickup.cs")
 
 # The bare-literal sites, by the name each is reported under. The success line
@@ -314,6 +315,11 @@ def _cleo_problems(cleo_dir: pathlib.Path, scm: types.ModuleType,
         "aparea.cs": (((0, scm.COMPLETION_BASE - 1),),
                       "the unlock and bookkeeping globals below the completion "
                       "block"),
+        # The pad warps read two vanilla flags and nothing this build writes, so
+        # the same band holds them with room to spare. Named rather than left
+        # out, for the reason above.
+        "appad.cs": (((0, scm.COMPLETION_BASE - 1),),
+                     "the vanilla mission flags below the completion block"),
     }
     # The success line counts CLEO_SCRIPTS; this is what actually judges them, so
     # a script added to one and not the other is a script reported as read and
@@ -499,9 +505,13 @@ def _district_list_problems(scm_dir: pathlib.Path, scm) -> list[str]:
 
 
 # The one package whose route in the world is true only because build_scm.py
-# edits the map for it, and the mission that route names.
+# edits the map for it, and the mission that route names. All three doors stand
+# between the street and the package, at three heights, so all three are named:
+# an edit that reopens some of them reads as done and leaves the route shut,
+# which is how the first attempt at this shipped.
 PAD_DOOR_PACKAGE = 25
 PAD_DOOR_MISSION = "Treacherous Swine"
+PAD_DOOR_MODELS = ("#SPAD_DR_OPEN1", "#SPAD_DR_OPEN2", "#SPAD_DR_OPEN3")
 
 
 def _pad_door_problems(scm_dir: pathlib.Path, data) -> list[str]:
@@ -519,17 +529,24 @@ def _pad_door_problems(scm_dir: pathlib.Path, data) -> list[str]:
     build = source.read_text(encoding="utf-8")
     routed = any(data.mission_passed_item_name(PAD_DOOR_MISSION) in route
                  for route in data.PACKAGE_ABILITY_ALTERNATIVES.get(PAD_DOOR_PACKAGE, []))
-    edited = ("def open_gonzalez_pad_door():" in build
-              and "open_gonzalez_pad_door()" in build.splitlines())
-    if routed == edited:
-        return []
-    if routed:
+    opener = _function_body(build, "def open_gonzalez_pad_door():")
+    edited = opener is not None and "open_gonzalez_pad_door()" in build.splitlines()
+    if not routed:
+        if not edited:
+            return []
+        return [f"{source.name}: open_gonzalez_pad_door leaves the pad open for "
+                f"a route package {PAD_DOOR_PACKAGE} no longer takes"]
+    if not edited:
         return [f"{source.name}: package {PAD_DOOR_PACKAGE} is reached through "
                 f"{PAD_DOOR_MISSION}, but open_gonzalez_pad_door is not both "
                 "defined and called, so the pad shuts again at that mission's "
                 "teardown and the route is a window inside it"]
-    return [f"{source.name}: open_gonzalez_pad_door leaves the pad open for a "
-            f"route package {PAD_DOOR_PACKAGE} no longer takes"]
+    shut = [model for model in PAD_DOOR_MODELS if model not in opener]
+    if shut:
+        return [f"{source.name}: open_gonzalez_pad_door names no {', '.join(shut)}, "
+                f"so the pad keeps a door package {PAD_DOOR_PACKAGE} is behind and "
+                "the route stays a window inside the mission"]
+    return []
 
 
 # A text table key a mod script prints, as `NAME = "KEY"` at column zero.
