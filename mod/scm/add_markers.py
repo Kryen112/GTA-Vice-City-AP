@@ -382,8 +382,8 @@ lines = kept
 # (rampage/stunt/taxi checks) and APACT (activity and side-event flags) poll only
 # numeric globals and are rewritten into the watcher below; the completion
 # globals they set are unchanged, so the ASI polls them identically. APAREA,
-# APREWD and APRADIO do real work with objects, road switches and player state
-# and are carried across as they stand.
+# APREWD, APRADIO and APPAD do real work with objects, road switches and player
+# state and are carried across as they stand.
 def remove_thread(label):
     """Cuts a whole thread out of MAIN and hands back its body.
 
@@ -419,13 +419,16 @@ remove_thread("APPKG")
 remove_thread("APSTAT")
 remove_thread("APACT")
 
-# Three more threads leave MAIN, and unlike the three above they are carried
+# Four more threads leave MAIN, and unlike the three above they are carried
 # across rather than rewritten: they do real work with objects, road switches and
 # player state, so re-expressing them by hand would be a second implementation to
 # keep in step. Each becomes its own CLEO script, because a .cs runs from its own
 # entry point and two loops in one file would fall through into each other.
+# APPAD is here for a second reason besides the buffer: out of main.scm it cannot
+# change that file's size, so shipping it cannot shift an offset a save in
+# progress still points at.
 #
-# What makes these three portable and APMARK not: none of them names a label
+# What makes these four portable and APMARK not: none of them names a label
 # outside itself, so nothing has to reach back into main.scm. APMARK starts a
 # mission launcher per managed mission, and a label belongs to the file it
 # compiles in, so it cannot follow until something else can start those threads.

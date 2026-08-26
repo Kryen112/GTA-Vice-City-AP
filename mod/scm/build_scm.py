@@ -535,6 +535,25 @@ def open_gonzalez_pad_door():
     edits.append("left the doors onto Gonzalez's pad open after Treacherous Swine")
 
 
+def _point(text):
+    x, y, z = (float(value) for value in text.split())
+    return (x, y, z)
+
+
+def _box_corners(text):
+    values = [float(value) for value in text.split()]
+    assert len(values) == 6, f"pad warp: {text!r} is not two corners"
+    return (tuple(values[:3]), tuple(values[3:]))
+
+
+def _inside(corners, point):
+    # A box's corners come in whatever order the mission wrote them, so each axis
+    # is read as a range rather than as a low corner and a high one.
+    first, second = corners
+    return all(min(first[axis], second[axis]) <= point[axis] <= max(first[axis], second[axis])
+               for axis in range(3))
+
+
 # Gonzalez's pad is reached by script and not on foot: the building has no
 # walkable interior, and Treacherous Swine moves the player both ways itself,
 # fading and setting coordinates. So the open doors are only half of what the
@@ -546,7 +565,7 @@ def open_gonzalez_pad_door():
 # The near box is this watcher's own and is deliberately not the mission's: it
 # only decides when to poll and draw, and its floor sits below the street so the
 # marker at the front door is drawn to a player standing outside it.
-PAD_NEAR_BOX = "479.9 -1.4 5.0 450.3 59.5 45.0"
+PAD_NEAR_BOX = "490.0 -1.4 5.0 450.3 59.5 45.0"
 PAD_UP_BOX = "476.5 27.3 11.28 474.8 33.0 14.3"
 PAD_UP_TARGET = "454.4 31.3 33.86"
 PAD_UP_HEADING = "270.0"
@@ -594,16 +613,54 @@ def add_pad_warp_watcher():
     assert any(source.strip() == f"{PAD_PASSED_FLAG} == 1"
                for source in SOURCE_LINES), (
         f"pad warp: {PAD_PASSED_FLAG} is not the flag this decompile reads")
+    # A gate on a flag nothing sets never opens, so the WRITE is pinned too, at
+    # exactly one site, the way the mission gates pin theirs.
+    writes = [i for i, ln in enumerate(lines) if ln == f"{PAD_PASSED_FLAG} = 1"]
+    assert len(writes) == 1, (
+        f"pad warp: {PAD_PASSED_FLAG} is written at {len(writes)} sites, so the "
+        "warps would arm at the wrong time or never")
 
-    near = f"is_player_in_area_3d $player_char 0 {PAD_NEAR_BOX}"
+    # The geometry has to hold together or a player ends up on a roof with no way
+    # off, or in a fade loop. Two things are checked rather than trusted: the near
+    # box contains every trigger, destination and marker, since leaving it is what
+    # parks the watcher; and each destination sits outside the boxes that would
+    # fire the warp again, which is what the hold after a lift up exists to
+    # survive and what nothing protects the way down.
+    near = _box_corners(PAD_NEAR_BOX)
+    held = [("the up trigger", corner) for corner in _box_corners(PAD_UP_BOX)]
+    for index, box in enumerate(PAD_DOWN_BOXES):
+        held += [(f"down box {index}", corner) for corner in _box_corners(box)]
+    held.append(("the up destination", _point(PAD_UP_TARGET)))
+    held.append(("the down destination", _point(PAD_DOWN_TARGET)))
+    held += [(f"sphere {index}", _point(sphere))
+             for index, sphere in enumerate(PAD_SPHERES)]
+    for label, point in held:
+        assert _inside(near, point), (
+            f"pad warp: {label} at {point} is outside the near box, which parks "
+            "the watcher and stops it drawing there")
+    assert not _inside(_box_corners(PAD_UP_BOX), _point(PAD_DOWN_TARGET)), (
+        "pad warp: the down destination stands in the up trigger, so the two "
+        "would bounce the player between them")
+    for index, box in enumerate(PAD_DOWN_BOXES):
+        assert not _inside(_box_corners(box), _point(PAD_DOWN_TARGET)), (
+            f"pad warp: the down destination stands in down box {index}, so the "
+            "way down would fade and warp forever")
+
+    near_test = f"is_player_in_area_3d $player_char 0 {PAD_NEAR_BOX}"
+    # What every loop asks before it does anything. The playing test is why a
+    # death or a bust inside a doorway is not a fade to black and a lift onto the
+    # roof: vanilla only ever fires these triggers inside the mission, with the
+    # player's control already taken away.
+    ready = ["if ", "  is_player_playing $player_char", "goto_if_false @APPAD_LOOP",
+             "if ", "  $onmission == 0", "goto_if_false @APPAD_LOOP"]
     body = ["", ":APPAD", "script_name 'APPAD'", "",
             ":APPAD_LOOP", "wait 250",
+            *ready,
             "if ", f"  {PAD_PASSED_FLAG} == 1", "goto_if_false @APPAD_LOOP",
-            "if ", "  $onmission == 0", "goto_if_false @APPAD_LOOP",
-            "if ", f"  {near}", "goto_if_false @APPAD_LOOP",
+            "if ", f"  {near_test}", "goto_if_false @APPAD_LOOP",
             "", ":APPAD_NEAR", "wait 0",
-            "if ", "  $onmission == 0", "goto_if_false @APPAD_LOOP",
-            "if ", f"  {near}", "goto_if_false @APPAD_LOOP",
+            *ready,
+            "if ", f"  {near_test}", "goto_if_false @APPAD_LOOP",
             *sphere_lines,
             "if ", f"  is_player_in_area_3d $player_char 0 {PAD_UP_BOX}",
             "goto_if_false @APPAD_DOWN",
@@ -612,7 +669,7 @@ def add_pad_warp_watcher():
             f"set_player_heading $player_char z_angle_to {PAD_UP_HEADING}",
             "do_fade 1 500",
             "", ":APPAD_CLEAR", "wait 0",
-            "if ", "  $onmission == 0", "goto_if_false @APPAD_LOOP",
+            *ready,
             "if or",
             *(f"  is_player_in_area_3d $player_char 0 {box}"
               for box in PAD_DOWN_BOXES),

@@ -37,8 +37,7 @@ REPOSITORY_ROOT = pathlib.Path(__file__).resolve().parent.parent
 # sites _literal_table_problems checks. The success line reports both, so they
 # are declared once here rather than written down again in the message, where
 # they went stale the moment a site was added.
-CLEO_SCRIPTS = ("aprewd.cs", "apradio.cs", "apwatchers.cs", "aparea.cs",
-                "appad.cs",
+CLEO_SCRIPTS = ("aprewd.cs", "apradio.cs", "apwatchers.cs", "aparea.cs", "appad.cs",
                 "appickup.cs")
 
 # The bare-literal sites, by the name each is reported under. The success line
@@ -512,36 +511,45 @@ def _district_list_problems(scm_dir: pathlib.Path, scm) -> list[str]:
 PAD_DOOR_PACKAGE = 25
 PAD_DOOR_MISSION = "Treacherous Swine"
 PAD_DOOR_MODELS = ("#SPAD_DR_OPEN1", "#SPAD_DR_OPEN2", "#SPAD_DR_OPEN3")
+# Both halves of the route, since the building has no walkable interior: the
+# doors alone leave the player at the bottom of it and the warps alone leave the
+# way down behind a shut door. Either one missing is the same lie as neither.
+PAD_EDITS = ("open_gonzalez_pad_door", "add_pad_warp_watcher")
 
 
 def _pad_door_problems(scm_dir: pathlib.Path, data) -> list[str]:
-    """Package 25's mission route against the build edit that makes it true.
+    """Package 25's mission route against the build edits that make it true.
 
-    Vanilla shuts Gonzalez's pad again when Treacherous Swine tears down, so
-    that route is a window inside one mission until build_scm.py leaves the
-    pad's door open. Neither file can see the other, and the failure is silent
-    in both directions: without the edit the world goes on placing progression
-    behind a package a helicopter is the only way back to, and without the route
-    the edit opens a door for nothing. They are a pair, so they are checked as
-    one.
+    Vanilla shuts Gonzalez's pad again when Treacherous Swine tears down, and
+    the building has no walkable interior, so that route is a window inside one
+    mission until build_scm.py both reopens the doors and keeps the mission's
+    warps. Neither file can see the other, and the failure is silent in both
+    directions: without the edits the world goes on placing progression behind a
+    package a helicopter is the only way back to, and without the route the
+    edits open a building for nothing. They are one thing, so they are checked
+    as one.
     """
     source = scm_dir / "build_scm.py"
     build = source.read_text(encoding="utf-8")
+    called = set(build.splitlines())
     routed = any(data.mission_passed_item_name(PAD_DOOR_MISSION) in route
                  for route in data.PACKAGE_ABILITY_ALTERNATIVES.get(PAD_DOOR_PACKAGE, []))
-    opener = _function_body(build, "def open_gonzalez_pad_door():")
-    edited = opener is not None and "open_gonzalez_pad_door()" in build.splitlines()
+    bodies = {edit: _function_body(build, f"def {edit}():") for edit in PAD_EDITS}
+    absent = [edit for edit in PAD_EDITS
+              if bodies[edit] is None or f"{edit}()" not in called]
     if not routed:
-        if not edited:
+        if len(absent) == len(PAD_EDITS):
             return []
-        return [f"{source.name}: open_gonzalez_pad_door leaves the pad open for "
-                f"a route package {PAD_DOOR_PACKAGE} no longer takes"]
-    if not edited:
+        return [f"{source.name}: {', '.join(sorted(set(PAD_EDITS) - set(absent)))} "
+                f"opens the pad for a route package {PAD_DOOR_PACKAGE} no longer "
+                "takes"]
+    if absent:
         return [f"{source.name}: package {PAD_DOOR_PACKAGE} is reached through "
-                f"{PAD_DOOR_MISSION}, but open_gonzalez_pad_door is not both "
-                "defined and called, so the pad shuts again at that mission's "
-                "teardown and the route is a window inside it"]
-    shut = [model for model in PAD_DOOR_MODELS if model not in opener]
+                f"{PAD_DOOR_MISSION}, but {', '.join(absent)} is not both defined "
+                "and called, so the pad is shut again once that mission ends and "
+                "the route is a window inside it"]
+    shut = [model for model in PAD_DOOR_MODELS
+            if model not in bodies["open_gonzalez_pad_door"]]
     if shut:
         return [f"{source.name}: open_gonzalez_pad_door names no {', '.join(shut)}, "
                 f"so the pad keeps a door package {PAD_DOOR_PACKAGE} is behind and "

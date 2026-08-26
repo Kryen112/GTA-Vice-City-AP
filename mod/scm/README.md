@@ -18,10 +18,11 @@ version control.
    This makes every mission-giver marker appear only on its AP unlock, holds the
    whole marker and launcher pass until An Old Friend is done (the vanilla flag
    `$222` that mission sets), severs the vanilla story reveals and launcher
-   starts, adds the APMARK watcher, and moves TWELVE threads out of the MAIN
+   starts, adds the APMARK watcher, and moves THIRTEEN threads out of the MAIN
    section so it stays under the game's fixed script buffer. Three are rewritten
-   into the watcher it writes to `apwatchers.txt`; three more are carried across
-   verbatim into `aparea.txt`, `aprewd.txt` and `apradio.txt`; and the six weapon
+   into the watcher it writes to `apwatchers.txt`; four more are carried across
+   verbatim into `aparea.txt`, `aprewd.txt`, `apradio.txt` and `appad.txt`; and
+   the six weapon
    shops are carried into `apammu1.txt`, `apammu2.txt`, `apammu3.txt`,
    `aphard1.txt`, `aphard2.txt` and `aphard3.txt`. One file each throughout,
    because a CLEO script runs from its own entry point.
@@ -34,9 +35,10 @@ version control.
    `start_new_script` at a label inside a `.cs`, and CLEO for VC does not
    override that opcode, so the game's handler takes the local label as a raw
    instruction pointer and the thread runs memory below script space.
-4. Compile all eleven, plus the script itself:
+4. Compile all twelve, plus the script itself:
    `sanny.exe --compile built.markers.txt main.scm --game vc`, then the same for
-   `apwatchers.txt`, `aparea.txt`, `aprewd.txt`, `apradio.txt`, `appickup.txt`
+   `apwatchers.txt`, `aparea.txt`, `aprewd.txt`, `apradio.txt`, `appad.txt`,
+   `appickup.txt`
    and the six shop files to `.cs`. Sanny compiles headlessly only with the game
    folder as the working directory, and it lingers: compile ONE at a time and
    check the output file's timestamp, because a run that writes nothing still
