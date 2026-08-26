@@ -3,7 +3,6 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
-#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -14,7 +13,6 @@
 #include "scm_finale_warp.hpp"
 #include "scm_packages.hpp"
 #include "scm_seed_stamp.hpp"
-#include "scm_stunt_jumps.hpp"
 #include "toast_stack.hpp"
 
 #include <plugin.h>
@@ -22,7 +20,6 @@
 #include <CHud.h>
 #include <CMessages.h>
 #include <CModelInfo.h>
-#include <eModelInfoType.h>
 #include <CTheScripts.h>
 #include <CWorld.h>
 #include <CPlayerPed.h>
@@ -47,9 +44,9 @@
 
 namespace gtavc {
 
-// The pure planners copy the game's own ids: appearances, pickup types and model
-// kinds alike, kept free of game headers so the console self-test can exercise
-// them. This is the one place that sees both, so it holds them together.
+// The pure planners copy the game's own ids, appearances and pickup types
+// alike, kept free of game headers so the console self-test can exercise them.
+// This is the one place that sees both, so it holds them together.
 static_assert(kAppearanceAutomobile == VEHICLE_APPEARANCE_AUTOMOBILE, "automobile appearance");
 static_assert(kAppearanceBike == VEHICLE_APPEARANCE_BIKE, "bike appearance");
 static_assert(kAppearanceHeli == VEHICLE_APPEARANCE_HELI, "heli appearance");
@@ -59,10 +56,6 @@ static_assert(kPickupTypeCollectable == PICKUP_COLLECTABLE1, "collectable pickup
 static_assert(kPickupTypePropertyLocked == PICKUP_PROPERTY_LOCKED, "locked property type");
 static_assert(kPickupTypePropertyForSale == PICKUP_PROPERTY_FORSALE, "for-sale property type");
 static_assert(kPickupTypeInShop == PICKUP_IN_SHOP, "in-shop pickup type");
-static_assert(kObjectTypeMission == OBJECT_MISSION, "mission object type moved");
-static_assert(kModelInfoSimple == MODEL_INFO_SIMPLE, "simple model kind");
-static_assert(kModelInfoTime == MODEL_INFO_TIME, "time model kind");
-static_assert(kModelInfoWeapon == MODEL_INFO_WEAPON, "weapon model kind");
 
 namespace {
 // Fixed part of the reserved layout, matching apworld scm.py: the seed hash
@@ -137,10 +130,10 @@ constexpr int kPickupUnmatchedLogFrame = 600;
 // queue of eight and the five-entry previous-brief history the pause menu reads,
 // so a ring past thirteen keeps every live message's text its own.
 //
-// This channel carries the blocked-attempt line and the developer dumps, all of
-// them written here rather than arriving from the server, so the character bound
-// is generous rather than derived; PostToast truncates anything longer, which is
-// the safe direction for text the mod wrote itself.
+// This channel carries the blocked-attempt line, written here rather than
+// arriving from the server, so the character bound is generous rather than
+// derived; PostToast truncates anything longer, which is the safe direction
+// for text the mod wrote itself.
 constexpr std::size_t kBriefMessageLiveElsewhere = 13;
 // How long one of these holds the screen. The game's own default for a script
 // print, and the value this channel has always used.
@@ -172,11 +165,6 @@ bool UsesPoliceScanner(CVehicle* vehicle) {
 // The streaming flag the give-weapon script opcode uses (load as a dependency).
 constexpr int kStreamModelDependency = 0x04;
 
-// The request flag whose counterpart exists. SetMissionDoesntRequireModel clears
-// this one, and nothing in the executable clears the dependency flag above, so a
-// request that has to be given back has to be made with this. The game's own
-// callers pair the two the same way.
-constexpr int kStreamModelReleasable = 0x02;
 // A weapon pickup grants two magazines: a reloaded weapon plus a spare, floored
 // so single-load weapons (shotgun/stubby/sniper, magazine 1) still give a usable
 // amount rather than two rounds.
@@ -225,8 +213,6 @@ constexpr const char* kAbilityBlockedText[kAbilityCount] = {
     "Land vehicles are locked.", "Sea vehicles are locked.",
     "Air vehicles are locked.", "Weapons are locked.", nullptr,
 };
-// The key writing the unique stunt jump table beside the executable.
-constexpr int kStuntJumpDumpKey = VK_F7;
 
 // The reserved global the finale holds up while it runs, mirrored from apworld
 // scm.py FINALE_ACTIVE_GLOBAL. Keep the ambient layout off the pool while the
@@ -239,45 +225,7 @@ constexpr int kFinaleActiveGlobal = 9669;
 // CustomVariables for Vice City. Read only, and only to tell a finale still
 // running from a flag the mission never got to drop.
 constexpr int kOnMissionGlobal = 313;
-// The key writing the live pickup pool beside the executable, and its file. Its
-// own key rather than the stunt jump one because it reads a different thing at a
-// different time: the pool holds what is streamed in right now, so this is
-// pressed standing where the question is rather than once anywhere.
-constexpr int kPickupDumpKey = VK_F8;
-constexpr const char* kPickupDumpFile = "ap_pickup_pool.txt";
 
-// The key writing every world entity standing near the player, and its file.
-// A shop's stock is not pickups, so the pickup pool dump cannot see what an
-// Ammu-Nation sells; this reads the pools holding the world itself, and names
-// each entity's model so a shop fitting can be identified.
-//
-// Near the player only, since the question is about the room the player is
-// standing in and the building pool alone holds thousands of entries.
-constexpr int kWorldDumpKey = VK_F9;
-constexpr const char* kWorldDumpFile = "ap_world_objects.txt";
-constexpr float kWorldDumpRadius = 25.0f;
-
-// The key dressing nearby shop stock as the AP check marker, and putting it back
-// on the next press, with how far it reaches. A shop's stock is script created
-// objects wearing weapon model infos, so what an AP shop item needs in the world
-// is this one model swap, and this is where that swap is proven before a seed
-// drives it. A key rather than seed driven because nothing detects a purchase
-// yet, so there is nothing to revert the swap ON: pressing twice stands in.
-//
-// Not F10, which Windows reads as the menu key and can take focus with. Its own
-// radius rather than the dump's, so retuning what a dump reports cannot silently
-// retune what this rewrites.
-constexpr int kShopMarkerKey = VK_F11;
-constexpr float kShopMarkerRadius = 25.0f;
-
-// The turn the marker needs to face the room. A shop item is hung facing its
-// customer, and the marker's own front is the other way round, so wearing the
-// item's heading shows the marker's unlit back. Half a turn in radians, applied
-// on the way in and again on the way out, since adding it twice is where it
-// started.
-constexpr float kShopMarkerHalfTurn = 3.14159265f;
-
-constexpr const char* kStuntJumpDumpFile = "gtavc_ap_stuntjumps.txt";
 // The kill-frenzy skull's model name in the game's object definitions.
 constexpr const char* kKillFrenzyModelName = "killfrenzy";
 // Diagnostic names for the held pickup classes, HeldPickupClass order.
@@ -343,8 +291,7 @@ void __cdecl PrintMoneyCounter(float x, float y, const wchar_t* text) {
 // the storage outlives the call by a full ring.
 //
 // This is not the toast stack and carries nothing from the multiworld: the
-// blocked-attempt line, which answers a press the player just made, and the
-// developer dumps.
+// blocked-attempt line alone, which answers a press the player just made.
 void PostToast(const std::string& text) {
   static std::array<std::array<wchar_t, kToastBufferChars>, kToastBufferCount>
       buffers{};
@@ -380,48 +327,6 @@ void DestroyGameEntity(void* entity) {
   using DeletingDestructor = void*(__thiscall*)(void*, int);
   void** vtable = *static_cast<void***>(entity);
   reinterpret_cast<DeletingDestructor>(vtable[kDeletingDestructorSlot])(entity, 1);
-}
-
-// A file beside the executable, where the log already goes.
-std::string PathBesideExecutable(const char* name) {
-  char executable[MAX_PATH] = {0};
-  GetModuleFileNameA(nullptr, executable, MAX_PATH);
-  std::string path(executable);
-  const std::size_t slash = path.find_last_of("\\/");
-  const std::string directory =
-      (slash == std::string::npos) ? "." : path.substr(0, slash);
-  return directory + "\\" + name;
-}
-
-// Every committed, readable block this process privately owns, plus the ones
-// its modules occupy. The modules matter: a pool given a static backing store
-// lives in the executable's own zero-initialised data, which is mapped image
-// rather than heap and would otherwise never be looked at. File mappings stay
-// out, since the game maps hundreds of megabytes of archive it never builds
-// anything in.
-std::vector<std::pair<const unsigned char*, std::size_t>> ReadableBlocks() {
-  std::vector<std::pair<const unsigned char*, std::size_t>> blocks;
-  SYSTEM_INFO system{};
-  GetSystemInfo(&system);
-  auto* address = static_cast<const unsigned char*>(system.lpMinimumApplicationAddress);
-  const auto* limit = static_cast<const unsigned char*>(system.lpMaximumApplicationAddress);
-  constexpr DWORD readable = PAGE_READONLY | PAGE_READWRITE | PAGE_WRITECOPY |
-                             PAGE_EXECUTE_READ | PAGE_EXECUTE_READWRITE |
-                             PAGE_EXECUTE_WRITECOPY;
-  while (address < limit) {
-    MEMORY_BASIC_INFORMATION region{};
-    if (VirtualQuery(address, &region, sizeof(region)) != sizeof(region)) break;
-    const bool usable = region.State == MEM_COMMIT &&
-                        (region.Type == MEM_PRIVATE || region.Type == MEM_IMAGE) &&
-                        (region.Protect & readable) != 0 &&
-                        (region.Protect & PAGE_GUARD) == 0;
-    if (usable) {
-      blocks.emplace_back(static_cast<const unsigned char*>(region.BaseAddress),
-                          region.RegionSize);
-    }
-    address = static_cast<const unsigned char*>(region.BaseAddress) + region.RegionSize;
-  }
-  return blocks;
 }
 
 // An address as the pins spell it, so a failure log can be read against
@@ -536,14 +441,6 @@ bool CallSiteStillCallsPriceGetter(unsigned int site) {
   const unsigned int target =
       static_cast<unsigned int>(static_cast<int>(site) + 5 + relative);
   return target == kPickupPriceGetterCallee10;
-}
-
-// Whether the foreground window belongs to this game, so a key pressed in
-// another application while the player is alt-tabbed is ignored.
-bool GameWindowHasFocus() {
-  DWORD process_id = 0;
-  GetWindowThreadProcessId(GetForegroundWindow(), &process_id);
-  return process_id == GetCurrentProcessId();
 }
 }  // namespace
 
@@ -1239,247 +1136,6 @@ void ScmGameState::EnforceLocks() {
 
 void ScmGameState::OnBeforeWorldProcess() { ApplyAbilityInputLocks(); }
 
-namespace {
-// Only a page that went away is this scan's business. Every other exception,
-// a C++ throw and a stack overflow included, belongs to whoever raised it:
-// swallowing those would report the block unscannable and unwind without
-// running a single destructor.
-int MemoryFaultFilter(unsigned int code) {
-  return (code == EXCEPTION_ACCESS_VIOLATION || code == EXCEPTION_IN_PAGE_ERROR ||
-          code == EXCEPTION_GUARD_PAGE)
-             ? EXCEPTION_EXECUTE_HANDLER
-             : EXCEPTION_CONTINUE_SEARCH;
-}
-
-// Scanning live memory races the streamer, which frees blocks on its own
-// thread, so a page can go away between being reported committed and being
-// read. Each step is split in two so the guard sits in a function holding no
-// object of its own, which is what lets a structured handler wrap it.
-void ScanBlockInner(const unsigned char* base, std::size_t size,
-                    std::vector<StuntJumpPosition>* positions) {
-  *positions = FindStuntJumpPositions(base, size);
-}
-
-bool ScanBlockGuarded(const unsigned char* base, std::size_t size,
-                      std::vector<StuntJumpPosition>* positions) {
-  __try {
-    ScanBlockInner(base, size, positions);
-    return true;
-  } __except (MemoryFaultFilter(GetExceptionCode())) {
-    return false;
-  }
-}
-
-void FindRunsInner(const std::vector<StuntJumpPosition>* positions,
-                   std::vector<StuntJumpRun>* runs) {
-  *runs = FindStuntJumpRuns(*positions);
-}
-
-bool FindRunsGuarded(const std::vector<StuntJumpPosition>& positions,
-                     std::vector<StuntJumpRun>* runs) {
-  __try {
-    FindRunsInner(&positions, runs);
-    return true;
-  } __except (MemoryFaultFilter(GetExceptionCode())) {
-    return false;
-  }
-}
-
-void ReadRecordsInner(const unsigned char* base, const StuntJumpRun* run,
-                      std::vector<StuntJumpRecord>* records) {
-  records->clear();
-  for (int step = 0; step < run->count; ++step) {
-    records->push_back(ReadStuntJumpRecord(base, run->offset + run->stride * step));
-  }
-}
-
-bool ReadRecordsGuarded(const unsigned char* base, const StuntJumpRun& run,
-                        std::vector<StuntJumpRecord>* records) {
-  __try {
-    ReadRecordsInner(base, &run, records);
-    return true;
-  } __except (MemoryFaultFilter(GetExceptionCode())) {
-    return false;
-  }
-}
-
-// How many addresses holding the array are worth writing down. One identifies
-// the pool, so the rest are only corroboration and the file stays short.
-constexpr std::size_t kStuntJumpHolderLimit = 8;
-
-// Above this the address belongs to the heap rather than to a loaded module.
-// The executable images sit at the bottom of the address space, so this only
-// labels a dump's provenance and never gates anything.
-constexpr std::uintptr_t kModuleAddressCeiling = 0x00C00000u;
-
-void FindPointersInner(std::uintptr_t value, const unsigned char* base,
-                       std::size_t size, std::vector<std::uintptr_t>* found) {
-  for (std::size_t offset = 0; offset + sizeof(std::uintptr_t) <= size;
-       offset += sizeof(std::uintptr_t)) {
-    std::uintptr_t candidate = 0;
-    std::memcpy(&candidate, base + offset, sizeof(candidate));
-    if (candidate == value) {
-      found->push_back(reinterpret_cast<std::uintptr_t>(base + offset));
-      if (found->size() >= kStuntJumpHolderLimit) return;
-    }
-  }
-}
-
-bool FindPointersGuarded(std::uintptr_t value, const unsigned char* base,
-                         std::size_t size, std::vector<std::uintptr_t>* found) {
-  __try {
-    FindPointersInner(value, base, size, found);
-    return true;
-  } __except (MemoryFaultFilter(GetExceptionCode())) {
-    return false;
-  }
-}
-}  // namespace
-
-void ScmGameState::DumpStuntJumps() {
-  // How many jumps this game built. The manager counts them as it adds them, so
-  // this is the only number the game itself supplies about the table.
-  const int expected = CStats::TotalNumberOfUniqueJumps;
-
-  const std::vector<std::pair<const unsigned char*, std::size_t>> blocks =
-      ReadableBlocks();
-  int longest_seen = 0;
-  int truncated_blocks = 0;
-  std::vector<StuntJumpCandidate> candidates;
-  for (const auto& [base, size] : blocks) {
-    std::vector<StuntJumpPosition> positions;
-    if (!ScanBlockGuarded(base, size, &positions)) continue;
-    if (positions.size() >= kStuntJumpPositionLimit) ++truncated_blocks;
-    if (positions.size() < static_cast<std::size_t>(kStuntJumpMinimumRun)) continue;
-    std::vector<StuntJumpRun> runs;
-    if (!FindRunsGuarded(positions, &runs)) continue;
-    for (const StuntJumpRun& run : runs) {
-      longest_seen = std::max(longest_seen, run.count);
-      StuntJumpCandidate candidate;
-      candidate.run = run;
-      candidate.base = reinterpret_cast<std::uintptr_t>(base);
-      if (!ReadRecordsGuarded(base, run, &candidate.records)) continue;
-      candidate.layout_fit = LayoutFit(candidate.records);
-      candidates.push_back(std::move(candidate));
-    }
-    // Only the pick and the alternatives written are ever read, so the list is
-    // trimmed as it grows rather than after.
-    std::stable_sort(candidates.begin(), candidates.end(),
-                     [expected](const StuntJumpCandidate& left,
-                                const StuntJumpCandidate& right) {
-                       return CandidateRanksBefore(left, right, expected);
-                     });
-    if (candidates.size() > kStuntJumpCandidatesKept) {
-      candidates.resize(kStuntJumpCandidatesKept);
-    }
-  }
-  // A block that hit the position cap was searched only as far as the cap, so
-  // the table could have been past it. Say so: otherwise that reads as no table.
-  if (truncated_blocks > 0 && logger_) {
-    logger_("stunt jump dump: " + std::to_string(truncated_blocks) +
-            " block(s) held more positions than the scan collects");
-  }
-  if (candidates.empty()) {
-    if (logger_) {
-      logger_("stunt jump dump: no table found, longest qualifying run " +
-              std::to_string(longest_seen) + ", game expects " +
-              std::to_string(expected));
-    }
-
-    PostToast("No stunt jump table found in memory.");
-    return;
-  }
-
-  const StuntJumpCandidate& best_candidate = candidates.front();
-  const StuntJumpRun best = best_candidate.run;
-  const std::vector<StuntJumpRecord>& best_records = best_candidate.records;
-  const std::uintptr_t array_address = best_candidate.base + best.offset;
-  // The one address the array is reachable from is worth writing down: it is
-  // the pool's own object pointer, so a later build can read the table
-  // directly instead of scanning for it again.
-  std::vector<std::uintptr_t> holders;
-  for (const auto& [base, size] : blocks) {
-    if (holders.size() >= kStuntJumpHolderLimit) break;
-    FindPointersGuarded(array_address, base, size, &holders);
-  }
-
-  const std::string path = PathBesideExecutable(kStuntJumpDumpFile);
-  FILE* file = nullptr;
-  fopen_s(&file, path.c_str(), "w");
-  if (file == nullptr) {
-    if (logger_) logger_("stunt jump dump: cannot write " + path);
-    PostToast("Stunt jump dump failed to write.");
-    return;
-  }
-  std::fprintf(file, "# GTA Vice City unique stunt jumps, dumped by the "
-                     "Archipelago ASI.\n");
-  std::fprintf(file, "# array 0x%08X stride %u records %u, game counts %d\n",
-               static_cast<unsigned int>(array_address),
-               static_cast<unsigned int>(best.stride),
-               static_cast<unsigned int>(best_records.size()), expected);
-  std::fprintf(file, "# span %d units, %d percent away from the origin, "
-                     "%d percent fits the known record layout\n",
-               static_cast<int>(best.span),
-               static_cast<int>(best.away_from_origin * 100.0f),
-               static_cast<int>(best_candidate.layout_fit * 100.0f));
-  // Where it came from. An address inside a loaded module means a pool with a
-  // static backing store rather than one built on the heap.
-  std::fprintf(file, "# found in %s memory\n",
-               array_address < kModuleAddressCeiling ? "module" : "heap");
-  for (std::uintptr_t holder : holders) {
-    std::fprintf(file, "# pointed at from 0x%08X\n",
-                 static_cast<unsigned int>(holder));
-  }
-  std::fprintf(file, "# index then start corners, landing corners, camera, reward\n");
-  int index = 0;
-  for (const StuntJumpRecord& record : best_records) {
-    if (static_cast<std::size_t>(index) >= kStuntJumpRowsWritten) break;
-    std::fprintf(file, "%d", index++);
-    for (float value : record.values) std::fprintf(file, " %.4f", value);
-    std::fprintf(file, " %d\n", record.reward);
-  }
-  // The runners-up, commented out so the reader ignores them. Promoting one
-  // means deleting its comment marks and deleting the block above, which saves
-  // a session when the first pick turns out to be something else shaped like a
-  // jump table.
-  for (std::size_t rank = 1;
-       rank < candidates.size() && rank <= kStuntJumpAlternativesWritten; ++rank) {
-    const StuntJumpCandidate& other = candidates[rank];
-    std::fprintf(file,
-                 "# alternative %u: array 0x%08X stride %u records %u span %d, "
-                 "%d percent fits\n",
-                 static_cast<unsigned int>(rank),
-                 static_cast<unsigned int>(other.base + other.run.offset),
-                 static_cast<unsigned int>(other.run.stride),
-                 static_cast<unsigned int>(other.records.size()),
-                 static_cast<int>(other.run.span),
-                 static_cast<int>(other.layout_fit * 100.0f));
-    int other_index = 0;
-    for (const StuntJumpRecord& record : other.records) {
-      if (static_cast<std::size_t>(other_index) >= kStuntJumpRowsWritten) break;
-      std::fprintf(file, "#%d", other_index++);
-      for (float value : record.values) std::fprintf(file, " %.4f", value);
-      std::fprintf(file, " %d\n", record.reward);
-    }
-  }
-  std::fclose(file);
-  if (logger_) {
-    logger_("stunt jump dump: " + std::to_string(best_records.size()) +
-            " records, stride " +
-            std::to_string(best.stride) + ", game counts " + std::to_string(expected) +
-            ", wrote " + path);
-  }
-  // A count short of the game's own is a partial table, so say so here rather
-  // than leave it to whoever reads the file later: the shape filters splitting
-  // one oversized jump off the run looks exactly like success otherwise.
-  if (expected > 0 && best.count != expected) {
-    PostToast("Found " + std::to_string(best.count) + " stunt jumps, the game "
-              "counts " + std::to_string(expected) + ".");
-  } else {
-    PostToast("Wrote " + std::to_string(best.count) + " stunt jumps.");
-  }
-}
-
 void ScmGameState::ApplyOneShot(const ItemEffect& effect) {
   if (effect.type.rfind("trap_", 0) == 0) {
     ApplyTrap(effect);
@@ -1837,392 +1493,6 @@ bool ScmGameState::TakeDeath() {
   return died;
 }
 
-void ScmGameState::ToggleShopMarkerModels() {
-  if (plugin::GetGameVersion() != GAME_10EN) {
-    if (logger_) logger_("shop marker: not the classic 1.0 executable");
-    PostToast("Shop marker needs the 1.0 executable.");
-    return;
-  }
-  CPlayerPed* player = FindPlayerPed();
-  if (player == nullptr) {
-    if (logger_) logger_("shop marker: no player, nothing changed");
-    PostToast("Shop marker needs a player.");
-    return;
-  }
-  CPool<CObject, CCutsceneObject>* pool = CPools::ms_pObjectPool;
-  if (pool == nullptr) {
-    if (logger_) logger_("shop marker: no object pool, nothing changed");
-    PostToast("Shop marker found no object pool.");
-    return;
-  }
-
-  // A second press puts the world back, so nothing is left dressed up.
-  if (!shop_marker_swaps_.empty()) {
-    int restored = 0;
-    int lost = 0;
-    for (const ShopMarkerSwap& swap : shop_marker_swaps_) {
-      // A pool REFERENCE, not an index. An index alone is not identity, since a
-      // freed slot is reused, and wearing the marker is not identity either in
-      // this mod: the marker is what a pending check wears, and a pickup's own
-      // visible object lives in this same pool and churns through slots. A
-      // reference carries the slot's reuse counter, so a recycled slot answers
-      // with nothing rather than with somebody else's object.
-      CObject* object = pool->GetAtRef(swap.pool_ref);
-      if (object == nullptr || object->m_nModelIndex != kPickupCheckMarkerModel) {
-        ++lost;
-        continue;
-      }
-      // The model has to be in memory to be worn. Nothing kept the original
-      // loaded while the marker stood in for it, and putting an unloaded model
-      // on an object leaves it invisible with nothing to rebuild it.
-      CStreaming::RequestModel(swap.original_model, kStreamModelReleasable);
-      CStreaming::LoadAllRequestedModels(false);
-      if (!CStreaming::HasModelLoaded(swap.original_model)) {
-        // Give the request back on the way out, so a model that will not load
-        // does not stay asked for until something evicts it.
-        CStreaming::SetMissionDoesntRequireModel(swap.original_model);
-        ++lost;
-        continue;
-      }
-      // Delete first. The engine's SetModelIndex creates the new visible object
-      // without deleting the old one, which leaks it and leaks a reference on
-      // the model it came from.
-      object->DeleteRwObject();
-      object->SetModelIndex(static_cast<unsigned int>(swap.original_model));
-      object->SetHeading(object->GetHeading() + kShopMarkerHalfTurn);
-      // The object now holds its own reference on the model, so the request that
-      // got it loaded has done its job and is given back. Releasing it while the
-      // object wears the model cannot evict it, since eviction skips a model
-      // something references. The bit is shared with the script's own hold on the
-      // same model rather than counted, so this drops that too; harmless for the
-      // same reason.
-      CStreaming::SetMissionDoesntRequireModel(swap.original_model);
-      ++restored;
-    }
-    // Gives back the mission dependency the swap asked for. Objects still
-    // wearing the marker hold their own reference on it, so this cannot pull the
-    // model out from under one.
-    CStreaming::SetMissionDoesntRequireModel(kPickupCheckMarkerModel);
-    if (logger_) {
-      logger_("shop marker: " + std::to_string(restored) + " objects put back, "
-              + std::to_string(lost) + " no longer there");
-    }
-    PostToast("Restored " + std::to_string(restored) + " shop items.");
-    shop_marker_swaps_.clear();
-    return;
-  }
-
-  // The marker has to be in memory before anything can wear it, and a shop is
-  // exactly where it may not be, since nothing in the room needs it.
-  CStreaming::RequestModel(kPickupCheckMarkerModel, kStreamModelReleasable);
-  CStreaming::LoadAllRequestedModels(false);
-  if (!CStreaming::HasModelLoaded(kPickupCheckMarkerModel)) {
-    CStreaming::SetMissionDoesntRequireModel(kPickupCheckMarkerModel);
-    if (logger_) logger_("shop marker: the marker model would not load");
-    PostToast("Shop marker: model not loaded.");
-    return;
-  }
-
-  const unsigned short body_armour_model =
-      *reinterpret_cast<const unsigned short*>(kPickupBodyArmourModelAddress10);
-  const CVector player_position = player->GetPosition();
-  for (int index = 0; index < pool->m_nSize; ++index) {
-    CObject* object = pool->GetAt(index);
-    if (object == nullptr) continue;
-    const int model_id = object->m_nModelIndex;
-    if (model_id == kPickupCheckMarkerModel) continue;
-    CBaseModelInfo* info =
-        (model_id >= 0 && model_id < CModelInfo::ms_modelInfoCount)
-            ? CModelInfo::ms_modelInfoPtrs[model_id]
-            : nullptr;
-    if (info == nullptr) continue;
-    if (!IsShopStockObject(static_cast<int>(info->GetModelType()), model_id,
-                           static_cast<int>(body_armour_model),
-                           static_cast<int>(object->m_nObjectType),
-                           object->m_nObjectFlags.bIsPickupObject != 0)) {
-      continue;
-    }
-    const CVector position = object->GetPosition();
-    const float delta_x = position.x - player_position.x;
-    const float delta_y = position.y - player_position.y;
-    const float delta_z = position.z - player_position.z;
-    if (std::sqrt(delta_x * delta_x + delta_y * delta_y + delta_z * delta_z) >
-        kShopMarkerRadius) {
-      continue;
-    }
-    // Delete before create, the same way the restore does, and for the same
-    // reason: the engine's SetModelIndex does not delete what it replaces.
-    shop_marker_swaps_.push_back({pool->GetRef(object), model_id});
-    object->DeleteRwObject();
-    object->SetModelIndex(static_cast<unsigned int>(kPickupCheckMarkerModel));
-    object->SetHeading(object->GetHeading() + kShopMarkerHalfTurn);
-  }
-  if (shop_marker_swaps_.empty()) {
-    // Nothing wore it, so nothing will release it later: the next press takes
-    // this same branch again rather than the restore.
-    CStreaming::SetMissionDoesntRequireModel(kPickupCheckMarkerModel);
-  }
-  if (logger_) {
-    logger_("shop marker: " + std::to_string(shop_marker_swaps_.size())
-            + " shop objects wearing the marker");
-  }
-  PostToast("Marked " + std::to_string(shop_marker_swaps_.size())
-            + " shop items.");
-}
-
-void ScmGameState::DumpWorldObjects() {
-  // Same shape as the pickup dump and for the same reasons: a development tool
-  // on a key, on the classic executable, and only with a player, since every
-  // distance it writes is measured from one.
-  if (plugin::GetGameVersion() != GAME_10EN) {
-    if (logger_) logger_("world dump: not the classic 1.0 executable");
-    PostToast("World dump needs the 1.0 executable.");
-    return;
-  }
-  CPlayerPed* player = FindPlayerPed();
-  if (player == nullptr) {
-    if (logger_) logger_("world dump: no player, nothing written");
-    PostToast("World dump needs a player.");
-    return;
-  }
-  const CVector player_position = player->GetPosition();
-
-  const std::string path = PathBesideExecutable(kWorldDumpFile);
-  FILE* file = nullptr;
-  fopen_s(&file, path.c_str(), "w");
-  if (file == nullptr) {
-    if (logger_) logger_("world dump: cannot write " + path);
-    PostToast("World dump failed to write.");
-    return;
-  }
-  // What was walked and what was not, because a missing row is otherwise read
-  // as a missing entity. Peds and vehicles are left out as things that merely
-  // stand in a shop rather than being part of it.
-  std::fprintf(file,
-               "# entities within %.0f units of %.2f %.2f %.2f\n",
-               kWorldDumpRadius, player_position.x, player_position.y,
-               player_position.z);
-  std::fprintf(file, "# pools walked: object, dummy, building, treadable. NOT "
-                     "walked: ped, vehicle\n");
-  // object_type is the game's own eObjectType and means nothing outside the
-  // object pool, so it reads -1 elsewhere. model_kind is the model info kind,
-  // and weapon_type means something only where that kind carries one.
-  std::fprintf(file, "# pool,index,model,model_name,object_type,model_kind,"
-                     "weapon_type,x,y,z,distance_from_player\n");
-
-  // The model's own entry, which is what actually identifies a wall gun. The
-  // table is indexed by model id and an entry can be absent, so a blank answer
-  // is a real one rather than a reason to skip the row.
-  const auto model_info = [](int model_id) -> CBaseModelInfo* {
-    if (model_id < 0 || model_id >= CModelInfo::ms_modelInfoCount) {
-      return nullptr;
-    }
-    return CModelInfo::ms_modelInfoPtrs[model_id];
-  };
-
-  int written = 0;
-  const auto emit = [&](const char* pool, int index, int model_id,
-                        int object_type, const CVector& position) {
-    CBaseModelInfo* info = model_info(model_id);
-    const int model_kind =
-        info != nullptr ? static_cast<int>(info->GetModelType()) : -1;
-    // Only where that field IS the weapon type union, which the pure helper
-    // decides; reading it on a kind that means something else there would print
-    // a pointer as a weapon.
-    const int weapon_type =
-        (info != nullptr && ModelInfoCarriesWeaponType(model_kind))
-            ? static_cast<CSimpleModelInfo*>(info)->m_nWeaponType
-            : -1;
-    const float delta_x = position.x - player_position.x;
-    const float delta_y = position.y - player_position.y;
-    const float delta_z = position.z - player_position.z;
-    const float distance = std::sqrt(delta_x * delta_x + delta_y * delta_y +
-                                    delta_z * delta_z);
-    if (distance > kWorldDumpRadius) return;
-    // The name is a fixed width field with no terminator promised, so the
-    // print is bounded to it rather than trusting a zero to arrive.
-    std::fprintf(file, "%s,%d,%d,%.21s,%d,%d,%d,%.4f,%.4f,%.4f,%.1f\n",
-                 pool, index, model_id, info != nullptr ? info->m_szName : "",
-                 object_type, model_kind, weapon_type, position.x, position.y,
-                 position.z, distance);
-    ++written;
-  };
-
-  // Objects first, since anything the game can take away or animate is one, and
-  // a gun on a rack is likelier to be an object than part of the building.
-  if (CPools::ms_pObjectPool != nullptr) {
-    CPool<CObject, CCutsceneObject>* pool = CPools::ms_pObjectPool;
-    for (int index = 0; index < pool->m_nSize; ++index) {
-      CObject* object = pool->GetAt(index);
-      if (object == nullptr) continue;
-      emit("object", index, object->m_nModelIndex,
-           static_cast<int>(object->m_nObjectType), object->GetPosition());
-    }
-  }
-  // Then the map's own two pools. A shop fitting that never moves may well be
-  // here rather than an object, and a dummy is what the game demotes a distant
-  // object to.
-  if (CPools::ms_pDummyPool != nullptr) {
-    CPool<CDummy>* pool = CPools::ms_pDummyPool;
-    for (int index = 0; index < pool->m_nSize; ++index) {
-      CDummy* dummy = pool->GetAt(index);
-      if (dummy == nullptr) continue;
-      emit("dummy", index, dummy->m_nModelIndex, -1, dummy->GetPosition());
-    }
-  }
-  if (CPools::ms_pBuildingPool != nullptr) {
-    CPool<CBuilding>* pool = CPools::ms_pBuildingPool;
-    for (int index = 0; index < pool->m_nSize; ++index) {
-      CBuilding* building = pool->GetAt(index);
-      if (building == nullptr) continue;
-      emit("building", index, building->m_nModelIndex, -1,
-           building->GetPosition());
-    }
-  }
-  // Treadables are buildings the game keeps in a pool of their own, so walking
-  // the building pool alone would miss them.
-  if (CPools::ms_pTreadablePool != nullptr) {
-    CPool<CTreadable>* pool = CPools::ms_pTreadablePool;
-    for (int index = 0; index < pool->m_nSize; ++index) {
-      CTreadable* treadable = pool->GetAt(index);
-      if (treadable == nullptr) continue;
-      emit("treadable", index, treadable->m_nModelIndex, -1,
-           treadable->GetPosition());
-    }
-  }
-
-  std::fclose(file);
-  if (logger_) {
-    logger_("world dump: " + std::to_string(written)
-            + " entities written to " + path);
-  }
-  PostToast("Wrote " + std::to_string(written) + " nearby entities.");
-}
-
-void ScmGameState::DumpPickupPool() {
-  // Read straight out of the pool, which holds only what is streamed in right
-  // now. That is why this is a key rather than a one-shot: it answers about the
-  // place the player is standing.
-  //
-  // Classic 1.0 only, all of it. CostOfWeapon is a raw address, and the pool and
-  // the model table are reached through plugin-sdk symbols that are single
-  // addresses pinned for this build, so another executable would not give a
-  // price-less dump, it would give garbage rows.
-  if (plugin::GetGameVersion() != GAME_10EN) {
-    if (logger_) logger_("pickup dump: not the classic 1.0 executable");
-    PostToast("Pickup dump needs the 1.0 executable.");
-    return;
-  }
-  CPlayerPed* player = FindPlayerPed();
-  if (player == nullptr) {
-    // Every distance is measured from the player, so without one the file would
-    // be magnitudes from the origin under a heading claiming a position.
-    if (logger_) logger_("pickup dump: no player, nothing written");
-    PostToast("Pickup dump needs a player.");
-    return;
-  }
-  const float player_x = player->GetPosition().x;
-  const float player_y = player->GetPosition().y;
-  const float player_z = player->GetPosition().z;
-
-  const std::string path = PathBesideExecutable(kPickupDumpFile);
-  FILE* file = nullptr;
-  fopen_s(&file, path.c_str(), "w");
-  if (file == nullptr) {
-    if (logger_) logger_("pickup dump: cannot write " + path);
-    PostToast("Pickup dump failed to write.");
-    return;
-  }
-  const short* prices = reinterpret_cast<const short*>(kCostOfWeaponAddress10);
-  // Read once, unsigned because the game reads them with movzx and compares
-  // against a sign-extended model id: a name that never resolved leaves 0xFFFF
-  // there, which the game can never match and a signed read would turn into -1.
-  PickupFixedPriceModels fixed_models;
-  fixed_models.body_armour =
-      *reinterpret_cast<const unsigned short*>(kPickupBodyArmourModelAddress10);
-  fixed_models.health =
-      *reinterpret_cast<const unsigned short*>(kPickupHealthModelAddress10);
-  fixed_models.adrenaline =
-      *reinterpret_cast<const unsigned short*>(kPickupAdrenalineModelAddress10);
-  fixed_models.body_armour_weapon_type = kPickupBodyArmourWeaponType;
-  fixed_models.health_weapon_type = kPickupHealthWeaponType;
-  fixed_models.adrenaline_weapon_type = kPickupAdrenalineWeaponType;
-  // Every live entry, not just the in-shop ones. A shop's stock is not in this
-  // pool at all: it is objects wearing weapon model infos, which the world dump
-  // names. So every type is written here, with the distance from the player,
-  // which is what tells the contents of the room being stood in from the rest of
-  // the city.
-  std::fprintf(file, "# GTA Vice City live pickups, dumped by the Archipelago "
-                     "ASI.\n");
-  std::fprintf(file, "# Player at %.1f %.1f %.1f. Type 1 is in-shop, 7 is in-shop "
-                     "out of stock; the weapon_type and price columns only mean "
-                     "anything for those.\n", player_x, player_y, player_z);
-  std::fprintf(file, "# pool_index,type,model,x,y,z,quantity,weapon_type,price,"
-                     "distance_from_player,collected\n");
-  int written = 0;
-  for (int index = 0; index < kPickupPoolSize; ++index) {
-    const CPickup& pickup = CPickups::aPickUps[index];
-    if (pickup.bPickupType == 0) continue;
-    // What the till would charge, resolved by the same function that states the
-    // order: three models take a fixed weapon type before anything reads a model
-    // info, and reading the model info alone prints zero for those, which is the
-    // ten ambient stands. A weapon model prices from the model info and needs no
-    // special case. The marker is answered too, at what the ASI's own patch
-    // charges for it.
-    //
-    // The model comes from the pool entry here rather than from the pickup's
-    // object, and the two agree while the object is the one the entry describes,
-    // which is every frame the pickup is standing there.
-    int weapon_type = -1;
-    int price = -1;
-    // The model id is bounded before it indexes anything. The purchase path
-    // guards -1 explicitly before dereferencing the same array, so a negative id
-    // on a live entry is a value the engine treats as reachable, and it would
-    // give a garbage non-null pointer here to read an int off.
-    // Bounded against the game's own count rather than a written-down size, so
-    // an executable whose model table was extended is still read correctly.
-    const int model_id = static_cast<int>(pickup.nModelId);
-    int model_info_weapon_type = -1;
-    if (model_id >= 0 && model_id < CModelInfo::ms_modelInfoCount) {
-      CBaseModelInfo* info = CModelInfo::GetModelInfo(model_id);
-      // Only where that field IS the union, which the pure helper decides. The
-      // purchase path reads the offset unconditionally, which is safe for it
-      // because a pickup the player can touch wears a simple model; this walks
-      // every live pickup instead, so it asks first.
-      if (info != nullptr &&
-          ModelInfoCarriesWeaponType(static_cast<int>(info->GetModelType()))) {
-        model_info_weapon_type =
-            static_cast<CSimpleModelInfo*>(info)->m_nWeaponType;
-      }
-    }
-    weapon_type = PickupWeaponTypeForPrice(model_id, fixed_models,
-                                           model_info_weapon_type,
-                                           kPickupCheckMarkerWeaponType);
-    if (weapon_type >= 0 && weapon_type < kCostOfWeaponCount) {
-      price = prices[weapon_type];
-    }
-    const float delta_x = pickup.vecPos.x - player_x;
-    const float delta_y = pickup.vecPos.y - player_y;
-    const float delta_z = pickup.vecPos.z - player_z;
-    const double distance = std::sqrt(static_cast<double>(
-        delta_x * delta_x + delta_y * delta_y + delta_z * delta_z));
-    std::fprintf(file, "%d,%d,%d,%.4f,%.4f,%.4f,%u,%d,%d,%.1f,%d\n", index,
-                 static_cast<int>(pickup.bPickupType),
-                 static_cast<int>(pickup.nModelId), pickup.vecPos.x,
-                 pickup.vecPos.y, pickup.vecPos.z,
-                 static_cast<unsigned int>(pickup.dwPickupQuantity),
-                 weapon_type, price, distance,
-                 pickup.bRemoved ? 1 : 0);
-    ++written;
-  }
-  std::fclose(file);
-  if (logger_) {
-    logger_("pickup dump: " + std::to_string(written)
-            + " live pickups written to " + path);
-  }
-  PostToast("Wrote " + std::to_string(written) + " live pickups.");
-}
-
 void ScmGameState::EnforcePickupLayout() {
   if (pickup_targets_.empty()) {
     ClearPickupPriceOverrides();
@@ -2396,9 +1666,6 @@ void ScmGameState::ForgetGameScopedState() {
   // re-derive from the globals every frame.
   ability_toast_shown_.fill(false);
   ability_toast_last_ms_.fill(0);
-  // The stunt jump dump key's edge stays where it is. Its handler runs on the
-  // frame and its latch belongs to the keyboard rather than to a game, so
-  // clearing it here would unlatch it on every frame the dump runs in.
   // The model table belongs to the game that loaded it.
   kill_frenzy_model_ = -1;
   kill_frenzy_lookup_logged_ = false;
@@ -2414,17 +1681,6 @@ void ScmGameState::ForgetGameScopedState() {
   // precisely to wait for a game to be readable in.
   toasts_.visible.clear();
   toasts_.waiting.clear();
-  // The shop marker swaps name objects by pool reference, and replacing the
-  // world refills that pool, so the references belong to a world that is gone.
-  // Dropped rather than restored: there is nothing left to put back.
-  if (!shop_marker_swaps_.empty()) {
-    if (logger_) {
-      logger_("shop marker: " + std::to_string(shop_marker_swaps_.size())
-              + " swaps dropped with the world they belonged to");
-    }
-    shop_marker_swaps_.clear();
-    CStreaming::SetMissionDoesntRequireModel(kPickupCheckMarkerModel);
-  }
   // The frame handler keeps this true to the seed while it runs, so this is
   // for the case where it does not run at all: a game with no stamped seed
   // hash never reaches it, and the counter would otherwise still be answering
@@ -2492,48 +1748,6 @@ void ScmGameState::ForgetGameScopedState() {
 
 void ScmGameState::OnGameFrame() {
   std::lock_guard<std::mutex> lock(mutex_);
-
-  // Each dump reads the WORLD rather than the seed, so all of them run on any
-  // loaded game rather than waiting for a stamped one, and they are handled here
-  // rather than inside the lock enforcement below, which returns early when the
-  // seed configures no lock at all. One table, so a fourth key cannot arrive as
-  // a fourth copy of this, and the window is asked about once instead of once
-  // per key.
-  const bool window_has_focus = GameWindowHasFocus();
-  const bool player_present = FindPlayerPed() != nullptr;
-  static_assert(kStuntJumpDumpKey != kPickupDumpKey &&
-                    kStuntJumpDumpKey != kWorldDumpKey &&
-                    kStuntJumpDumpKey != kShopMarkerKey &&
-                    kPickupDumpKey != kWorldDumpKey &&
-                    kPickupDumpKey != kShopMarkerKey &&
-                    kWorldDumpKey != kShopMarkerKey,
-                "two hot keys naming one key would run both actions on a press");
-  struct HotKey {
-    int key;
-    bool* was_down;
-    void (ScmGameState::*action)();
-  };
-  const HotKey hot_keys[] = {
-      {kStuntJumpDumpKey, &stunt_jump_key_was_down_,
-       &ScmGameState::DumpStuntJumps},
-      {kPickupDumpKey, &pickup_dump_key_was_down_,
-       &ScmGameState::DumpPickupPool},
-      {kWorldDumpKey, &world_dump_key_was_down_,
-       &ScmGameState::DumpWorldObjects},
-      {kShopMarkerKey, &shop_marker_key_was_down_,
-       &ScmGameState::ToggleShopMarkerModels},
-  };
-  for (const HotKey& entry : hot_keys) {
-    const bool down = window_has_focus &&
-        (GetAsyncKeyState(entry.key) & 0x8000) != 0;
-    // Edge triggered, and the edge is recorded whether or not the dump runs, so
-    // a key held down while no player exists does not fire on the frame one
-    // appears.
-    if (down && !*entry.was_down && player_present) {
-      (this->*entry.action)();
-    }
-    *entry.was_down = down;
-  }
 
   cached_seed_hash_ = ReadSeedHash();
   if (ShouldStampSeedHash(cached_seed_hash_.empty(), !expected_seed_hash_.empty(),

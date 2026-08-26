@@ -99,33 +99,6 @@ class ScmGameState : public GameState {
  private:
   static int GetGlobal(int index);
   static void SetGlobal(int index, int value);
-  // Writes the game's own unique stunt jump table beside the executable, found
-  // by scanning the heap for it. A development tool: the jump positions are the
-  // one thing the tracker pack cannot read offline, since the game never writes
-  // them down anywhere a build step could reach. Runs only on its key press.
-  void DumpStuntJumps();
-  // Every live pickup the pool holds, with what it is, where it is, and a price
-  // that means something only for the in-shop types. A development tool: it runs
-  // on a key press, on the classic 1.0 executable, and only with a player, since
-  // every distance it writes is measured from one.
-  void DumpPickupPool();
-
-  // Every entity standing near the player, with what it is and where. Names the
-  // things a shop is BUILT from, which the pickup pool cannot see, since a
-  // shop's stock is not pickups. A development tool on the same terms as the
-  // pickup dump: a key press, the classic executable, and a player to measure
-  // from.
-  void DumpWorldObjects();
-
-  // Dresses every shop item near the player as the AP check marker, and undoes
-  // it on the next call. Proves in the world what an AP shop item has to look
-  // like, ahead of a seed driving it.
-  //
-  // The undo reaches only what is still there. The stock is script created, so a
-  // mission cleanup, a load or a return to the frontend destroys it, and those
-  // swaps are then dropped rather than restored, because the objects they name no
-  // longer exist.
-  void ToggleShopMarkerModels();
 
   // Sets each collected package's completion global by matching the game's
   // collectable pickups to the configured package coordinates. Only a package
@@ -348,20 +321,6 @@ class ScmGameState : public GameState {
   // game boundary.
   std::array<bool, kAbilityCount> ability_toast_shown_{};
   std::array<unsigned int, kAbilityCount> ability_toast_last_ms_{};
-  // One edge detector per hot key, so one press does one thing.
-  bool stunt_jump_key_was_down_ = false;
-  bool pickup_dump_key_was_down_ = false;
-  bool world_dump_key_was_down_ = false;
-  bool shop_marker_key_was_down_ = false;
-
-  // What the shop marker toggle changed, so the next press can put it back. A
-  // pool reference rather than an index, since it carries the slot's reuse
-  // counter and a recycled slot must answer with nothing.
-  struct ShopMarkerSwap {
-    int pool_ref = -1;
-    int original_model = -1;
-  };
-  std::vector<ShopMarkerSwap> shop_marker_swaps_;
   // The kill-frenzy skull model, resolved by name and latched on the first
   // hit; negative while unresolved, when the rampage icons stay vanilla.
   // Reset on the game boundary with the other per-game state.

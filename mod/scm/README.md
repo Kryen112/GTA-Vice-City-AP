@@ -213,31 +213,6 @@ version control.
   first frame the seed hash is up. The whole pass waits on that hash for a
   separate reason, which is that the ASI's baseline of the completion globals
   skips any global that starts non-zero.
-- Stunt jump dump: F7 in a loaded game writes `gtavc_ap_stuntjumps.txt` beside
-  the executable. Vice City defines its 36 unique stunt jumps nowhere a build
-  step can read, neither in the SCM nor as a static table in the executable;
-  the game builds them on the heap at start. The ASI scans its own heap for
-  the record shape (two bounding boxes then a camera position) and takes the
-  longest run at one stride, preferring a run as long as the game's own
-  `CStats::TotalNumberOfUniqueJumps`, and toasting the shortfall when it
-  finds fewer. Development tool: it runs only on the key, reads no reserved
-  global, and writes nothing into the world beyond its own result toast.
-  `scripts/dump_check_coords.py` takes the file as its third argument and
-  folds the jumps into the tracker pack's coordinate table.
-- Pickup pool dump: F8 in a loaded 1.0 game with a player writes
-  `ap_pickup_pool.txt` beside the executable, one row per live pickup, in the
-  order the file's own header names: pool index, type, model, position, quantity,
-  weapon type, price, distance from the player, and whether it is collected and
-  awaiting respawn. The weapon type and price are computed for every row but only
-  mean anything for the in-shop types, since only those charge. Price reads `-1`
-  wherever the weapon type falls outside the cost table, and the weapon type
-  itself reads `-1` only when no model info supplied one, so a model whose field
-  holds a LOD parent instead prints that pointer.
-  There are only 14 in-shop pickups in the game, the ten ambient pay stands and
-  the four at Phil's, all of them created by the script: no engine call that
-  creates a pickup passes the in-shop type, and F8 inside an Ammu-Nation returns
-  the ten stands and nothing else. So a shop's counter guns are not pickups, and
-  nothing in this file reaches what they cost.
 - Finale warp: `$9668`. The hidden-packages goal is a macguffin hunt, so its
   last fragment plays the story's ending: the client asks for it on every
   status frame, the ASI raises this flag, and the boot-started APFIN watcher

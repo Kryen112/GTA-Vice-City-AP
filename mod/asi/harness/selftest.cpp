@@ -1,7 +1,6 @@
 // Standalone protocol self-test: round-trips framing (small and chunked) and
 // checks the guards, with no socket and no game. Proves the C++ protocol layer
 // compiles and behaves in the 32-bit MSVC toolchain.
-#include <algorithm>
 #include <array>
 #include <iostream>
 #include <limits>
@@ -27,7 +26,6 @@
 #include "../src/scm_radio.hpp"
 #include "../src/scm_seed_stamp.hpp"
 #include "../src/scm_status_panel.hpp"
-#include "../src/scm_stunt_jumps.hpp"
 #include "../src/scm_toasts.hpp"
 
 using namespace gtavc;
@@ -1005,101 +1003,16 @@ int main() {
     const auto orphan = PlanPickupLayout(targets, {}, {true, true});
     Expect(orphan.price_overrides.empty(),
            "an unmatched stand overrides no pool slot");
-    // The pure MODEL of the decision, on the two answers that matter. Not the
-    // live hook: that walks a store this harness cannot reach, because the walk
-    // and the store live in scm_game_state.cpp, which needs plugin-sdk and the
-    // game. What is pinned here is that a marker prices from whatever type it is
-    // handed, which is the half the store feeds.
-    Expect(PickupWeaponTypeForPrice(kPickupCheckMarkerModel, PickupFixedPriceModels{},
-                                    0, 33) == 33,
-           "a stand's marker prices from the stand's own weapon type");
-    Expect(PickupWeaponTypeForPrice(kPickupCheckMarkerModel, PickupFixedPriceModels{},
-                                    0, kPickupCheckMarkerWeaponType)
-               == kPickupCheckMarkerWeaponType,
-           "and every other marker prices at the ASI's own figure");
   }
 
-  // What an in-shop pickup prices from, in the order the purchase path resolves
-  // it. The order is the whole of this: the three fixed models are compared
-  // before anything reads a model info, so resolving them the other way round
-  // prices a stand off a field that means nothing for it.
-  {
-    PickupFixedPriceModels fixed;
-    fixed.body_armour = 368;
-    fixed.health = 366;
-    fixed.adrenaline = 367;
-    // Distinct on purpose. The game gives armour and adrenaline the same type,
-    // so using the real pair here would leave the first and third clauses
-    // indistinguishable and a swap between them would redden nothing.
-    fixed.body_armour_weapon_type = 0x26;
-    fixed.health_weapon_type = 0x25;
-    fixed.adrenaline_weapon_type = 0x21;
-    // A model info value that must never win where a fixed model matches.
-    const int ignored = 99;
-    Expect(PickupWeaponTypeForPrice(366, fixed, ignored, 1) == 0x25,
-           "a health stand prices from its fixed type, not its model info");
-    Expect(PickupWeaponTypeForPrice(368, fixed, ignored, 1) == 0x26,
-           "and so does body armour");
-    Expect(PickupWeaponTypeForPrice(367, fixed, ignored, 1) == 0x21,
-           "and adrenaline, by its own clause and not body armour's");
-    Expect(PickupWeaponTypeForPrice(-1, fixed, ignored, 1) == 0,
-           "a model of minus one prices from nothing, the way the table does");
-    Expect(PickupWeaponTypeForPrice(kPickupCheckMarkerModel, fixed, ignored, 1) == 1,
-           "the marker prices at what the ASI charges for it");
-    Expect(PickupWeaponTypeForPrice(274, fixed, ignored, 1) == ignored,
-           "and any other model prices from its model info");
-    // The marker's type is the caller's to choose, so a value no other clause
-    // returns proves the parameter is what comes back.
-    Expect(PickupWeaponTypeForPrice(kPickupCheckMarkerModel, fixed, ignored, 7) == 7,
-           "and the marker's price is whatever the caller asks for");
-    // The shipped constant through the same clause, which pins that no earlier
-    // clause intercepts the marker model, the three fixed ones included. The
-    // order among those clauses is pinned by the cases above. It cannot pin the
-    // constant's VALUE, being an identity in it; the tripwire below does that.
-    Expect(PickupWeaponTypeForPrice(kPickupCheckMarkerModel, fixed, ignored,
-                                    kPickupCheckMarkerWeaponType)
-               == kPickupCheckMarkerWeaponType,
-           "the marker prices from the shipped marker weapon type");
-    // A tripwire, not a derivation: what makes 12 right is that CostOfWeapon
-    // holds a thousand there, which only the game's own table can say. The ASI
-    // reads it at load and logs a mismatch; this refuses a silent edit to either
-    // half of the pair.
-    Expect(kPickupCheckMarkerWeaponType == 12 &&
-               kPickupCheckMarkerPriceInDollars == 1000,
-           "the marker's price index and its documented price still agree; "
-           "re-read CostOfWeapon before changing either");
-
-    // A name that never resolved leaves 0xFFFF in the game's own slot, which the
-    // game reads unsigned, so it can never match a model. Minus one must still
-    // reach the minus one clause and not be swallowed by one of the three, so
-    // each of them carries a type that would be visible if it were.
-    PickupFixedPriceModels unresolved;
-    unresolved.body_armour_weapon_type = 0x11;
-    unresolved.health_weapon_type = 0x12;
-    unresolved.adrenaline_weapon_type = 0x13;
-    Expect(unresolved.body_armour == 0xFFFF &&
-               unresolved.health == 0xFFFF &&
-               unresolved.adrenaline == 0xFFFF,
-           "all three fields default to the 0xFFFF the game leaves in an "
-           "unresolved slot");
-    Expect(PickupWeaponTypeForPrice(-1, unresolved, ignored, 1) == 0,
-           "an unresolved fixed model does not swallow the minus one case");
-
-    // Which model infos carry the weapon type at all. Leaving the weapon kind
-    // out reads as a working dump whose price column simply says nothing, and
-    // the models it drops are the weapons, which is most of what a shop sells.
-    // Literals, not the constants, so this pins WHICH kinds are admitted rather
-    // than restating the disjunction with its own names.
-    Expect(ModelInfoCarriesWeaponType(4),
-           "a weapon model info carries the weapon type");
-    Expect(ModelInfoCarriesWeaponType(1) && ModelInfoCarriesWeaponType(3),
-           "and so do the simple and time kinds it derives from");
-    for (const int kind : {0, 2, 5, 6, 7, -1}) {
-      Expect(!ModelInfoCarriesWeaponType(kind),
-             "and no other kind does, since that offset is something else or "
-             "past the object");
-    }
-  }
+  // A tripwire, not a derivation: what makes 12 right is that CostOfWeapon
+  // holds a thousand there, which only the game's own table can say. The ASI
+  // reads it at load and logs a mismatch; this refuses a silent edit to either
+  // half of the pair.
+  Expect(kPickupCheckMarkerWeaponType == 12 &&
+             kPickupCheckMarkerPriceInDollars == 1000,
+         "the marker's price index and its documented price still agree; "
+         "re-read CostOfWeapon before changing either");
 
   {
     // Taking a check from a vehicle. The gate compares the police bribe model
@@ -1123,29 +1036,6 @@ int main() {
            "any other model answers with the bribe model in a vehicle too");
     Expect(VehicleCollectComparisonModel(kSomethingElse, kBribe, false) == kBribe,
            "and on foot");
-    // What counts as a shop's stock. Two silent mistakes to refuse: dropping the
-    // body armour, which is a simple model sold beside the guns, and catching a
-    // pickup's own visible object, which wears a weapon model info too.
-    constexpr int kBodyArmour = 368;
-    constexpr int kOtherModel = 401;
-    Expect(IsShopStockObject(kModelInfoWeapon, 274, kBodyArmour,
-                             kObjectTypeMission, false),
-           "a gun on a rack is stock");
-    Expect(IsShopStockObject(kModelInfoSimple, kBodyArmour, kBodyArmour,
-                             kObjectTypeMission, false),
-           "and so is the body armour beside it, by model rather than by kind");
-    Expect(!IsShopStockObject(kModelInfoWeapon, 274, kBodyArmour,
-                              kObjectTypeMission, true),
-           "a pickup's own object is never stock, whatever it wears");
-    Expect(!IsShopStockObject(kModelInfoSimple, kBodyArmour, kBodyArmour,
-                              kObjectTypeMission, true),
-           "including the body armour pickup");
-    Expect(!IsShopStockObject(kModelInfoWeapon, 274, kBodyArmour, 1, false),
-           "and neither is a map object, whatever it wears");
-    Expect(!IsShopStockObject(kModelInfoSimple, kOtherModel, kBodyArmour,
-                              kObjectTypeMission, false),
-           "an ordinary script object is not stock either");
-
     // A real bribe is what the gate was built for and must be untouched, in a
     // vehicle and out of one.
     Expect(VehicleCollectComparisonModel(kBribe, kBribe, true) == kBribe &&
@@ -2901,203 +2791,6 @@ int main() {
     menu.game_loaded = false;
     Expect(!PlanPanelFrame(menu, true).draw,
            "and the panel stays off the frontend's own menu");
-  }
-
-  // Recovering the stunt jump table from a block of memory. The game builds it
-  // on the heap and writes it nowhere else, so the search runs on what the table
-  // is: world positions at a constant stride, spread across the city.
-  {
-    constexpr std::size_t kStride = 0x44;
-    constexpr int kJumps = 36;
-    constexpr std::size_t kLead = 0x120;
-
-    // One record at a place in the city, laid out the way the manager lays it.
-    const auto plant = [](std::vector<unsigned char>* into, std::size_t offset,
-                          float x, float y, int reward) {
-      const float floats[kStuntJumpFloats] = {
-          x, y, 10.0f, x + 8.0f, y + 8.0f, 16.0f,
-          x + 60.0f, y, 9.0f, x + 90.0f, y + 20.0f, 15.0f,
-          x + 30.0f, y - 40.0f, 25.0f,
-      };
-      std::memcpy(into->data() + offset, floats, sizeof(floats));
-      std::memcpy(into->data() + offset + sizeof(floats), &reward, sizeof(reward));
-    };
-    const auto plant_table = [&](std::vector<unsigned char>* into, std::size_t lead) {
-      for (int index = 0; index < kJumps; ++index) {
-        plant(into, lead + kStride * index, -900.0f + 40.0f * index,
-              300.0f - 20.0f * index, 500 * (index + 1));
-      }
-    };
-
-    std::vector<unsigned char> memory(kLead + kStride * (kJumps + 2), 0);
-    plant_table(&memory, kLead);
-
-    const std::vector<StuntJumpPosition> positions =
-        FindStuntJumpPositions(memory.data(), memory.size());
-    Expect(positions.size() >= static_cast<std::size_t>(kJumps),
-           "every planted position is found");
-    const std::vector<StuntJumpRun> runs = FindStuntJumpRuns(positions);
-    // Each record holds five positions, so the array yields a run per alignment
-    // and a run per straddle. What matters is that the true one is among them,
-    // and that ranking picks it: only there do the floats form the manager's
-    // own record.
-    const StuntJumpRun* table = nullptr;
-    for (const StuntJumpRun& run : runs) {
-      if (run.offset == kLead && run.stride == kStride && run.count == kJumps) {
-        table = &run;
-      }
-    }
-    Expect(table != nullptr, "the planted table is among the qualifying runs");
-    if (table != nullptr) {
-      Expect(table->span >= kStuntJumpMinimumSpan, "the planted table spans the city");
-      Expect(table->away_from_origin > 0.99f,
-             "every planted position is away from the origin");
-    }
-
-    // Ranked as the caller ranks them, the true alignment comes first.
-    {
-      std::vector<StuntJumpCandidate> ranked;
-      for (const StuntJumpRun& run : runs) {
-        StuntJumpCandidate candidate;
-        candidate.run = run;
-        for (int step = 0; step < run.count; ++step) {
-          candidate.records.push_back(
-              ReadStuntJumpRecord(memory.data(), run.offset + run.stride * step));
-        }
-        candidate.layout_fit = LayoutFit(candidate.records);
-        ranked.push_back(std::move(candidate));
-      }
-      std::stable_sort(ranked.begin(), ranked.end(),
-                       [wanted = kJumps](const StuntJumpCandidate& left,
-                                         const StuntJumpCandidate& right) {
-                         return CandidateRanksBefore(left, right, wanted);
-                       });
-      Expect(!ranked.empty() && ranked.front().run.offset == kLead &&
-                 ranked.front().run.stride == kStride,
-             "ranking puts the true alignment first, not a straddling run");
-    }
-
-    // An array of one model's bounding volumes: real positions at a constant
-    // stride, but around that model's own origin and reaching only a few dozen
-    // units, so no run of it qualifies.
-    {
-      std::vector<unsigned char> model_bounds(kStride * 40, 0);
-      for (int index = 0; index < 40; ++index) {
-        plant(&model_bounds, kStride * index, 5.0f + static_cast<float>(index),
-              -5.0f - static_cast<float>(index), 0);
-      }
-      const std::vector<StuntJumpPosition> bound_positions =
-          FindStuntJumpPositions(model_bounds.data(), model_bounds.size());
-      Expect(!bound_positions.empty(), "model bounds do read as positions");
-      Expect(FindStuntJumpRuns(bound_positions).empty(),
-             "an array of one model's bounds never qualifies as the table");
-    }
-
-    // A model-bounds array sharing a block with the table, at the lower address.
-    // Both are 36 long, so a search offering one run per block would hand back
-    // the decoy and the table would never be seen.
-    {
-      const std::size_t decoy_lead = 0x40;
-      const std::size_t table_lead = decoy_lead + kStride * (kJumps + 2);
-      std::vector<unsigned char> shared(table_lead + kStride * (kJumps + 2), 0);
-      for (int index = 0; index < kJumps; ++index) {
-        plant(&shared, decoy_lead + kStride * index, 6.0f + static_cast<float>(index),
-              -6.0f - static_cast<float>(index), 0);
-      }
-      plant_table(&shared, table_lead);
-      const std::vector<StuntJumpRun> shared_runs =
-          FindStuntJumpRuns(FindStuntJumpPositions(shared.data(), shared.size()));
-      bool found_table = false;
-      bool found_decoy = false;
-      for (const StuntJumpRun& run : shared_runs) {
-        if (run.offset == table_lead && run.count == kJumps) found_table = true;
-        if (run.offset == decoy_lead) found_decoy = true;
-      }
-      Expect(found_table, "the table is offered even behind a decoy at a lower address");
-      Expect(!found_decoy, "the decoy sharing the block never qualifies");
-    }
-
-    // One jump beside the world origin does not cost the table its run: the
-    // origin test is a share of the whole run, never a per-record reject.
-    {
-      std::vector<unsigned char> with_central(kLead + kStride * (kJumps + 2), 0);
-      plant_table(&with_central, kLead);
-      plant(&with_central, kLead, 12.0f, -6.0f, 500);
-      const std::vector<StuntJumpRun> central_runs = FindStuntJumpRuns(
-          FindStuntJumpPositions(with_central.data(), with_central.size()));
-      bool intact = false;
-      for (const StuntJumpRun& run : central_runs) {
-        if (run.offset == kLead && run.count == kJumps && run.stride == kStride) {
-          intact = true;
-        }
-      }
-      Expect(intact, "a jump beside the origin leaves the run whole and aligned");
-    }
-
-    // A height nothing occupies, and one that is not a number, are both rejected.
-    {
-      const float in_the_city[3] = {-900.0f, 300.0f, 11.0f};
-      Expect(LooksLikeWorldPosition(in_the_city), "a place in the city reads as one");
-      const float too_high[3] = {-900.0f, 300.0f, 9000.0f};
-      Expect(!LooksLikeWorldPosition(too_high), "nothing sits nine kilometres up");
-      const float not_a_number[3] = {-900.0f, 300.0f,
-                                     std::numeric_limits<float>::quiet_NaN()};
-      Expect(!LooksLikeWorldPosition(not_a_number),
-             "a height that is not a number is not a height");
-    }
-
-    // The known layout ranks a candidate up but never gates it, so it is read as
-    // a share of the run rather than a verdict on it.
-    {
-      std::vector<StuntJumpRecord> records;
-      for (int index = 0; index < kJumps; ++index) {
-        records.push_back(ReadStuntJumpRecord(memory.data(), kLead + kStride * index));
-      }
-      Expect(LayoutFit(records) > 0.99f, "the planted table fits the known layout");
-      records[0].reward = -1082130432;  // -1.0f
-      Expect(LayoutFit(records) < 1.0f && LayoutFit(records) > 0.9f,
-             "one odd record costs a little of the fit, not all of it");
-    }
-
-    // Ranking: the game's own count leads, then how well the layout fits.
-    {
-      StuntJumpCandidate matching;
-      matching.run = StuntJumpRun{0x100, kStride, kJumps, 2000.0f, 1.0f};
-      matching.layout_fit = 0.5f;
-      StuntJumpCandidate longer;
-      longer.run = StuntJumpRun{0x200, kStride, kJumps * 3, 4000.0f, 1.0f};
-      longer.layout_fit = 1.0f;
-      Expect(CandidateRanksBefore(longer, matching, kJumps),
-             "the closer layout fit leads, whatever the counts");
-      Expect(!CandidateRanksBefore(matching, longer, kJumps),
-             "and the count alone does not lead it back");
-
-      // A spatial grid holding exactly as many entries as the game reports,
-      // reaching right across the map, and forming no jump record at all: the
-      // count and the span both say table, only the fit says otherwise.
-      StuntJumpCandidate grid;
-      grid.run = StuntJumpRun{0x400, 360, kJumps, 3704.0f, 1.0f};
-      grid.layout_fit = 0.0f;
-      StuntJumpCandidate table;
-      table.run = StuntJumpRun{0x500, kStride, kJumps, 2000.0f, 1.0f};
-      table.layout_fit = 1.0f;
-      Expect(CandidateRanksBefore(table, grid, kJumps),
-             "a table of jumps leads a grid of the same length and wider reach");
-
-      StuntJumpCandidate poorer_fit = table;
-      poorer_fit.run.offset = 0x600;
-      poorer_fit.layout_fit = 0.6f;
-      Expect(CandidateRanksBefore(table, poorer_fit, kJumps),
-             "among equal counts the closer layout fit leads");
-    }
-
-    // Nothing naming a position yields nothing, rather than a short run.
-    {
-      std::vector<unsigned char> empty(4096, 0);
-      Expect(
-          FindStuntJumpRuns(FindStuntJumpPositions(empty.data(), empty.size())).empty(),
-          "zeroed memory holds no stunt jump table");
-    }
   }
 
   // The completion percentage as the stats menu prints it. The menu converts

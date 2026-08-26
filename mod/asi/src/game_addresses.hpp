@@ -194,38 +194,9 @@ constexpr unsigned int kPickupShownPriceCallEnd10 = 0x43D833;
 // where this stopped being true answers -1 and the stand prices at the marker's
 // figure rather than at some other stand's.
 
-// The three models the purchase path prices WITHOUT consulting the model info,
-// classic 1.0 executable only. Each holds a model id, filled at load from the
-// name in data/maps/generic.ide, and each takes a fixed weapon type before the
-// dispatch: 0x440CCA reads the first and 0x440CD5 sets 0x26, 0x440CE0 reads the
-// second and 0x440CEB sets 0x25, 0x440CF2 reads the third and 0x440CFD sets 0x26.
-// The model compared is the PICKUP OBJECT's, loaded at 0x440CC3 and 0x440CC6.
-//
-// Anything reporting what a stand charges has to know these, because the model
-// info gives zero for a model one of them names. The ten ambient stands wear only
-// these, seven health and three adrenaline.
-//
-// They are not all a stand can wear: the script's other four type-1 stands are
-// the heavy weapons Phil sells, which price from the model info exactly as it
-// stands, randomize_pickups can put any non-bribe model on an ambient stand, and
-// a pending check puts the marker there.
-//
-// Those 14 script sites are ALL the in-shop pickups there are. No engine site
-// makes one: every immediate-type call to CPickups::GenerateNewOne passes 2, 4, 6,
-// 8, 0x10, 0x11 or 0x12, and the only two that take the type from a variable read
-// it out of the script's own parameters. So the guns on an Ammu-Nation counter are
-// not in-shop pickups, which an F8 dump inside one confirmed by returning the ten
-// ambient stands and nothing else.
-constexpr unsigned int kPickupBodyArmourModelAddress10 = 0x68E928;
-constexpr unsigned int kPickupHealthModelAddress10 = 0x68E930;
-constexpr unsigned int kPickupAdrenalineModelAddress10 = 0x68E924;
-constexpr int kPickupBodyArmourWeaponType = 0x26;
-constexpr int kPickupHealthWeaponType = 0x25;
-constexpr int kPickupAdrenalineWeaponType = 0x26;
-
-// CostOfWeapon, the in-shop price table both reads above index, classic 1.0
-// executable only. An int16 array of 40 entries; the dump reads it so a shop's
-// prices can be recorded beside its stock rather than looked up by hand.
+// CostOfWeapon, the in-shop price table both pinned price paths index, classic
+// 1.0 executable only. An int16 array of 40 entries; the ASI reads the marker's
+// own entry at load to hold it against the price documented beside it.
 constexpr unsigned int kCostOfWeaponAddress10 = 0x688000;
 constexpr int kCostOfWeaponCount = 40;
 
