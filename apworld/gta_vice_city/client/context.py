@@ -218,6 +218,17 @@ class GTAViceCityContext(CommonContext):
             await self.get_username()
         await self.send_connect()
 
+    def make_gui(self) -> type:
+        """Name the client window after the game. kvui builds the rest of the
+        title around base_title, appending the Archipelago version and the
+        server the client is connected to."""
+        from kvui import GameManager
+
+        class GTAViceCityManager(GameManager):
+            base_title = "Archipelago GTA Vice City Client"
+
+        return GTAViceCityManager
+
     def expected_seed_hash(self) -> str | None:
         # The identity the mod stamps into its save and presents on connect.
         # Available once AP has sent RoomInfo (seed_name) and Connected (slot).

@@ -1331,5 +1331,26 @@ class TestGoalDispatch(unittest.TestCase):
         self.assertEqual(asyncio.run(scenario()), 1)
 
 
+class TestWindowTitle(unittest.TestCase):
+    def test_the_window_is_named_after_the_game(self) -> None:
+        # A stub kvui stands in for the real one, so the test needs no window
+        # and no graphics backend. Only base_title is being asserted.
+        class FakeGameManager:
+            base_title = "Archipelago Client"
+
+        fake_kvui = types.ModuleType("kvui")
+        fake_kvui.GameManager = FakeGameManager
+
+        async def scenario() -> type:
+            with _fake_settings(""):
+                context = _context()
+                with mock.patch.dict("sys.modules", {"kvui": fake_kvui}):
+                    return context.make_gui()
+
+        manager = asyncio.run(scenario())
+        self.assertTrue(issubclass(manager, FakeGameManager))
+        self.assertEqual(manager.base_title, "Archipelago GTA Vice City Client")
+
+
 if __name__ == "__main__":
     unittest.main()
