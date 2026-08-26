@@ -9,6 +9,9 @@
 
 #include "hud_text.hpp"
 
+#include <CHud.h>
+#include <CRect.h>
+
 #include <windows.h>
 
 namespace gtavc {
@@ -27,6 +30,60 @@ float MeasureToastLine(const std::string& text) {
   // trimming until it is measuring the whole thing.
   if (text.size() > kWidenMaxChars) return std::numeric_limits<float>::max();
   return CFont::GetStringWidth(Widen(text), true);
+}
+
+// The vanilla help box, read out of the executable. The box is the one thing that
+// shares the top left corner with the stack, and the game puts a tutorial hint in
+// it.
+//
+// Where it starts and where it wraps: 0x55B577 adds 0x697C48 (34) to 0x697B28
+// (200), scales the sum, subtracts 0x697C10 (4) and hands that to CFont::SetWrapx,
+// so the text runs from x 34 to x 234 less the box's own inset. It draws at
+// 0x697C44 (0.52) by 0x697C40 (1.1), set at 0x55B51F.
+constexpr float kHelpBoxX = 34.0f;
+constexpr float kHelpBoxWrapAt = 234.0f;
+constexpr float kHelpBoxY = 28.0f;
+constexpr float kHelpBoxInset = 4.0f;
+constexpr float kHelpBoxScaleX = 0.52f;
+constexpr float kHelpBoxScaleY = 1.1f;
+// The gap the stack leaves under the box, so the two read as separate things
+// rather than one block. The mod's own number, not the game's.
+constexpr float kHelpBoxGap = 6.0f;
+
+// Where the stack may start this frame. Normally the anchor; while the game is
+// showing a help message, below that box instead.
+//
+// The box's bottom is the GAME's answer, not a computed one: CFont::GetTextRect
+// (0x550720) walks the string at the current font state and returns the rectangle
+// the text occupies, wrapping included, which is what the box is drawn around. An
+// earlier version multiplied a guessed line height by a line count, and the whole
+// drop distance rested on that guess.
+//
+// Sets CFont state and does NOT put it back. Safe because the caller snapshots
+// CFont::Details before calling this and restores it on the way out, and because
+// everything set here is set again by the stack's own drawing afterwards.
+float ToastTopThisFrame(const ToastGeometry& geometry) {
+  if (!CHud::IsHelpMessageBeingDisplayed()) return geometry.anchor_y;
+  // An array of the game's own, so it is never absent; an empty one is a box with
+  // nothing in it, which needs no room.
+  const wchar_t* message = CHud::m_HelpMessageToPrint;
+  if (message[0] == 0) return geometry.anchor_y;
+  // The box's own face, scale and wrap edge: an extent measured under any other set
+  // of them is a different box.
+  CFont::SetFontStyle(FONT_STANDARD);
+  CFont::SetPropOn();
+  CFont::SetCentreOff();
+  CFont::SetRightJustifyOff();
+  CFont::SetJustifyOff();
+  CFont::SetBackgroundOff();
+  CFont::SetScale(StretchX(kHelpBoxScaleX), StretchY(kHelpBoxScaleY));
+  CFont::SetWrapx(StretchX(kHelpBoxWrapAt) - kHelpBoxInset);
+  CRect rect(0.0f, 0.0f, 0.0f, 0.0f);
+  CFont::GetTextRect(&rect, StretchX(kHelpBoxX), StretchY(kHelpBoxY), message);
+  // Back into the units the geometry is written in, plus the inset between the last
+  // line and the box's own edge.
+  const float bottom = UnstretchY(rect.bottom) + kHelpBoxInset;
+  return ToastTopBelowBox(geometry, bottom, kHelpBoxGap);
 }
 
 }  // namespace
@@ -81,6 +138,17 @@ void DrawToastStack(ToastStackState& state, const ToastGeometry& geometry,
   // would land on somebody else's text.
   const CFontDetails saved = CFont::Details;
 
+  // Where the stack starts this frame, which is not always the anchor: a tutorial
+  // box owns the top left corner while it is up, and the stack drops below it for
+  // exactly as long as that lasts.
+  //
+  // FIRST, before the stack's own font state below. Measuring the box needs the
+  // BOX's face, scale and wrap edge, and this leaves them behind; running it after
+  // the setup left every toast measured, cut and printed at the help box's size
+  // against the box's own narrow wrap edge, and the cut was then remembered.
+  const float top_y = ToastTopThisFrame(geometry);
+  const std::size_t line_capacity = ToastLineCapacityFrom(geometry, top_y);
+
   // Left to right, proportional, shadowed, no centring: the stack is a list to
   // read over a moving world, so contrast comes from the shadow the way the
   // vanilla brief message gets it. Set before anything is measured, since the
@@ -116,14 +184,14 @@ void DrawToastStack(ToastStackState& state, const ToastGeometry& geometry,
   const float continuation_width =
       right_edge - StretchX(geometry.anchor_x + geometry.continuation_indent);
   FitToastStack(state, first_width, continuation_width,
-                ToastLineCapacity(geometry), &MeasureToastLine);
+                line_capacity, &MeasureToastLine);
 
   // Then the advance, which is the caller's: it owns the clock and the band's own
   // capacity. After the cutting, because a row's line count is not final until its
   // lines are cut and the band is measured in line counts; before the draw order
   // is taken, because the advance admits and expires rows and every pointer into
   // the visible list would otherwise be one it had already moved.
-  if (advance) advance(state);
+  if (advance) advance(state, line_capacity);
 
   const std::vector<const ToastRow*> rows = ToastDrawOrder(state);
   if (rows.empty()) {
@@ -131,23 +199,23 @@ void DrawToastStack(ToastStackState& state, const ToastGeometry& geometry,
     return;
   }
 
-  // Upward from the anchor. A row's own lines read downward, so a two-line row
-  // takes its lines in reverse as the stack climbs: the row's last line sits
-  // lowest and its first line above it, which is what puts the sentence over its
-  // own location rather than under the next row's.
-  float y = geometry.anchor_y;
+  // Downward from the top, newest row first, so a new row always appears in the
+  // same place and the older ones move down under it. A row's own lines read
+  // downward too, which is now the same direction the stack runs in, so nothing is
+  // reversed: an item row is one line, and only a broken notice has more than one.
+  float y = top_y;
   for (const ToastRow* row : rows) {
     if (row == nullptr) continue;
-    for (std::size_t index = row->lines.size(); index > 0; --index) {
-      if (y < geometry.ceiling_y) {
+    for (std::size_t index = 0; index < row->lines.size(); ++index) {
+      if (y > geometry.floor_y) {
         CFont::Details = saved;
         return;
       }
-      const std::vector<ToastSegment>& line = row->lines[index - 1];
-      // Only the row's first line starts at the anchor's own x; the rest are set
-      // in, so a location reads as belonging to the sentence above it.
+      const std::vector<ToastSegment>& line = row->lines[index];
+      // Only a row's first line starts at the anchor's own x; the rest are set in,
+      // which is how a broken notice reads as one block.
       float x = StretchX(geometry.anchor_x +
-                         (index == 1 ? 0.0f : geometry.continuation_indent));
+                         (index == 0 ? 0.0f : geometry.continuation_indent));
       for (const ToastSegment& segment : line) {
         if (segment.text.empty()) continue;
         const wchar_t* text = Widen(segment.text);
@@ -168,7 +236,7 @@ void DrawToastStack(ToastStackState& state, const ToastGeometry& geometry,
         // summing drifts and spreads the words apart.
         x += advance;
       }
-      y -= geometry.line_height;
+      y += geometry.line_height;
     }
   }
   CFont::Details = saved;

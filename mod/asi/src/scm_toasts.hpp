@@ -4,8 +4,8 @@
 // and cuts through the same helpers, which is what keeps one definition of how
 // wide a line is and what a cut line looks like.
 //
-// A toast is one row the mod draws itself, above the radar, in the band the
-// vanilla HUD leaves free on the left edge. The game's own brief-message channel
+// A toast is one row the mod draws itself, down the left edge from the top, in the
+// band the vanilla HUD leaves free there. The game's own brief-message channel
 // queues eight and DRAWS ONE, so posting a row per line held the screen for a
 // multiple of a message's time and dropped everything past the eighth. Nothing
 // here goes through that channel.
@@ -50,11 +50,12 @@ struct ToastSegment {
 };
 
 // The most segments one row may carry, borrowed from the Harry Potter 2 mod's own
-// bound. The richest row here is eight: "You sent ", the item, " to ", the player,
-// then "(", the location, ")" on the second line.
+// bound. The richest row here is eight, all on one line: "You sent ", the item,
+// " to ", the player, then " (", the location, ")".
 constexpr std::size_t kToastMaxSegments = 10;
-// The most lines one row may carry. Two in practice, the sentence and the
-// location beneath it, and the bound is what keeps one row from taking the band.
+// The most lines one row may carry. ONE in practice: a movement is a single line,
+// location included, and only a notice too long for the band is broken across
+// several. The bound is what keeps one of those from taking the whole band.
 constexpr std::size_t kToastMaxLines = 4;
 
 // One row: its lines of segments, top to bottom. A row with no lines is not a
@@ -145,18 +146,23 @@ constexpr float kVirtualScreenWidth = 640.0f;
 constexpr float kVirtualScreenHeight = 448.0f;
 
 // Where the stack draws, in the frontend's own 640x448 units. Defaults are the
-// measured band: the anchor sits just above the radar's top edge at y 256, the
-// ceiling clears the help box, and the width holds a sentence with a location
-// without wrapping. An optional ini beside the module may override any of them,
+// measured band: the anchor sits near the top of an otherwise empty corner, the
+// floor clears the radar, and the width holds a sentence with its location on one
+// line. An optional ini beside the module may override any of them,
 // which is why this is a struct of values rather than a set of constants.
 struct ToastGeometry {
   float anchor_x = 18.0f;
-  // Where the LOWEST line draws. Rows stack upward from here.
-  float anchor_y = 250.0f;
+  // Where the TOP line draws. Rows stack downward from here, newest first, so a
+  // new row pushes the older ones down and the newest is always in the same place.
+  // High on the screen because the top left is otherwise empty: the money, the
+  // wanted stars and the weapon are all top right.
+  float anchor_y = 30.0f;
   // How wide a line may draw before the font folds it.
   float width = 340.0f;
-  // The highest a line may draw, which is what bounds the band.
-  float ceiling_y = 100.0f;
+  // The lowest a line may draw, which is what bounds the band. Just clear of the
+  // radar, whose top edge is y 256 (0x68FD34 = 116 up from the bottom of 448, less
+  // its own 76 of height).
+  float floor_y = 250.0f;
   // Measured in game and brought down from 0.55/0.9 at 17: a row at that size took
   // a fifth of the screen's height on its own and its location line still had to be
   // cut. Smaller text also means more of a location fits, so a row says more in
@@ -170,18 +176,49 @@ struct ToastGeometry {
   unsigned int lifetime_ms = kToastLifetimeMs;
 };
 
-// How many lines the band holds. The lowest line draws at anchor_y and each one
-// above it a line_height higher, so the topmost usable line is the last one at or
-// below the ceiling. A geometry whose band is shorter than one line still holds
-// one: a stack that can draw nothing would swallow the handshake refusal, which
-// is the one row that must always be readable.
-inline std::size_t ToastLineCapacity(const ToastGeometry& geometry) {
+// How many lines the band holds. The top line draws at anchor_y and each one below
+// it a line_height lower, so the last usable line is the one still at or above the
+// floor. A geometry whose band is shorter than one line still holds one: a stack
+// that can draw nothing would swallow the handshake refusal, which is the one row
+// that must always be readable.
+//
+// Takes the band's top as an argument rather than reading anchor_y, because the top
+// MOVES: a tutorial box owns the corner while it is up and the stack drops below it
+// for as long as that lasts.
+inline std::size_t ToastLineCapacityFrom(const ToastGeometry& geometry, float top_y) {
   if (geometry.line_height <= 0.0f) return 1;
-  const float band = geometry.anchor_y - geometry.ceiling_y;
-  if (band < 0.0f) return 1;
+  const float band = geometry.floor_y - top_y;
+  // A top pushed past the floor can draw NOTHING, so it holds nothing. Not one:
+  // the drawing's own clip refuses the first line in that state, and a capacity of
+  // one would have the advance start a row's lifetime on a line that is never
+  // drawn, which is the silent loss every other rule here exists to prevent. The
+  // geometry's own bounds keep the anchor line drawable, so only a top pushed down
+  // by a tutorial box taller than the whole band reaches this.
+  if (band < 0.0f) return 0;
   const std::size_t lines =
       static_cast<std::size_t>(band / geometry.line_height) + 1;
   return lines < 1 ? 1 : lines;
+}
+
+// The band with nothing pushing its top down, which is what the geometry alone
+// says and what the tests measure. Always at least one line, since
+// BoundToastGeometry keeps the floor at or below the anchor.
+inline std::size_t ToastLineCapacity(const ToastGeometry& geometry) {
+  return ToastLineCapacityFrom(geometry, geometry.anchor_y);
+}
+
+// Where the stack starts when something else owns the corner: below that thing,
+// with a gap so the two read as separate blocks rather than one. Never above the
+// anchor, so a box that ends higher than the stack would have started changes
+// nothing.
+//
+// The pure half of honouring the tutorial box. What the box's own bottom IS has to
+// be measured against the font, which is the drawing's business; what to do with it
+// is this.
+inline float ToastTopBelowBox(const ToastGeometry& geometry, float box_bottom_y,
+                             float gap) {
+  const float below = box_bottom_y + gap;
+  return below > geometry.anchor_y ? below : geometry.anchor_y;
 }
 
 // How many lines the notices are holding, which comes off the band before the
@@ -221,7 +258,7 @@ inline void AdvanceToastStack(ToastStackState& state, unsigned int now_ms,
   const std::size_t notice_lines = ToastNoticeLines(state);
   // The notices never give their lines back, so what is left is what rotates.
   // Floored at NOTHING and not at one line: reserving a line the band does not
-  // have would admit a row the drawing then clips at the ceiling, and a row that
+  // have would admit a row the drawing then clips at the floor, and a row that
   // started its clock and was never drawn is exactly the silent loss this whole
   // design exists to avoid. A band too small for both is a band the notices own,
   // which is the right answer when they are what explains why nothing works.
@@ -231,12 +268,12 @@ inline void AdvanceToastStack(ToastStackState& state, unsigned int now_ms,
   std::size_t used = 0;
   for (const LiveToast& live : state.visible) used += live.row.line_count();
 
-  // A notice can arrive under rows already up, and it takes its lines off the band
-  // whether or not they were free. The oldest rows go, from the front, because
-  // they are the ones that have been read: dropping a row that has held the screen
-  // is not the silent loss the admission rule guards against, and leaving them
-  // would push the top of the stack past the ceiling where the drawing would clip
-  // it away unseen for the rest of its lifetime.
+  // The band can shrink under rows already up: a notice takes its lines whether or
+  // not they were free, and a tutorial box pushes the whole top down while it is
+  // there. The oldest rows go first, and they go back on the QUEUE rather than out,
+  // so nothing is lost; leaving them would push the foot of the stack past the floor
+  // where the drawing clips it away unseen for the rest of its lifetime.
+  std::size_t evicted = 0;
   while (used > rotating_capacity && !state.visible.empty()) {
     used -= state.visible.front().row.line_count();
     // Back onto the head of the queue rather than dropped. A row can be evicted
@@ -244,7 +281,12 @@ inline void AdvanceToastStack(ToastStackState& state, unsigned int now_ms,
     // rule this whole design rests on is that nothing is lost. It keeps its cut,
     // so re-admitting it measures nothing again, and its clock restarts when it is
     // visible again, which is what the clock has always meant.
-    state.waiting.insert(state.waiting.begin(), state.visible.front());
+    // Each one goes back BEHIND the ones already put back, not in front of them, so
+    // a batch returns in the order it was admitted rather than reversed. Arrival
+    // order is the only order these rows have.
+    state.waiting.insert(state.waiting.begin() + static_cast<std::ptrdiff_t>(evicted),
+                         state.visible.front());
+    ++evicted;
     state.visible.erase(state.visible.begin());
   }
 
@@ -260,14 +302,12 @@ inline void AdvanceToastStack(ToastStackState& state, unsigned int now_ms,
       // A row taller than the whole rotating band would otherwise sit at the head
       // forever, showing nothing and blocking every row behind it. So when the
       // band is empty and still cannot hold it, it is admitted with its LEADING
-      // lines only, which is its sentence: the drawing lays a row's lines out
-      // upward from its last, so a row that overran would show its location with
-      // the sentence clipped off the top, and an orphan location names nothing.
-      // Cutting it here decides which half survives instead of leaving that to
-      // where the ceiling happens to fall.
+      // lines only: the drawing runs downward and clips at the floor, so those are
+      // the lines that would survive anyway, and cutting it here says so instead of
+      // leaving it to wherever the floor happens to fall.
       //
       // Only reachable through a hand-edited geometry: the measured band holds
-      // nine lines and a row may carry four.
+      // sixteen lines and a row carries one, or four at the very most.
       if (!state.visible.empty() || rotating_capacity == 0) break;
       LiveToast trimmed = queued;
       trimmed.row.lines.resize(rotating_capacity);
@@ -520,10 +560,12 @@ inline void FitToastStack(ToastStackState& state, float first_width,
   }
 }
 
-// The rows to draw, anchor first and upward from there: the notices sit lowest,
-// because they are the ones that must be readable whatever else is arriving, then
-// the rotating rows newest first. Pointers rather than copies, since the drawing
-// runs every frame and the state outlives it.
+// The rows to draw, anchor first and downward from there: the notices sit at the
+// top, because they are the ones that must be readable whatever else is arriving
+// and the top is the one place nothing pushes them out of, then the rotating rows
+// newest first, so a new row appears in the same place every time and the older
+// ones move down. Pointers rather than copies, since the drawing runs every frame
+// and the state outlives it.
 inline std::vector<const ToastRow*> ToastDrawOrder(const ToastStackState& state) {
   std::vector<const ToastRow*> rows;
   rows.reserve(kToastNoticeCount + state.visible.size());
@@ -612,7 +654,7 @@ inline bool ParseToastSetting(const std::string& raw, std::string& key,
 // The finiteness test is not decoration. Every comparison against a NaN is false,
 // so a NaN would pass every bound below unchanged, and a NaN band then makes the
 // line count a cast from a NaN, which is undefined and in practice enormous: the
-// whole queue admitted at once onto a stack whose ceiling test can never be true.
+// whole queue admitted at once onto a stack whose floor test can never be true.
 inline bool ParseToastFloat(const std::string& text, float& out) {
   char* end = nullptr;
   const double parsed = std::strtod(text.c_str(), &end);
@@ -642,8 +684,8 @@ inline void ApplyToastSetting(ToastGeometry& geometry, const std::string& key,
     geometry.anchor_y = number;
   } else if (key == "width" && ParseToastFloat(value, number)) {
     geometry.width = number;
-  } else if (key == "ceiling_y" && ParseToastFloat(value, number)) {
-    geometry.ceiling_y = number;
+  } else if (key == "floor_y" && ParseToastFloat(value, number)) {
+    geometry.floor_y = number;
   } else if (key == "line_height" && ParseToastFloat(value, number)) {
     geometry.line_height = number;
   } else if (key == "scale_x" && ParseToastFloat(value, number)) {
@@ -660,7 +702,7 @@ inline void ApplyToastSetting(ToastGeometry& geometry, const std::string& key,
   }
 }
 
-// The read geometry held to something drawable. The anchor and the ceiling are
+// The read geometry held to something drawable. The anchor and the floor are
 // ordered rather than each clamped alone, so a file that swapped them draws a
 // band of one line at the anchor instead of an inverted one.
 inline ToastGeometry BoundToastGeometry(ToastGeometry geometry) {
@@ -668,7 +710,10 @@ inline ToastGeometry BoundToastGeometry(ToastGeometry geometry) {
                                      kVirtualScreenWidth - kToastMinWidth);
   geometry.anchor_y =
       ClampToastValue(geometry.anchor_y, 0.0f, kVirtualScreenHeight - 1.0f);
-  geometry.ceiling_y = ClampToastValue(geometry.ceiling_y, 0.0f, geometry.anchor_y);
+  // The floor is never above the top it is measured from, so a file that swapped
+  // them draws a band of one line at the anchor instead of an inverted one.
+  geometry.floor_y = ClampToastValue(geometry.floor_y, geometry.anchor_y,
+                                     kVirtualScreenHeight);
   geometry.width = ClampToastValue(geometry.width, kToastMinWidth,
                                    kVirtualScreenWidth - geometry.anchor_x);
   geometry.line_height = ClampToastValue(geometry.line_height, kToastMinLineHeight,

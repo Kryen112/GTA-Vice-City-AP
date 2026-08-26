@@ -2650,9 +2650,11 @@ void ScmGameState::DrawToasts() {
   // advance measures the band in. So DrawToastStack cuts, then this advances, then
   // it draws.
   DrawToastStack(toasts_, toast_geometry_, 255,
-                 [this](ToastStackState& state) {
-                   AdvanceToastStack(state, RealTimeMs(),
-                                     ToastLineCapacity(toast_geometry_),
+                 [this](ToastStackState& state, std::size_t line_capacity) {
+                   // The capacity is the DRAWING's, not the geometry's: a tutorial
+                   // box owns the corner while it is up and the band is shorter for
+                   // as long as that lasts.
+                   AdvanceToastStack(state, RealTimeMs(), line_capacity,
                                      toast_geometry_.lifetime_ms);
                  });
 }

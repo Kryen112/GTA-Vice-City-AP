@@ -47,7 +47,10 @@ class StatusPage {
 
   // Draws the panel over the borrowed page. Called from the menu draw hook,
   // after the menu itself has drawn, so this paints over it.
-  void Draw(const std::vector<StatusSection>& sections) const;
+  // The whole panel: the seed's state dealt into columns, and the recent messages
+  // under them across the page. Takes the state rather than composed sections
+  // because the two halves are laid out differently and each needs its own.
+  void Draw(const StatusPanelState& state) const;
 
  private:
   // Whether the pause menu's entry went in, so the panel has a way to be

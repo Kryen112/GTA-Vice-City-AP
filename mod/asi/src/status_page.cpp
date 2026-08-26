@@ -95,6 +95,9 @@ constexpr float kHeadingScale = 0.9f;
 // every one of them was cut. Smaller text fits more of a location, so the rows say
 // more while taking less of the eye.
 constexpr float kRecentScale = 0.78f;
+// How far short of the page's own edge a footer line is fitted. A column keeps the
+// ten units between its width and its pitch for the same reason.
+constexpr float kFooterGutter = 10.0f;
 
 // The relations the one-line-per-row guarantee rests on. A line narrowed to its
 // column stops short of the wrap edge a gutter further out, and the inset pulls a
@@ -218,33 +221,6 @@ void DrawColumn(const std::vector<PanelLine>& lines, float column_x,
     CFont::SetFontStyle(FONT_STANDARD);
     CFont::SetScale(StretchX(kGeometry.scale_x * scale),
                     StretchY(kGeometry.scale_y * scale));
-    // A recent row: its own colours, printed one segment after another from the
-    // column's left edge. Each segment advances by its own measured width, which
-    // is exact for that segment; the width of the whole LINE is never summed from
-    // these, since summing per-segment widths drifts. The fitting already cut this
-    // line to the column, so nothing here can reach the wrap edge.
-    if (!line.segments.empty()) {
-      CFont::SetScale(StretchX(kGeometry.scale_x * scale * kRecentScale),
-                      StretchY(kGeometry.scale_y * scale * kRecentScale));
-      float x = left;
-      for (const ToastSegment& segment : line.segments) {
-        if (segment.text.empty()) continue;
-        const wchar_t* text = Widen(segment.text);
-        // Measured before it is printed. CFont::PrintString overwrites a trailing
-        // space in the buffer it is handed with a terminator (0x551381), so
-        // printing first shortens the string the advance then measures and every
-        // segment ending in a space loses it.
-        const float advance = CFont::GetStringWidth(text, true);
-        CFont::SetColor(ToastRoleColor(segment.role, alpha));
-        CFont::PrintString(x, StretchY(y), text);
-        x += advance;
-      }
-      y += row_height;
-      // Back to the page's own size for whatever follows in this column.
-      CFont::SetScale(StretchX(kGeometry.scale_x * scale),
-                      StretchY(kGeometry.scale_y * scale));
-      continue;
-    }
     if (line.label.empty()) {
       CFont::SetColor(ToneColor(line.tone, alpha));
       const wchar_t* value = Widen(line.value);
@@ -276,6 +252,54 @@ void DrawColumn(const std::vector<PanelLine>& lines, float column_x,
       CFont::PrintString(
           value_x > label_end ? value_x : label_end + StretchX(kLabelGap),
           StretchY(y), value);
+    }
+    y += row_height;
+  }
+}
+
+// The recent messages, drawn UNDER the columns across the whole page rather than
+// dealt into one of them. A column is 146 units and a message is a sentence and a
+// location, so in a column every one of them was cut; across the page there is room
+// for the whole thing.
+//
+// Takes only the band the columns left, so it costs the rest of the page nothing:
+// the columns are laid out first and this starts below the lowest row any of them
+// drew. A page with no room left draws no recent block, which is the right way for
+// it to lose out against the seed's own state.
+void DrawRecentFooter(const StatusSection& section, float top, float bottom,
+                      float row_height, int alpha) {
+  if (section.rows.empty()) return;
+  if (!RecentFooterFits(top, bottom, row_height)) return;
+  const float left = StretchX(kGeometry.first_column_x);
+  const float wrap_at = StretchX(kVirtualWidth - kGeometry.first_column_x);
+  const std::size_t held =
+      RecentFooterRows(top, bottom, row_height, section.rows.size());
+
+  const float scale = FittedTextScale(row_height, kGeometry.row_height);
+  float y = top;
+  CFont::SetFontStyle(FONT_HEADING);
+  CFont::SetScale(StretchX(kGeometry.scale_x * scale * kHeadingScale),
+                  StretchY(kGeometry.scale_y * scale * kHeadingScale));
+  CFont::SetColor(HeadingColor(alpha));
+  CFont::SetWrapx(wrap_at);
+  CFont::PrintString(left, StretchY(y), Widen(section.heading));
+  y += row_height;
+
+  CFont::SetFontStyle(FONT_STANDARD);
+  CFont::SetScale(StretchX(kGeometry.scale_x * scale * kRecentScale),
+                  StretchY(kGeometry.scale_y * scale * kRecentScale));
+  for (std::size_t index = 0; index < held; ++index) {
+    const StatusRow& row = section.rows[index];
+    float x = left;
+    for (const ToastSegment& segment : row.segments) {
+      if (segment.text.empty()) continue;
+      const wchar_t* text = Widen(segment.text);
+      // Measured before it is printed: CFont::PrintString overwrites a trailing
+      // space in the buffer it is handed with a terminator (0x551381).
+      const float advance = CFont::GetStringWidth(text, true);
+      CFont::SetColor(ToastRoleColor(segment.role, alpha));
+      CFont::PrintString(x, StretchY(y), text);
+      x += advance;
     }
     y += row_height;
   }
@@ -465,7 +489,8 @@ PanelFrame StatusPage::Follow() {
   return frame;
 }
 
-void StatusPage::Draw(const std::vector<StatusSection>& sections) const {
+void StatusPage::Draw(const StatusPanelState& state) const {
+  const std::vector<StatusSection> sections = ComposeStatusPanel(state);
   const int alpha = FrontEndMenuManager.FadeIn(255);
   const float cover_bottom = CoverBottom();
 
@@ -502,8 +527,7 @@ void StatusPage::Draw(const std::vector<StatusSection>& sections) const {
   // was composed of.
   const std::vector<std::vector<PanelLine>> columns = PlanPanelColumns(
       FitPanelLines(FlattenPanel(sections), StretchX(kGeometry.column_width),
-                    StretchX(kLabelGap), DesignTextWidth, DesignHeadingWidth,
-                    DesignRecentWidth),
+                    StretchX(kLabelGap), DesignTextWidth, DesignHeadingWidth),
       kColumnCount);
   const float row_height = FittedRowHeight(
       TallestColumn(columns), cover_bottom - kGeometry.top_y, kGeometry.row_height);
@@ -524,6 +548,24 @@ void StatusPage::Draw(const std::vector<StatusSection>& sections) const {
                    kGeometry.column_pitch * static_cast<float>(column),
                row_height, cover_bottom, alpha);
   }
+
+  // Then the recent messages, under whatever the columns took. The band starts
+  // below the lowest row any column drew, plus a blank row so the two blocks read
+  // as separate, and its lines are fitted to the whole page rather than a column.
+  const float columns_bottom =
+      RecentFooterTop(kGeometry.top_y, row_height, TallestColumn(columns));
+  StatusSection recent = ComposeRecentSection(state);
+  // Fitted a gutter short of the wrap edge, the way a column is fitted inside its
+  // own pitch. The drawing advances per segment and a per-segment sum drifts against
+  // the whole-line measure the fitting used, so a line accepted exactly ON the edge
+  // can cross it mid-row and the font folds its tail onto the row below.
+  const float footer_width =
+      kVirtualWidth - kGeometry.first_column_x * 2.0f - kFooterGutter;
+  for (StatusRow& row : recent.rows) {
+    row.segments =
+        FitSegmentLine(row.segments, StretchX(footer_width), DesignRecentWidth);
+  }
+  DrawRecentFooter(recent, columns_bottom, cover_bottom, row_height, alpha);
 
   // The panel's own glyphs are flushed before the pointer, so the pointer is
   // drawn over the panel the way it was drawn over the page: a sprite goes down

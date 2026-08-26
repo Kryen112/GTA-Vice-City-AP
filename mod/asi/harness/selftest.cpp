@@ -80,13 +80,6 @@ float MeasureHeadingUnits(const std::string& text) {
   return 1.2f * MeasureUnits(text);
 }
 
-// A RECENT row draws smaller than the rows around it, which is the third face the
-// fitting has to measure in. Taken here at the same fraction the page uses, so a
-// line accepted by the fitting is one the drawing can really hold.
-float MeasureRecentUnits(const std::string& text) {
-  return 0.78f * MeasureUnits(text);
-}
-
 void Expect(bool condition, const char* label) {
   if (!condition) {
     std::cerr << "FAIL: " << label << "\n";
@@ -1428,19 +1421,41 @@ int main() {
     };
 
     // The band's capacity comes out of the geometry, so the measured default is
-    // what the drain rate is reasoned about. The anchor sits above the radar's top
-    // edge and the ceiling clears the help box.
+    // what the drain rate is reasoned about. The anchor sits near the top of an
+    // empty corner and the floor clears the radar.
     ToastGeometry geometry;
-    Expect(ToastLineCapacity(geometry) == 11,
-           "the measured band holds eleven lines, which is five two-line rows");
+    Expect(ToastLineCapacity(geometry) == 16,
+           "the measured band holds sixteen lines, and a message is one line, so "
+           "sixteen of them");
     ToastGeometry narrow;
-    narrow.ceiling_y = narrow.anchor_y;
+    narrow.floor_y = narrow.anchor_y;
     Expect(ToastLineCapacity(narrow) == 1,
            "a band with no height still holds one line, so a notice is never lost");
+    // Not reachable through the file, which orders the two, but a hand-built one
+    // must still answer a count rather than a negative or an enormous cast.
     ToastGeometry inverted;
-    inverted.ceiling_y = inverted.anchor_y + 100.0f;
-    Expect(ToastLineCapacity(inverted) == 1,
-           "an inverted band holds one line rather than a negative count");
+    inverted.floor_y = inverted.anchor_y - 100.0f;
+    Expect(ToastLineCapacity(inverted) == 0,
+           "an inverted band holds nothing, which is what it can draw");
+    // The band's top MOVES: a tutorial box owns the corner while it is up, and the
+    // stack drops below it for as long as that lasts, so the capacity has to be
+    // asked about the top it is really drawing from.
+    Expect(ToastLineCapacityFrom(geometry, geometry.anchor_y + 100.0f) <
+               ToastLineCapacity(geometry),
+           "a top pushed down leaves a shorter band");
+    // NOTHING, not one line: the drawing's own clip refuses the first line in that
+    // state, and a capacity of one would have the advance start a row's lifetime on
+    // a line that is never drawn.
+    Expect(ToastLineCapacityFrom(geometry, geometry.floor_y + 50.0f) == 0,
+           "a top pushed past the floor holds nothing at all");
+    // And where the box ends higher than the stack would have started, nothing
+    // moves.
+    Expect(ToastTopBelowBox(geometry, geometry.anchor_y - 20.0f, 6.0f) ==
+               geometry.anchor_y,
+           "a box ending above the anchor does not lift the stack");
+    Expect(ToastTopBelowBox(geometry, geometry.anchor_y + 40.0f, 6.0f) ==
+               geometry.anchor_y + 46.0f,
+           "and one ending below it pushes the stack under it, plus the gap");
 
     // A row's lifetime runs from the frame it was admitted on, not from the frame
     // it arrived on. This is the whole mechanism, so it is asserted directly: a row
@@ -1521,7 +1536,7 @@ int main() {
     // they were free or not. The OLDEST rows go, from the front, because they are
     // the ones that have been read: a row that has held the screen is not lost the
     // way an unshown one is, and leaving them would push the top of the stack past
-    // the ceiling where the drawing clips it away unseen for the rest of its life.
+    // the floor where the drawing clips it away unseen for the rest of its life.
     {
       ToastStackState state;
       for (int index = 0; index < 3; ++index) {
@@ -1572,9 +1587,9 @@ int main() {
              "a band the notices fill takes back the line a row was holding");
     }
 
-    // The draw order: the notices lowest, at the anchor, then the rotating rows
-    // newest first as the stack climbs. So the newest row sits where the eye
-    // already is and the notices never move.
+    // The draw order: the notices first, at the anchor, then the rotating rows
+    // newest first running downward. So the newest row is always in the same place,
+    // the older ones move down under it, and the notices never move at all.
     {
       ToastStackState state;
       state.notices[ToastNoticeSlot(ToastNotice::kBridgeDown)] =
@@ -1585,11 +1600,11 @@ int main() {
       const std::vector<const ToastRow*> order = ToastDrawOrder(state);
       Expect(order.size() == 3, "every live row is drawn");
       Expect(order[0]->lines[0][0].text == "notice",
-             "the notice draws at the anchor");
+             "the notice draws at the anchor, the top of the stack");
       Expect(order[1]->lines[0][0].text == "newer",
-             "the newest rotating row draws above it");
+             "the newest rotating row draws under it");
       Expect(order[2]->lines[0][0].text == "older",
-             "and the older row above that, so the stack climbs into the past");
+             "and the older row under that, so the stack runs down into the past");
     }
 
     // Building a row from the wire. The newline marker is a layout break and not a
@@ -1855,7 +1870,7 @@ int main() {
 
     // NaN is the one value every bound below would pass unchanged, because every
     // comparison against it is false. A NaN band then makes the line count a cast
-    // from a NaN, which admits the whole queue onto a stack whose ceiling test can
+    // from a NaN, which admits the whole queue onto a stack whose floor test can
     // never be true.
     for (const char* spelling : {"nan", "-nan", "NAN", "inf", "-inf"}) {
       const ToastGeometry hostile =
@@ -1886,12 +1901,12 @@ int main() {
     Expect(far_out.lifetime_ms <= kToastMaxLifetimeMs,
            "a row cannot be made to hold the screen forever");
 
-    // An inverted band is ordered rather than left negative, so the ceiling is
-    // never above the anchor.
+    // An inverted band is ordered rather than left negative, so the floor is never
+    // above the anchor.
     const ToastGeometry swapped =
-        ParseToastGeometry({"[toasts]", "anchor_y = 100", "ceiling_y = 400"});
-    Expect(swapped.ceiling_y <= swapped.anchor_y,
-           "the ceiling is never above the anchor it is measured from");
+        ParseToastGeometry({"[toasts]", "anchor_y = 400", "floor_y = 100"});
+    Expect(swapped.floor_y >= swapped.anchor_y,
+           "the floor is never above the top it is measured from");
     Expect(ToastLineCapacity(swapped) >= 1, "and the band still holds a line");
   }
 
@@ -1909,7 +1924,7 @@ int main() {
 
     // Two notices in a one-line band: the notices own it, and nothing rotating is
     // admitted, because a row admitted here would start its lifetime and then be
-    // clipped at the ceiling without ever being drawn.
+    // clipped at the floor without ever being drawn.
     ToastStackState crowded;
     crowded.notices[ToastNoticeSlot(ToastNotice::kHandshakeRefusal)] =
         PlainToastRow("refused", ToastRole::kTrap);
@@ -1924,8 +1939,8 @@ int main() {
 
     // A row taller than the whole rotating band. It shows anyway when nothing else
     // is up, because a queue that never drains says nothing at all, and it shows
-    // its LEADING lines: the drawing stacks a row's lines upward from its last, so
-    // an untrimmed row would show its location with the sentence clipped away.
+    // its LEADING lines, which are the ones the downward drawing would have kept
+    // anyway.
     ToastStackState stalled;
     ToastRow tall;
     tall.lines.push_back({{"sentence", ToastRole::kConnective}});
@@ -2280,69 +2295,97 @@ int main() {
                Section(sections, "MINIMAP").rows[0].value == "HIDDEN",
            "and the radar says whether the item has arrived");
 
-    // The pause page's RECENT block. The in-game stack is a marquee, so this is the
-    // only place a row seen while driving can be read again, and it has to cost the
-    // rest of the page nothing.
+    // The pause page's recent messages. Laid out UNDER the columns across the whole
+    // page rather than dealt into one of them, so it is composed on its own and is
+    // deliberately NOT a section of the page the columns are flowed from.
     {
       const auto movement = [](const std::string& item, const std::string& location) {
         ToastRow row;
-        row.lines.push_back({{"You", ToastRole::kOwnSlot},
-                             {" found your ", ToastRole::kConnective},
-                             {item, ToastRole::kProgression}});
+        std::vector<ToastSegment> line = {{"You", ToastRole::kOwnSlot},
+                                          {" found your ", ToastRole::kConnective},
+                                          {item, ToastRole::kProgression}};
         if (!location.empty()) {
-          row.lines.push_back({{"(", ToastRole::kConnective},
-                               {location, ToastRole::kLocation},
-                               {")", ToastRole::kConnective}});
+          line.push_back({" (", ToastRole::kConnective});
+          line.push_back({location, ToastRole::kLocation});
+          line.push_back({")", ToastRole::kConnective});
         }
+        row.lines.push_back(line);
         return row;
       };
 
       StatusPanelState state;
-      Expect(!HasSection(ComposeStatusPanel(state), "RECENT"),
-             "a seed that has moved no item has no RECENT block at all");
-
+      Expect(ComposeRecentSection(state).rows.empty(),
+             "a seed that has moved no item has no recent block at all");
+      // And it is never dealt into the columns, whatever it holds: a message is a
+      // sentence and a location, and in a 146 unit column every one of them was cut.
       state.recent_rows = {movement("Body Armour", "Cherry Popper Fourth Delivery")};
-      const StatusSection recent = Section(ComposeStatusPanel(state), "RECENT");
-      Expect(recent.rows.size() == 2,
-             "a two-line row is two rows here, the sentence and its location");
+      // Read directly rather than through HasSection, whose own guard requires
+      // every heading it is asked for to appear on some page. This one deliberately
+      // appears on none: it is drawn under the columns, not dealt into them.
+      bool dealt_into_a_column = false;
+      for (const StatusSection& section : ComposeStatusPanel(state)) {
+        if (section.heading == "RECENT MESSAGES") dealt_into_a_column = true;
+      }
+      Expect(!dealt_into_a_column, "the recent block is not a column section");
+
+      const StatusSection recent = ComposeRecentSection(state);
+      Expect(recent.heading == "RECENT MESSAGES", "and it names itself in full");
+      Expect(recent.rows.size() == 1,
+             "a movement is ONE row, the sentence and its location together");
       Expect(recent.rows[0].label.empty() && recent.rows[0].value.empty(),
-             "a segmented row carries no label and no value, so every other row on "
-             "the page is unaffected by its presence");
+             "a segmented row carries no label and no value, so nothing about the "
+             "page's own rows is changed by its presence");
       Expect(recent.rows[0].segments[0].role == ToastRole::kOwnSlot,
              "and it keeps the colours the stack drew it in");
-      Expect(!recent.rows[0].joined_above && recent.rows[1].joined_above,
-             "the location line belongs with the sentence above it, so the column "
-             "dealing cannot put one at the head of a column and the other at the "
-             "foot of the last");
-
-      // The lines are in reading order here, unlike the stack, which reverses them
-      // because it climbs.
       Expect(ToastLineText(state.recent_rows[0].lines[0]) ==
-                 "You found your Body Armour",
-             "the sentence is the first line of the row");
+                 "You found your Body Armour (Cherry Popper Fourth Delivery)",
+             "the whole message is one line");
 
-      // Bounded. The row height comes from the tallest column and the whole page's
-      // text size is fitted to it, so an unbounded history would shrink every other
-      // block the moment a single item moved.
+      // Bounded, so a long history cannot run off the band the columns left it.
       state.recent_rows.clear();
       for (int index = 0; index < 40; ++index) {
         state.recent_rows.push_back(movement("Item", "Somewhere"));
       }
-      const StatusSection capped = Section(ComposeStatusPanel(state), "RECENT");
-      Expect(capped.rows.size() <= kRecentMaxLines,
-             "RECENT never takes more of the page than its budget");
-      Expect(capped.rows.size() % 2 == 0,
-             "and it stops on a whole row, never on a location with no sentence");
+      Expect(ComposeRecentSection(state).rows.size() == kRecentMaxLines,
+             "one-line rows fill the budget to the line and no further");
 
-      // A one-line row (a cheat-sent item names no location) still fits the budget
-      // exactly rather than being refused for being an odd size.
+      // A two-line row can still reach here, since a notice is broken rather than
+      // cut, and it is taken whole or not at all.
       state.recent_rows.clear();
       for (int index = 0; index < 40; ++index) {
-        state.recent_rows.push_back(movement("Item", ""));
+        ToastRow two = movement("Item", "");
+        two.lines.push_back({{"second", ToastRole::kConnective}});
+        state.recent_rows.push_back(two);
       }
-      Expect(Section(ComposeStatusPanel(state), "RECENT").rows.size() ==
-                 kRecentMaxLines,
-             "one-line rows fill the budget to the line");
+      // Where the block lands, and whether it lands at all. This is what keeps it
+      // off the columns above it and off the pause page's own back button below.
+      {
+        constexpr float kTop = 60.0f;
+        constexpr float kRow = 13.0f;
+        Expect(RecentFooterTop(kTop, kRow, 10) == kTop + kRow * 11.0f,
+               "the block starts a blank row under the tallest column");
+        Expect(RecentFooterTop(kTop, kRow, 0) == kTop + kRow,
+               "and a page with no rows at all still leaves that blank row");
+        const float footer_top = RecentFooterTop(kTop, kRow, 10);
+        Expect(!RecentFooterFits(footer_top, footer_top + kRow, kRow),
+               "a band with room for a heading alone draws no block, since a "
+               "heading over nothing says less than nothing");
+        Expect(RecentFooterFits(footer_top, footer_top + kRow * 2.0f, kRow),
+               "a heading and one message is enough to be worth the band");
+        Expect(RecentFooterRows(footer_top, footer_top + kRow * 2.0f, kRow, 9) == 1,
+               "and that band holds exactly the one message");
+        Expect(RecentFooterRows(footer_top, footer_top + kRow * 5.0f, kRow, 2) == 2,
+               "a band with room to spare holds only what there is to show");
+        Expect(RecentFooterRows(footer_top, footer_top, kRow, 9) == 0,
+               "and a band of nothing holds nothing");
+      }
+
+      const StatusSection pairs = ComposeRecentSection(state);
+      Expect(pairs.rows.size() % 2 == 0 && pairs.rows.size() <= kRecentMaxLines,
+             "a multi-line row is taken whole, never half");
+      // Nothing marks them as belonging together, and nothing needs to: the block
+      // is drawn as one run under the columns, so its lines are always adjacent.
+      // The column dealing, which is what joined_above exists for, never sees them.
     }
 
     // The comparison the two sets above exist for.
@@ -2466,7 +2509,7 @@ int main() {
     // really laid out from, it still fits the band at a size worth reading.
     const std::vector<PanelLine> narrowed =
         FitPanelLines(worst, kColumnUnits, kLabelGapUnits, MeasureUnits,
-                      MeasureHeadingUnits, MeasureRecentUnits);
+                      MeasureHeadingUnits);
     const int narrowed_tallest = TallestColumn(PlanPanelColumns(narrowed, 4));
     Expect(narrowed_tallest <= 28,
            "and inside twenty-eight once every line is narrowed to its column");
@@ -2489,7 +2532,7 @@ int main() {
     bool every_line_narrow = true;
     for (const float column : {kColumnUnits, kColumnUnits * 0.75f}) {
       const std::vector<PanelLine> narrow = FitPanelLines(
-          worst, column, kLabelGapUnits, MeasureUnits, MeasureHeadingUnits, MeasureRecentUnits);
+          worst, column, kLabelGapUnits, MeasureUnits, MeasureHeadingUnits);
       for (const PanelLine& line : narrow) {
         if (line.blank) continue;
         const std::string& text = line.label.empty() ? line.value : line.label;
@@ -2518,7 +2561,7 @@ int main() {
     for (const float column : {kColumnUnits, kColumnUnits * 0.75f}) {
       const std::vector<std::vector<PanelLine>> dealt = PlanPanelColumns(
           FitPanelLines(worst, column, kLabelGapUnits, MeasureUnits,
-                        MeasureHeadingUnits, MeasureRecentUnits),
+                        MeasureHeadingUnits),
           4);
       for (std::size_t index = 1; index < dealt.size(); ++index) {
         if (dealt[index].empty() || !dealt[index].front().joined_above) continue;
@@ -2562,7 +2605,7 @@ int main() {
     const std::vector<PanelLine> fits =
         FitPanelLines({{"Taxi", "none", StatusTone::kPlain, false, false}},
                       kColumnUnits, kLabelGapUnits, MeasureUnits,
-                      MeasureHeadingUnits, MeasureRecentUnits);
+                      MeasureHeadingUnits);
     Expect(fits.size() == 1 && fits[0].label == "Taxi" && fits[0].value == "none" &&
                !fits[0].value_alone,
            "a label and a value that fit a column share their row");
@@ -2572,7 +2615,7 @@ int main() {
     // it is held and in how many districts.
     const std::vector<PanelLine> split = FitPanelLines(
         {{"Property Purchases", "HELD 10/11", StatusTone::kHeld, false, false}},
-        kColumnUnits, kLabelGapUnits, MeasureUnits, MeasureHeadingUnits, MeasureRecentUnits);
+        kColumnUnits, kLabelGapUnits, MeasureUnits, MeasureHeadingUnits);
     Expect(split.size() == 2 && split[0].label == "Property Purchases" &&
                split[0].value.empty(),
            "a pair too wide for its column leaves the label a row of its own");
@@ -2586,7 +2629,7 @@ int main() {
     // as one.
     const std::vector<PanelLine> rebroken = FitPanelLines(
         {{"", "         Escobar International", StatusTone::kOpen, false, false}},
-        kColumnUnits, kLabelGapUnits, MeasureUnits, MeasureHeadingUnits, MeasureRecentUnits);
+        kColumnUnits, kLabelGapUnits, MeasureUnits, MeasureHeadingUnits);
     Expect(rebroken.size() == 2 && rebroken[0].value == "         Escobar" &&
                rebroken[1].value == "         International" &&
                rebroken[1].joined_above,
@@ -2597,7 +2640,7 @@ int main() {
     // composer's own wrapping puts them.
     const std::vector<PanelLine> prefixed = FitPanelLines(
         {{"", "free in: Escobar International", StatusTone::kOpen, false, false}},
-        kColumnUnits, kLabelGapUnits, MeasureUnits, MeasureHeadingUnits, MeasureRecentUnits);
+        kColumnUnits, kLabelGapUnits, MeasureUnits, MeasureHeadingUnits);
     Expect(prefixed.size() == 2 && prefixed[0].value == "free in: Escobar" &&
                prefixed[1].value == "         International",
            "and a line carrying the prefix indents under it rather than under "
@@ -2607,7 +2650,7 @@ int main() {
     // so the font cannot fold it either, and cutting it would hide what it names.
     const std::vector<PanelLine> unbreakable = FitPanelLines(
         {{"", "AStationNameLongerThanAnyColumn", StatusTone::kOpen, false, false}},
-        kColumnUnits, kLabelGapUnits, MeasureUnits, MeasureHeadingUnits, MeasureRecentUnits);
+        kColumnUnits, kLabelGapUnits, MeasureUnits, MeasureHeadingUnits);
     Expect(unbreakable.size() == 1 &&
                unbreakable[0].value == "AStationNameLongerThanAnyColumn",
            "a word wider than a column is drawn whole rather than cut");
@@ -2617,7 +2660,7 @@ int main() {
         FitPanelLines({{"", "", StatusTone::kPlain, false, true},
                        {"MISSION STRANDS", "", StatusTone::kPlain, true, false}},
                       kColumnUnits, kLabelGapUnits, MeasureUnits,
-                      MeasureHeadingUnits, MeasureRecentUnits);
+                      MeasureHeadingUnits);
     Expect(passed.size() == 2 && passed[0].blank && passed[1].heading &&
                passed[1].label == "MISSION STRANDS",
            "a blank line and a heading that fits come through the fitting whole");
@@ -2628,7 +2671,7 @@ int main() {
     // page draws, and a heading that folds costs the row under it.
     const std::vector<PanelLine> heading = FitPanelLines(
         {{"THE GAME COUNTS AND MORE", "", StatusTone::kPlain, true, false}},
-        kColumnUnits, kLabelGapUnits, MeasureUnits, MeasureHeadingUnits, MeasureRecentUnits);
+        kColumnUnits, kLabelGapUnits, MeasureUnits, MeasureHeadingUnits);
     Expect(MeasureUnits("THE GAME COUNTS AND MORE") <= kColumnUnits &&
                heading.size() > 1 && heading[0].heading && heading[1].heading &&
                heading[1].joined_above,

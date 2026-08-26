@@ -30,6 +30,10 @@ constexpr float kVirtualHeight = kVirtualScreenHeight;
 float StretchX(float x);
 float StretchY(float y);
 
+// Back the other way, for a measurement the game handed back in its own device
+// units that has to be compared against a layout written in the virtual ones.
+float UnstretchY(float y);
+
 // The text the mod hands the game. CFont takes wide characters and the mod
 // composes narrow ones, so each string is widened into storage of the mod's own.
 // The font reads the string during the print rather than keeping the pointer

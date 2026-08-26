@@ -292,9 +292,10 @@ class GTAViceCityContext(CommonContext):
         the role survives the second-person wording, and a single-player game
         addressing its player reads better than one addressing a slot name.
 
-        The location goes on a second line in parentheses, which is HP2's layout.
-        A movement with no location is a cheat-sent item, and then there is
-        nothing to name.
+        The whole movement is ONE line, location included: two lines cost twice the
+        band and, drawn one under the other, a location read as though it belonged
+        to the row below it. A movement with no location is a cheat-sent item, and
+        then there is nothing to name.
         """
         item = args["item"]
         receiving = args["receiving"]
@@ -328,8 +329,7 @@ class GTAViceCityContext(CommonContext):
         if item.location > 0:
             location = self.location_names.lookup_in_slot(item.location, item.player) or ""
         if location:
-            segments += [protocol.toast_newline(),
-                         ("(", protocol.TOAST_CONNECTIVE),
+            segments += [(" (", protocol.TOAST_CONNECTIVE),
                          (location, protocol.TOAST_LOCATION),
                          (")", protocol.TOAST_CONNECTIVE)]
         return segments

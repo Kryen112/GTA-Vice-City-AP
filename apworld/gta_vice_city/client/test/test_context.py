@@ -528,15 +528,15 @@ class TestItemToast(unittest.TestCase):
 
     def test_found_own_item(self) -> None:
         self.assertEqual(self._text(1, 1),
-                         "You found your Progressive Cortez(Cortez Mission)")
+                         "You found your Progressive Cortez (Cortez Mission)")
 
     def test_sent_to_another_player(self) -> None:
         self.assertEqual(self._text(1, 2),
-                         "You sent Progressive Cortez to PlayerTwo(Cortez Mission)")
+                         "You sent Progressive Cortez to PlayerTwo (Cortez Mission)")
 
     def test_received_from_another_player(self) -> None:
         self.assertEqual(self._text(2, 1),
-                         "You received Progressive Cortez from PlayerTwo(Cortez Mission)")
+                         "You received Progressive Cortez from PlayerTwo (Cortez Mission)")
 
     def test_between_two_other_players_is_not_a_row(self) -> None:
         self.assertIsNone(self._segments(2, 3))
@@ -549,16 +549,15 @@ class TestItemToast(unittest.TestCase):
             segments = self._segments(item_player, receiving)
             self.assertEqual(segments[0], ("You", protocol.TOAST_OWN_SLOT))
 
-    def test_the_location_is_its_own_line_and_its_own_colour(self) -> None:
+    def test_the_whole_row_is_one_line_and_the_location_keeps_its_colour(self) -> None:
         segments = self._segments(1, 1)
-        self.assertIn(protocol.toast_newline(), segments)
-        # Everything after the break is the parenthesised location.
-        tail = segments[segments.index(protocol.toast_newline()) + 1:]
-        self.assertEqual(tail, [("(", protocol.TOAST_CONNECTIVE),
-                                ("Cortez Mission", protocol.TOAST_LOCATION),
-                                (")", protocol.TOAST_CONNECTIVE)])
+        # No break anywhere: the row is one line, location included.
+        self.assertNotIn(protocol.toast_newline(), segments)
+        self.assertEqual(segments[-3:], [(" (", protocol.TOAST_CONNECTIVE),
+                                         ("Cortez Mission", protocol.TOAST_LOCATION),
+                                         (")", protocol.TOAST_CONNECTIVE)])
 
-    def test_a_row_with_no_location_has_no_second_line(self) -> None:
+    def test_a_row_with_no_location_names_none(self) -> None:
         # A cheat-sent item has no location, and then there is nothing to name.
         segments = self._segments(1, 1, location=0)
         self.assertNotIn(protocol.toast_newline(), segments)

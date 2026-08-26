@@ -83,11 +83,11 @@ struct StatusRow {
   // the drawing prints them one after another rather than as a label-value pair.
   // Every other row leaves this empty and draws exactly as it always did, which
   // is what keeps the flattening, the fitting and the column dealing untouched.
+  // A row the recent block composed, carrying its own colours instead of a tone.
+  // A row with segments has no label and no value: the segments ARE its text. Only
+  // the recent block makes these, and it is drawn under the columns rather than
+  // dealt into them, so no line of the page's own layout ever carries any.
   std::vector<ToastSegment> segments;
-  // Whether this row belongs with the one above it, which is what keeps the two in
-  // one column. A composer knows this where the fitting cannot work it out: a
-  // toast row's location line means nothing without the sentence over it.
-  bool joined_above = false;
 };
 
 // A titled block of rows. The first block carries no heading: it is the seed's
@@ -512,26 +512,24 @@ inline StatusSection ComposeMinimapSection(const StatusPanelState& state) {
 // fitting measures it afterwards.
 constexpr std::size_t kRecentContinuationSpaces = 2;
 
-// The most lines RECENT may add to the page. The row height comes from the
-// TALLEST column and the whole page's text size is fitted to it, so an unbounded
-// history would shrink every other block the moment a single item moved. Held
-// under a column's own share, so RECENT costs the page nothing it was not already
-// laying out. The ring behind it keeps more rows than this: the budget decides how
-// many are shown, not how many are remembered.
+// The most lines the recent block may draw. It is laid out UNDER the columns
+// across the whole page rather than dealt into one of them, which is what lets a
+// whole message show without being cut, and it takes only the band the columns
+// leave, so it costs the rest of the page nothing at all. The ring behind it keeps
+// more rows than this: the budget decides how many are shown, not how many are
+// remembered.
 constexpr std::size_t kRecentMaxLines = 14;
 
 // The item movements the stack has shown, newest first, in the same colours it
 // drew them in.
 //
-// One panel line per line of a row, so a two-line row takes two rows here as
-// well: the sentence, then its location set in beneath it. A row's lines are kept
-// in their own order, unlike the stack's, because a list read top to bottom wants
-// the sentence above its location and the stack only reverses them because it
-// climbs.
+// One panel line per line of a row, which is one row for a movement and more only
+// for a notice broken across lines. Later lines are set in beneath the first, so a
+// broken one reads as a block.
 inline StatusSection ComposeRecentSection(const StatusPanelState& state) {
   StatusSection section;
   if (state.recent_rows.empty()) return section;
-  section.heading = "RECENT";
+  section.heading = "RECENT MESSAGES";
   for (const ToastRow& row : state.recent_rows) {
     // Whole rows only. Half a row is a sentence with no location or a location
     // with no sentence, and the second is worse than leaving the row out.
@@ -549,10 +547,6 @@ inline StatusSection ComposeRecentSection(const StatusPanelState& state) {
       // reaching here has none, and this is a guard against a row built some other
       // way rather than a case the stack produces.
       if (panel_row.segments.empty()) continue;
-      // Every line after a row's first belongs with the one above it, so the
-      // column dealing keeps them together: a location at the head of one column
-      // with its sentence at the foot of the last names nothing at all.
-      panel_row.joined_above = index > 0;
       section.rows.push_back(panel_row);
     }
   }
@@ -569,7 +563,7 @@ inline std::vector<StatusSection> ComposeStatusPanel(const StatusPanelState& sta
         ComposeStrandSection(state), ComposeAbilitySection(state),
         ComposeContentSection(state), ComposeRewardSection(state),
         ComposeRouteSection(state), ComposeRadioSection(state),
-        ComposeMinimapSection(state), ComposeRecentSection(state)}) {
+        ComposeMinimapSection(state)}) {
     if (!section.rows.empty()) sections.push_back(section);
   }
   return sections;
@@ -632,6 +626,32 @@ inline PanelFrame PlanPanelFrame(const PanelMenuState& state, bool armed_was) {
   return frame;
 }
 
+// Where the recent block starts: under the tallest column, plus a blank row so the
+// two read as separate blocks. Pure arithmetic, here rather than beside the drawing
+// so the console self-test can drive it: what it decides is whether the block
+// overlaps the columns above it or the pause page's own back button below.
+inline float RecentFooterTop(float columns_top, float row_height, int tallest) {
+  const int rows = tallest > 0 ? tallest : 0;
+  return columns_top + row_height * static_cast<float>(rows + 1);
+}
+
+// Whether the band left is worth a block at all: a heading with nothing under it
+// says less than nothing, so it takes a heading AND a row or it takes none. A page
+// whose columns filled the band draws no recent block, which is the right way for a
+// history to lose out against the seed's own state.
+inline bool RecentFooterFits(float top, float bottom, float row_height) {
+  return top + row_height * 2.0f <= bottom;
+}
+
+// How many of a fitted block's rows the band actually holds, past its heading.
+inline std::size_t RecentFooterRows(float top, float bottom, float row_height,
+                                    std::size_t available) {
+  if (!RecentFooterFits(top, bottom, row_height) || row_height <= 0.0f) return 0;
+  const float band = bottom - (top + row_height);
+  const std::size_t held = static_cast<std::size_t>(band / row_height);
+  return held < available ? held : available;
+}
+
 // One drawn line of the panel. The blocks are flattened into lines before they
 // are laid out, so a block taller than a column continues in the next one instead
 // of setting the row height for the whole page: twenty mission strands are a
@@ -652,9 +672,6 @@ struct PanelLine {
   // in the same column: a value at the head of one column with its label at the
   // foot of the last names nothing at all.
   bool joined_above = false;
-  // A recent row's own coloured text. A line with segments carries no label and no
-  // value, so every other line in the panel is unaffected by its presence.
-  std::vector<ToastSegment> segments;
 };
 
 inline std::vector<PanelLine> FlattenPanel(const std::vector<StatusSection>& sections) {
@@ -676,8 +693,6 @@ inline std::vector<PanelLine> FlattenPanel(const std::vector<StatusSection>& sec
       line.label = row.label;
       line.value = row.value;
       line.tone = row.tone;
-      line.segments = row.segments;
-      line.joined_above = row.joined_above;
       lines.push_back(line);
     }
   }
@@ -695,43 +710,27 @@ inline std::vector<PanelLine> FlattenPanel(const std::vector<StatusSection>& sec
 // spaces.
 //
 // Measured at the design size, which is the largest the page ever draws at, so a
-// line that fits here fits at every size the fitting can pick. Headings and
-// segmented lines each take a measure of their own, because neither draws in the
-// body's face and size: the taller the band the panel is given the larger the whole
-// page draws, and a line measured under the wrong one of the three is either folded
-// or cut when it need not have been.
+// line that fits here fits at every size the fitting can pick. Headings take a
+// measure of their own, because they draw in another face: the taller the band the
+// panel is given, the larger the whole page draws, and a heading measured under the
+// body face would be the one line left free to fold.
 inline std::vector<PanelLine> FitPanelLines(const std::vector<PanelLine>& lines,
                                             float column_width, float label_gap,
                                             TextWidth measure,
-                                            TextWidth heading_measure,
-                                            TextWidth segment_measure) {
+                                            TextWidth heading_measure) {
   std::vector<PanelLine> fitted;
   fitted.reserve(lines.size());
   // Every piece a line breaks into after the first belongs with the one before it,
   // so the dealing keeps them in one column.
-  // A piece past the first belongs with the piece before it. A line that ARRIVED
-  // joined stays joined through its first piece as well: the composer knew
-  // something the breaking cannot see, which is that this line means nothing
-  // without the one above it.
+  // Every piece a line breaks into after the first belongs with the one before it,
+  // so the dealing keeps them in one column.
   const auto push = [&fitted](PanelLine line, std::size_t piece) {
-    line.joined_above = line.joined_above || piece > 0;
+    line.joined_above = piece > 0;
     fitted.push_back(std::move(line));
   };
   for (const PanelLine& line : lines) {
     if (line.blank) {
       fitted.push_back(line);
-      continue;
-    }
-    // A segmented line is cut to its column rather than broken across rows, so it
-    // reaches the drawing as exactly one line and the one-line-per-row guarantee
-    // holds for it the same way it holds for everything else.
-    if (!line.segments.empty()) {
-      PanelLine part = line;
-      // Its own measure: a segmented line draws smaller than the rows around it,
-      // so measuring it at the body size would cut it short of the column.
-      part.segments =
-          FitSegmentLine(line.segments, column_width, segment_measure);
-      fitted.push_back(part);
       continue;
     }
     if (line.heading) {

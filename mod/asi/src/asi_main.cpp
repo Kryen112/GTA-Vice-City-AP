@@ -137,7 +137,7 @@ struct AsiMain {
     // borrowed page whether the panel's entry opened it. The same answer says
     // whether the panel draws, so the menu is read once.
     if (!status_page.Follow().draw) return;
-    status_page.Draw(gtavc::ComposeStatusPanel(game.BuildStatusPanelState()));
+    status_page.Draw(game.BuildStatusPanelState());
   }
 
   static AsiMain instance;

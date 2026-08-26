@@ -37,6 +37,10 @@ RESYNC_CHECKED = [542000000, 542000001]
 #
 # The harness reports a row as its lines joined by " | ", so what comes back proves
 # both the newline marker breaking the row and the segment order inside each line.
+#
+# The client no longer emits the marker (a movement is one line now), but the mod
+# still has to honour it, since that is how a notice too long for the band is broken
+# across lines. This is the only thing that exercises it end to end.
 TOAST_SEGMENTS = [
     ("You", protocol.TOAST_OWN_SLOT),
     (" sent ", protocol.TOAST_CONNECTIVE),

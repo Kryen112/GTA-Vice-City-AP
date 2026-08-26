@@ -12,6 +12,14 @@ float StretchY(float y) {
   return y * static_cast<float>(RsGlobal.maximumHeight) / kVirtualHeight;
 }
 
+float UnstretchY(float y) {
+  const float height = static_cast<float>(RsGlobal.maximumHeight);
+  // A height of nothing is not a screen; the caller gets its input back rather than
+  // a division by zero.
+  if (height <= 0.0f) return y;
+  return y * kVirtualHeight / height;
+}
+
 const wchar_t* Widen(const std::string& text) {
   // One past the longest string either caller may hand over, so a string that fits
   // the bound is never truncated here. Anything longer is refused by the measuring
