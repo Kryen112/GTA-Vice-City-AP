@@ -1302,6 +1302,13 @@ class TestAbilityLocksAll(WorldTestBase):
         # seed always has a sphere 0.
         self.assertTrue(self.can_reach_location("An Old Friend"))
 
+    def test_the_party_is_walkable(self) -> None:
+        # The second Rosenberg mission is walked as well, so its one unlock is
+        # all it takes even with every ability locked.
+        self.assertFalse(self.can_reach_location("The Party"))
+        self.collect(self.get_items_by_name("Progressive Rosenberg")[:1])
+        self.assertTrue(self.can_reach_location("The Party"))
+
     def test_stunt_jump_needs_a_land_vehicle(self) -> None:
         self.collect_by_name(["Mainland Access"])
         self.assertFalse(self.can_reach_location(data.stunt_jump_name(1)))

@@ -516,7 +516,6 @@ MISSION_ABILITY_REQUIREMENTS: dict[str, list[str]] = {
     "Shakedown": [WEAPON_EQUIP_ITEM],
     "Spilling the Beans": [WEAPON_EQUIP_ITEM],
     "The Job": [WEAPON_EQUIP_ITEM],
-    "The Party": [LAND_VEHICLES_ITEM],
     "The Shootist": [WEAPON_EQUIP_ITEM],
     "Trojan Voodoo": [LAND_VEHICLES_ITEM],
     "Two Bit Hit": [WEAPON_EQUIP_ITEM],
