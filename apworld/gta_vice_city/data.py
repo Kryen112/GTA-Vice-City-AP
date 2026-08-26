@@ -1551,6 +1551,14 @@ LEAF_LINKS_ROUTES: list[list[str]] = [
 # Packages that can be got at more than one way: the first two sit out in the
 # water, most of the rest are on roofs a car can be jumped off or a helicopter
 # landed on, and five are inside Leaf Links.
+#
+# Package 25 is the one whose mission route the mod has to make true. Vanilla
+# shuts Gonzalez's pad again the moment Treacherous Swine tears down, which
+# would leave that route a window inside one mission and put the package out of
+# reach for good once the mission is behind a player whose Vice Point item has
+# not arrived. build_scm's open_gonzalez_pad_door leaves the pad's door open
+# afterwards, so the route reads the way this table writes it. Drop that edit
+# and this row has to go with it.
 PACKAGE_ABILITY_ALTERNATIVES: dict[int, list[list[str]]] = {
     3: [[AIR_VEHICLES_ITEM], [SEA_VEHICLES_ITEM]],
     4: [[AIR_VEHICLES_ITEM], [SEA_VEHICLES_ITEM]],

@@ -434,6 +434,66 @@ def sever_starfish_east_open():
     return block
 
 
+def open_gonzalez_pad_door():
+    """Leave the middle door onto Gonzalez's pad open once a mission opens it.
+
+    The pad carries hidden package 25, and vanilla shuts its doors again when
+    Treacherous Swine tears down, so the audited route up there is a window
+    inside one mission rather than a reach. A package still held by a content
+    lock while that mission plays is then out of the player's hands for good,
+    with a helicopter the only way back.
+
+    Martha's Mug Shot says which door is the barrier: it opens the middle one
+    and no other and warps the player nowhere upward, so the climb from the
+    street to its party is the game's own geometry and the doors above and below
+    that one are off the route and stay vanilla.
+
+    Three teardowns recreate the door closed and all three become open. The
+    creation at a new game is left alone, so the pad is shut until a mission
+    opens it, and so is Treacherous Swine's own mid-mission eject, which drops
+    the player on the street and whose door the teardown reopens at the end
+    anyway.
+    """
+    closed = ("create_object_no_offset $1815 = init_object #SPAD_DR_CLOSED2 "
+              "at 465.375 30.336 33.181")
+    # The model and the position are the game's own, taken from the line the two
+    # missions write rather than spelled again here, so an open door put where
+    # the player cannot use it fails the build instead of the playthrough.
+    placement = "init_object #SPAD_DR_OPEN2 at 461.961 31.436 31.24"
+    assert any(line.endswith(placement) for line in SOURCE_LINES), (
+        "pad door: the decompile does not put the open middle door there")
+    opened = f"create_object_no_offset $1815 = {placement}"
+    sites = [i for i, ln in enumerate(lines) if ln == closed]
+    assert len(sites) == 5, f"pad door: the closed middle door matched {len(sites)}"
+    # Every site is named positively rather than by failing the others, so a
+    # teardown that stops reading like one fails here instead of quietly keeping
+    # its door shut.
+    kinds = {"teardown": [], "new game": [], "eject": []}
+    unknown = []
+    for site in sites:
+        after = lines[site + 4]
+        if lines[site - 2] == "delete_object $4466":
+            kinds["teardown"].append(site)      # Martha's Mug Shot, both its exits
+        elif after == "delete_object $2257":
+            kinds["teardown"].append(site)      # Treacherous Swine, its own
+        elif after.startswith("create_object_no_offset $1817 "):
+            kinds["new game"].append(site)      # where the pad starts shut
+        elif after.startswith("set_player_coordinates "):
+            kinds["eject"].append(site)         # the scripted way off the pad
+        else:
+            unknown.append(site + 1)
+    assert not unknown, (
+        f"pad door: closed middle doors at lines {unknown} read as none of a "
+        "teardown, a new game or the eject")
+    counted = {kind: len(found) for kind, found in kinds.items()}
+    assert counted == {"teardown": 3, "new game": 1, "eject": 1}, (
+        f"pad door: {counted}, expected three teardowns, one new game and one "
+        "eject")
+    for site in kinds["teardown"]:
+        lines[site] = opened
+    edits.append("left the middle door onto Gonzalez's pad open after its missions")
+
+
 # Property purchases: each buy mission-let is a post-purchase cutscene, so mark
 # its completion at the mission-let start. Order matches the apworld order.
 def add_purchase_completions():
@@ -2395,6 +2455,7 @@ mainland_shared, mainland_crossings, west_gate_open = relocate_mainland_open()
 add_area_watcher(mainland_shared, mainland_crossings,
                  sever_starfish_east_open(), west_gate_open)
 add_package_watcher()
+open_gonzalez_pad_door()
 add_finale_flag()
 add_finale_warp()
 add_purchase_completions()

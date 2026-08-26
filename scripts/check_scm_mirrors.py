@@ -482,6 +482,40 @@ def _district_list_problems(scm_dir: pathlib.Path, scm) -> list[str]:
             f"{list(scm.DISTRICT_KEYS)}"]
 
 
+# The one package whose route in the world is true only because build_scm.py
+# edits the map for it, and the mission that route names.
+PAD_DOOR_PACKAGE = 25
+PAD_DOOR_MISSION = "Treacherous Swine"
+
+
+def _pad_door_problems(scm_dir: pathlib.Path, data) -> list[str]:
+    """Package 25's mission route against the build edit that makes it true.
+
+    Vanilla shuts Gonzalez's pad again when Treacherous Swine tears down, so
+    that route is a window inside one mission until build_scm.py leaves the
+    pad's door open. Neither file can see the other, and the failure is silent
+    in both directions: without the edit the world goes on placing progression
+    behind a package a helicopter is the only way back to, and without the route
+    the edit opens a door for nothing. They are a pair, so they are checked as
+    one.
+    """
+    source = scm_dir / "build_scm.py"
+    build = source.read_text(encoding="utf-8")
+    routed = any(data.mission_passed_item_name(PAD_DOOR_MISSION) in route
+                 for route in data.PACKAGE_ABILITY_ALTERNATIVES.get(PAD_DOOR_PACKAGE, []))
+    edited = ("def open_gonzalez_pad_door():" in build
+              and "open_gonzalez_pad_door()" in build.splitlines())
+    if routed == edited:
+        return []
+    if routed:
+        return [f"{source.name}: package {PAD_DOOR_PACKAGE} is reached through "
+                f"{PAD_DOOR_MISSION}, but open_gonzalez_pad_door is not both "
+                "defined and called, so the pad shuts again at that mission's "
+                "teardown and the route is a window inside it"]
+    return [f"{source.name}: open_gonzalez_pad_door leaves the pad open for a "
+            f"route package {PAD_DOOR_PACKAGE} no longer takes"]
+
+
 def main() -> int:
     _self_test()
     root = archipelago_root()
@@ -623,6 +657,7 @@ def main() -> int:
     problems.extend(_cleo_problems(cleo_dir, scm, data))
     problems.extend(_literal_table_problems(scm_dir, scm))
     problems.extend(_district_list_problems(scm_dir, scm))
+    problems.extend(_pad_door_problems(scm_dir, data))
     problems.extend(_match_tolerance_problems(asi_dir, data))
     for where, source, name, want in expected:
         if name not in source:

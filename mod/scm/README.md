@@ -247,3 +247,18 @@ version control.
   so the script is vanilla until the ASI overwrites the map from the station
   unlocks. The APRADIO watcher consumes the `$9564` retune request the ASI
   posts (station id plus one, zero idle).
+- Gonzalez's pad: hidden package 25 sits on the roof Treacherous Swine opens,
+  and vanilla shuts all three of its doors again at that mission's teardown, so
+  the route the logic names would be a window inside one mission rather than a
+  reach. `open_gonzalez_pad_door` reopens the middle door at the three
+  teardowns that recreate it closed, Treacherous Swine's own and both of
+  Martha's Mug Shot's. The creation at a new game and the mid-mission eject
+  stay vanilla, so the pad is shut until a mission opens it. Martha's Mug Shot
+  is what says the middle door is the only barrier: it opens that one and no
+  other, and the player walks up to its party from the street with no warp. The
+  three lines are model and coordinate swaps, so the build is byte for byte the
+  size it was; they are in the mission segment, so MAIN is not the budget they
+  would have spent either way. The edit is unconditional, which
+  `notes/2026-08-26-gonzalez-pad-door.md` argues for: gating it on the packages
+  class would put the vanilla hundred-package reward behind the same missable
+  whenever that class is off and the packages content key on.
