@@ -2,8 +2,8 @@
 
 Starts the real Python AsiBridge, runs the compiled C++ harness against it as a
 subprocess, and asserts the round trip: the harness receives the welcome, the
-resync items and checked locations, and its emitted check and completion
-percentage reach the bridge.
+resync items and checked locations, and its emitted check, completion
+percentage and death reach the bridge.
 Windows and MSVC only (needs the built harness), so this is a dev-machine check,
 not part of the ubuntu CI. Usage:
     python scripts/asi_interop_check.py <path-to-harness.exe>
@@ -55,6 +55,10 @@ TOAST_SEGMENTS = [
 EXPECTED_TOAST = "You sent Minigun to PlayerTwo | (Hidden Package 42)"
 EMITTED_CHECK = 542000042
 EMITTED_PERCENTAGE = 93
+# The linked death the bridge forwards, and the source the harness must echo
+# back: the mod logs it, so a rename on either side would lose the one field the
+# frame carries with nothing failing anywhere.
+DEATH_LINK_SOURCE = "PlayerTwo"
 CONFIG = {
     "item_globals": {"542100000": 9010, "542100001": 9011},
     "completion_watch": {"9035": 542000000, "9036": 542000042},
@@ -150,6 +154,7 @@ class Recorder:
     def __init__(self) -> None:
         self.checks: list[int] = []
         self.percentages: list[int] = []
+        self.deaths = 0
         self.connected = 0
 
     def seed_hash(self) -> str:
@@ -163,6 +168,9 @@ class Recorder:
 
     async def on_progress(self, percentage: int) -> None:
         self.percentages.append(percentage)
+
+    async def on_death(self) -> None:
+        self.deaths += 1
 
     async def on_connected(self, bridge: AsiBridge) -> None:
         self.connected += 1
@@ -180,6 +188,7 @@ class Recorder:
         await bridge.send_status(*STATUS, STATUS_GOAL_ROWS, STATUS_STRAND_ROWS,
                                  STATUS_FINALE_WARP)
         await bridge.send_toast(TOAST_SEGMENTS)
+        await bridge.send_death_link(DEATH_LINK_SOURCE)
 
 
 async def run(harness: str) -> int:
@@ -191,13 +200,15 @@ async def run(harness: str) -> int:
         on_goal_reached=recorder.on_goal,
         on_connected=recorder.on_connected,
         on_progress=recorder.on_progress,
+        on_death=recorder.on_death,
     )
     await bridge.start()
     process = await asyncio.create_subprocess_exec(
         harness,
         "--host", "127.0.0.1", "--port", str(bridge.port),
         "--seed-hash", "", "--emit-check", str(EMITTED_CHECK),
-        "--emit-percentage", str(EMITTED_PERCENTAGE), "--run-ms", "1500",
+        "--emit-percentage", str(EMITTED_PERCENTAGE), "--emit-death", "1",
+        "--run-ms", "1500",
         stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
     )
     try:
@@ -218,6 +229,11 @@ async def run(harness: str) -> int:
     if recorder.percentages != [EMITTED_PERCENTAGE]:
         failures.append(
             f"bridge percentages {recorder.percentages} != [{EMITTED_PERCENTAGE}]")
+    if recorder.deaths != 1:
+        failures.append(f"bridge deaths {recorder.deaths} != 1")
+    if summary.get("death_links") != [DEATH_LINK_SOURCE]:
+        failures.append(
+            f"death_links {summary.get('death_links')} != [{DEATH_LINK_SOURCE!r}]")
     if summary.get("welcome_seed_hash") != EXPECTED_HASH:
         failures.append(f"welcome hash {summary.get('welcome_seed_hash')!r} != {EXPECTED_HASH!r}")
     if summary.get("items") != [list(pair) for pair in RESYNC_ITEMS]:

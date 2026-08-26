@@ -19,6 +19,7 @@
 #include "scm_ability_locks.hpp"
 #include "scm_completion.hpp"
 #include "scm_content_locks.hpp"
+#include "scm_death_link.hpp"
 #include "scm_effects.hpp"
 #include "scm_crossings.hpp"
 #include "scm_minimap.hpp"
@@ -62,6 +63,8 @@ class ScmGameState : public GameState {
   void RequeueChecks(const std::vector<std::int64_t>& undelivered) override;
   bool TakeGoalReached() override;
   bool TakeProgressPercentage(int& percentage) override;
+  void ApplyDeathLink(const std::string& source) override;
+  bool TakeDeath() override;
 
   // Called from the game frame. All SCM memory access is here.
   void OnGameFrame();
@@ -152,6 +155,18 @@ class ScmGameState : public GameState {
   // drunk-vision window for their duration, reverting each once its deadline
   // passes. Runs every frame.
   void UpdateTimedTraps();
+  // Both DeathLink directions, once per frame: reports Tommy's death on the
+  // frame the game's own wasted state arrives, and delivers a linked death once
+  // the player is controllable. Reads the player state, so it runs on the frame.
+  void UpdateDeathLink(bool controllable);
+  // The game's own player state (playing, wasted, arrested, restarting after a
+  // failed mission), which is what tells a death from an arrest.
+  static int PlayerState();
+  // Kills Tommy where he stands, by zeroing armour and health the way the
+  // script's own set-health opcode does, and lets the game take its usual death
+  // path from there. Nothing else marks the death: the wasted state, the fade,
+  // the hospital and the stats are all the game's own.
+  static void ApplyLinkedDeath();
   // True when the game hands the player control: not in a cutscene, on a
   // mission pass/fail screen, or otherwise script-owned. The one flag all item
   // application keys on: unlock globals and one-shot effects alike wait for it.
@@ -298,6 +313,21 @@ class ScmGameState : public GameState {
   // cutscene is seen on the frame it is written.
   bool outbound_checks_held_ = true;
   bool baseline_captured_ = false;
+  // A linked death the client forwarded, and who it came from, waiting for a
+  // frame that can deliver it. One flag and not a count: a second death arriving
+  // before the first is delivered asks for the same thing.
+  bool death_link_pending_ = false;
+  std::string death_link_source_;
+  // Tommy's death waiting for the bridge to pick it up, and the wasted state as
+  // it read last frame, so a death is reported on its edge rather than on every
+  // frame of the fade.
+  bool pending_death_ = false;
+  bool player_was_wasted_ = false;
+  // The window a kill this mod made waits for its own wasted state in, so
+  // exactly one death is kept out of the multiworld. Armed on the kill and
+  // ended by that wasted state or by its own deadline, both in the pure header,
+  // since this is the whole echo guard.
+  DeathLinkEcho death_link_echo_;
   // Timed-trap state, reverted once each deadline (in real milliseconds) passes.
   bool time_scale_trap_active_ = false;
   unsigned int time_scale_trap_until_ = 0;

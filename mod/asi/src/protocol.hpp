@@ -33,11 +33,13 @@ constexpr const char* kItems = "items";
 constexpr const char* kChecked = "checked";
 constexpr const char* kToast = "toast";
 constexpr const char* kStatus = "status";
+constexpr const char* kDeathLink = "death_link";
 constexpr const char* kHello = "hello";
 constexpr const char* kCheck = "check";
 constexpr const char* kGoalReached = "goal_reached";
 constexpr const char* kProgress = "progress";
 constexpr const char* kApplied = "applied";
+constexpr const char* kDeath = "death";
 }  // namespace msg
 
 class ProtocolError : public std::runtime_error {
@@ -80,5 +82,8 @@ json CheckMessage(std::int64_t location);
 json GoalReachedMessage();
 json ProgressMessage(int percentage);
 json AppliedMessage(std::int64_t index);
+// Tommy was wasted. No payload: the line other players read names this slot,
+// which only the client knows.
+json DeathMessage();
 
 }  // namespace gtavc

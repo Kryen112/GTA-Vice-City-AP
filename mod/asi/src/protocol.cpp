@@ -180,4 +180,6 @@ json AppliedMessage(std::int64_t index) {
   return json{{"type", msg::kApplied}, {"index", index}};
 }
 
+json DeathMessage() { return json{{"type", msg::kDeath}}; }
+
 }  // namespace gtavc

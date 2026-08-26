@@ -88,6 +88,13 @@ Client to ASI:
                               Optional like the config's later fields: an ASI that
                               does not know the type ignores it and its page
                               leaves those blocks out.
+    death_link {source}       a linked player died, so kill Tommy. Sent only
+                              while the seed's DeathLink option is on, which the
+                              client alone knows: the option is slot_data and the
+                              mod has no copy of it, so the client is the gate in
+                              both directions. The source is who died, for the
+                              mod's log; the player-facing line rides the toast
+                              channel like any other multiworld event.
 
 ASI to client:
     hello        {seed_hash}  first frame after connect
@@ -98,6 +105,12 @@ ASI to client:
                               menu prints it, sent whenever it changes. The
                               client publishes it to the AP data store, where the
                               tracker reads it.
+    death        {}           Tommy was wasted. Sent on the game's own wasted
+                              state and on nothing else, so an arrest is not a
+                              death, and never for a death this mod caused
+                              itself, which would bounce back into the
+                              multiworld. The client drops it when the option is
+                              off.
 """
 
 from __future__ import annotations
@@ -106,6 +119,20 @@ import base64
 import hashlib
 import json
 
+# The handshake refuses a mod and a client that do not speak the same number, so
+# it moves only when an existing frame changes what it MEANS. A message type
+# either side may ignore is not that: an unknown type is dropped with a log line
+# on both sides, so a mod one type behind a client still plays the seed, minus
+# whatever that type carried. The same rule the config frame's optional fields
+# follow.
+#
+# What that costs, stated because it is the one thing the freeze buys silence on:
+# a client whose mod predates a type it sends is welcomed and the feature simply
+# does not happen. DeathLink is the sharpest case, since the client tags the slot
+# on the server's side of the wire, so the slot joins the pool and nothing kills
+# or reports. The mod's log names the frame it dropped, and the client installs
+# the ASI from its own payload on connect, so the window is a mod install the
+# client could not replace: the game was running, or auto_install_mod is off.
 PROTOCOL_VERSION = 4
 
 # A single frame, including its trailing newline, never exceeds this many bytes.
@@ -126,11 +153,13 @@ ITEMS = "items"
 CHECKED = "checked"
 TOAST = "toast"
 STATUS = "status"
+DEATH_LINK = "death_link"
 HELLO = "hello"
 CHECK = "check"
 GOAL_REACHED = "goal_reached"
 PROGRESS = "progress"
 APPLIED = "applied"
+DEATH = "death"
 
 # The chunk-envelope key. Distinct from the "type" key of a logical message so
 # the two never collide.
@@ -246,6 +275,16 @@ def status_message(checks_done: int, checks_total: int, items_received: int,
             "finale_warp": finale_warp}
 
 
+def death_link_message(source: str) -> dict:
+    """A linked player's death, on its way to the game.
+
+    The source is carried for the mod's log rather than for anything drawn: what
+    the player reads is a toast the client composes, the same channel every other
+    multiworld event arrives on.
+    """
+    return {"type": DEATH_LINK, "source": source}
+
+
 def hello_message(presented_seed_hash: str) -> dict:
     return {"type": HELLO, "protocol_version": PROTOCOL_VERSION,
             "seed_hash": presented_seed_hash}
@@ -261,6 +300,12 @@ def goal_reached_message() -> dict:
 
 def progress_message(percentage: int) -> dict:
     return {"type": PROGRESS, "percentage": percentage}
+
+
+def death_message() -> dict:
+    """Tommy was wasted. No payload: the cause line other players read is the
+    client's to compose, since only it knows this slot's name."""
+    return {"type": DEATH}
 
 
 class MessageWriter:

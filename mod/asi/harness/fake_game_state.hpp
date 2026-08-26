@@ -120,6 +120,18 @@ class FakeGameState : public GameState {
     return reached;
   }
 
+  void ApplyDeathLink(const std::string& source) override {
+    std::lock_guard<std::mutex> lock(mutex_);
+    death_links_.push_back(source);
+  }
+
+  bool TakeDeath() override {
+    std::lock_guard<std::mutex> lock(mutex_);
+    const bool died = death_pending_;
+    death_pending_ = false;
+    return died;
+  }
+
   bool TakeProgressPercentage(int& percentage) override {
     std::lock_guard<std::mutex> lock(mutex_);
     if (pending_percentage_ < 0) return false;
@@ -137,6 +149,18 @@ class FakeGameState : public GameState {
   void QueuePercentage(int percentage) {
     std::lock_guard<std::mutex> lock(mutex_);
     pending_percentage_ = percentage;
+  }
+
+  void QueueDeath() {
+    std::lock_guard<std::mutex> lock(mutex_);
+    death_pending_ = true;
+  }
+
+  // Who each linked death said it came from, in arrival order, so the interop
+  // check can prove the source survived the decode.
+  std::vector<std::string> DeathLinks() {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return death_links_;
   }
 
   std::string StampedSeedHash() {
@@ -230,6 +254,8 @@ class FakeGameState : public GameState {
   std::vector<std::string> toasts_;
   std::array<std::string, kToastNoticeCount> notices_{};
   std::vector<std::int64_t> pending_checks_;
+  std::vector<std::string> death_links_;
+  bool death_pending_ = false;
   bool goal_pending_ = false;
   int pending_percentage_ = -1;
   bool client_connected_ = false;

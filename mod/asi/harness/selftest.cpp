@@ -16,6 +16,7 @@
 #include "../src/scm_completion.hpp"
 #include "../src/scm_content_locks.hpp"
 #include "../src/scm_crossings.hpp"
+#include "../src/scm_death_link.hpp"
 #include "../src/scm_effects.hpp"
 #include "../src/scm_finale_warp.hpp"
 #include "../src/scm_grant_pacing.hpp"
@@ -282,6 +283,99 @@ int main() {
            "the ending waits while the player is not controllable");
     Expect(!ShouldRaiseFinaleWarp(false, true), "no ask, no ending");
     Expect(!ShouldRaiseFinaleWarp(false, false), "no ask and no control, no ending");
+  }
+
+  // DeathLink, outbound: the wasted state reports once on its edge, an arrest is
+  // not a death (it never reaches the predicate as wasted), the echo of a kill
+  // this mod made is kept out of the multiworld, and a death with no client is
+  // dropped rather than queued.
+  {
+    Expect(ShouldReportDeath(true, false, false, true), "a fresh death reports");
+    Expect(!ShouldReportDeath(true, true, false, true),
+           "the frames after the death report nothing more");
+    Expect(!ShouldReportDeath(false, true, false, true),
+           "coming back from the dead is not a death");
+    Expect(!ShouldReportDeath(true, false, true, true),
+           "the echo of a linked death is not reported back");
+    Expect(!ShouldReportDeath(true, false, false, false),
+           "a death with no client connected is dropped rather than queued");
+  }
+
+  // The echo window, which is the whole guard against a death bouncing between
+  // two linked slots forever: a kill arms it, the wasted state it was armed for
+  // ends it, and its deadline ends it for a kill that never killed. Sequenced
+  // rather than asserted one call at a time, since the ordering is what makes it
+  // correct.
+  {
+    const unsigned int armed_at = 1000;
+    const unsigned int window = 5000;
+    const DeathLinkEcho armed = ArmDeathLinkEcho(armed_at, window);
+    Expect(DeathLinkEchoSuppressing(armed, armed_at),
+           "the frame that armed the window is inside it");
+    Expect(DeathLinkEchoSuppressing(armed, armed_at + window - 1),
+           "the window holds up to its deadline");
+    Expect(!DeathLinkEchoSuppressing(armed, armed_at + window),
+           "the window is over on its deadline");
+    Expect(!DeathLinkEchoSuppressing(DeathLinkEcho{}, armed_at),
+           "an unarmed window suppresses nothing");
+
+    // The frames between the kill and the wasted state it caused: no edge yet, so
+    // the window is still holding and the death it is waiting for is the one it
+    // will swallow.
+    const DeathLinkEcho waiting =
+        AdvanceDeathLinkEcho(armed, armed_at + 16, false, false);
+    Expect(DeathLinkEchoSuppressing(waiting, armed_at + 16),
+           "the window waits for the wasted state its kill caused");
+    Expect(!ShouldReportDeath(true, false, DeathLinkEchoSuppressing(waiting, armed_at + 32),
+                              true),
+           "and that wasted state is not reported");
+
+    // The wasted edge ends it, so a second death moments later is a real one.
+    const DeathLinkEcho spent =
+        AdvanceDeathLinkEcho(waiting, armed_at + 32, true, false);
+    Expect(!DeathLinkEchoSuppressing(spent, armed_at + 32),
+           "the wasted edge it was armed for ends the window");
+    Expect(ShouldReportDeath(true, false, DeathLinkEchoSuppressing(spent, armed_at + 48),
+                             true),
+           "a death right after the echo is reported");
+
+    // A kill that never killed: the deadline ends the window instead, and the
+    // next real death reports rather than being taken for the echo.
+    const DeathLinkEcho expired =
+        AdvanceDeathLinkEcho(armed, armed_at + window, false, false);
+    Expect(!DeathLinkEchoSuppressing(expired, armed_at + window),
+           "a kill that never killed stops being waited for");
+    Expect(ShouldReportDeath(true, false, DeathLinkEchoSuppressing(expired, armed_at + window),
+                             true),
+           "and the next real death is reported");
+
+    // The clock wrapping: a window armed just before the wrap still holds after
+    // it, since the difference is taken signed.
+    const unsigned int before_wrap = 0xFFFFF000u;
+    const DeathLinkEcho across = ArmDeathLinkEcho(before_wrap, window);
+    Expect(DeathLinkEchoSuppressing(across, before_wrap + 1),
+           "a window armed before the clock wraps still holds after it");
+    Expect(!DeathLinkEchoSuppressing(across, before_wrap + window),
+           "and still ends on its deadline");
+  }
+
+  // DeathLink, inbound: the kill waits for control, is dropped when Tommy is
+  // already dying or arrested, and needs a player to kill. The already-dying
+  // test outranks the control test, since the wasted fade holds control too and
+  // a held death would land on the frame Tommy leaves the hospital.
+  {
+    Expect(PlanDeathLink(true, true, true, true) == DeathLinkAction::kKill,
+           "a linked death kills a controllable player");
+    Expect(PlanDeathLink(false, true, true, true) == DeathLinkAction::kHold,
+           "no death pending, nothing happens");
+    Expect(PlanDeathLink(true, true, false, true) == DeathLinkAction::kHold,
+           "a linked death waits while the player is not controllable");
+    Expect(PlanDeathLink(true, false, true, true) == DeathLinkAction::kHold,
+           "a linked death waits for a player to kill");
+    Expect(PlanDeathLink(true, true, false, false) == DeathLinkAction::kDrop,
+           "a death arriving mid-death is dropped, not held for the respawn");
+    Expect(PlanDeathLink(true, true, true, false) == DeathLinkAction::kDrop,
+           "a death arriving during an arrest is dropped, not saved for the door");
   }
 
   // One-shot effect planning: effects apply in received order past the applied

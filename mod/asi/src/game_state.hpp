@@ -179,6 +179,17 @@ class GameState {
   // True once when the goal was newly reached.
   virtual bool TakeGoalReached() = 0;
 
+  // A linked player died, so kill Tommy. The source is who died, for the log;
+  // what the player reads arrives on the toast channel like any other multiworld
+  // event. The kill waits for the player to be controllable and is dropped if
+  // Tommy is already dying, since nobody dies twice.
+  virtual void ApplyDeathLink(const std::string& source) = 0;
+
+  // True once when Tommy was wasted and the multiworld should hear about it.
+  // Never true for a death this mod caused itself, which would bounce back to
+  // whoever sent it. Polled by the bridge each loop.
+  virtual bool TakeDeath() = 0;
+
   // The game's completion percentage, as its stats menu prints it, when it has
   // changed since the last call. False when there is nothing new to report, so
   // the bridge sends a frame per change rather than one per frame.

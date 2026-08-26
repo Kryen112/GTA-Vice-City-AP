@@ -205,6 +205,13 @@ constexpr unsigned char kDrunkVisualsLevel = 255;
 constexpr int kDrunkSteeringDelay = 8;
 constexpr int kDefaultTrapSeconds = 30;
 
+// How long a kill made for a linked death waits for the game's wasted state
+// before it stops expecting one. The wasted state follows the health write
+// within a frame or two, so this is only the ceiling for a kill that did not
+// kill (a script that owns the player, a state that ignores the write); past it
+// the next real death reports normally rather than being taken for the echo.
+constexpr unsigned int kDeathLinkEchoWindowMs = 5000;
+
 // The trap duration in real milliseconds, from the descriptor's seconds param.
 unsigned int TrapDurationMs(const ItemEffect& effect) {
   const int seconds = (effect.has_amount && effect.amount > 0) ? effect.amount : kDefaultTrapSeconds;
@@ -831,6 +838,21 @@ bool ScmGameState::PlayerIsControllable() {
   // No pad yet (still loading) reads as not controllable, so items wait.
   if (pad == nullptr) return false;
   return pad->DisablePlayerControls == 0;
+}
+
+int ScmGameState::PlayerState() {
+  return static_cast<int>(CWorld::Players[0].m_nPlayerState);
+}
+
+void ScmGameState::ApplyLinkedDeath() {
+  CPlayerPed* player = FindPlayerPed();
+  if (player == nullptr) return;
+  // Armour first. It absorbs nothing here, since a health write is not damage,
+  // but a corpse still wearing armour would be the one part of the death the
+  // game did not do itself. Everything after this is the game's: the wasted
+  // state, the fade, the hospital, the stat.
+  player->m_fArmour = 0.0f;
+  player->m_fHealth = 0.0f;
 }
 
 unsigned int ScmGameState::RealTimeMs() {
@@ -1550,6 +1572,43 @@ void ScmGameState::UpdateTimedTraps() {
   }
 }
 
+void ScmGameState::UpdateDeathLink(bool controllable) {
+  const int state = PlayerState();
+  const bool wasted = state == PLAYERSTATE_HASDIED;
+  const unsigned int now = RealTimeMs();
+  const bool echo_suppressed = DeathLinkEchoSuppressing(death_link_echo_, now);
+  if (ShouldReportDeath(wasted, player_was_wasted_, echo_suppressed, client_connected_)) {
+    pending_death_ = true;
+    if (logger_) logger_("the player was wasted, reporting the death");
+  }
+  // Advanced before the kill below arms it, which is the order that makes the
+  // guard work: a window ends on the wasted state it was waiting for or on its
+  // own deadline, and one armed this frame has neither yet.
+  death_link_echo_ =
+      AdvanceDeathLinkEcho(death_link_echo_, now, wasted, player_was_wasted_);
+  player_was_wasted_ = wasted;
+
+  const DeathLinkAction action =
+      PlanDeathLink(death_link_pending_, FindPlayerPed() != nullptr, controllable,
+                    state == PLAYERSTATE_PLAYING);
+  if (action == DeathLinkAction::kKill) {
+    ApplyLinkedDeath();
+    death_link_pending_ = false;
+    // Armed for the wasted state this kill is about to cause, so the death is
+    // not reported back to the world it came from.
+    death_link_echo_ = ArmDeathLinkEcho(now, kDeathLinkEchoWindowMs);
+    if (logger_) {
+      logger_("killed the player for the death link from " + death_link_source_);
+    }
+  } else if (action == DeathLinkAction::kDrop) {
+    if (logger_) {
+      logger_("dropped the death link from " + death_link_source_ +
+              ", the player is already dying, arrested or restarting");
+    }
+    death_link_pending_ = false;
+  }
+}
+
 std::string ScmGameState::SeedHash() {
   std::lock_guard<std::mutex> lock(mutex_);
   return cached_seed_hash_;
@@ -1614,12 +1673,22 @@ void ScmGameState::ClearNotice(ToastNotice notice) {
 void ScmGameState::SetClientConnected(bool connected) {
   std::lock_guard<std::mutex> lock(mutex_);
   client_connected_ = connected;
-  // The seed goes with the session that named it. The stamp already asks whether
-  // a client is here, so this is that same guarantee made structural rather than
-  // left resting on the order two calls happen to be made in: no hash outlives
-  // its session, so no departed client's seed can claim the next game and have
-  // the client after it refuse that game for good.
-  if (!connected) expected_seed_hash_.clear();
+  if (!connected) {
+    // The seed goes with the session that named it. The stamp already asks whether
+    // a client is here, so this is that same guarantee made structural rather than
+    // left resting on the order two calls happen to be made in: no hash outlives
+    // its session, so no departed client's seed can claim the next game and have
+    // the client after it refuse that game for good.
+    expected_seed_hash_.clear();
+    // And a death goes with it, both ways. One found in the last frames of a
+    // session would otherwise be pumped on the NEXT connect and bounce an event
+    // minutes old to every linked slot, and one still waiting to be delivered was
+    // sent by a session that has ended. The same rule the whole feature follows: a
+    // death is an event, so it is dropped rather than queued.
+    pending_death_ = false;
+    death_link_pending_ = false;
+    death_link_source_.clear();
+  }
   // The bridge going down is the one state a player cannot see from anywhere in
   // game: checks keep being found and go nowhere. The row holds until the socket
   // is back rather than expiring, and it clears itself here, so the reconnect the
@@ -1750,6 +1819,22 @@ bool ScmGameState::TakeProgressPercentage(int& percentage) {
   reported_percentage_ = pending_percentage_;
   pending_percentage_ = -1;
   return true;
+}
+
+void ScmGameState::ApplyDeathLink(const std::string& source) {
+  std::lock_guard<std::mutex> lock(mutex_);
+  // Recorded here and delivered on the frame, like every other write into the
+  // world: the bridge thread must not touch the player.
+  death_link_pending_ = true;
+  death_link_source_ = source;
+  if (logger_) logger_("death link received from " + source);
+}
+
+bool ScmGameState::TakeDeath() {
+  std::lock_guard<std::mutex> lock(mutex_);
+  const bool died = pending_death_;
+  pending_death_ = false;
+  return died;
 }
 
 void ScmGameState::ToggleShopMarkerModels() {
@@ -2371,6 +2456,21 @@ void ScmGameState::ForgetGameScopedState() {
   unlock_targets_.clear();
   items_dirty_ = true;
   outbound_checks_held_ = true;
+  // A death belongs to the game it happened in, both ways: one waiting to be
+  // reported has nowhere left to go, and one waiting to be delivered would land
+  // on whoever loads next. The same reason the client drops a death that arrives
+  // with no game connected, and the opposite of the queued checks below, which
+  // are facts about the slot rather than events.
+  pending_death_ = false;
+  death_link_pending_ = false;
+  death_link_source_.clear();
+  death_link_echo_ = DeathLinkEcho{};
+  // Seeded from the state rather than set to false, the way the completion
+  // baseline at the top of this function is a snapshot: a boundary reached while
+  // the game still reads wasted would otherwise leave a fresh edge waiting for
+  // the next game to find, and it would report a death that belonged to the game
+  // before it.
+  player_was_wasted_ = PlayerState() == PLAYERSTATE_HASDIED;
   // Queued checks are deliberately NOT dropped here. A location is a
   // permanent fact about the slot rather than about the game it was found
   // in, and there is one game per seed, so sending a stale one costs
@@ -2601,6 +2701,12 @@ void ScmGameState::OnGameFrame() {
   // Hold or revert the timed traps (sped-up or slowed clock, hostile
   // pedestrians, drunk vision) whether or not new items arrived this frame.
   UpdateTimedTraps();
+
+  // DeathLink, both ways. Not through the grant pacer: a paced death would
+  // arrive minutes after the player who sent it died, and a death is an event
+  // rather than a raise that has to take. It waits on what a grant waits on and
+  // nothing else: the control flag, and a player ped to write into.
+  UpdateDeathLink(controllable);
 
   // Keep every vehicle radio on an unlocked station while the randomize
   // option is on. Reads the config and unlock globals written above, so a

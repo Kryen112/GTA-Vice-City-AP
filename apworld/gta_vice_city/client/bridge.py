@@ -1,7 +1,7 @@
 """The ASI-facing side of the bridge client: a localhost TCP listener.
 
 Hosts one ASI connection at a time, performs the version and seed handshake,
-and dispatches check, goal and progress messages to injected callbacks. It has
+and dispatches check, goal, progress and death messages to injected callbacks. It has
 no Archipelago dependency; the context module wires the callbacks and the
 expected seed hash to the real AP connection. Assume the ASI disconnects and reconnects
 at any time: on every successful handshake the caller pushes a full resync.
@@ -25,6 +25,7 @@ GoalCallback = Callable[[], Awaitable[None]]
 ConnectedCallback = Callable[["AsiBridge"], Awaitable[None]]
 AppliedCallback = Callable[[int], Awaitable[None]]
 ProgressCallback = Callable[[int], Awaitable[None]]
+DeathCallback = Callable[[], Awaitable[None]]
 
 
 async def _noop_applied(_index: int) -> None:
@@ -32,6 +33,10 @@ async def _noop_applied(_index: int) -> None:
 
 
 async def _noop_progress(_percentage: int) -> None:
+    return None
+
+
+async def _noop_death() -> None:
     return None
 
 
@@ -50,6 +55,7 @@ class AsiBridge:
         on_connected: ConnectedCallback,
         on_applied: AppliedCallback = _noop_applied,
         on_progress: ProgressCallback = _noop_progress,
+        on_death: DeathCallback = _noop_death,
         logger: logging.Logger | None = None,
     ) -> None:
         self._host = host
@@ -60,6 +66,7 @@ class AsiBridge:
         self._on_connected = on_connected
         self._on_applied = on_applied
         self._on_progress = on_progress
+        self._on_death = on_death
         self._logger = logger or logging.getLogger("Client")
         self._server: asyncio.AbstractServer | None = None
         self._writer: asyncio.StreamWriter | None = None
@@ -129,6 +136,9 @@ class AsiBridge:
         await self.send(protocol.status_message(
             checks_done, checks_total, items_received, goal_reached,
             goal_rows, strand_rows, finale_warp))
+
+    async def send_death_link(self, source: str) -> None:
+        await self.send(protocol.death_link_message(source))
 
     def _drop_connection(self) -> None:
         writer = self._writer
@@ -244,6 +254,8 @@ class AsiBridge:
                 await self._on_applied(int(message["index"]))
             elif message_type == protocol.PROGRESS:
                 await self._on_progress(int(message["percentage"]))
+            elif message_type == protocol.DEATH:
+                await self._on_death()
             else:
                 self._logger.debug("GTA Vice City bridge ignoring message: %r", message_type)
         except (KeyError, TypeError, ValueError) as error:

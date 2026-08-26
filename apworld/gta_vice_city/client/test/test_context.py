@@ -1123,6 +1123,193 @@ class TestProgressPercentage(unittest.TestCase):
         self.assertEqual(asyncio.run(scenario()), 0)
 
 
+class TestDeathLink(unittest.TestCase):
+    """The option is slot_data, so the client is the gate in both directions.
+
+    The mod reports every wasted state and obeys every kill it is handed, because
+    it holds no copy of the option: a save must never be what decides whether the
+    seed has DeathLink.
+    """
+
+    @staticmethod
+    def _connected_server() -> types.SimpleNamespace:
+        # What update_death_link checks before it sends a ConnectUpdate.
+        return types.SimpleNamespace(socket=types.SimpleNamespace(closed=False))
+
+    def test_connected_tags_the_session_and_tells_the_server(self) -> None:
+        # The tag cannot ride the Connect: the option arrives in the reply to it,
+        # so a ConnectUpdate is what puts this slot in the DeathLink pool.
+        async def scenario() -> tuple[set[str], list[dict]]:
+            with _fake_settings(""):
+                context = _context()
+                context.server = self._connected_server()
+                with mock.patch.object(
+                    context, "setup_and_launch", new_callable=mock.AsyncMock,
+                ), mock.patch.object(
+                    context, "send_msgs", new_callable=mock.AsyncMock,
+                ) as send:
+                    context.on_package("Connected", {"slot_data": {"death_link": True}})
+                    await asyncio.gather(*list(context._background_tasks))
+                    return context.tags, [call.args[0][0] for call in send.await_args_list]
+
+        tags, messages = asyncio.run(scenario())
+        self.assertIn("DeathLink", tags)
+        updates = [message for message in messages if message.get("cmd") == "ConnectUpdate"]
+        self.assertEqual(len(updates), 1)
+        self.assertIn("DeathLink", updates[0]["tags"])
+        # CommonContext keeps `tags` as a class attribute and update_death_link
+        # mutates the set in place, so the context takes an instance copy. Without
+        # it one connected slot would tag every context in the process, this test
+        # suite included.
+        self.assertEqual(context_module.CommonContext.tags, {"AP"})
+
+    def test_a_seed_without_death_link_is_not_tagged(self) -> None:
+        async def scenario() -> tuple[set[str], list[dict], bool]:
+            with _fake_settings(""):
+                context = _context()
+                context.server = self._connected_server()
+                with mock.patch.object(
+                    context, "setup_and_launch", new_callable=mock.AsyncMock,
+                ), mock.patch.object(
+                    context, "send_msgs", new_callable=mock.AsyncMock,
+                ) as send:
+                    context.on_package("Connected", {"slot_data": {"death_link": False}})
+                    await asyncio.gather(*list(context._background_tasks))
+                    return (context.tags,
+                            [call.args[0][0] for call in send.await_args_list],
+                            context.death_link_enabled)
+
+        tags, messages, enabled = asyncio.run(scenario())
+        self.assertNotIn("DeathLink", tags)
+        self.assertFalse(enabled)
+        self.assertEqual([message for message in messages
+                          if message.get("cmd") == "ConnectUpdate"], [])
+
+    def test_an_inbound_death_reaches_the_mod_behind_its_toast(self) -> None:
+        # The toast goes first, so the line naming who killed Tommy is on screen
+        # before the frame that kills him.
+        async def scenario() -> list[str]:
+            with _fake_settings(""):
+                context = _context()
+                context.death_link_enabled = True
+                order: list[str] = []
+                with mock.patch.object(type(context.bridge), "connected",
+                                       new_callable=mock.PropertyMock) as connected, \
+                     mock.patch.object(context.bridge, "send_toast") as send_toast, \
+                     mock.patch.object(context.bridge, "send_death_link") as send_death:
+                    connected.return_value = True
+                    send_toast.side_effect = lambda segments: order.append(
+                        "".join(text for text, _color in segments))
+                    send_death.side_effect = lambda source: order.append(source)
+                    context.on_deathlink({"time": 1.0, "source": "PlayerTwo"})
+                    await asyncio.gather(*list(context._background_tasks))
+                return order
+
+        self.assertEqual(asyncio.run(scenario()),
+                         ["DeathLink from PlayerTwo", "PlayerTwo"])
+
+    def test_an_inbound_death_is_dropped_with_no_game_connected(self) -> None:
+        # A death happens to a player who is playing, so one that arrives with no
+        # mod connected is stale rather than pending, unlike a location.
+        async def scenario() -> int:
+            with _fake_settings(""):
+                context = _context()
+                context.death_link_enabled = True
+                with mock.patch.object(type(context.bridge), "connected",
+                                       new_callable=mock.PropertyMock) as connected, \
+                     mock.patch.object(context.bridge, "send_death_link") as send_death:
+                    connected.return_value = False
+                    context.on_deathlink({"time": 1.0, "source": "PlayerTwo"})
+                    await asyncio.gather(*list(context._background_tasks))
+                    return send_death.await_count
+
+        self.assertEqual(asyncio.run(scenario()), 0)
+
+    def test_an_inbound_death_is_ignored_while_the_option_is_off(self) -> None:
+        async def scenario() -> int:
+            with _fake_settings(""):
+                context = _context()
+                context.death_link_enabled = False
+                with mock.patch.object(type(context.bridge), "connected",
+                                       new_callable=mock.PropertyMock) as connected, \
+                     mock.patch.object(context.bridge, "send_death_link") as send_death:
+                    connected.return_value = True
+                    context.on_deathlink({"time": 1.0, "source": "PlayerTwo"})
+                    await asyncio.gather(*list(context._background_tasks))
+                    return send_death.await_count
+
+        self.assertEqual(asyncio.run(scenario()), 0)
+
+    def test_the_command_overrides_the_seed_and_survives_a_reconnect(self) -> None:
+        # A seed rolled without DeathLink can still be linked for a session, and
+        # a reconnect re-reading slot_data must not undo what the player asked
+        # for: the override wins while it is set.
+        async def scenario() -> tuple[bool, set[str], bool, bool]:
+            with _fake_settings(""):
+                context = _context()
+                context.server = self._connected_server()
+                with mock.patch.object(
+                    context, "setup_and_launch", new_callable=mock.AsyncMock,
+                ), mock.patch.object(context, "send_msgs", new_callable=mock.AsyncMock):
+                    context.on_package("Connected", {"slot_data": {"death_link": False}})
+                    await asyncio.gather(*list(context._background_tasks))
+                    context.command_processor(context)("/deathlink on")
+                    await asyncio.gather(*list(context._background_tasks))
+                    after_command = context.death_link_enabled
+                    tagged = set(context.tags)
+                    # The reconnect: slot_data says off, the override says on.
+                    context.on_package("Connected", {"slot_data": {"death_link": False}})
+                    await asyncio.gather(*list(context._background_tasks))
+                    after_reconnect = context.death_link_enabled
+                    context.command_processor(context)("/deathlink seed")
+                    await asyncio.gather(*list(context._background_tasks))
+                    return after_command, tagged, after_reconnect, context.death_link_enabled
+
+        after_command, tagged, after_reconnect, after_seed = asyncio.run(scenario())
+        self.assertTrue(after_command)
+        self.assertIn("DeathLink", tagged)
+        self.assertTrue(after_reconnect)
+        # Handed back to the seed, which rolled it off.
+        self.assertFalse(after_seed)
+
+    def test_a_wasted_player_is_broadcast(self) -> None:
+        async def scenario() -> list[dict]:
+            with _fake_settings(""):
+                context = _context()
+                context.death_link_enabled = True
+                context.slot = 1
+                context.server = self._connected_server()
+                context.player_names = {1: "Tommy"}
+                with mock.patch.object(
+                    context, "send_msgs", new_callable=mock.AsyncMock,
+                ) as send:
+                    await context.on_bridge_death()
+                    return [call.args[0][0] for call in send.await_args_list]
+
+        messages = asyncio.run(scenario())
+        self.assertEqual(len(messages), 1)
+        self.assertEqual(messages[0]["cmd"], "Bounce")
+        self.assertEqual(messages[0]["tags"], ["DeathLink"])
+        self.assertEqual(messages[0]["data"]["source"], "Tommy")
+        self.assertIn("wasted", messages[0]["data"]["cause"])
+
+    def test_a_wasted_player_says_nothing_while_the_option_is_off(self) -> None:
+        # The mod reports the death whatever the seed rolled, so this is the gate.
+        async def scenario() -> int:
+            with _fake_settings(""):
+                context = _context()
+                context.death_link_enabled = False
+                context.slot = 1
+                context.server = self._connected_server()
+                with mock.patch.object(
+                    context, "send_msgs", new_callable=mock.AsyncMock,
+                ) as send:
+                    await context.on_bridge_death()
+                    return send.await_count
+
+        self.assertEqual(asyncio.run(scenario()), 0)
+
+
 class TestGoalDispatch(unittest.TestCase):
     def test_room_update_can_complete_the_goal(self) -> None:
         # A newly checked location reaches _maybe_finish_goal through

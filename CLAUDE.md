@@ -123,6 +123,18 @@ or `git add .`.
   global that cannot hold its target cannot starve the rest. Any further
   withholding condition is the thing this clause exists to forbid, because a
   second one is where lost grants hide.
+- DeathLink is that one deferral and no queue. A linked death that still cannot
+  land is DROPPED rather than held: Tommy already dying or arrested, no game
+  connected, a game boundary. A death is an event and not a fact about the slot,
+  which is the opposite of a queued check, and those are still never dropped.
+  It holds, like a grant, on a frame with no player ped to write into. The
+  pacer never applies: it paces GRANTS, and a death is not one, so the three
+  exemptions above stay three. The mod never reports back the death its own
+  kill caused, which is what keeps two linked slots from bouncing one death
+  forever, and it reports the game's own wasted state only, so an arrest is
+  not a death. The option is
+  slot_data, so the CLIENT is the only gate: the mod holds no copy of it, and a
+  value stamped into a save would be a second answer that could disagree.
 - Item and location id tables freeze at the first public release. After that,
   only append and never reorder or remove entries, since existing seeds and
   trackers depend on the ids. Before release they are free to change.

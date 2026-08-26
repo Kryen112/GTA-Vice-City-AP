@@ -282,6 +282,17 @@ void BridgeClient::HandleMessage(const json& message) {
         }
       }
       game_->SetClientStatus(status);
+    } else if (type == msg::kDeathLink) {
+      // The client sends this only while the seed's DeathLink option is on, so
+      // there is nothing to gate here: the mod holds no copy of the option, and
+      // a save's own state must never be what decides.
+      game_->ApplyDeathLink(message.value("source", std::string()));
+    } else {
+      // A type this build does not know, which is a client newer than this mod:
+      // dropped, and said so, because the protocol version deliberately does not
+      // move for a new message type and this log line is then the only thing
+      // that explains a feature the client believes it has.
+      logger_("ignoring an unknown message type: " + type);
     }
   } catch (const json::exception& error) {
     logger_(std::string("ignoring malformed message: ") + error.what());
@@ -310,6 +321,12 @@ void BridgeClient::PumpOutbound() {
   int percentage = 0;
   if (game_->TakeProgressPercentage(percentage)) {
     SendMessage(ProgressMessage(percentage));
+  }
+  // A death that cannot be sent is dropped rather than handed back, unlike a
+  // check: it is an event and not a fact about the slot, so the linked players
+  // want it now or not at all.
+  if (game_->TakeDeath()) {
+    SendMessage(DeathMessage());
   }
 }
 

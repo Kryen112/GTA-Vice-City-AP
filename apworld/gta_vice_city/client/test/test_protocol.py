@@ -91,6 +91,17 @@ class TestFraming(unittest.TestCase):
         self.assertEqual(message["goal_rows"], [["Goal", "Package Fragments", False]])
         self.assertEqual(message["strand_rows"][1], ["Diaz", "6 of 6", True])
 
+    def test_death_messages_round_trip(self) -> None:
+        # Both directions of DeathLink. The inbound frame carries the source for
+        # the mod's log; the outbound one carries nothing, since the line other
+        # players read names this slot and only the client knows it.
+        inbound = protocol.death_link_message("PlayerTwo")
+        self.assertEqual(_round_trip(inbound), [inbound])
+        self.assertEqual(inbound["source"], "PlayerTwo")
+        outbound = protocol.death_message()
+        self.assertEqual(_round_trip(outbound), [outbound])
+        self.assertEqual(outbound["type"], protocol.DEATH)
+
     def test_large_message_chunks_and_reassembles(self) -> None:
         big = protocol.items_message([(index, index * 7) for index in range(5000)])
         frames = protocol.MessageWriter().frames(big)

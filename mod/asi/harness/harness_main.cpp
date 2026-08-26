@@ -33,6 +33,7 @@ int main(int argc, char** argv) {
   const std::string seed_hash = ArgValue(argc, argv, "--seed-hash", "");
   const long long emit_check = std::stoll(ArgValue(argc, argv, "--emit-check", "-1"));
   const int emit_percentage = std::stoi(ArgValue(argc, argv, "--emit-percentage", "-1"));
+  const bool emit_death = ArgValue(argc, argv, "--emit-death", "0") == "1";
   const int run_ms = std::stoi(ArgValue(argc, argv, "--run-ms", "1500"));
 
   FakeGameState game(seed_hash);
@@ -44,6 +45,7 @@ int main(int argc, char** argv) {
   std::this_thread::sleep_for(std::chrono::milliseconds(400));
   if (emit_check >= 0) game.QueueCheck(emit_check);
   if (emit_percentage >= 0) game.QueuePercentage(emit_percentage);
+  if (emit_death) game.QueueDeath();
   std::this_thread::sleep_for(std::chrono::milliseconds(run_ms > 400 ? run_ms - 400 : 100));
 
   bridge.Stop();
@@ -56,6 +58,9 @@ int main(int argc, char** argv) {
   }
   summary["checked"] = game.Checked();
   summary["toasts"] = game.Toasts();
+  // Every linked death the session delivered, by source, so the round trip
+  // proves the frame and its one field decode.
+  summary["death_links"] = game.DeathLinks();
   summary["notices"] = game.Notices();
   summary["item_globals"] = json::object();
   for (const auto& entry : game.ItemGlobals()) {

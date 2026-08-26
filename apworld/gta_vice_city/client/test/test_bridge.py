@@ -1,7 +1,7 @@
 """Bridge and fake-ASI integration tests, run headless with asyncio.run.
 
-Covers the handshake, resync on connect, check and goal dispatch, seed and
-version refusal, the not-connected-to-AP refusal, reconnect resync, and a
+Covers the handshake, resync on connect, check, goal and death dispatch, seed
+and version refusal, the not-connected-to-AP refusal, reconnect resync, and a
 chunked large resync.
 """
 
@@ -35,6 +35,7 @@ class Recorder:
         self.goals = 0
         self.connected = 0
         self.percentages: list[int] = []
+        self.deaths = 0
 
     def seed_hash(self) -> str | None:
         return self.expected_hash
@@ -47,6 +48,9 @@ class Recorder:
 
     async def on_progress(self, percentage: int) -> None:
         self.percentages.append(percentage)
+
+    async def on_death(self) -> None:
+        self.deaths += 1
 
     async def on_connected(self, bridge: AsiBridge) -> None:
         self.connected += 1
@@ -73,6 +77,7 @@ def _make_bridge(recorder: Recorder) -> AsiBridge:
         on_goal_reached=recorder.on_goal,
         on_connected=recorder.on_connected,
         on_progress=recorder.on_progress,
+        on_death=recorder.on_death,
     )
 
 
@@ -187,6 +192,28 @@ class TestBridge(unittest.TestCase):
             await asi.send_progress(0)
             await asi.send_progress(93)
             self.assertTrue(await _wait_until(lambda: recorder.percentages == [0, 93]))
+            await asi.close()
+            await bridge.stop()
+
+        asyncio.run(scenario())
+
+    def test_death_is_dispatched_and_a_linked_death_reaches_the_mod(self) -> None:
+        # DeathLink crosses this seam in both directions: the mod reports Tommy's
+        # own death upward, and a linked player's death goes down as its own
+        # frame rather than riding the resync.
+        async def scenario() -> None:
+            recorder = Recorder("abcd1234")
+            bridge = _make_bridge(recorder)
+            await bridge.start()
+            asi = FakeAsi(HOST, bridge.port, presented_seed_hash="abcd1234")
+            await asi.connect()
+            await asi.drain_messages()
+            await asi.send_death()
+            self.assertTrue(await _wait_until(lambda: recorder.deaths == 1))
+            await bridge.send_death_link("PlayerTwo")
+            frame = await asi.next_message()
+            self.assertEqual(frame["type"], protocol.DEATH_LINK)
+            self.assertEqual(frame["source"], "PlayerTwo")
             await asi.close()
             await bridge.stop()
 

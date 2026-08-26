@@ -3,9 +3,11 @@
 Subclasses CommonContext to speak the real AP protocol against a hosted seed,
 and hosts the AsiBridge that the GTA: Vice City mod connects to. It bridges the
 two: AP received-items and checked-locations resync down to the mod, and mod
-check, goal and progress events up to AP. The protocol and framing live in
-bridge.py and protocol.py, which are tested headless; this module is the live
-wiring, verified against a real server and game.
+check, goal and progress events up to AP. DeathLink crosses it in both
+directions, gated here rather than in the mod, since the option is slot_data.
+The protocol and framing live in bridge.py and protocol.py, which are tested
+headless; this module is the live wiring, verified against a real server and
+game.
 
 Normally launched from the Archipelago Launcher's "GTA Vice City Client"
 button. During development, from inside the Archipelago repo:
@@ -93,6 +95,28 @@ class GTAViceCityCommandProcessor(ClientCommandProcessor):
         self.ctx.set_install_dir(chosen)
         self.output(f"Install folder set to {self.ctx.install_dir} (saved to host.yaml).")
 
+    def _cmd_deathlink(self, state: str = "") -> None:
+        """Turn DeathLink on or off for this session, whatever the seed rolled.
+        Usage: /deathlink [on | off | seed]. Bare flips it, and 'seed' hands it
+        back to the seed's own option."""
+        wanted = state.strip().lower()
+        if wanted in ("on", "true", "1"):
+            self.ctx.death_link_override = True
+        elif wanted in ("off", "false", "0"):
+            self.ctx.death_link_override = False
+        elif wanted == "seed":
+            self.ctx.death_link_override = None
+        elif not wanted:
+            self.ctx.death_link_override = not self.ctx.death_link_enabled
+        else:
+            self.output("Usage: /deathlink [on | off | seed]")
+            return
+        self.ctx.refresh_death_link()
+        source = ("the seed's own option" if self.ctx.death_link_override is None
+                  else "your override for this session")
+        self.output(f"DeathLink is {'on' if self.ctx.death_link_enabled else 'off'} "
+                    f"({source}).")
+
     def _cmd_restore(self) -> None:
         """Restore your normal saves, undoing Archipelago save isolation. Close
         the game first."""
@@ -120,6 +144,10 @@ class GTAViceCityContext(CommonContext):
     def __init__(self, server_address: str | None, password: str | None,
                  bridge_port: int, slot_name: str | None = None) -> None:
         super().__init__(server_address, password)
+        # CommonContext keeps `tags` as a CLASS attribute, so update_death_link
+        # would otherwise add DeathLink to the set every context in this process
+        # shares. An instance copy keeps this session's tags this session's.
+        self.tags = set(self.tags)
         if slot_name:
             self.auth = slot_name
         self.bridge_port = bridge_port
@@ -142,6 +170,17 @@ class GTAViceCityContext(CommonContext):
         # The ASI configuration from slot_data: item id -> unlock global, and
         # completion global -> location id. Captured on Connected.
         self.asi_config: dict = {}
+        # Whether DeathLink is on, and the two answers it is worked out from: the
+        # seed's own option, from slot_data on Connected, and a /deathlink the
+        # player asked for, which wins while it is set so a reconnect re-reading
+        # slot_data cannot undo it. None means follow the seed.
+        #
+        # This is the gate for both directions: the mod reports every wasted state
+        # and obeys every kill it is sent, because it has no copy of the option
+        # and a save's own state must never be what decides.
+        self.death_link_enabled = False
+        self.death_link_from_seed = False
+        self.death_link_override: bool | None = None
         # Client-side goal detection, configured from slot_data on Connected.
         # hidden_packages counts received copies of the macguffin; final_mission
         # watches for the finale location being checked; hundred_percent waits
@@ -167,6 +206,7 @@ class GTAViceCityContext(CommonContext):
             on_check=self.on_bridge_check,
             on_goal_reached=self.on_bridge_goal,
             on_progress=self.on_bridge_progress,
+            on_death=self.on_bridge_death,
             on_connected=self.on_bridge_connected,
             logger=logger,
         )
@@ -210,6 +250,12 @@ class GTAViceCityContext(CommonContext):
                 # property strands exist as items at all before it lists them.
                 "enable_properties": bool(slot_data.get("enable_properties", False)),
             }
+            # The tag has to be added AFTER the Connect, because the option
+            # arrives in the reply to it: send_connect carries whatever tags are
+            # set at the time, so a slot with DeathLink on is tagged by the
+            # ConnectUpdate update_death_link sends here, one frame later.
+            self.death_link_from_seed = bool(slot_data.get("death_link", False))
+            self.refresh_death_link()
             self.slot_goal = slot_data.get("goal")
             self.goal_uncounted_locations = set(
                 slot_data.get("goal_uncounted_locations", []))
@@ -458,6 +504,58 @@ class GTAViceCityContext(CommonContext):
 
     async def on_bridge_goal(self) -> None:
         await self._finish_goal()
+
+    def refresh_death_link(self) -> None:
+        """Work out whether DeathLink is on and tell the server. Called on every
+        Connected and on /deathlink, so the tag always says what this session
+        actually does."""
+        self.death_link_enabled = (self.death_link_from_seed
+                                   if self.death_link_override is None
+                                   else self.death_link_override)
+        self._schedule(self.update_death_link(self.death_link_enabled))
+
+    def on_deathlink(self, data: dict) -> None:
+        """A linked player died, so Tommy dies too.
+
+        Not queued for a game that is not there. A death happens to a player who
+        is playing, so one that arrives with no mod connected is stale by the
+        time a game could act on it, unlike a location, which is a permanent fact
+        about the slot and is replayed until it lands. The mod defers it through
+        a cutscene and drops it if Tommy is already dying, which is the only
+        deferral either side does.
+        """
+        super().on_deathlink(data)
+        if not self.death_link_enabled:
+            # The server routes a bounce only to a tagged client, so the option
+            # being off here means the tag outlived it, which nothing else covers.
+            return
+        if not self.bridge.connected:
+            logger.info("DeathLink: no game is connected, so the death is dropped.")
+            return
+        self._schedule(self._deliver_death(str(data.get("source") or "another world")))
+
+    async def _deliver_death(self, source: str) -> None:
+        # The toast goes first, so the line naming who killed Tommy is on screen
+        # before the frame that kills him rather than after the respawn.
+        await self.bridge.send_toast([
+            ("DeathLink", protocol.TOAST_TRAP),
+            (" from ", protocol.TOAST_CONNECTIVE),
+            (source, protocol.TOAST_OTHER_SLOT),
+        ])
+        await self.bridge.send_death_link(source)
+
+    async def on_bridge_death(self) -> None:
+        """Tommy was wasted in game, so every linked slot dies with him.
+
+        The mod reports every wasted state and the option is read here, so a seed
+        with DeathLink off drops the report. Nothing else here suppresses one: the
+        mod never reports a death it caused itself, which is what keeps two linked
+        slots from killing each other forever, so a window on this side could only
+        swallow a real death.
+        """
+        if not self.death_link_enabled or self.slot is None:
+            return
+        await self.send_death(f"{self._player_name(self.slot)} was wasted in Vice City.")
 
     async def on_bridge_progress(self, percentage: int) -> None:
         # The game's own "Percentage completed" stat. Remembered first and sent
