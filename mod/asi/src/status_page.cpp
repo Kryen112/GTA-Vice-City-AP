@@ -89,6 +89,12 @@ constexpr float kLabelGap = 5.0f;
 constexpr float kValueInset = 2.0f;
 // What a heading draws at, against the rows around it.
 constexpr float kHeadingScale = 0.9f;
+// What a RECENT row draws at. Smaller than the page's own rows on purpose: the
+// block is a history to glance over rather than state to read, its lines are the
+// longest on the page (a sentence and a location), and at the body size nearly
+// every one of them was cut. Smaller text fits more of a location, so the rows say
+// more while taking less of the eye.
+constexpr float kRecentScale = 0.78f;
 
 // The relations the one-line-per-row guarantee rests on. A line narrowed to its
 // column stops short of the wrap edge a gutter further out, and the inset pulls a
@@ -125,6 +131,18 @@ float DesignTextWidth(const std::string& text) {
   if (text.size() > kWidenMaxChars) return std::numeric_limits<float>::max();
   CFont::SetFontStyle(FONT_STANDARD);
   CFont::SetScale(StretchX(kGeometry.scale_x), StretchY(kGeometry.scale_y));
+  return CFont::GetStringWidth(Widen(text), true);
+}
+
+// The same, for a RECENT row, which draws smaller than the rows around it. Its own
+// measure because the fitting has to ask about the size the line really draws at:
+// measured at the body size, a line that fits would be cut short of the column and
+// one that does not would be cut when it need not have been.
+float DesignRecentWidth(const std::string& text) {
+  if (text.size() > kWidenMaxChars) return std::numeric_limits<float>::max();
+  CFont::SetFontStyle(FONT_STANDARD);
+  CFont::SetScale(StretchX(kGeometry.scale_x * kRecentScale),
+                  StretchY(kGeometry.scale_y * kRecentScale));
   return CFont::GetStringWidth(Widen(text), true);
 }
 
@@ -206,15 +224,25 @@ void DrawColumn(const std::vector<PanelLine>& lines, float column_x,
     // these, since summing per-segment widths drifts. The fitting already cut this
     // line to the column, so nothing here can reach the wrap edge.
     if (!line.segments.empty()) {
+      CFont::SetScale(StretchX(kGeometry.scale_x * scale * kRecentScale),
+                      StretchY(kGeometry.scale_y * scale * kRecentScale));
       float x = left;
       for (const ToastSegment& segment : line.segments) {
         if (segment.text.empty()) continue;
         const wchar_t* text = Widen(segment.text);
+        // Measured before it is printed. CFont::PrintString overwrites a trailing
+        // space in the buffer it is handed with a terminator (0x551381), so
+        // printing first shortens the string the advance then measures and every
+        // segment ending in a space loses it.
+        const float advance = CFont::GetStringWidth(text, true);
         CFont::SetColor(ToastRoleColor(segment.role, alpha));
         CFont::PrintString(x, StretchY(y), text);
-        x += CFont::GetStringWidth(text, true);
+        x += advance;
       }
       y += row_height;
+      // Back to the page's own size for whatever follows in this column.
+      CFont::SetScale(StretchX(kGeometry.scale_x * scale),
+                      StretchY(kGeometry.scale_y * scale));
       continue;
     }
     if (line.label.empty()) {
@@ -474,7 +502,8 @@ void StatusPage::Draw(const std::vector<StatusSection>& sections) const {
   // was composed of.
   const std::vector<std::vector<PanelLine>> columns = PlanPanelColumns(
       FitPanelLines(FlattenPanel(sections), StretchX(kGeometry.column_width),
-                    StretchX(kLabelGap), DesignTextWidth, DesignHeadingWidth),
+                    StretchX(kLabelGap), DesignTextWidth, DesignHeadingWidth,
+                    DesignRecentWidth),
       kColumnCount);
   const float row_height = FittedRowHeight(
       TallestColumn(columns), cover_bottom - kGeometry.top_y, kGeometry.row_height);

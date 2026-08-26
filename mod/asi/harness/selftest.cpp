@@ -80,6 +80,13 @@ float MeasureHeadingUnits(const std::string& text) {
   return 1.2f * MeasureUnits(text);
 }
 
+// A RECENT row draws smaller than the rows around it, which is the third face the
+// fitting has to measure in. Taken here at the same fraction the page uses, so a
+// line accepted by the fitting is one the drawing can really hold.
+float MeasureRecentUnits(const std::string& text) {
+  return 0.78f * MeasureUnits(text);
+}
+
 void Expect(bool condition, const char* label) {
   if (!condition) {
     std::cerr << "FAIL: " << label << "\n";
@@ -1424,8 +1431,8 @@ int main() {
     // what the drain rate is reasoned about. The anchor sits above the radar's top
     // edge and the ceiling clears the help box.
     ToastGeometry geometry;
-    Expect(ToastLineCapacity(geometry) == 9,
-           "the measured band holds nine lines, which is four two-line rows");
+    Expect(ToastLineCapacity(geometry) == 11,
+           "the measured band holds eleven lines, which is five two-line rows");
     ToastGeometry narrow;
     narrow.ceiling_y = narrow.anchor_y;
     Expect(ToastLineCapacity(narrow) == 1,
@@ -2459,7 +2466,7 @@ int main() {
     // really laid out from, it still fits the band at a size worth reading.
     const std::vector<PanelLine> narrowed =
         FitPanelLines(worst, kColumnUnits, kLabelGapUnits, MeasureUnits,
-                      MeasureHeadingUnits);
+                      MeasureHeadingUnits, MeasureRecentUnits);
     const int narrowed_tallest = TallestColumn(PlanPanelColumns(narrowed, 4));
     Expect(narrowed_tallest <= 28,
            "and inside twenty-eight once every line is narrowed to its column");
@@ -2482,7 +2489,7 @@ int main() {
     bool every_line_narrow = true;
     for (const float column : {kColumnUnits, kColumnUnits * 0.75f}) {
       const std::vector<PanelLine> narrow = FitPanelLines(
-          worst, column, kLabelGapUnits, MeasureUnits, MeasureHeadingUnits);
+          worst, column, kLabelGapUnits, MeasureUnits, MeasureHeadingUnits, MeasureRecentUnits);
       for (const PanelLine& line : narrow) {
         if (line.blank) continue;
         const std::string& text = line.label.empty() ? line.value : line.label;
@@ -2511,7 +2518,7 @@ int main() {
     for (const float column : {kColumnUnits, kColumnUnits * 0.75f}) {
       const std::vector<std::vector<PanelLine>> dealt = PlanPanelColumns(
           FitPanelLines(worst, column, kLabelGapUnits, MeasureUnits,
-                        MeasureHeadingUnits),
+                        MeasureHeadingUnits, MeasureRecentUnits),
           4);
       for (std::size_t index = 1; index < dealt.size(); ++index) {
         if (dealt[index].empty() || !dealt[index].front().joined_above) continue;
@@ -2555,7 +2562,7 @@ int main() {
     const std::vector<PanelLine> fits =
         FitPanelLines({{"Taxi", "none", StatusTone::kPlain, false, false}},
                       kColumnUnits, kLabelGapUnits, MeasureUnits,
-                      MeasureHeadingUnits);
+                      MeasureHeadingUnits, MeasureRecentUnits);
     Expect(fits.size() == 1 && fits[0].label == "Taxi" && fits[0].value == "none" &&
                !fits[0].value_alone,
            "a label and a value that fit a column share their row");
@@ -2565,7 +2572,7 @@ int main() {
     // it is held and in how many districts.
     const std::vector<PanelLine> split = FitPanelLines(
         {{"Property Purchases", "HELD 10/11", StatusTone::kHeld, false, false}},
-        kColumnUnits, kLabelGapUnits, MeasureUnits, MeasureHeadingUnits);
+        kColumnUnits, kLabelGapUnits, MeasureUnits, MeasureHeadingUnits, MeasureRecentUnits);
     Expect(split.size() == 2 && split[0].label == "Property Purchases" &&
                split[0].value.empty(),
            "a pair too wide for its column leaves the label a row of its own");
@@ -2579,7 +2586,7 @@ int main() {
     // as one.
     const std::vector<PanelLine> rebroken = FitPanelLines(
         {{"", "         Escobar International", StatusTone::kOpen, false, false}},
-        kColumnUnits, kLabelGapUnits, MeasureUnits, MeasureHeadingUnits);
+        kColumnUnits, kLabelGapUnits, MeasureUnits, MeasureHeadingUnits, MeasureRecentUnits);
     Expect(rebroken.size() == 2 && rebroken[0].value == "         Escobar" &&
                rebroken[1].value == "         International" &&
                rebroken[1].joined_above,
@@ -2590,7 +2597,7 @@ int main() {
     // composer's own wrapping puts them.
     const std::vector<PanelLine> prefixed = FitPanelLines(
         {{"", "free in: Escobar International", StatusTone::kOpen, false, false}},
-        kColumnUnits, kLabelGapUnits, MeasureUnits, MeasureHeadingUnits);
+        kColumnUnits, kLabelGapUnits, MeasureUnits, MeasureHeadingUnits, MeasureRecentUnits);
     Expect(prefixed.size() == 2 && prefixed[0].value == "free in: Escobar" &&
                prefixed[1].value == "         International",
            "and a line carrying the prefix indents under it rather than under "
@@ -2600,7 +2607,7 @@ int main() {
     // so the font cannot fold it either, and cutting it would hide what it names.
     const std::vector<PanelLine> unbreakable = FitPanelLines(
         {{"", "AStationNameLongerThanAnyColumn", StatusTone::kOpen, false, false}},
-        kColumnUnits, kLabelGapUnits, MeasureUnits, MeasureHeadingUnits);
+        kColumnUnits, kLabelGapUnits, MeasureUnits, MeasureHeadingUnits, MeasureRecentUnits);
     Expect(unbreakable.size() == 1 &&
                unbreakable[0].value == "AStationNameLongerThanAnyColumn",
            "a word wider than a column is drawn whole rather than cut");
@@ -2610,7 +2617,7 @@ int main() {
         FitPanelLines({{"", "", StatusTone::kPlain, false, true},
                        {"MISSION STRANDS", "", StatusTone::kPlain, true, false}},
                       kColumnUnits, kLabelGapUnits, MeasureUnits,
-                      MeasureHeadingUnits);
+                      MeasureHeadingUnits, MeasureRecentUnits);
     Expect(passed.size() == 2 && passed[0].blank && passed[1].heading &&
                passed[1].label == "MISSION STRANDS",
            "a blank line and a heading that fits come through the fitting whole");
@@ -2621,7 +2628,7 @@ int main() {
     // page draws, and a heading that folds costs the row under it.
     const std::vector<PanelLine> heading = FitPanelLines(
         {{"THE GAME COUNTS AND MORE", "", StatusTone::kPlain, true, false}},
-        kColumnUnits, kLabelGapUnits, MeasureUnits, MeasureHeadingUnits);
+        kColumnUnits, kLabelGapUnits, MeasureUnits, MeasureHeadingUnits, MeasureRecentUnits);
     Expect(MeasureUnits("THE GAME COUNTS AND MORE") <= kColumnUnits &&
                heading.size() > 1 && heading[0].heading && heading[1].heading &&
                heading[1].joined_above,

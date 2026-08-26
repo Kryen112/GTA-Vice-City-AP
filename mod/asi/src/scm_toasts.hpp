@@ -157,9 +157,13 @@ struct ToastGeometry {
   float width = 340.0f;
   // The highest a line may draw, which is what bounds the band.
   float ceiling_y = 100.0f;
-  float line_height = 17.0f;
-  float scale_x = 0.55f;
-  float scale_y = 0.9f;
+  // Measured in game and brought down from 0.55/0.9 at 17: a row at that size took
+  // a fifth of the screen's height on its own and its location line still had to be
+  // cut. Smaller text also means more of a location fits, so a row says more in
+  // less space, and the band holds six two-line rows where it held four.
+  float line_height = 14.0f;
+  float scale_x = 0.42f;
+  float scale_y = 0.72f;
   // How far a row's second and later lines are set in from the first, so the
   // location reads as belonging to the sentence above it.
   float continuation_indent = 10.0f;

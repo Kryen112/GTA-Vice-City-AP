@@ -695,14 +695,16 @@ inline std::vector<PanelLine> FlattenPanel(const std::vector<StatusSection>& sec
 // spaces.
 //
 // Measured at the design size, which is the largest the page ever draws at, so a
-// line that fits here fits at every size the fitting can pick. Headings take a
-// measure of their own, because they draw in another face: the taller the band the
-// panel is given, the larger the whole page draws, and a heading measured under the
-// body face would be the one line left free to fold.
+// line that fits here fits at every size the fitting can pick. Headings and
+// segmented lines each take a measure of their own, because neither draws in the
+// body's face and size: the taller the band the panel is given the larger the whole
+// page draws, and a line measured under the wrong one of the three is either folded
+// or cut when it need not have been.
 inline std::vector<PanelLine> FitPanelLines(const std::vector<PanelLine>& lines,
                                             float column_width, float label_gap,
                                             TextWidth measure,
-                                            TextWidth heading_measure) {
+                                            TextWidth heading_measure,
+                                            TextWidth segment_measure) {
   std::vector<PanelLine> fitted;
   fitted.reserve(lines.size());
   // Every piece a line breaks into after the first belongs with the one before it,
@@ -725,7 +727,10 @@ inline std::vector<PanelLine> FitPanelLines(const std::vector<PanelLine>& lines,
     // holds for it the same way it holds for everything else.
     if (!line.segments.empty()) {
       PanelLine part = line;
-      part.segments = FitSegmentLine(line.segments, column_width, measure);
+      // Its own measure: a segmented line draws smaller than the rows around it,
+      // so measuring it at the body size would cut it short of the column.
+      part.segments =
+          FitSegmentLine(line.segments, column_width, segment_measure);
       fitted.push_back(part);
       continue;
     }

@@ -151,13 +151,22 @@ void DrawToastStack(ToastStackState& state, const ToastGeometry& geometry,
       for (const ToastSegment& segment : line) {
         if (segment.text.empty()) continue;
         const wchar_t* text = Widen(segment.text);
+        // MEASURED BEFORE IT IS PRINTED, and the order is the whole point:
+        // CFont::PrintString overwrites a TRAILING SPACE in the buffer it is
+        // handed with a terminator (0x551381, guarded on the character being a
+        // space and the next one being the terminator). Printing first therefore
+        // shortens the very string the advance is about to measure, and every
+        // segment ending in a space loses it: "You found your" ran straight into
+        // the item name. GetStringWidth itself is innocent, since `sentence` true
+        // walks past spaces (0x5506F4).
+        const float advance = CFont::GetStringWidth(text, true);
         CFont::SetColor(ToastRoleColor(segment.role, alpha));
         CFont::PrintString(x, StretchY(y), text);
-        // Each segment starts where the last one ended, measured in the face and
-        // scale this line draws in. Per segment ONLY to advance: whether the LINE
-        // fits was decided from its whole text above, never from a sum of these,
-        // since summing drifts and spreads the words apart.
-        x += CFont::GetStringWidth(text, true);
+        // Each segment starts where the last one ended, in the face and scale this
+        // line draws in. Per segment ONLY to advance: whether the LINE fits was
+        // decided from its whole text above, never from a sum of these, since
+        // summing drifts and spreads the words apart.
+        x += advance;
       }
       y -= geometry.line_height;
     }
