@@ -1,12 +1,19 @@
 """Builds gta_vice_city.apworld with Archipelago's own packaging and installs it.
 
 Links the world into the Archipelago checkout's worlds folder so the core can
-discover it, packages it into an .apworld using Archipelago's own
-APWorldContainer to write the archipelago.json manifest, writes it to dist, and
-copies it into the frozen install's custom_worlds folder. Test caches and
-compiled files stay out of the archive.
+discover it, stages the mod payload inside the world package, hands the
+packaging itself to Archipelago's "Build APWorlds" launcher component, copies
+what the component wrote to dist, and copies that into the frozen install's
+custom_worlds folder.
 
     python scripts/build_apworld.py [output_dir]
+
+The component is the packaging path the apworld format documents, so nothing
+here decides what a well formed apworld looks like. It merges the world's own
+archipelago.json with the container version fields the format requires, and it
+reads its exclusions from Archipelago's GLOBAL.apignore plus the world's
+.apignore. What this build produces is what the core's own release build
+produces, which is what every Archipelago an outside player runs will accept.
 
 The install target defaults to %ProgramData%/Archipelago/custom_worlds and is
 overridable with the AP_CUSTOM_WORLDS environment variable.
@@ -20,25 +27,41 @@ import os
 import pathlib
 import shutil
 import struct
+import subprocess
 import sys
-import zipfile
 
 from ap_env import WORLD_NAME, WORLD_SOURCE, archipelago_root, link_world
 
 REPOSITORY_ROOT = pathlib.Path(__file__).resolve().parent.parent
 
-# The world version stamped into the apworld manifest.
-WORLD_VERSION = "0.1.0"
+# The world's own manifest, the half of the packaged one the component carries
+# over untouched. It holds the world version and the core version floor.
+WORLD_MANIFEST = WORLD_SOURCE / "archipelago.json"
 
-EXCLUDED_DIRECTORIES = {"__pycache__", "test", ".pytest_cache"}
-EXCLUDED_SUFFIXES = {".pyc", ".pyo"}
+# Fields the packaged apworld cannot do without. game names the world to build,
+# world_version orders two installed copies of it, and minimum_ap_version keeps
+# a core too old to run this world from loading it at all.
+REQUIRED_MANIFEST_FIELDS = ("game", "world_version", "minimum_ap_version")
 
-# The mod payload the client's installer deploys, staged into the apworld under
-# data/mod. Only our own files: the player supplies the ASI loader and CLEO. The
-# compiled main.scm gates staging, since without it the mod is not playable.
+# The mod payload the client's installer deploys, staged into the world package
+# under data/mod. Only our own files: the player supplies the ASI loader and
+# CLEO. The compiled main.scm gates staging, since without it the mod is not
+# playable.
 MOD_ASI = REPOSITORY_ROOT / "mod" / "asi" / "plugin" / "bin" / "GTA-VC" / "Release" / "GtaVcAp.VC.asi"
 MOD_CLEO_DIR = REPOSITORY_ROOT / "mod" / "cleo"
 MOD_SCM = REPOSITORY_ROOT / "mod" / "scm" / "main.scm"
+
+# Where the payload is staged for the component to pick up. It is written for
+# the length of one build and cleared again, so the only copy that outlives a
+# build is the one inside the apworld. A copy left in the source tree would be a
+# second payload with no freshness gate on it: the installer prefers a local
+# data/mod over the packaged one, so a client run from the checkout would deploy
+# whatever an older build happened to leave there.
+#
+# The build owns data/mod and not data, which is where an apworld conventionally
+# keeps shipped assets. Clearing destroys only what the build wrote, so a data
+# file this world starts committing later survives it.
+STAGED_PAYLOAD = WORLD_SOURCE / "data" / "mod"
 
 # What the ASI is compiled from, for the staleness check below. The harness is
 # left out because it builds its own binaries and is named by no ClCompile entry,
@@ -54,11 +77,24 @@ ASI_SOURCE_GLOBS = (
     "mod/asi/plugin/GtaVcAp.vcxproj",
 )
 
+# Runs the launcher component in a process of its own. Loading it here would
+# pull every world in the checkout into this one, and the component signs off by
+# opening a file browser on its output folder, which a build run from a hook or
+# from CI has no use for.
+PACKAGE_PROGRAM = """
+import sys
 
-def _included(path: pathlib.Path) -> bool:
-    if any(part in EXCLUDED_DIRECTORIES for part in path.relative_to(WORLD_SOURCE).parts):
-        return False
-    return path.suffix not in EXCLUDED_SUFFIXES
+import Launcher
+from worlds.LauncherComponents import components
+
+Launcher.open_folder = lambda folder: None
+component = next((entry for entry in components
+                  if entry.display_name == "Build APWorlds"), None)
+if component is None:
+    sys.exit("Archipelago's Build APWorlds component is not registered. It "
+             "lives in a source checkout, not in a frozen install.")
+Launcher.run_component(component, sys.argv[1])
+"""
 
 
 def _installer_module():
@@ -69,6 +105,32 @@ def _installer_module():
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
+
+
+def manifest_game() -> str:
+    """The game the component is asked to package, from the world's manifest.
+
+    Refuses a manifest missing any required field rather than packaging around
+    it. The component happily writes an apworld when there is no manifest to
+    carry over, and that apworld loses its version floor silently: it installs
+    into a core too old to run it and fails somewhere else entirely.
+    """
+    if not WORLD_MANIFEST.is_file():
+        raise SystemExit(
+            f"Refusing to package: no {WORLD_MANIFEST.name} in the world "
+            "package. It carries the game name, the world version, and the "
+            "core version floor into the apworld.")
+    try:
+        manifest = json.loads(WORLD_MANIFEST.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as error:
+        raise SystemExit(f"Refusing to package: {WORLD_MANIFEST.name} does not "
+                         f"read as json ({error}).") from error
+    missing = [field for field in REQUIRED_MANIFEST_FIELDS if field not in manifest]
+    if missing:
+        raise SystemExit(
+            f"Refusing to package: {WORLD_MANIFEST.name} names no "
+            f"{', '.join(missing)}.")
+    return manifest["game"]
 
 
 def stale_sources(artifact: pathlib.Path, root: pathlib.Path,
@@ -153,10 +215,10 @@ def _refuse_oversized_main() -> None:
 
 
 def _refuse_unshippable_payload() -> None:
-    """Stops the build before it writes anything when the payload cannot ship.
+    """Stops the build before it stages anything when the payload cannot ship.
 
-    Runs before the archive is opened, because raising inside it would still
-    close a well formed apworld carrying the world and the manifest and no mod at
+    Runs before the world package is touched, because refusing later would still
+    leave a well formed apworld carrying the world and the manifest and no mod at
     all. The installer reads an empty payload as nothing to manage, so that
     archive would not merely be incomplete, it would stop replacing the stale ASI
     it was meant to fix.
@@ -194,17 +256,35 @@ def _refuse_unshippable_payload() -> None:
         "Win32.")
 
 
-def _stage_mod_payload(bundle: zipfile.ZipFile) -> None:
-    # The mod needs both the compiled ASI (the AP communication layer) and the
-    # compiled main.scm (mission gating) to be playable. Only two states reach
-    # here: neither present, which ships an apworld with no payload for the
-    # installer to no-op on, and both present, which stages them. The caller
-    # refuses the half-built state before anything is written, so this function
-    # would raise part way through an archive if it were ever called without it.
+def clear_staged_payload() -> None:
+    """Removes the staged payload from the world package.
+
+    Runs before staging as well as after packaging, so a payload an interrupted
+    build left behind is never the one that ships. The data directory the
+    staging created goes with it when the build is the only thing in there, and
+    stays when it is not.
+    """
+    if STAGED_PAYLOAD.is_dir():
+        shutil.rmtree(STAGED_PAYLOAD)
+    container = STAGED_PAYLOAD.parent
+    if container.is_dir() and not any(container.iterdir()):
+        container.rmdir()
+
+
+def stage_mod_payload() -> list[str]:
+    """Copies the mod payload into the world package, and names what it copied.
+
+    The mod needs both the compiled ASI (the AP communication layer) and the
+    compiled main.scm (mission gating) to be playable. Only two states reach
+    here: neither present, which ships an apworld with no payload for the
+    installer to no-op on, and both present, which stages them. The caller
+    refuses the half-built state before this runs.
+    """
+    clear_staged_payload()
     if not MOD_ASI.is_file() and not MOD_SCM.is_file():
         print("Mod payload not staged (no compiled ASI or main.scm); the apworld "
               "ships without the auto-installer.")
-        return
+        return []
     cleo_scripts = sorted(MOD_CLEO_DIR.glob("*.cs")) if MOD_CLEO_DIR.is_dir() else []
     staged = [MOD_ASI.name] + [f"cleo/{script.name}" for script in cleo_scripts] + ["main.scm"]
     # Every staged file must be on the installer's removal manifest (main.scm is
@@ -216,12 +296,48 @@ def _stage_mod_payload(bundle: zipfile.ZipFile) -> None:
             f"Staged payload files not in installer.SHIPPED_PAYLOAD_PATHS: "
             f"{', '.join(unlisted)}. Append them (never remove entries) so "
             "/uninstall cleans every install.")
-    base = pathlib.PurePosixPath(WORLD_NAME) / "data" / "mod"
-    bundle.write(MOD_ASI, str(base / MOD_ASI.name))
-    bundle.write(MOD_SCM, str(base / "main.scm"))
+    STAGED_PAYLOAD.mkdir(parents=True)
+    shutil.copyfile(MOD_ASI, STAGED_PAYLOAD / MOD_ASI.name)
+    shutil.copyfile(MOD_SCM, STAGED_PAYLOAD / "main.scm")
+    if cleo_scripts:
+        (STAGED_PAYLOAD / "cleo").mkdir()
     for script in cleo_scripts:
-        bundle.write(script, str(base / "cleo" / script.name))
+        shutil.copyfile(script, STAGED_PAYLOAD / "cleo" / script.name)
     print(f"Staged mod payload: {', '.join(staged)}.")
+    return staged
+
+
+def package(root: pathlib.Path, game: str) -> pathlib.Path | None:
+    """Runs Archipelago's Build APWorlds component and returns what it wrote.
+
+    The component reads and writes paths relative to the Archipelago root, so it
+    runs from there. Its stdin is closed because loading the world registry
+    reaches ModuleUpdate, which prompts when a dependency is missing, and a
+    prompt nobody can answer is a hang rather than a failure. A world that fails
+    to load that way is dropped by the registry, which is what a build of one
+    other world wants.
+
+    What the component wrote last time is removed first. A world the registry
+    does not hold, because this one failed to import or the link is gone, is a
+    line in the component's log and an exit code of zero, so the only thing that
+    separates a build from a build that did nothing is whether the file is
+    there afterwards. Without this the previous archive would be copied out and
+    installed as though it were this run's.
+    """
+    built = root / "build" / "apworlds" / f"{WORLD_NAME}.apworld"
+    built.unlink(missing_ok=True)
+    completed = subprocess.run(
+        [sys.executable, "-c", PACKAGE_PROGRAM, game],
+        cwd=root, stdin=subprocess.DEVNULL, check=False)
+    if completed.returncode != 0:
+        print(f"Archipelago's Build APWorlds component exited {completed.returncode}.")
+        return None
+    if not built.is_file():
+        print(f"The component wrote no {built}. It packages what the world "
+              f"registry holds, so '{game}' either failed to import or is not "
+              "linked into the checkout.")
+        return None
+    return built
 
 
 def _install_directory() -> pathlib.Path | None:
@@ -232,22 +348,6 @@ def _install_directory() -> pathlib.Path | None:
     if program_data:
         return pathlib.Path(program_data) / "Archipelago" / "custom_worlds"
     return None
-
-
-def _build_manifest() -> tuple[dict, str]:
-    # Use Archipelago's own container so the manifest fields match the installed
-    # core exactly. Pin the minimum core version to this checkout and leave the
-    # maximum unset so newer cores still load the world.
-    from Utils import tuplize_version, version_tuple
-    from worlds.Files import APWorldContainer
-    from worlds.gta_vice_city import GTAViceCityWorld
-
-    container = APWorldContainer()
-    container.game = GTAViceCityWorld.game
-    container.world_version = tuplize_version(WORLD_VERSION)
-    container.minimum_ap_version = version_tuple
-    manifest_path = f"{WORLD_NAME}/archipelago.json"
-    return container.get_manifest(), manifest_path
 
 
 def _install(archive: pathlib.Path) -> None:
@@ -275,28 +375,29 @@ def main() -> int:
         return 1
     if link_world(root) is None:
         return 1
-    sys.path.insert(0, str(root))
 
-    # Before the archive is opened, so a refusal leaves the previous apworld in
+    # Before anything is staged, so a refusal leaves the previous apworld in
     # place rather than replacing it with one that has no mod in it.
+    game = manifest_game()
     _refuse_unshippable_payload()
     _refuse_oversized_main()
 
-    manifest, manifest_path = _build_manifest()
+    # Staging is inside the guard as well as packaging, so a copy that fails
+    # part way through leaves no half payload behind. The installer prefers a
+    # local data/mod to the packaged one, and half a payload is one the mod
+    # cannot run on.
+    try:
+        stage_mod_payload()
+        built = package(root, game)
+    finally:
+        clear_staged_payload()
+    if built is None:
+        return 1
 
     output_dir = pathlib.Path(sys.argv[1]) if len(sys.argv) > 1 else REPOSITORY_ROOT / "dist"
     output_dir.mkdir(parents=True, exist_ok=True)
-    archive = output_dir / f"{WORLD_NAME}.apworld"
-
-    with zipfile.ZipFile(archive, "w", zipfile.ZIP_DEFLATED, compresslevel=9) as bundle:
-        for path in sorted(WORLD_SOURCE.rglob("*")):
-            if not path.is_file() or not _included(path):
-                continue
-            arcname = pathlib.PurePosixPath(WORLD_NAME) / path.relative_to(WORLD_SOURCE).as_posix()
-            bundle.write(path, str(arcname))
-        bundle.writestr(manifest_path, json.dumps(manifest))
-        _stage_mod_payload(bundle)
-
+    archive = output_dir / built.name
+    shutil.copyfile(built, archive)
     print(f"Wrote {archive} ({archive.stat().st_size} bytes).")
     _install(archive)
     return 0

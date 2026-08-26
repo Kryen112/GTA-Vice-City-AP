@@ -6,8 +6,10 @@ pure and parameterized on the root and the globs so it can be driven from a
 temporary directory instead of the repository.
 """
 
+import json
 import os
 import pathlib
+import subprocess
 import sys
 
 SCRIPTS = pathlib.Path(__file__).resolve().parents[1]
@@ -224,3 +226,218 @@ def test_an_unreadable_script_refuses(tmp_path: pathlib.Path, monkeypatch) -> No
         assert "does not read as a compiled script" in str(refusal)
     else:
         raise AssertionError("an unreadable script must refuse to package")
+
+
+MANIFEST = {
+    "game": "Grand Theft Auto Vice City",
+    "world_version": "0.1.0",
+    "minimum_ap_version": "0.6.7",
+}
+
+
+def _manifest(tmp_path: pathlib.Path, text: str) -> pathlib.Path:
+    path = tmp_path / "archipelago.json"
+    path.write_text(text, encoding="utf-8")
+    return path
+
+
+def test_the_manifest_names_the_game_to_package(tmp_path: pathlib.Path, monkeypatch) -> None:
+    monkeypatch.setattr(build_apworld, "WORLD_MANIFEST", _manifest(tmp_path, json.dumps(MANIFEST)))
+    assert build_apworld.manifest_game() == MANIFEST["game"]
+
+
+def test_a_manifest_missing_a_field_refuses(tmp_path: pathlib.Path, monkeypatch) -> None:
+    # Each field is load bearing on its own, so each absence is its own refusal:
+    # the packaging component writes a perfectly valid apworld around a missing
+    # one and the loss shows up only in a player's install.
+    for field in build_apworld.REQUIRED_MANIFEST_FIELDS:
+        short = {key: value for key, value in MANIFEST.items() if key != field}
+        monkeypatch.setattr(build_apworld, "WORLD_MANIFEST", _manifest(tmp_path, json.dumps(short)))
+        try:
+            build_apworld.manifest_game()
+        except SystemExit as refusal:
+            assert field in str(refusal)
+        else:
+            raise AssertionError(f"a manifest with no {field} must refuse to package")
+
+
+def test_an_absent_manifest_refuses(tmp_path: pathlib.Path, monkeypatch) -> None:
+    monkeypatch.setattr(build_apworld, "WORLD_MANIFEST", tmp_path / "archipelago.json")
+    try:
+        build_apworld.manifest_game()
+    except SystemExit as refusal:
+        assert "archipelago.json" in str(refusal)
+    else:
+        raise AssertionError("a world package with no manifest must refuse to package")
+
+
+def test_a_manifest_that_is_not_json_refuses(tmp_path: pathlib.Path, monkeypatch) -> None:
+    monkeypatch.setattr(build_apworld, "WORLD_MANIFEST", _manifest(tmp_path, "{not json at all"))
+    try:
+        build_apworld.manifest_game()
+    except SystemExit as refusal:
+        assert "json" in str(refusal)
+    else:
+        raise AssertionError("an unreadable manifest must refuse to package")
+
+
+def test_the_repository_manifest_is_the_one_that_ships() -> None:
+    # The build reads the committed file, not the constant above, so this is
+    # what keeps the two from drifting into each other.
+    manifest = json.loads(build_apworld.WORLD_MANIFEST.read_text(encoding="utf-8"))
+    for field in build_apworld.REQUIRED_MANIFEST_FIELDS:
+        assert field in manifest, f"the world manifest names no {field}"
+
+
+def _payload(tmp_path: pathlib.Path, monkeypatch, cleo_names: tuple = ("apwatchers.cs",)):
+    """A staging setup on temporary paths: both artifacts, some CLEO, a stage."""
+    asi = _write(tmp_path / "GtaVcAp.VC.asi", 1000)
+    scm = _write(tmp_path / "main.scm", 1000)
+    cleo_dir = tmp_path / "cleo"
+    for name in cleo_names:
+        _write(cleo_dir / name, 1000)
+    staged = tmp_path / "world" / "data" / "mod"
+    monkeypatch.setattr(build_apworld, "MOD_ASI", asi)
+    monkeypatch.setattr(build_apworld, "MOD_SCM", scm)
+    monkeypatch.setattr(build_apworld, "MOD_CLEO_DIR", cleo_dir)
+    monkeypatch.setattr(build_apworld, "STAGED_PAYLOAD", staged)
+    return staged
+
+
+def test_staging_writes_the_payload_the_component_packages(tmp_path: pathlib.Path, monkeypatch) -> None:
+    staged = _payload(tmp_path, monkeypatch)
+    assert build_apworld.stage_mod_payload() == [
+        "GtaVcAp.VC.asi", "cleo/apwatchers.cs", "main.scm"]
+    assert (staged / "GtaVcAp.VC.asi").is_file()
+    assert (staged / "main.scm").is_file()
+    assert (staged / "cleo" / "apwatchers.cs").is_file()
+
+
+def test_clearing_leaves_no_payload_in_the_world_package(tmp_path: pathlib.Path, monkeypatch) -> None:
+    # The staged copy lives for one build. Left behind it is a second payload
+    # with no freshness gate on it, and the installer prefers it to the packaged
+    # one, so a client run from the checkout would deploy whatever is there.
+    staged = _payload(tmp_path, monkeypatch)
+    build_apworld.stage_mod_payload()
+    build_apworld.clear_staged_payload()
+    assert not staged.exists()
+
+
+def test_staging_replaces_what_an_earlier_build_left(tmp_path: pathlib.Path, monkeypatch) -> None:
+    # A script that stopped shipping still sits in the stage after an interrupted
+    # build, and the component packages whatever it finds there.
+    staged = _payload(tmp_path, monkeypatch)
+    _write(staged / "cleo" / "apwatchers.cs", 1000)
+    stale = _write(staged / "cleo" / "apshops.cs", 1000)
+    build_apworld.stage_mod_payload()
+    assert not stale.exists()
+    assert (staged / "cleo" / "apwatchers.cs").is_file()
+
+
+def test_no_artifacts_stages_nothing_and_clears_a_leftover(tmp_path: pathlib.Path, monkeypatch) -> None:
+    # A checkout with no build in it ships an apworld with no payload, and the
+    # one an earlier build staged must not be what goes out in its place.
+    staged = _payload(tmp_path, monkeypatch)
+    build_apworld.stage_mod_payload()
+    monkeypatch.setattr(build_apworld, "MOD_ASI", tmp_path / "absent.asi")
+    monkeypatch.setattr(build_apworld, "MOD_SCM", tmp_path / "absent.scm")
+    assert build_apworld.stage_mod_payload() == []
+    assert not staged.exists()
+
+
+def test_staging_refuses_a_file_the_uninstaller_would_leave(tmp_path: pathlib.Path, monkeypatch) -> None:
+    # The removal manifest is append only, and this is what enforces it: a new
+    # CLEO script that nobody listed installs into a game folder that /uninstall
+    # then cannot clean.
+    staged = _payload(tmp_path, monkeypatch, cleo_names=("apwatchers.cs", "apunlisted.cs"))
+    try:
+        build_apworld.stage_mod_payload()
+    except SystemExit as refusal:
+        assert "cleo/apunlisted.cs" in str(refusal)
+    else:
+        raise AssertionError("a payload the uninstaller cannot clean must refuse to package")
+    assert not staged.exists()
+
+
+def _component(monkeypatch, returncode: int, writes: pathlib.Path | None = None) -> None:
+    """Stands in for the packaging component, writing what it is told to."""
+    def run(*args, **kwargs) -> subprocess.CompletedProcess:
+        if writes is not None:
+            _write(writes, 2000)
+        return subprocess.CompletedProcess(args, returncode)
+    monkeypatch.setattr(build_apworld.subprocess, "run", run)
+
+
+def _built(root: pathlib.Path) -> pathlib.Path:
+    return root / "build" / "apworlds" / f"{build_apworld.WORLD_NAME}.apworld"
+
+
+def test_the_archive_the_component_wrote_is_what_ships(tmp_path: pathlib.Path, monkeypatch) -> None:
+    built = _built(tmp_path)
+    _component(monkeypatch, 0, writes=built)
+    assert build_apworld.package(tmp_path, "Grand Theft Auto Vice City") == built
+
+
+def test_a_component_that_packaged_nothing_ships_nothing(tmp_path: pathlib.Path, monkeypatch) -> None:
+    # The component logs a world the registry does not hold and exits zero, so
+    # the archive from the previous build is still sitting in its output folder.
+    # Copying that one out would install a stale apworld as though it were this
+    # run's, which is the whole reason the build clears the path first.
+    stale = _write(_built(tmp_path), 1000)
+    _component(monkeypatch, 0)
+    assert build_apworld.package(tmp_path, "Grand Theft Auto Vice City") is None
+    assert not stale.exists()
+
+
+def test_a_component_failure_ships_nothing(tmp_path: pathlib.Path, monkeypatch) -> None:
+    stale = _write(_built(tmp_path), 1000)
+    _component(monkeypatch, 1)
+    assert build_apworld.package(tmp_path, "Grand Theft Auto Vice City") is None
+    assert not stale.exists()
+
+
+def test_the_data_directory_goes_only_when_the_build_owns_it(tmp_path: pathlib.Path, monkeypatch) -> None:
+    # data is where an apworld conventionally keeps shipped assets. The build
+    # writes data/mod and takes only that back, so a data file this world starts
+    # committing later is not deleted by every build that runs after it.
+    staged = _payload(tmp_path, monkeypatch)
+    build_apworld.stage_mod_payload()
+    build_apworld.clear_staged_payload()
+    assert not staged.parent.exists()
+
+    build_apworld.stage_mod_payload()
+    kept = _write(staged.parent / "shipped.json", 1000)
+    build_apworld.clear_staged_payload()
+    assert not staged.exists()
+    assert kept.is_file()
+
+
+def test_nothing_is_staged_until_every_gate_has_passed(tmp_path: pathlib.Path, monkeypatch) -> None:
+    # The gates read the repository and the stage writes to it, so the order is
+    # the property: a refusal has to leave the previous apworld and the previous
+    # source tree exactly as they were. Each gate is tested on its own, and
+    # nothing else pins them ahead of the staging.
+    order: list[str] = []
+
+    def records(name: str, result=None):
+        def recorded(*args, **kwargs):
+            order.append(name)
+            return result
+        return recorded
+
+    monkeypatch.setattr(build_apworld, "archipelago_root", records("root", tmp_path))
+    monkeypatch.setattr(build_apworld, "link_world", records("link", tmp_path))
+    monkeypatch.setattr(build_apworld, "manifest_game", records("manifest", "Grand Theft Auto Vice City"))
+    monkeypatch.setattr(build_apworld, "_refuse_unshippable_payload", records("payload"))
+    monkeypatch.setattr(build_apworld, "_refuse_oversized_main", records("main"))
+    monkeypatch.setattr(build_apworld, "stage_mod_payload", records("stage", []))
+    monkeypatch.setattr(build_apworld, "clear_staged_payload", records("clear"))
+    monkeypatch.setattr(build_apworld, "package", records("package", None))
+    monkeypatch.setattr(sys, "argv", ["build_apworld.py"])
+
+    assert build_apworld.main() == 1
+    for gate in ("manifest", "payload", "main"):
+        assert order.index(gate) < order.index("stage"), f"{gate} runs after the payload is staged"
+    # And the stage is cleared whatever the packaging did, which is why it is
+    # the last thing to happen on a run that packaged nothing.
+    assert order[-1] == "clear"

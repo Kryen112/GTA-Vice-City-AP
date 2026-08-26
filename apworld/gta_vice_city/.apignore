@@ -1,0 +1,4 @@
+# What the player installs is the world and the mod payload, not the suite that
+# proves them. The tests live in the source checkout and run from there.
+test/
+.pytest_cache/

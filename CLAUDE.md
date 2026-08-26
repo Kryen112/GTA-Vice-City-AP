@@ -17,9 +17,12 @@ or `git add .`.
 - `apworld/gta_vice_city/client/`: bridge client on CommonClient, bundled in
   the world and registered as a launcher component. Hosts the localhost
   listener; the ASI connects to it. `scripts/build_apworld.py` links the world
-  into the Archipelago checkout, packages it (client included) into a
-  `.apworld` with an Archipelago manifest, and installs it to the frozen
-  install's `custom_worlds`.
+  into the Archipelago checkout, stages the mod payload into it, and hands the
+  packaging to Archipelago's own `Build APWorlds` launcher component, then
+  installs the result to the frozen install's `custom_worlds`. The manifest
+  fields the world owns live in `apworld/gta_vice_city/archipelago.json`, and
+  what stays out of the package lives in its `.apignore`; nothing in `scripts/`
+  decides what a well formed apworld looks like.
 - `mod/asi/`: C++ plugin on plugin-sdk. `mod/cleo/`: CLEO scripts.
   `mod/scm/`: main.scm source for Sanny Builder.
 - `scripts/`: entry points shared by hooks, CI, and manual runs.

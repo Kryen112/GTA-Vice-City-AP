@@ -27,6 +27,10 @@ mod/asi/plugin/obj/
 mod/scm/main.scm
 mod/cleo/*.cs
 
+# The payload staged into the world package for the length of one build.
+# The build clears it again; an interrupted one leaves it behind.
+apworld/gta_vice_city/data/mod/
+
 # The decision log and research, local to this machine
 notes/
 
