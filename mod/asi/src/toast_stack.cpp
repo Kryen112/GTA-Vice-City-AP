@@ -80,9 +80,23 @@ float ToastTopThisFrame(const ToastGeometry& geometry) {
   CFont::SetWrapx(StretchX(kHelpBoxWrapAt) - kHelpBoxInset);
   CRect rect(0.0f, 0.0f, 0.0f, 0.0f);
   CFont::GetTextRect(&rect, StretchX(kHelpBoxX), StretchY(kHelpBoxY), message);
-  // Back into the units the geometry is written in, plus the inset between the last
-  // line and the box's own edge.
-  const float bottom = UnstretchY(rect.bottom) + kHelpBoxInset;
+  // The FAR edge, which this engine's CRect calls `top`, not `bottom`. Decoded off
+  // the non-centred write at 0x550BD5, where the fields land as left(+0),
+  // bottom(+4), right(+8), top(+0xC):
+  //
+  //   bottom = y                      the edge the text starts at
+  //   top    = y + lines * advance    the edge it ends at, advance being
+  //                                   0x6971CC (32) * scale_y * 0x6971D0 (0.5)
+  //                                   plus 0x6971D4 (2), twice over at the end
+  //
+  // So the names read as though the screen counted upward and the box's own bottom
+  // is `top`. Reading `bottom` returned the box's TOP, which is why the stack sat
+  // over the hint instead of under it. Taken as the larger of the two so the naming
+  // cannot bite again.
+  const float far_edge = rect.top > rect.bottom ? rect.top : rect.bottom;
+  // Back into the units the geometry is written in, plus the box's own inset
+  // between its last line and its edge.
+  const float bottom = UnstretchY(far_edge) + kHelpBoxInset;
   return ToastTopBelowBox(geometry, bottom, kHelpBoxGap);
 }
 
