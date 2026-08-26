@@ -401,10 +401,49 @@ class TestTextTableDeploy(unittest.TestCase):
         installer.deploy(self.install, payload=PAYLOAD)
         for name in ("american.gxt", "french.gxt"):
             patched = (self.install / "TEXT" / name).read_bytes()
-            self.assertEqual(installer.gxt_value(patched, installer.PANEL_TEXT_KEY),
-                             installer.PANEL_TEXT)
+            # Every key the mod adds, not the panel key alone: a shop stand
+            # whose key is missing prints its own name back, which is the
+            # signal the marker was put there to replace.
+            for key, value in installer.ADDED_TEXT.items():
+                self.assertEqual(installer.gxt_value(patched, key), value, key)
             backup = self.install / installer.BACKUP_DIR_NAME / name
             self.assertEqual(backup.read_bytes(), VANILLA_TABLE)
+
+    def test_a_table_missing_one_key_makes_the_install_not_current(self) -> None:
+        # What an install patched by an older build looks like: the panel key is
+        # there and a newer one is not. It has to read as stale, or the table
+        # never gains the key and the deploy that would add it never runs.
+        for key in installer.ADDED_TEXT:
+            with self.subTest(key=key):
+                installer.deploy(self.install, payload=PAYLOAD)
+                table = self.install / "TEXT" / "american.gxt"
+                older = VANILLA_TABLE
+                for other, value in installer.ADDED_TEXT.items():
+                    if other != key:
+                        older = installer.add_gxt_key(older, other, value)
+                table.write_bytes(older)
+                self.assertFalse(
+                    installer.mod_is_current(self.install, payload=PAYLOAD))
+                installer.deploy(self.install, payload=PAYLOAD)
+                self.assertEqual(
+                    installer.gxt_value(table.read_bytes(), key),
+                    installer.ADDED_TEXT[key])
+
+    def test_never_backs_up_a_table_an_older_build_patched(self) -> None:
+        # The counterpart of the label-change case below, for a key added later:
+        # the table already carries the panel key, so it is not stock and saving
+        # it as the backup would lose the real stock file for good.
+        (self.install / "TEXT" / "american.gxt").write_bytes(
+            installer.add_gxt_key(VANILLA_TABLE, installer.PANEL_TEXT_KEY,
+                                  installer.PANEL_TEXT))
+        installer.deploy(self.install, payload=PAYLOAD)
+        self.assertFalse(
+            (self.install / installer.BACKUP_DIR_NAME / "american.gxt").exists())
+        self.assertEqual(
+            installer.gxt_value(
+                (self.install / "TEXT" / "american.gxt").read_bytes(),
+                installer.SHOP_ITEM_TEXT_KEY),
+            installer.SHOP_ITEM_TEXT)
 
     def test_an_unpatched_table_makes_the_install_not_current(self) -> None:
         installer.deploy(self.install, payload=PAYLOAD)
@@ -418,7 +457,7 @@ class TestTextTableDeploy(unittest.TestCase):
         (self.install / "TEXT").rmdir()
         log = installer.deploy(self.install, payload=PAYLOAD)
         self.assertTrue(installer.mod_is_current(self.install, payload=PAYLOAD))
-        self.assertFalse([line for line in log if "menu text" in line])
+        self.assertFalse([line for line in log if "the mod's text" in line])
 
     def test_a_truncated_table_is_reported_rather_than_raised(self) -> None:
         # A half-written file raises struct.error out of the readers, which the
@@ -438,7 +477,7 @@ class TestTextTableDeploy(unittest.TestCase):
         (self.install / "TEXT" / "american.gxt").write_bytes(VANILLA_TABLE[:12])
         (self.install / "TEXT" / "french.gxt").write_bytes(VANILLA_TABLE[:20])
         log = installer.deploy(self.install, payload=PAYLOAD)
-        reported = [line for line in log if "Could not add the menu text" in line]
+        reported = [line for line in log if "Could not add the mod's text" in line]
         self.assertEqual(len(reported), 2, log)
         # A table this installer cannot read never holds an install up, and with
         # both of them unreadable there is nothing left to hold one up.
@@ -464,7 +503,7 @@ class TestTextTableDeploy(unittest.TestCase):
         log = installer.deploy(self.install, payload=PAYLOAD)
         self.assertEqual((self.install / "TEXT" / "american.gxt").read_bytes(),
                          b"garbage")
-        self.assertTrue([line for line in log if "Could not add the menu text" in line])
+        self.assertTrue([line for line in log if "Could not add the mod's text" in line])
 
     def test_remove_brings_the_stock_tables_back(self) -> None:
         installer.deploy(self.install, payload=PAYLOAD)
@@ -486,6 +525,18 @@ class TestTextTableDeploy(unittest.TestCase):
         (self.install / installer.BACKUP_DIR_NAME / "american.gxt").unlink()
         log = installer.remove(self.install, payload=PAYLOAD)
         self.assertTrue([line for line in log if "No backup for TEXT/american.gxt" in line])
+
+    def test_remove_restores_a_table_carrying_only_one_of_the_keys(self) -> None:
+        # A table left by an older build carries some of the keys and not
+        # others. Recognising it by any one of them is what lets remove put the
+        # stock file back instead of reading it as the player's own.
+        for key, value in installer.ADDED_TEXT.items():
+            with self.subTest(key=key):
+                installer.deploy(self.install, payload=PAYLOAD)
+                table = self.install / "TEXT" / "american.gxt"
+                table.write_bytes(installer.add_gxt_key(VANILLA_TABLE, key, value))
+                installer.remove(self.install, payload=PAYLOAD)
+                self.assertEqual(table.read_bytes(), VANILLA_TABLE)
 
 
 if __name__ == "__main__":

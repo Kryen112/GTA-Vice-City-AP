@@ -114,7 +114,19 @@ version control.
 - Shop class flag: `$9586`, one while shuffle_shops is on, stamped by the
   ASI from slot_data. The six relocated shop threads read it before they
   put the AP marker on a wall or withhold what a purchase hands over, so a
-  seed without the class leaves every shop exactly vanilla.
+  seed without the class leaves every shop exactly vanilla. A stand whose
+  check is still to be taken also announces itself by the text key `APITEM`
+  instead of the item's own name, and steps over the vanilla "you already
+  have this" refusal: the tool stores' `not is_current_player_weapon`, the
+  Ammu-Nations' `9999 > $852` ammo cap and the body armour stand's
+  `100 > $873`. That refusal is what a pending stand cannot survive, since a
+  tool store equips the player's own melee weapon on every frame it is open
+  and a pending stand hands over no weapon to replace it with. The
+  affordability test and the out-of-stock flags are NOT opened: the charge
+  still leaves the player's money, and out of stock is already a logic term,
+  carried by `shop_data.SHOP_STOCK_MISSIONS` for the fourteen items a mission
+  racks and by `shop_data.CROSSING_STOCKED_ITEMS` for the Vice Point sniper,
+  whose flag is the one the mainland crossing sets.
 - Ability locks: `$9587..$9594` (one lock flag per ability item, ASI-stamped
   from slot_data) and `$9595..$9602` (one unlock per item, ASI-written from
   the received items) are ASI-facing only; no gate reads them. The ASI

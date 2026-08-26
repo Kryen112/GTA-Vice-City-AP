@@ -973,6 +973,36 @@ SHOP_MARKER_MODEL = 376
 # the world.
 SHOPS_ENABLED = 9586
 
+# The text table key a stand announces itself by while its check is still to be
+# taken. The wall wears the AP marker and the name over it has to agree, since a
+# stand calling itself "Chainsaw" while it hands nothing over says the opposite.
+# Mirrors installer.SHOP_ITEM_TEXT_KEY, which is what puts the string in the
+# game's own text tables, and is pinned by check_scm_mirrors.
+SHOP_PENDING_NAME_KEY = "APITEM"
+
+# The vanilla "you already have this" tests, one line each and one form per shop
+# kind: a tool store refuses a tool the player is holding, an Ammu-Nation
+# refuses a gun already at the ammo cap, and a body armour stand refuses a
+# player already at 100. A pending stand is not selling that thing, it is
+# selling the check, so each of these is stepped over while the check is out.
+#
+# Leaving them in place makes a check UNREACHABLE rather than merely awkward. A
+# tool store equips the player's own melee weapon on every frame it is open, so
+# the stand selling that tool refuses forever, and buying a different stand
+# cannot break the tie the way it does in vanilla, since a pending stand hands
+# over no weapon to replace it with. The armour stand is the same story for a
+# player standing at full armour.
+#
+# The affordability test is deliberately not here. The charge still leaves the
+# player's money, so a stand that sold without it would run the balance
+# negative.
+OWNERSHIP_TESTS = (
+    re.compile(r"^  not is_current_player_weapon \$player_char"
+               r" current_weapon == \d+$"),
+    re.compile(r"^  9999 > \$\d+$"),
+    re.compile(r"^  100 > \$\d+$"),
+)
+
 # (thread, script global, what it hands over, its own model) per shop item,
 # mirroring shop_data.SHOP_ITEMS in order. The third element is a weapon type,
 # or "armour" for the body armour every Ammu-Nation sells, which grants armour
@@ -1160,11 +1190,59 @@ def add_shop_completions():
     replaced_span = {}
     charges = []
     seen = set()
+    opened = set()
     label = 0
     marker_requests = []
+
+    def open_for_the_check(thread, key, naming, guard):
+        """Rewrite what one stand says and what it refuses while its check is
+        out: the AP name in place of the item's own, and the vanilla ownership
+        test stepped over. Both branches carry the same term the grant gate
+        does, so a seed without the class reads and refuses exactly vanilla."""
+        nonlocal label
+        assert naming is not None, (
+            f"shops: {thread} sells {key[1]} without naming it, so nothing "
+            "says the stand is an AP check")
+        assert guard is not None, (
+            f"shops: {thread} sells {key[1]} with no ownership test to open, "
+            "so either the test moved or a new refusal is unaccounted for")
+        global_index = completion[key]
+        head, _, tail = lines[naming].partition("'")
+        _vanilla_key, _, rest = tail.partition("'")
+        assert head and rest, f"shops: {lines[naming]} names no text key"
+        label += 1
+        pending_label = f"{thread}_APSHOP_PENDING_{label}"
+        named_label = f"{thread}_APSHOP_NAMED_{label}"
+        replacements[naming] = [
+            "if or", f"  ${SHOPS_ENABLED} == 0",
+            f"  ${global_index} == 1", f"goto_if_false @{pending_label}",
+            lines[naming], f"goto @{named_label}",
+            f":{pending_label}",
+            f"{head}'{SHOP_PENDING_NAME_KEY}'{rest}",
+            f":{named_label}",
+        ]
+        label += 1
+        open_label = f"{thread}_APSHOP_OPEN_{label}"
+        # The whole three line if block is carried into the else branch rather
+        # than having its condition rewritten, so the test the game already
+        # passed stays the game's own words and only reaching it is conditional.
+        replacements[guard] = [
+            "if or", f"  ${SHOPS_ENABLED} == 0",
+            f"  ${global_index} == 1", f"goto_if_false @{open_label}",
+            *lines[guard:guard + 3],
+            f":{open_label}",
+        ]
+        replaced_span[guard] = 3
+
     for thread, (start, end) in threads.items():
         pending = None
         first_object = None
+        # The name a stand is announcing by and the refusal it is holding, both
+        # waiting for the grant that says which item they belong to. A stand
+        # names itself and refuses before it hands anything over, so neither can
+        # be resolved where it is found.
+        naming = None
+        guard = None
         for index in range(start, end):
             line = lines[index]
             if line.startswith("create_object $"):
@@ -1209,12 +1287,32 @@ def add_shop_completions():
                         f":{made}",
                     ]
                     replaced_span[index] = len(block)
+            elif SHOP_WITHHOLD and line.startswith("print_big "):
+                assert naming is None, (
+                    f"shops: {thread} announces two names before one grant, so "
+                    "which stand the second belongs to is not readable here")
+                naming = index
+            elif SHOP_WITHHOLD and any(test.match(line)
+                                       for test in OWNERSHIP_TESTS):
+                assert guard is None, (
+                    f"shops: {thread} refuses twice before one grant, so which "
+                    "refusal belongs to the stand is not readable here")
+                assert (lines[index - 1] == "if "
+                        and lines[index + 1].startswith("goto_if_false @")), (
+                    f"shops: {thread} tests {line.strip()!r} outside a plain "
+                    "three line if block, so carrying the block would carry "
+                    "the wrong lines")
+                guard = index - 1
             elif line.startswith("give_weapon_to_player $player_char weapon "):
                 pending = int(line.split("weapon ")[1].split(" ")[0])
                 if not SHOP_WITHHOLD:
                     continue
                 key = (thread, pending)
                 assert key in completion, f"shops: {thread} grants unlisted {pending}"
+                if key not in opened:
+                    opened.add(key)
+                    open_for_the_check(thread, key, naming, guard)
+                    naming = guard = None
                 label += 1
                 done = f"{thread}_APSHOP_DONE_{label}"
                 # Nothing is handed over while the check is still to be taken.
@@ -1229,6 +1327,10 @@ def add_shop_completions():
                     continue
                 key = (thread, pending)
                 assert key in completion, f"shops: {thread} grants unlisted armour"
+                if key not in opened:
+                    opened.add(key)
+                    open_for_the_check(thread, key, naming, guard)
+                    naming = guard = None
                 label += 1
                 done = f"{thread}_APSHOP_DONE_{label}"
                 replacements[index] = [
@@ -1247,11 +1349,19 @@ def add_shop_completions():
                 seen.add(key)
                 pending = None
         assert first_object is not None, f"shops: {thread} creates no stock"
+        # A name or a refusal left over at the end of a thread belongs to
+        # nothing this found, which means a stand went unrewritten and its check
+        # stays behind whatever the leftover was guarding.
+        assert (naming, guard) == (None, None), (
+            f"shops: {thread} ends with an unclaimed name or refusal")
         if SHOP_WITHHOLD and thread in marker_heading:
             marker_requests.append((first_object, thread))
 
     missing = [key for key in completion if key not in seen]
     assert not missing, f"shops: no purchase site found for {missing}"
+    unopened = [key for key in completion if key not in opened]
+    assert not SHOP_WITHHOLD or not unopened, (
+        f"shops: no name and refusal found for {unopened}")
 
     sites = ([(index, None, body) for index, body in replacements.items()]
              + [(index, (global_index, object_key, tag), None)
@@ -1315,7 +1425,8 @@ def add_shop_completions():
         f"shops: {len(charges)} purchase sites across {len(threads)} threads, "
         f"{len(completion)} completions "
         f"${SHOP_COMPLETION_BASE}..${SHOP_COMPLETION_BASE + len(completion) - 1}, "
-        f"{len(replacements)} lines gated on the check")
+        f"{len(replacements)} sites gated on the check, "
+        f"{len(opened)} stands renamed and opened while pending")
 
 
 def add_package_watcher():

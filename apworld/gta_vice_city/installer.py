@@ -10,9 +10,10 @@ When the apworld carries no payload, every entry point here is a no-op, so the
 installer can ship before the mod does without touching a game install.
 
 Deploy also patches the game's text tables, which no payload file can replace:
-the pause menu's Archipelago entry is a GXT key, and the key has to exist in the
-table the running game loaded. Every ``TEXT/*.gxt`` gains one key, backed up
-first like main.scm.
+the pause menu's Archipelago entry and the name a weapon shop gives a stand whose
+check is still to be taken are both GXT keys, and a key has to exist in the table
+the running game loaded. Every ``TEXT/*.gxt`` gains the keys in ``ADDED_TEXT``,
+backed up first like main.scm.
 
 ``remove`` reverses deploy: it deletes our own files and brings the backed-up
 stock main.scm and text tables back, returning the install to stock.
@@ -104,6 +105,20 @@ UNREADABLE_TABLE = (OSError, ValueError, struct.error)
 # which looks the key up to decide whether the table was patched.
 PANEL_TEXT_KEY = "APSTAT"
 PANEL_TEXT = "ARCHIPELAGO"
+
+# What a weapon shop calls a stand whose check is still to be taken. The stand
+# wears the AP marker and the name over it has to agree, since a stand calling
+# itself "Chainsaw" while it hands nothing over says the opposite. Mirrors
+# build_scm.SHOP_PENDING_NAME_KEY, the key the shop threads print, and is pinned
+# by check_scm_mirrors.
+SHOP_ITEM_TEXT_KEY = "APITEM"
+SHOP_ITEM_TEXT = "AP Item"
+
+# Every key this mod adds to a text table, by key. The check, the patch and the
+# removal all read this rather than naming a key each, so a key added here is
+# added, healed and taken back out with the others.
+ADDED_TEXT = {PANEL_TEXT_KEY: PANEL_TEXT, SHOP_ITEM_TEXT_KEY: SHOP_ITEM_TEXT}
+
 TEXT_DIR_NAME = "TEXT"
 GXT_SUFFIX = ".gxt"
 
@@ -238,12 +253,14 @@ def text_tables(install_dir: Path) -> list[Path]:
 
 
 def text_tables_are_patched(install_dir: Path) -> bool:
-    """Whether every text table in the install carries the panel key. An install
-    with no readable text table counts as patched, so a folder this installer
-    cannot help never holds up an install."""
+    """Whether every text table in the install carries every key this mod adds.
+    An install with no readable text table counts as patched, so a folder this
+    installer cannot help never holds up an install."""
     for path in text_tables(install_dir):
         try:
-            if gxt_value(path.read_bytes(), PANEL_TEXT_KEY) != PANEL_TEXT:
+            raw = path.read_bytes()
+            if any(gxt_value(raw, key) != value
+                   for key, value in ADDED_TEXT.items()):
                 return False
         except UNREADABLE_TABLE:
             # Unreadable, or not a text table after all: patching it would fail
@@ -253,30 +270,31 @@ def text_tables_are_patched(install_dir: Path) -> bool:
 
 
 def patch_text_tables(install_dir: Path) -> list[str]:
-    """Add the panel key to every text table in the install, backing each stock
+    """Add this mod's keys to every text table in the install, backing each stock
     file up once. Idempotent, and never raises: a file it cannot patch is
-    reported and left as it was, which costs the menu entry its label and
-    nothing else."""
+    reported and left as it was, which costs the menu entry its label and a
+    pending shop stand its name, and nothing else."""
     install_dir = Path(install_dir)
     log: list[str] = []
     for path in text_tables(install_dir):
         try:
             raw = path.read_bytes()
-            if gxt_value(raw, PANEL_TEXT_KEY) == PANEL_TEXT:
+            patched = raw
+            for key, value in ADDED_TEXT.items():
+                patched = add_gxt_key(patched, key, value)
+            if patched == raw:
                 continue
-            patched = add_gxt_key(raw, PANEL_TEXT_KEY, PANEL_TEXT)
-            # Only a table without the key at all is stock enough to back up. A
-            # table already carrying it with some other value is one an earlier
-            # build patched, and saving that as the stock copy would lose the real
-            # one for good.
-            if gxt_value(raw, PANEL_TEXT_KEY) is None:
+            # Only a table carrying NONE of the keys is stock enough to back up.
+            # A table already carrying one is one an earlier build patched, and
+            # saving that as the stock copy would lose the real one for good.
+            if all(gxt_value(raw, key) is None for key in ADDED_TEXT):
                 _backup_once(install_dir, path)
             path.write_bytes(patched)
         except UNREADABLE_TABLE as error:
-            log.append(f"Could not add the menu text to {TEXT_DIR_NAME}/{path.name}: "
+            log.append(f"Could not add the mod's text to {TEXT_DIR_NAME}/{path.name}: "
                        f"{error}.")
             continue
-        log.append(f"Added the menu text to {TEXT_DIR_NAME}/{path.name}.")
+        log.append(f"Added the mod's text to {TEXT_DIR_NAME}/{path.name}.")
     return log
 
 
@@ -397,8 +415,9 @@ def mod_is_current(install_dir: Path, payload: list[tuple[str, bytes]] | None = 
                 return False
         except OSError:
             return False
-    # The menu text is part of the install, and it lives in a game file rather
-    # than in a payload file, so a table still missing the key is not current.
+    # The mod's text is part of the install, and it lives in game files rather
+    # than in payload files, so a table missing any key in ADDED_TEXT is not
+    # current.
     return text_tables_are_patched(install_dir)
 
 
@@ -497,12 +516,14 @@ def remove(install_dir: Path, payload: list[tuple[str, bytes]] | None = None) ->
                    "game files.")
 
     # The text tables come back from their backups, and only over a file that
-    # still carries the key this mod added: anything else is the player's own
+    # still carries a key this mod added: anything else is the player's own
     # file, and it stays.
     for path in text_tables(install_dir):
         table_backup = backup_dir / path.name
         try:
-            was_patched = gxt_value(path.read_bytes(), PANEL_TEXT_KEY) is not None
+            raw = path.read_bytes()
+            was_patched = any(gxt_value(raw, key) is not None
+                              for key in ADDED_TEXT)
         except UNREADABLE_TABLE as error:
             log.append(f"Could not read {TEXT_DIR_NAME}/{path.name}: {error}.")
             continue
@@ -513,8 +534,8 @@ def remove(install_dir: Path, payload: list[tuple[str, bytes]] | None = None) ->
                 table_backup.unlink()
             continue
         if not table_backup.is_file():
-            log.append(f"No backup for {TEXT_DIR_NAME}/{path.name}, so the menu "
-                       "text this mod added to it stays. Nothing reads that key "
+            log.append(f"No backup for {TEXT_DIR_NAME}/{path.name}, so the text "
+                       "this mod added to it stays. Nothing reads those keys "
                        "without the mod.")
             continue
         try:

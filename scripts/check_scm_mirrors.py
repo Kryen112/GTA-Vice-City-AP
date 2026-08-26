@@ -343,7 +343,7 @@ def _cleo_problems(cleo_dir: pathlib.Path, scm: types.ModuleType,
 
 
 def _self_test() -> None:
-    """Exercises the four parsers on synthetic input.
+    """Exercises the five parsers on synthetic input.
 
     This script gates scripts/run_tests.py, so its parsers block every commit,
     and every one of them is a hand-rolled reader of a file format nothing else
@@ -414,6 +414,22 @@ def _self_test() -> None:
     assert _decode_reserved(bytes([0x02, 0x38, 0x94])) == {9486}
     assert _decode_reserved(bytes([0x02, 0x01, 0x00])) == set()
     assert _decode_reserved(bytes([0x02, 0x04, 0x00])) == set()
+
+    keys = chr(10).join([
+        'SHOP_PENDING_NAME_KEY = "APITEM"',
+        'NEIGHBOUR = "APOTHER"',
+        '    INDENTED = "NOTMINE"',
+        'COMMENTED = "APITEM"  # trailing text ends the line',
+    ])
+    assert _text_key(keys, "SHOP_PENDING_NAME_KEY") == "APITEM"
+    assert _text_key(keys, "NEIGHBOUR") == "APOTHER"
+    # Column zero only, so a constant of the same name inside a function or a
+    # docstring cannot answer for the module's own.
+    assert _text_key(keys, "INDENTED") is None
+    # The line has to BE the assignment: a trailing comment means the value read
+    # is not the whole line, which is how a stale key would slip through.
+    assert _text_key(keys, "COMMENTED") is None
+    assert _text_key(keys, "ABSENT") is None
 
 
 DISTRICT_LIST = re.compile(r"^DISTRICTS = \[\n(.*?)^\]$", re.MULTILINE | re.DOTALL)
@@ -516,6 +532,72 @@ def _pad_door_problems(scm_dir: pathlib.Path, data) -> list[str]:
             f"route package {PAD_DOOR_PACKAGE} no longer takes"]
 
 
+# A text table key a mod script prints, as `NAME = "KEY"` at column zero.
+TEXT_KEY_CONSTANT = re.compile(r'^(?P<name>[A-Z_]+) = "(?P<key>[^"]*)"$',
+                               re.MULTILINE)
+
+# What the format allows a key to be. A key past this, or one add_gxt_key cannot
+# encode, makes it raise; patch_text_tables turns that into a log line and
+# text_tables_are_patched then reads as never patched, so the client redeploys on
+# every launch and the stand prints a raw key forever. Nothing else in the world
+# checks either half.
+MAXIMUM_TEXT_KEY_BYTES = 8
+
+
+def _text_key(text: str, name: str) -> str | None:
+    """The value of one `NAME = "KEY"` line, or None when the file has none."""
+    for match in TEXT_KEY_CONSTANT.finditer(text):
+        if match.group("name") == name:
+            return match.group("key")
+    return None
+
+
+def _text_key_problems(scm_dir: pathlib.Path, installer) -> list[str]:
+    """The text table key a pending shop stand announces itself by, and the
+    length every shipped key has to fit in.
+
+    The shop threads print the key and the installer is what puts the string in
+    the game's own tables, and neither can see the other. Drift is silent in
+    game rather than loud: the game finds no such key and draws the raw name
+    back, so a stand wearing the AP marker goes on calling itself a chainsaw,
+    which is the exact thing the key exists to stop.
+    """
+    source = scm_dir / "build_scm.py"
+    printed = _text_key(source.read_text(encoding="utf-8"),
+                        "SHOP_PENDING_NAME_KEY")
+    problems: list[str] = []
+    if printed is None:
+        problems.append(f"{source.name}: SHOP_PENDING_NAME_KEY not found, so "
+                        "the shop stand key was not checked")
+    elif printed != installer.SHOP_ITEM_TEXT_KEY:
+        problems.append(
+            f"{source.name}: the shops print {printed!r} where the installer "
+            f"adds {installer.SHOP_ITEM_TEXT_KEY!r}")
+    if installer.SHOP_ITEM_TEXT_KEY not in installer.ADDED_TEXT:
+        problems.append(
+            f"installer.py: {installer.SHOP_ITEM_TEXT_KEY!r} is not in "
+            "ADDED_TEXT, so no text table ever gains it")
+    for key in installer.ADDED_TEXT:
+        # Measured the way add_gxt_key measures it, STRICTLY: an errors handler
+        # here would map a character the encoder rejects to a one byte "?" and
+        # pass a key that raises on the way into the table.
+        try:
+            length = len(key.encode("ascii"))
+        except UnicodeEncodeError:
+            problems.append(
+                f"installer.py: ADDED_TEXT carries {key!r}, which add_gxt_key "
+                "cannot encode, so it raises inside the handler patch_text_tables "
+                "reports and no table is ever patched")
+            continue
+        if length < 1 or length > MAXIMUM_TEXT_KEY_BYTES:
+            problems.append(
+                f"installer.py: ADDED_TEXT carries {key!r}, {length} bytes "
+                f"where a text table key is 1 to {MAXIMUM_TEXT_KEY_BYTES}, so "
+                "no table would ever be patched and the client would redeploy "
+                "on every launch")
+    return problems
+
+
 def main() -> int:
     _self_test()
     root = archipelago_root()
@@ -525,7 +607,7 @@ def main() -> int:
     if link_world(root) is None:
         return 1
     sys.path.insert(0, str(root))
-    from worlds.gta_vice_city import data, scm
+    from worlds.gta_vice_city import data, installer, scm
 
     scm_dir = REPOSITORY_ROOT / "mod" / "scm"
     asi_dir = REPOSITORY_ROOT / "mod" / "asi" / "src"
@@ -658,6 +740,7 @@ def main() -> int:
     problems.extend(_literal_table_problems(scm_dir, scm))
     problems.extend(_district_list_problems(scm_dir, scm))
     problems.extend(_pad_door_problems(scm_dir, data))
+    problems.extend(_text_key_problems(scm_dir, installer))
     problems.extend(_match_tolerance_problems(asi_dir, data))
     for where, source, name, want in expected:
         if name not in source:
