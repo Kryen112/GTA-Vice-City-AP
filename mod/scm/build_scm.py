@@ -435,47 +435,75 @@ def sever_starfish_east_open():
 
 
 def open_gonzalez_pad_door():
-    """Leave the middle door onto Gonzalez's pad open once a mission opens it.
+    """Leave the doors onto Gonzalez's pad open once Treacherous Swine ends.
 
-    The pad carries hidden package 25, and vanilla shuts its doors again when
-    Treacherous Swine tears down, so the audited route up there is a window
-    inside one mission rather than a reach. A package still held by a content
-    lock while that mission plays is then out of the player's hands for good,
-    with a helicopter the only way back.
+    The pad carries hidden package 25, and vanilla shuts its three doors again
+    at that mission's teardown, so the audited route up there is a window inside
+    one mission rather than a reach. A package still held by a content lock
+    while the mission plays is then out of the player's hands for good, with a
+    helicopter the only way back.
 
-    Martha's Mug Shot says which door is the barrier: it opens the middle one
-    and no other and warps the player nowhere upward, so the climb from the
-    street to its party is the game's own geometry and the doors above and below
-    that one are off the route and stay vanilla.
+    All three doors reopen, in the placements the mission's own start uses.
+    Those are where the doors really stand, and the mission says so itself: the
+    upper two each sit inside one of the two doorway boxes it watches for the
+    player stepping off the pad, at z 35.2 and z 31.2. The closed models share a
+    bake origin at 465.375 30.336 33.181 instead, which is neither doorway, so
+    their coordinates are never read as a position.
 
-    Three teardowns recreate the door closed and all three become open. The
-    creation at a new game is left alone, so the pad is shut until a mission
-    opens it, and so is Treacherous Swine's own mid-mission eject, which drops
-    the player on the street and whose door the teardown reopens at the end
-    anyway.
+    Martha's Mug Shot swaps the middle door alone for its party, which is on the
+    lower landing rather than the pad, so its two teardowns leave that one open
+    and touch nothing else. A seed that plays it first reaches the landing and
+    no further, and the pad waits for Treacherous Swine the way the logic term
+    says.
+
+    The creation at a new game is left alone, so the pad is shut until the
+    mission opens it, and so is the mission's own eject, which drops the player
+    on the street and whose doors the teardown reopens at the end anyway.
     """
-    closed = ("create_object_no_offset $1815 = init_object #SPAD_DR_CLOSED2 "
-              "at 465.375 30.336 33.181")
-    # The model and the position are the game's own, taken from the line the two
-    # missions write rather than spelled again here, so an open door put where
-    # the player cannot use it fails the build instead of the playthrough.
-    placement = "init_object #SPAD_DR_OPEN2 at 461.961 31.436 31.24"
-    assert any(line.endswith(placement) for line in SOURCE_LINES), (
-        "pad door: the decompile does not put the open middle door there")
-    opened = f"create_object_no_offset $1815 = {placement}"
-    sites = [i for i, ln in enumerate(lines) if ln == closed]
-    assert len(sites) == 5, f"pad door: the closed middle door matched {len(sites)}"
-    # Every site is named positively rather than by failing the others, so a
-    # teardown that stops reading like one fails here instead of quietly keeping
-    # its door shut.
-    kinds = {"teardown": [], "new game": [], "eject": []}
+    # Handle, closed placement, open placement, in the order the teardown writes
+    # them.
+    doors = [
+        ("$1814", "#SPAD_DR_CLOSED1 at 465.375 30.336 33.181",
+         "#SPAD_DR_OPEN1 at 454.321 31.436 35.198"),
+        ("$1815", "#SPAD_DR_CLOSED2 at 465.375 30.336 33.181",
+         "#SPAD_DR_OPEN2 at 461.961 31.436 31.24"),
+        ("$1816", "#SPAD_DR_CLOSED3 at 464.663 30.336 23.881",
+         "#SPAD_DR_OPEN3 at 464.663 30.336 23.881"),
+    ]
+
+    def creation(handle, placement):
+        return f"create_object_no_offset {handle} = init_object {placement}"
+
+    # Every open placement is one the game writes itself, so a door put where
+    # the player cannot use it fails the build rather than the playthrough.
+    for _handle, _closed, opened in doors:
+        assert any(line.endswith(opened) for line in SOURCE_LINES), (
+            f"pad door: the decompile never writes {opened}")
+
+    # Treacherous Swine's teardown, the one that runs on a pass and on a fail
+    # alike, named by the pool cover it deletes right after the doors.
+    cover = [i for i, ln in enumerate(lines) if ln == "delete_object $2257"]
+    assert len(cover) == 1, f"pad door: the pool cover delete matched {len(cover)}"
+    teardown = cover[0] - 6
+    for index, (handle, closed, opened) in enumerate(doors):
+        at = teardown + index * 2
+        assert lines[at] == creation(handle, closed), (
+            f"pad door: the teardown does not close {handle} where expected")
+        assert lines[at + 1] == f"dont_remove_object {handle}", (
+            f"pad door: {handle} is not kept after the teardown creates it")
+        lines[at] = creation(handle, opened)
+
+    # What is left of the middle door, named positively rather than by failing
+    # the others, so a site that stops reading like itself fails here instead of
+    # quietly keeping its door shut.
+    middle = creation("$1815", doors[1][1])
+    sites = [i for i, ln in enumerate(lines) if ln == middle]
+    kinds = {"party": [], "new game": [], "eject": []}
     unknown = []
     for site in sites:
         after = lines[site + 4]
         if lines[site - 2] == "delete_object $4466":
-            kinds["teardown"].append(site)      # Martha's Mug Shot, both its exits
-        elif after == "delete_object $2257":
-            kinds["teardown"].append(site)      # Treacherous Swine, its own
+            kinds["party"].append(site)         # Martha's Mug Shot, both its exits
         elif after.startswith("create_object_no_offset $1817 "):
             kinds["new game"].append(site)      # where the pad starts shut
         elif after.startswith("set_player_coordinates "):
@@ -483,15 +511,15 @@ def open_gonzalez_pad_door():
         else:
             unknown.append(site + 1)
     assert not unknown, (
-        f"pad door: closed middle doors at lines {unknown} read as none of a "
-        "teardown, a new game or the eject")
+        f"pad door: closed middle doors at lines {unknown} read as none of "
+        "Martha's Mug Shot, a new game or the eject")
     counted = {kind: len(found) for kind, found in kinds.items()}
-    assert counted == {"teardown": 3, "new game": 1, "eject": 1}, (
-        f"pad door: {counted}, expected three teardowns, one new game and one "
-        "eject")
-    for site in kinds["teardown"]:
-        lines[site] = opened
-    edits.append("left the middle door onto Gonzalez's pad open after its missions")
+    assert counted == {"party": 2, "new game": 1, "eject": 1}, (
+        f"pad door: {counted}, expected two from Martha's Mug Shot, one new "
+        "game and one eject")
+    for site in kinds["party"]:
+        lines[site] = creation("$1815", doors[1][2])
+    edits.append("left the doors onto Gonzalez's pad open after Treacherous Swine")
 
 
 # Property purchases: each buy mission-let is a post-purchase cutscene, so mark

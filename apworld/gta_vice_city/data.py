@@ -1556,9 +1556,9 @@ LEAF_LINKS_ROUTES: list[list[str]] = [
 # shuts Gonzalez's pad again the moment Treacherous Swine tears down, which
 # would leave that route a window inside one mission and put the package out of
 # reach for good once the mission is behind a player whose Vice Point item has
-# not arrived. build_scm's open_gonzalez_pad_door leaves the pad's door open
-# afterwards, so the route reads the way this table writes it. Drop that edit
-# and this row has to go with it.
+# not arrived. build_scm's open_gonzalez_pad_door leaves all three of the pad's
+# doors open afterwards, so the route reads the way this table writes it. Drop
+# that edit and this row has to go with it.
 PACKAGE_ABILITY_ALTERNATIVES: dict[int, list[list[str]]] = {
     3: [[AIR_VEHICLES_ITEM], [SEA_VEHICLES_ITEM]],
     4: [[AIR_VEHICLES_ITEM], [SEA_VEHICLES_ITEM]],

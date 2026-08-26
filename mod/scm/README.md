@@ -262,15 +262,16 @@ version control.
 - Gonzalez's pad: hidden package 25 sits on the roof Treacherous Swine opens,
   and vanilla shuts all three of its doors again at that mission's teardown, so
   the route the logic names would be a window inside one mission rather than a
-  reach. `open_gonzalez_pad_door` reopens the middle door at the three
-  teardowns that recreate it closed, Treacherous Swine's own and both of
-  Martha's Mug Shot's. The creation at a new game and the mid-mission eject
-  stay vanilla, so the pad is shut until a mission opens it. Martha's Mug Shot
-  is what says the middle door is the only barrier: it opens that one and no
-  other, and the player walks up to its party from the street with no warp. The
-  three lines are model and coordinate swaps, so the build is byte for byte the
-  size it was; they are in the mission segment, so MAIN is not the budget they
-  would have spent either way. The edit is unconditional, which
+  reach. `open_gonzalez_pad_door` reopens all three at that teardown, in the
+  placements the mission's own start uses, and leaves Martha's Mug Shot's two
+  teardowns opening the middle door alone, since that is the only one it swaps.
+  The creation at a new game and the mid-mission eject stay vanilla, so the pad
+  is shut until the mission opens it. The three doors stand at three heights,
+  z 23.9, z 31.2 and z 35.2, which the mission itself pins: the upper two match
+  the two doorway boxes it watches for the player stepping off the pad. Read the
+  OPEN placements for where a door is and never the CLOSED ones, which share a
+  bake origin at 465.375 30.336 33.181 that is neither doorway. The swaps leave
+  the compile byte for byte the size it was. The edit is unconditional, which
   `notes/2026-08-26-gonzalez-pad-door.md` argues for: gating it on the packages
   class would put the vanilla hundred-package reward behind the same missable
   whenever that class is off and the packages content key on.
