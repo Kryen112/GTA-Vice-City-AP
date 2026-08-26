@@ -384,6 +384,15 @@ class TestTextTablePatch(unittest.TestCase):
         with self.assertRaises(ValueError):
             installer.add_gxt_key(b"not a gxt at all", "APSTAT", "x")
 
+    def test_no_added_string_asks_the_game_for_a_number(self) -> None:
+        # The whole reason the pass banners have keys of their own is that the
+        # vanilla ones spell the reward amount into the same string, so a "~1~"
+        # left in one would put a number back beside a mission that now pays
+        # nothing, and the script prints these with no number to give it.
+        for key, value in installer.ADDED_TEXT.items():
+            with self.subTest(key=key):
+                self.assertNotIn("~1~", value)
+
 
 class TestTextTableDeploy(unittest.TestCase):
     def setUp(self) -> None:

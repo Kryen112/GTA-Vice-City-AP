@@ -27,6 +27,7 @@ import pathlib
 import re
 import struct
 import sys
+import tempfile
 import types
 
 from ap_env import archipelago_root, link_world
@@ -422,19 +423,66 @@ def _self_test() -> None:
 
     keys = chr(10).join([
         'SHOP_PENDING_NAME_KEY = "APITEM"',
-        'NEIGHBOUR = "APOTHER"',
-        '    INDENTED = "NOTMINE"',
-        'COMMENTED = "APITEM"  # trailing text ends the line',
+        'PASS_TEXT_KEY = "APPASS"',
+        '    INDENTED_KEY = "NOTMINE"',
+        'COMMENTED_KEY = "APITEM"  # trailing text ends the line',
     ])
-    assert _text_key(keys, "SHOP_PENDING_NAME_KEY") == "APITEM"
-    assert _text_key(keys, "NEIGHBOUR") == "APOTHER"
+    found = _string_constants(keys)
+    assert found["SHOP_PENDING_NAME_KEY"] == "APITEM"
+    assert found["PASS_TEXT_KEY"] == "APPASS"
     # Column zero only, so a constant of the same name inside a function or a
     # docstring cannot answer for the module's own.
-    assert _text_key(keys, "INDENTED") is None
+    assert "INDENTED_KEY" not in found
     # The line has to BE the assignment: a trailing comment means the value read
     # is not the whole line, which is how a stale key would slip through.
-    assert _text_key(keys, "COMMENTED") is None
-    assert _text_key(keys, "ABSENT") is None
+    assert "COMMENTED_KEY" not in found
+    assert "ABSENT" not in found
+
+    # The four ways the two files drift apart, each fed to the pin that reports
+    # it. This is the one check standing between them and a drift whose in-game
+    # symptom is silent, since the engine draws the key itself back rather than
+    # failing, so every branch is exercised rather than read.
+    stub_keys = {"SHOP_ITEM_TEXT_KEY": "APITEM", "PASS_TEXT_KEY": "APPASS",
+                 "COURSE_TEXT_KEY": "APCOURS", "WON_TEXT_KEY": "APWON"}
+    assert set(stub_keys) == set(SHARED_TEXT_KEYS.values()), (
+        "the stub has to spell every installer constant the table pairs")
+
+    def _paired(body: str, added: list[str] | None = None) -> list[str]:
+        scratch = pathlib.Path(tempfile.mkdtemp())
+        (scratch / "build_scm.py").write_text(body, encoding="utf-8")
+        carried = list(stub_keys.values()) if added is None else added
+        return _text_key_problems(scratch, types.SimpleNamespace(
+            ADDED_TEXT=dict.fromkeys(carried, "text"), **stub_keys))
+
+    def _declares(**overrides: str) -> str:
+        spelled = {name: stub_keys[added]
+                   for name, added in SHARED_TEXT_KEYS.items()}
+        spelled.update(overrides)
+        return "".join(f'{name} = "{key}"{chr(10)}'
+                       for name, key in spelled.items())
+
+    # Silence when the two sides agree, so each case below is the pin speaking
+    # about its own drift rather than about the fixture.
+    assert _paired(_declares()) == []
+    # Two keys swapped between the files, which the membership half alone reads
+    # as agreement since both are still added.
+    swapped = _paired(_declares(PASS_TEXT_KEY="APCOURS", COURSE_TEXT_KEY="APPASS"))
+    assert len(swapped) == 2
+    assert all("prints" in problem and "adds" in problem for problem in swapped)
+    # A constant renamed out of the convention leaves the pin, so its absence is
+    # what gets reported.
+    renamed = _declares().replace("SHOP_PENDING_NAME_KEY", "SHOP_PENDING_NAME")
+    assert [problem for problem in _paired(renamed)
+            if "SHOP_PENDING_NAME_KEY is gone" in problem]
+    # A key constant added with nothing pairing it, the shape the coverage half
+    # exists for.
+    unpaired = _declares() + 'TRAP_TEXT_KEY = "APTRAP"' + chr(10)
+    assert [problem for problem in _paired(unpaired)
+            if "pairs with nothing" in problem]
+    # A paired key the installer never adds, which the game answers by drawing
+    # the key itself back.
+    missing = _paired(_declares(), added=["APITEM", "APPASS", "APCOURS"])
+    assert [problem for problem in missing if "not in ADDED_TEXT" in problem]
 
 
 DISTRICT_LIST = re.compile(r"^DISTRICTS = \[\n(.*?)^\]$", re.MULTILINE | re.DOTALL)
@@ -557,9 +605,9 @@ def _pad_door_problems(scm_dir: pathlib.Path, data) -> list[str]:
     return []
 
 
-# A text table key a mod script prints, as `NAME = "KEY"` at column zero.
-TEXT_KEY_CONSTANT = re.compile(r'^(?P<name>[A-Z_]+) = "(?P<key>[^"]*)"$',
-                               re.MULTILINE)
+# A string constant a mod script spells at column zero, `NAME = "value"`.
+STRING_CONSTANT = re.compile(r'^(?P<name>[A-Z_]+) = "(?P<value>[^"]*)"$',
+                             re.MULTILINE)
 
 # What the format allows a key to be. A key past this, or one add_gxt_key cannot
 # encode, makes it raise; patch_text_tables turns that into a log line and
@@ -569,39 +617,63 @@ TEXT_KEY_CONSTANT = re.compile(r'^(?P<name>[A-Z_]+) = "(?P<key>[^"]*)"$',
 MAXIMUM_TEXT_KEY_BYTES = 8
 
 
-def _text_key(text: str, name: str) -> str | None:
-    """The value of one `NAME = "KEY"` line, or None when the file has none."""
-    for match in TEXT_KEY_CONSTANT.finditer(text):
-        if match.group("name") == name:
-            return match.group("key")
-    return None
+def _string_constants(text: str) -> dict[str, str]:
+    """Every `NAME = "value"` line a source file spells at column zero."""
+    return {match.group("name"): match.group("value")
+            for match in STRING_CONSTANT.finditer(text)}
+
+
+# Each text table key constant build_scm.py spells, against the installer
+# constant that has to carry the same key. Every `*_KEY` constant build_scm.py
+# declares has to appear here, so a key added there without a mirror fails
+# rather than going unchecked, and a constant renamed out of the convention is
+# reported as missing instead of quietly leaving the pin.
+SHARED_TEXT_KEYS = {
+    "SHOP_PENDING_NAME_KEY": "SHOP_ITEM_TEXT_KEY",
+    "PASS_TEXT_KEY": "PASS_TEXT_KEY",
+    "COURSE_TEXT_KEY": "COURSE_TEXT_KEY",
+    "WON_TEXT_KEY": "WON_TEXT_KEY",
+}
 
 
 def _text_key_problems(scm_dir: pathlib.Path, installer) -> list[str]:
-    """The text table key a pending shop stand announces itself by, and the
-    length every shipped key has to fit in.
+    """The text table keys the built script prints, and the length every
+    shipped key has to fit in.
 
-    The shop threads print the key and the installer is what puts the string in
-    the game's own tables, and neither can see the other. Drift is silent in
-    game rather than loud: the game finds no such key and draws the raw name
-    back, so a stand wearing the AP marker goes on calling itself a chainsaw,
-    which is the exact thing the key exists to stop.
+    The script prints the key and the installer is what puts the string in the
+    game's own tables, and neither can see the other. Drift is silent in game
+    rather than loud: the game finds no such key and draws the raw name back, so
+    a stand wearing the AP marker goes on calling itself a chainsaw and a passed
+    mission announces itself as APPASS, which is the exact thing the keys exist
+    to stop. Both halves are checked: each key matches the installer constant
+    SHARED_TEXT_KEYS pairs it with, so two keys swapped between them fail, and
+    every `*_KEY` constant build_scm.py declares has to be in that table, so a
+    key added there cannot go unpaired.
     """
     source = scm_dir / "build_scm.py"
-    printed = _text_key(source.read_text(encoding="utf-8"),
-                        "SHOP_PENDING_NAME_KEY")
-    problems: list[str] = []
-    if printed is None:
-        problems.append(f"{source.name}: SHOP_PENDING_NAME_KEY not found, so "
-                        "the shop stand key was not checked")
-    elif printed != installer.SHOP_ITEM_TEXT_KEY:
-        problems.append(
-            f"{source.name}: the shops print {printed!r} where the installer "
-            f"adds {installer.SHOP_ITEM_TEXT_KEY!r}")
-    if installer.SHOP_ITEM_TEXT_KEY not in installer.ADDED_TEXT:
-        problems.append(
-            f"installer.py: {installer.SHOP_ITEM_TEXT_KEY!r} is not in "
-            "ADDED_TEXT, so no text table ever gains it")
+    printed = _string_constants(source.read_text(encoding="utf-8"))
+    problems: list[str] = [
+        f"{source.name}: {name} prints a text table key that SHARED_TEXT_KEYS "
+        "pairs with nothing, so which key the installer has to add for it was "
+        "never checked"
+        for name in sorted(printed)
+        if name.endswith("_KEY") and name not in SHARED_TEXT_KEYS]
+    for name, added_name in sorted(SHARED_TEXT_KEYS.items()):
+        added = getattr(installer, added_name)
+        if name not in printed:
+            problems.append(
+                f"{source.name}: {name} is gone, so the key the installer adds "
+                f"as {added_name} ({added!r}) is printed by nothing that was "
+                "checked")
+        elif printed[name] != added:
+            problems.append(
+                f"{source.name}: {name} prints {printed[name]!r} where the "
+                f"installer's {added_name} adds {added!r}")
+        if added not in installer.ADDED_TEXT:
+            problems.append(
+                f"installer.py: {added_name} is {added!r}, which is not in "
+                "ADDED_TEXT, so no text table ever gains it and the game draws "
+                "the key itself back")
     for key in installer.ADDED_TEXT:
         # Measured the way add_gxt_key measures it, STRICTLY: an errors handler
         # here would map a character the encoder rejects to a one byte "?" and

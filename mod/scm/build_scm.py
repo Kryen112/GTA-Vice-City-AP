@@ -1784,6 +1784,40 @@ MISSION_HEADER = re.compile(r"^//-------------Mission (\d+)---------------$")
 PASS_BANNER = re.compile(r"^print_with_number_big 'M_PASS' number (\d+) time \d+ style 1$")
 CASH_ADD = re.compile(r"^add_score \$player_char money \+= (\$?\d+)$")
 
+# The pass line and the amount it paid share one text key, so suppressing a
+# reward takes the words off the screen with the number and a passed mission
+# announces itself by its jingle alone. These keys carry the same words without
+# the amount, and the installer puts them in every text table the game ships.
+# Each is mirrored in installer.py, and check_scm_mirrors pins the two sides
+# against each other by name.
+PASS_TEXT_KEY = "APPASS"
+COURSE_TEXT_KEY = "APCOURS"
+WON_TEXT_KEY = "APWON"
+
+# The banner keys that say something besides the amount, each with the moneyless
+# key that replaces it. A banner keyed anywhere else is the amount and nothing
+# else ('REWARD $~1~' on a stunt jump and a rampage, a bare '$~1~' on the two
+# ring events), so suppressing one costs no words and it has no entry here: the
+# pass texts those sites print of their own ('UNIQUE STUNT BONUS!', 'RAMPAGE
+# PASSED!!') are never suppressed.
+MONEYLESS_BANNER_KEYS = {"M_PASS": PASS_TEXT_KEY, "HELI_1B": COURSE_TEXT_KEY,
+                         "RACES18": WON_TEXT_KEY}
+NUMBER_BANNER = re.compile(
+    r"^print_with_number_big '(\w+)' number \S+ time (\d+) style (\d+)$")
+
+
+def moneyless_banner(line):
+    """The same banner without its reward amount, or None where the banner is
+    the amount alone and there is nothing left to say without it."""
+    match = NUMBER_BANNER.match(line)
+    if match is None:
+        return None
+    key = MONEYLESS_BANNER_KEYS.get(match.group(1))
+    if key is None:
+        return None
+    return f"print_big '{key}' {match.group(2)} ms {match.group(3)}"
+
+
 # Venue mission launchers, the Properties class members among MISSIONS
 # (mirrors data.VENUE_STRANDS). Their pass cash is gated, not deleted.
 VENUE_LAUNCHERS = frozenset([
@@ -1798,24 +1832,34 @@ def next_apcash_label():
     return f"APCASH_{next(apcash_numbers)}"
 
 
-def guard_flag(index, span, flag):
+def guard_flag(index, span, flag, otherwise=()):
     # Wrap `span` lines in an if-flag-zero guard: vanilla pays only while the
-    # class-cash flag is zero (the class is disabled).
-    guard_span(index, span, flag, next_apcash_label())
+    # class-cash flag is zero (the class is disabled). `otherwise` runs in the
+    # suppressed lines' place, which is where the moneyless banner goes.
+    guard_span(index, span, flag, next_apcash_label(), otherwise)
 
 
-def guard_replay(index, span, completion, flag):
+def guard_replay(index, span, completion, flag, otherwise=()):
     # Wrap `span` lines so they run when the check's class is off OR the event's
     # completion global is already set (a replay). Only the first completion
     # while the class is on skips the payout: the payout and the win-flag write
     # share one script frame, and the APACT watcher marks the completion global
     # at least a frame later, so the global is still zero exactly on the run the
-    # AP check eats.
+    # AP check eats. `otherwise` runs in the suppressed lines' place.
     label = next_apcash_label()
-    lines[index + span:index + span] = [f":{label}"]
+    lines[index + span:index + span] = guard_tail(label, otherwise)
     lines[index:index] = ["if or", f"  ${flag} == 0",
                           f"  ${completion} == 1", f"goto_if_false @{label}"]
     guard_labels.append(label)
+
+
+def guard_tail(label, otherwise):
+    # What closes a guarded span: the skip label alone, or, where the guard has
+    # a branch of its own, a jump over it and the label that rejoins after.
+    if not otherwise:
+        return [f":{label}"]
+    rejoin = f"{label}_REJOIN"
+    return [f"goto @{rejoin}", f":{label}", *otherwise, f":{rejoin}"]
 
 
 def mission_blocks():
@@ -2114,16 +2158,23 @@ def suppress_mission_rewards():
             cash = CASH_ADD.match(lines[i])
             if PASS_BANNER.match(lines[i]) or (cash and cash.group(1) in amounts):
                 actions.append((i, launcher))
-    deleted = wrapped = 0
+    deleted = wrapped = kept = 0
     for index, launcher in sorted(actions, reverse=True):
+        # A banner keeps its words and loses its amount; a cash add has nothing
+        # to keep, so the story one goes and the venue one waits behind the flag.
+        banner = moneyless_banner(lines[index])
         if launcher in VENUE_LAUNCHERS:
-            guard_flag(index, 1, PROPERTIES_ENABLED)
+            guard_flag(index, 1, PROPERTIES_ENABLED,
+                       [banner] if banner else ())
             wrapped += 1
+        elif banner:
+            lines[index] = banner
+            kept += 1
         else:
             del lines[index]
             deleted += 1
-    edits.append(f"mission rewards: {deleted} story lines removed, "
-                 f"{wrapped} venue lines gated")
+    edits.append(f"mission rewards: {deleted} story lines removed, {kept} story "
+                 f"banners left moneyless, {wrapped} venue lines gated")
 
 
 # The six race prizes, paid on every win in showroom menu order. The first win
@@ -2131,6 +2182,8 @@ def suppress_mission_rewards():
 # flag plus that race's completion global, which the APACT watcher has not yet
 # marked on the run the check eats (no wait separates the prize from the win
 # flag). Entry fees are money and stay vanilla, as do second and third place.
+# Each prize's banner is the line under it, so the two gate together and a
+# gated win says it was won without naming a sum nobody was paid.
 SUNSHINE_RACE_PRIZES = [
     (9370, "add_score $player_char money += 400"),
     (9371, "add_score $player_char money += 2000"),
@@ -2148,10 +2201,13 @@ def suppress_sunshine_race_first_wins():
     for completion, anchor in SUNSHINE_RACE_PRIZES:
         hits = [i for i in range(start, end) if lines[i] == anchor]
         assert len(hits) == 1, f"sunshine race prize: {anchor!r} matched {len(hits)}"
-        targets.append((hits[0], completion))
-    for index, completion in sorted(targets, reverse=True):
-        guard_replay(index, 1, completion, PROPERTIES_ENABLED)
-    edits.append(f"sunshine race first-win prizes gated: {len(targets)} lines")
+        moneyless = moneyless_banner(lines[hits[0] + 1])
+        assert moneyless is not None, (
+            f"sunshine race prize: {anchor!r} is not followed by its banner")
+        targets.append((hits[0], completion, moneyless))
+    for index, completion, moneyless in sorted(targets, reverse=True):
+        guard_replay(index, 2, completion, PROPERTIES_ENABLED, [moneyless])
+    edits.append(f"sunshine race first-win prizes gated: {len(targets)} pairs")
 
 
 def suppress_boatyard_first_run_reward():
@@ -2166,7 +2222,9 @@ def suppress_boatyard_first_run_reward():
                     == "print_with_number_big 'M_PASS' number 5000 time 5000 style 1")
     assert banner is not None and lines[banner + 1] == "add_score $player_char money += 5000", \
         "boatyard reward: first-run 5000 pair not found"
-    guard_flag(banner, 2, PROPERTIES_ENABLED)
+    moneyless = moneyless_banner(lines[banner])
+    assert moneyless is not None, "boatyard reward: the pass banner has no moneyless key"
+    guard_flag(banner, 2, PROPERTIES_ENABLED, [moneyless])
     edits.append("boatyard first-run reward gated on the properties flag")
 
 
@@ -2305,7 +2363,9 @@ def suppress_side_event_first_wins():
             assert len(hits) == 1, f"{name}: {anchor!r} matched {len(hits)}"
             targets.append(hits[0])
         for index in sorted(targets, reverse=True):
-            guard_replay(index, 1, completion, SIDE_EVENTS_ENABLED)
+            banner = moneyless_banner(lines[index])
+            guard_replay(index, 1, completion, SIDE_EVENTS_ENABLED,
+                         [banner] if banner else ())
         total += len(targets)
     edits.append(f"side event first-win payouts gated: {total} lines")
 
@@ -2364,6 +2424,14 @@ EXPECTED_VANILLA_BANNERS = {
     ("M96", "print_with_number_big 'M_PASS' number 15000 time 5000 style 1"): 1,
 }
 AUDIT_BANNER = re.compile(r"^print_with_number_big 'M_PASS' number \S+ time \d+ style 1$")
+
+# How many banners keep their words after losing their amount, by the key they
+# print. Pinned both ways for the same reason the tables above are: every anchor
+# that finds a banner is asserted, but nothing else notices moneyless_banner
+# itself failing to match, and a build where it matches nothing suppresses every
+# banner with no replacement and takes the words back off the screen.
+EXPECTED_MONEYLESS_BANNERS = {PASS_TEXT_KEY: 66, COURSE_TEXT_KEY: 4,
+                              WON_TEXT_KEY: 6}
 AUDIT_CASH = re.compile(r"^add_score \$player_char money \+= (\$?\d+)$")
 
 
@@ -2404,6 +2472,21 @@ def audit_cash_sites():
         assert not unexpected and not missing, \
             f"cash audit ({label}): unexpected {unexpected}, missing {missing}"
     edits.append("cash audit: every remaining payout is pinned vanilla")
+
+
+def audit_pass_banners():
+    # The counterpart gate: every suppressed banner that has words to keep
+    # prints them again, and exactly as many times as the tables above suppress.
+    # A key with no count is a key nothing counts, so the two tables have to name
+    # the same set before the counts mean anything.
+    assert set(EXPECTED_MONEYLESS_BANNERS) == set(MONEYLESS_BANNER_KEYS.values()), (
+        f"pass banner audit: {set(MONEYLESS_BANNER_KEYS.values())} are printed, "
+        f"{set(EXPECTED_MONEYLESS_BANNERS)} are counted")
+    found = {key: sum(1 for line in lines if line.startswith(f"print_big '{key}' "))
+             for key in EXPECTED_MONEYLESS_BANNERS}
+    assert found == EXPECTED_MONEYLESS_BANNERS, (
+        f"pass banner audit: built {found}, pinned {EXPECTED_MONEYLESS_BANNERS}")
+    edits.append(f"pass banner audit: {sum(found.values())} moneyless banners")
 
 
 def add_stat_watcher():
@@ -2618,11 +2701,12 @@ PACKAGE_BLOCKS = [
 ]
 
 
-def guard_span(index, span, flag, label):
+def guard_span(index, span, flag, label, otherwise=()):
     # Wrap `span` lines starting at `index` in an if-flag-zero guard so the grant
-    # fires only when the group is NOT shuffled. Inserts the skip label first (so
-    # the guard insert does not shift it).
-    lines[index + span:index + span] = [f":{label}"]
+    # fires only when the group is NOT shuffled, with `otherwise` running in
+    # their place when it does not. Inserts the closing lines first (so the
+    # guard insert does not shift them).
+    lines[index + span:index + span] = guard_tail(label, otherwise)
     lines[index:index] = ["if ", f"  ${flag} == 0", f"goto_if_false @{label}"]
     guard_labels.append(label)
 
@@ -2800,6 +2884,7 @@ add_reward_applier()
 add_radio_watcher()
 redirect_scripted_stations()
 audit_cash_sites()
+audit_pass_banners()
 
 built_progress_points = sum(1 for line in lines if line == PROGRESS_LINE)
 assert built_progress_points == source_progress_points, (

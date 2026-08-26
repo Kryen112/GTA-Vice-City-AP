@@ -118,10 +118,30 @@ PANEL_TEXT = "ARCHIPELAGO"
 SHOP_ITEM_TEXT_KEY = "APITEM"
 SHOP_ITEM_TEXT = "AP Item"
 
+# What a mission, a checkpoint course and a race say when they are won. The game
+# spells the pass line and the reward amount into one string, so suppressing a
+# vanilla reward takes the words with the number and a passed mission announces
+# itself by its jingle alone; these carry the same words without the amount.
+# Mirrors build_scm.PASS_TEXT_KEY, COURSE_TEXT_KEY and WON_TEXT_KEY, the keys the
+# built script prints, and is pinned by check_scm_mirrors.
+# The course key stops a letter short of the word to stay inside the ground the
+# stock data covers: a key record's name field is eight bytes with no terminator
+# of its own, and of the 2,451 keys the shipped table carries not one fills all
+# eight, so a key that did would be the first the game's own comparison ever
+# reads with no NUL in front of it.
+PASS_TEXT_KEY = "APPASS"
+PASS_TEXT = "MISSION PASSED!"
+COURSE_TEXT_KEY = "APCOURS"
+COURSE_TEXT = "Course Complete!"
+WON_TEXT_KEY = "APWON"
+WON_TEXT = "YOU HAVE WON!"
+
 # Every key this mod adds to a text table, by key. The check, the patch and the
 # removal all read this rather than naming a key each, so a key added here is
 # added, healed and taken back out with the others.
-ADDED_TEXT = {PANEL_TEXT_KEY: PANEL_TEXT, SHOP_ITEM_TEXT_KEY: SHOP_ITEM_TEXT}
+ADDED_TEXT = {PANEL_TEXT_KEY: PANEL_TEXT, SHOP_ITEM_TEXT_KEY: SHOP_ITEM_TEXT,
+              PASS_TEXT_KEY: PASS_TEXT, COURSE_TEXT_KEY: COURSE_TEXT,
+              WON_TEXT_KEY: WON_TEXT}
 
 TEXT_DIR_NAME = "TEXT"
 GXT_SUFFIX = ".gxt"

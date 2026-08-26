@@ -99,12 +99,19 @@ version control.
   properties; ASI-stamped from slot_data) gate the vanilla cash suppression:
   while a flag is one, the class's one-time completion cash and its on-screen
   amount are skipped (the AP check is the reward, mirrored back as filler);
-  at zero everything pays vanilla. Story mission pass cash is deleted outright
-  (always on); venue missions and Checkpoint Charlie's first run gate on the
-  properties flag; each side event gates its first-completion payout on the
-  side-events flag OR its completion global, so replays pay vanilla winnings.
-  Each Sunshine Autos race gates its first-win prize the same way, on the
-  properties flag OR that race's completion global.
+  at zero everything pays vanilla. The vanilla banner spells the pass line and
+  the amount into one text key, so a suppressed site prints a moneyless banner
+  of its own in the vanilla one's place, keyed `APPASS` ("MISSION PASSED!"),
+  `APCOURS` ("Course Complete!") or `APWON` ("YOU HAVE WON!"); the installer
+  adds all three to every text table, a banner that was nothing but the amount
+  is dropped with no replacement, and the built script's count of each is
+  pinned both ways.
+  Story mission pass cash is deleted outright (always on); venue missions and
+  Checkpoint Charlie's first run gate on the properties flag; each side event
+  gates its first-completion payout on the side-events flag OR its completion
+  global, so replays pay vanilla winnings.
+  Each Sunshine Autos race gates its first-win prize and the banner under it the
+  same way, on the properties flag OR that race's completion global.
   Repeatable earnings (emergency pay, till cash, race replay prizes, in-mission
   bonuses) are never touched, and a build-time audit pins every remaining
   payout so a new site fails the build instead of leaking. Reserved globals
