@@ -13,6 +13,7 @@
 #include "game_addresses.hpp"
 #include "scm_finale_warp.hpp"
 #include "scm_packages.hpp"
+#include "scm_seed_stamp.hpp"
 #include "scm_stunt_jumps.hpp"
 #include "toast_stack.hpp"
 
@@ -1556,8 +1557,10 @@ std::string ScmGameState::SeedHash() {
 
 void ScmGameState::StampSeedHash(const std::string& expected) {
   std::lock_guard<std::mutex> lock(mutex_);
-  pending_stamp_ = expected;
-  stamp_pending_ = true;
+  // The welcome names the seed once and the player can start any number of games
+  // under it, so this is held for as long as the session is up: the seed every
+  // game that comes up without one of its own is stamped with.
+  expected_seed_hash_ = expected;
 }
 
 void ScmGameState::ApplyItems(const std::vector<std::pair<std::int64_t, std::int64_t>>& items) {
@@ -1611,6 +1614,12 @@ void ScmGameState::ClearNotice(ToastNotice notice) {
 void ScmGameState::SetClientConnected(bool connected) {
   std::lock_guard<std::mutex> lock(mutex_);
   client_connected_ = connected;
+  // The seed goes with the session that named it. The stamp already asks whether
+  // a client is here, so this is that same guarantee made structural rather than
+  // left resting on the order two calls happen to be made in: no hash outlives
+  // its session, so no departed client's seed can claim the next game and have
+  // the client after it refuse that game for good.
+  if (!connected) expected_seed_hash_.clear();
   // The bridge going down is the one state a player cannot see from anywhere in
   // game: checks keep being found and go nowhere. The row holds until the socket
   // is back rather than expiring, and it clears itself here, so the reconnect the
@@ -2272,21 +2281,113 @@ void ScmGameState::SuppressPackageCash(int newly_collected) {
 
 void ScmGameState::OnGameStarted() {
   std::lock_guard<std::mutex> lock(mutex_);
-  // The shop marker swaps name objects by pool reference, and replacing the world
-  // refills that pool, so the references belong to a world that is gone. Dropped
-  // rather than restored: there is nothing left to put back.
-  //
   // Called from the two events that mean the world was replaced, one for starting
   // a game and one for loading one, because no state a frame can see says it: the
   // frame keeps running with the pause menu open, and the player ped outlives
-  // death, arrest and a cutscene.
-  if (shop_marker_swaps_.empty()) return;
-  if (logger_) {
-    logger_("shop marker: " + std::to_string(shop_marker_swaps_.size())
-            + " swaps dropped with the world they belonged to");
+  // death, arrest and a cutscene. A save loaded from the pause menu is the case
+  // only these reach, since it restores its own seed hash and no frame ever reads
+  // an empty one.
+  ForgetGameScopedState();
+}
+
+// Everything this handler remembers about one game, dropped when that game
+// ends. Runs with mutex_ held, from three places that each reach a boundary the
+// others do not: the frame that stamps a fresh game, every frame of a game that
+// has no seed at all, and the world-replaced events, which are the only ones
+// that catch a save loaded from the pause menu, since the load restores the
+// hash the frame would otherwise have read as empty. Every write is idempotent,
+// so the paths overlapping costs nothing.
+void ScmGameState::ForgetGameScopedState() {
+  baseline_captured_ = false;
+  // Forget which packages were seen present so a fresh game re-derives from
+  // its own pool. Tied to the game boundary, not to config: a bridge
+  // reconnect keeps the set intact, so a package collected mid-session is
+  // never missed by a clear between its present and gone frames.
+  package_seen_present_.clear();
+  // The minimap forcing memory belongs to the game that set it; the next
+  // game re-derives it from its own globals on the first frame.
+  minimap_forcing_hidden_ = false;
+  // Ability toast pacing belongs to the game too; the locks themselves
+  // re-derive from the globals every frame.
+  ability_toast_shown_.fill(false);
+  ability_toast_last_ms_.fill(0);
+  // The stunt jump dump key's edge stays where it is. Its handler runs on the
+  // frame and its latch belongs to the keyboard rather than to a game, so
+  // clearing it here would unlatch it on every frame the dump runs in.
+  // The model table belongs to the game that loaded it.
+  kill_frenzy_model_ = -1;
+  kill_frenzy_lookup_logged_ = false;
+  held_class_logged_ = {};
+  // The stack empties with the game it was drawing in, queue included, so no row
+  // admitted in one game finishes its life in the next. That takes rows the
+  // bridge queued seconds ago while a game was still up as well as rows it
+  // queued with no game to draw them in at all, and for the same reason: the
+  // stack only advances on a game frame, so the whole backlog would otherwise
+  // land as a burst on the first frame of the next game. Nothing is lost for
+  // good, since the pause page reads the recent list, which is a record rather
+  // than a queue and is kept. The notices are exempt too, since they exist
+  // precisely to wait for a game to be readable in.
+  toasts_.visible.clear();
+  toasts_.waiting.clear();
+  // The shop marker swaps name objects by pool reference, and replacing the
+  // world refills that pool, so the references belong to a world that is gone.
+  // Dropped rather than restored: there is nothing left to put back.
+  if (!shop_marker_swaps_.empty()) {
+    if (logger_) {
+      logger_("shop marker: " + std::to_string(shop_marker_swaps_.size())
+              + " swaps dropped with the world they belonged to");
+    }
+    shop_marker_swaps_.clear();
+    CStreaming::SetMissionDoesntRequireModel(kPickupCheckMarkerModel);
   }
-  shop_marker_swaps_.clear();
-  CStreaming::SetMissionDoesntRequireModel(kPickupCheckMarkerModel);
+  // The frame handler keeps this true to the seed while it runs, so this is
+  // for the case where it does not run at all: a game with no stamped seed
+  // hash never reaches it, and the counter would otherwise still be answering
+  // for the game before.
+  g_money_reads_locked.store(false, std::memory_order_relaxed);
+  world_was_loaded_ = false;
+  // The unmatched-slot diagnostic counts frames per game, so a fresh game
+  // gets its own creation window and its own single report.
+  pickup_enforce_frames_ = 0;
+  // Nothing is pending in a game that is not running, and the next loaded
+  // frame republishes from its own layout pass.
+  ClearPickupPriceOverrides();
+  // The percentage belongs to the game that earned it, so the next loaded
+  // frame reports its own reading whatever this one was. A value already read
+  // and not yet pumped stays queued, exactly as the outbound checks do: the
+  // frame runs many times per bridge poll, so quitting right after the last
+  // point of a game would otherwise drop the hundred it just reached. The cost
+  // is that a queued number can go out while the frontend is up, so a tracker
+  // can show the save just left for as long as one poll of the next game.
+  reported_percentage_ = -1;
+  // The pacer and what it has handed over belong to the game that received
+  // them. A fresh game reads its own globals as the starting point, so a
+  // load whose unlocks are already saved hands over nothing, and a new game
+  // hands the whole list over at the paced rate.
+  // Takes the pacer and the rotation cursor, and leaves the queued checks.
+  ResetGrantsForNewGame(grants_, outbound_checks_);
+  // Emptied and marked stale together: an empty cache that reads clean is
+  // one no frame rebuilds, and the next game would apply no unlock at all.
+  unlock_targets_.clear();
+  items_dirty_ = true;
+  outbound_checks_held_ = true;
+  // Queued checks are deliberately NOT dropped here. A location is a
+  // permanent fact about the slot rather than about the game it was found
+  // in, and there is one game per seed, so sending a stale one costs
+  // nothing while dropping one costs it forever: DetectCompletedLocations
+  // records the location in reported_ the moment it finds it and nothing
+  // ever clears that, and a save made with the global set hands the next
+  // game a baseline that reads it as never having been a completion global
+  // at all. Quitting from an end cutscene would silently un-check the
+  // mission that just passed.
+  //
+  // Deliberately not here either: the timed traps (the sped-up and slowed clock,
+  // the hostile pedestrians, the drunk vision) and the retune press bookkeeping.
+  // A trap holds to a real-time deadline and reverts itself, and its revert walks
+  // the ped pool and writes the pad, which a restart is rebuilding under it, so
+  // what carries into the next game is the rest of one trap's duration and never
+  // a write into a world coming up. The retune bookkeeping heals on the first
+  // frame with no player vehicle, which every boundary passes through.
 }
 
 void ScmGameState::OnGameFrame() {
@@ -2335,13 +2436,18 @@ void ScmGameState::OnGameFrame() {
   }
 
   cached_seed_hash_ = ReadSeedHash();
-  if (stamp_pending_) {
-    if (cached_seed_hash_.empty() && !pending_stamp_.empty()) {
-      WriteSeedHash(pending_stamp_);
-      cached_seed_hash_ = pending_stamp_;
-      if (logger_) logger_("stamped seed hash on new game");
-    }
-    stamp_pending_ = false;
+  if (ShouldStampSeedHash(cached_seed_hash_.empty(), !expected_seed_hash_.empty(),
+                          client_connected_)) {
+    WriteSeedHash(expected_seed_hash_);
+    cached_seed_hash_ = expected_seed_hash_;
+    // An empty hash in a game that is running is the world having been replaced,
+    // so what this handler remembers belongs to a game that is gone. The events
+    // say the same thing a moment earlier, and each path reaches one the other
+    // cannot: a save loaded from the pause menu brings its own hash back, so
+    // this branch never sees it, and a frame stamping a game the events missed
+    // heals it here. Forgetting twice costs nothing.
+    ForgetGameScopedState();
+    if (logger_) logger_("stamped seed hash on a new game");
   }
 
   // Only touch the game's script memory once a stamped game is actually
@@ -2349,73 +2455,7 @@ void ScmGameState::OnGameFrame() {
   // baseline taken there would be wrong.
   const bool game_active = !cached_seed_hash_.empty();
   if (!game_active) {
-    baseline_captured_ = false;
-    // Forget which packages were seen present so a fresh game re-derives from
-    // its own pool. Tied to the game boundary, not to config: a bridge
-    // reconnect keeps the set intact, so a package collected mid-session is
-    // never missed by a clear between its present and gone frames.
-    package_seen_present_.clear();
-    // The minimap forcing memory belongs to the game that set it; the next
-    // game re-derives it from its own globals on the first frame.
-    minimap_forcing_hidden_ = false;
-    // Ability toast pacing belongs to the game too; the locks themselves
-    // re-derive from the globals every frame.
-    ability_toast_shown_.fill(false);
-    ability_toast_last_ms_.fill(0);
-    // The stunt jump dump key's edge stays where it is. Its handler runs above
-    // this branch and its latch belongs to the keyboard rather than to a game,
-    // so clearing it here would unlatch it on every frame the dump runs in.
-    // The model table belongs to the game that loaded it.
-    kill_frenzy_model_ = -1;
-    kill_frenzy_lookup_logged_ = false;
-    held_class_logged_ = {};
-    // Rows the bridge queued while the frontend was up belong to no game: the
-    // stack only advances on a game frame, so they would otherwise land as a
-    // burst on the first frame of the next one. The notices are exempt, since
-    // they exist precisely to wait for a game to be readable in, and so is the
-    // recent list, which is a record rather than a queue.
-    toasts_.visible.clear();
-    toasts_.waiting.clear();
-    // The frame handler keeps this true to the seed while it runs, so this is
-    // for the case where it does not run at all: a game with no stamped seed
-    // hash never reaches it, and the counter would otherwise still be answering
-    // for the game before.
-    g_money_reads_locked.store(false, std::memory_order_relaxed);
-    world_was_loaded_ = false;
-    // The unmatched-slot diagnostic counts frames per game, so a fresh game
-    // gets its own creation window and its own single report.
-    pickup_enforce_frames_ = 0;
-    // Nothing is pending in a game that is not running, and the next loaded
-    // frame republishes from its own layout pass.
-    ClearPickupPriceOverrides();
-    // The percentage belongs to the game that earned it, so the next loaded
-    // frame reports its own reading whatever this one was. A value already read
-    // and not yet pumped stays queued, exactly as the outbound checks do: the
-    // frame runs many times per bridge poll, so quitting right after the last
-    // point of a game would otherwise drop the hundred it just reached. The cost
-    // is that a queued number can go out while the frontend is up, so a tracker
-    // can show the save just left for as long as one poll of the next game.
-    reported_percentage_ = -1;
-    // The pacer and what it has handed over belong to the game that received
-    // them. A fresh game reads its own globals as the starting point, so a
-    // load whose unlocks are already saved hands over nothing, and a new game
-    // hands the whole list over at the pace below.
-    // Takes the pacer and the rotation cursor, and leaves the queued checks.
-    ResetGrantsForNewGame(grants_, outbound_checks_);
-    // Emptied and marked stale together: an empty cache that reads clean is
-    // one no frame rebuilds, and the next game would apply no unlock at all.
-    unlock_targets_.clear();
-    items_dirty_ = true;
-    outbound_checks_held_ = true;
-    // Queued checks are deliberately NOT dropped here. A location is a
-    // permanent fact about the slot rather than about the game it was found
-    // in, and there is one game per seed, so sending a stale one costs
-    // nothing while dropping one costs it forever: DetectCompletedLocations
-    // records the location in reported_ the moment it finds it and nothing
-    // ever clears that, and a save made with the global set hands the next
-    // game a baseline that reads it as never having been a completion global
-    // at all. Quitting from an end cutscene would silently un-check the
-    // mission that just passed.
+    ForgetGameScopedState();
     return;
   }
 
@@ -2600,7 +2640,7 @@ void ScmGameState::OnGameFrame() {
   // Snapshot the completion globals as this game starts, so a real completion
   // shows up as a change from a zero baseline. Globals nonzero at the baseline
   // are not declared completion globals and are never reported.
-  if (!baseline_captured_) {
+  if (ShouldCaptureBaseline(baseline_captured_, completion_watch_.empty())) {
     baseline_ = current;
     baseline_captured_ = true;
     if (logger_) logger_("captured completion baseline");

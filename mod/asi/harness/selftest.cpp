@@ -24,6 +24,7 @@
 #include "../src/scm_pickup_layout.hpp"
 #include "../src/scm_progress.hpp"
 #include "../src/scm_radio.hpp"
+#include "../src/scm_seed_stamp.hpp"
 #include "../src/scm_status_panel.hpp"
 #include "../src/scm_stunt_jumps.hpp"
 #include "../src/scm_toasts.hpp"
@@ -1153,6 +1154,35 @@ int main() {
            "a world going away does not re-derive");
     Expect(!ShouldReDeriveUnlocks(true, false, false),
            "no items in hand means nothing to re-derive from");
+  }
+
+  // Stamping the seed into a game: every game that comes up without a hash gets
+  // one, which is what a new game started from the pause menu depends on, since
+  // the bridge session it was welcomed in never handshakes again.
+  {
+    Expect(ShouldStampSeedHash(true, true, true),
+           "a game whose script space holds no hash is stamped");
+    Expect(!ShouldStampSeedHash(false, true, true),
+           "a game already carrying a hash is never stamped over");
+    Expect(!ShouldStampSeedHash(true, false, true),
+           "with no welcome there is no seed to stamp, and the game stays "
+           "unstamped rather than being claimed by nothing");
+    Expect(!ShouldStampSeedHash(true, true, false),
+           "the seed a client that has gone away named cannot claim the next "
+           "game, which the client after it would refuse for good");
+  }
+
+  // Taking the completion baseline: not before a config has named the globals it
+  // is a baseline of, since an empty one is permanent and the welcome that stamps
+  // a game can land a frame ahead of the config that describes it.
+  {
+    Expect(ShouldCaptureBaseline(false, false),
+           "a game with globals to watch takes its baseline");
+    Expect(!ShouldCaptureBaseline(true, false),
+           "a baseline is taken once per game");
+    Expect(!ShouldCaptureBaseline(false, true),
+           "an empty watch list is no baseline: taking one would skip every "
+           "global the config has yet to name for the life of the game");
   }
 
   // Vehicle entry: each lock answers for its own appearance class and leaves

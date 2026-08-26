@@ -36,6 +36,16 @@ inline std::vector<std::int64_t> DetectCompletedLocations(
   return completed;
 }
 
+// Whether this frame takes the completion baseline. A baseline is an answer
+// about the globals the config names, and every global absent from one is
+// skipped for the life of the game above, so an empty baseline is a permanent
+// answer to a question nobody has asked yet. The welcome and the config are
+// separate frames on the wire, so a game stamped in the window between them
+// would report nothing at all for the rest of its life.
+inline bool ShouldCaptureBaseline(bool already_captured, bool watch_empty) {
+  return !already_captured && !watch_empty;
+}
+
 // The checks that leave for the server now, taken out of the queue. Holding
 // while the player has no control is what keeps a check from arriving in the
 // middle of a cutscene, on a frame the player could not have earned it.

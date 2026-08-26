@@ -132,8 +132,9 @@ class GameState {
   // Empty when no game has been started for this seed.
   virtual std::string SeedHash() = 0;
 
-  // The expected hash from welcome. A new game stamps it into the reserved
-  // global; an existing game leaves its stored value alone.
+  // The expected hash from welcome, kept for the session: every game that comes
+  // up with no hash of its own is stamped with it, and a game that already
+  // carries one keeps what it stored.
   virtual void StampSeedHash(const std::string& expected) = 0;
 
   // The full cumulative received-items list, as (index, item id). The

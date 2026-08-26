@@ -235,6 +235,11 @@ class ScmGameState : public GameState {
   // that removes and recreates a slot (the vanilla scripts do, with vanilla
   // models) is re-enforced on the next frame. Empty layout means vanilla.
   void EnforcePickupLayout();
+  // Drops everything this class remembers about one game, so the next one
+  // starts from its own world and its own globals rather than from what the
+  // last one left here. Runs with mutex_ held, on the frame and on the
+  // world-replaced events alike.
+  void ForgetGameScopedState();
 
   Logger logger_;
   std::mutex mutex_;
@@ -264,7 +269,12 @@ class ScmGameState : public GameState {
   // marquee, so this is the only place in game a row can be read again. Kept
   // across a game boundary: it is a record of the multiworld and not of a game.
   std::vector<ToastRow> recent_toasts_;
-  std::string pending_stamp_;
+  // The seed hash the client welcomed with, which is the one every game that
+  // comes up without one is stamped with while that client is still there. Empty
+  // until a welcome names it, cleared when that session ends, and read beside
+  // client_connected_ as well, so the seed a departed client named can never
+  // claim the game after it.
+  std::string expected_seed_hash_;
   std::string cached_seed_hash_;
   bool items_dirty_ = false;
   // Grants leave at a rate the game survives rather than the rate the server
@@ -287,7 +297,6 @@ class ScmGameState : public GameState {
   // separate all the same, so a mission writing a completion during its end
   // cutscene is seen on the frame it is written.
   bool outbound_checks_held_ = true;
-  bool stamp_pending_ = false;
   bool baseline_captured_ = false;
   // Timed-trap state, reverted once each deadline (in real milliseconds) passes.
   bool time_scale_trap_active_ = false;
