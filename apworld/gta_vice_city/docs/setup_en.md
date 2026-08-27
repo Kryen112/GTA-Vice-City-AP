@@ -20,9 +20,8 @@ then connect the client. The client installs the in-game mod for you.
 - **GTA: Vice City, the original classic PC release, executable 1.0**
   (`gta-vc.exe`), with its original `data/main.scm`. This is the classic game,
   not the Definitive Edition, which is a different game the mod does not run on.
-  The client fingerprints `data/main.scm` and refuses to install when it is not
-  the original 1.0 script. The executable is not fingerprinted, so a wrong one
-  shows up as a game where nothing Archipelago happens.
+  The client checks both and refuses to install when either is wrong, naming
+  which build of the game it found and what it wanted.
 - **Ultimate ASI Loader**, installed in your game folder as `dinput8.dll`. Vice
   City does not load `.asi` plugins on its own, so this is required.
 - **CLEO for Vice City**, installed in your game folder.
@@ -44,9 +43,10 @@ download the mod separately.
 
 ## 2. Prepare your game folder
 
-1. Confirm your `gta-vc.exe` is the original 1.0 build. Nothing checks this for
-   you: the mod attaches to 1.0 and to nothing else, so another build leaves you
-   with a game where nothing Archipelago happens.
+1. Confirm your `gta-vc.exe` is the original 1.0 build. The client checks this
+   before it installs and before it launches the game, and tells you which build
+   it found, so you do not have to know how to look; the mod attaches to 1.0 and
+   to nothing else.
 2. Install Ultimate ASI Loader (`dinput8.dll`) into the folder that holds
    `gta-vc.exe`.
 3. Install CLEO into the same folder.
@@ -135,11 +135,17 @@ saves.
 
 ## If something goes wrong
 
-- **The game starts but nothing Archipelago happens.** Three causes, in the
-  order worth checking. Confirm Ultimate ASI Loader is present as `dinput8.dll`
-  and CLEO is installed; run `/installmod` with the game closed and relaunch;
-  and confirm your `gta-vc.exe` is the original 1.0 build, since the mod
-  attaches to that one only and says nothing about any other.
+- **The client says your `gta-vc.exe` is another build.** It names the build it
+  found. The mod attaches to the classic 1.0 executable and to no other, so no
+  other build can run it, patched or not.
+- **The client says it could not tell which build your `gta-vc.exe` is.** It
+  installs anyway and this may be nothing: a compressed or repacked executable
+  is unreadable from the outside and unpacks to a perfectly good 1.0 once the
+  game starts. It is worth remembering only if nothing Archipelago then happens
+  in game.
+- **The game starts but nothing Archipelago happens.** Confirm Ultimate ASI
+  Loader is present as `dinput8.dll` and CLEO is installed, then run
+  `/installmod` with the game closed and relaunch.
 - **The client says your `main.scm` is not the original 1.0 script.** It prints
   the fingerprint it found and the one it wants. Restore `data/main.scm` from
   your own copy of the game files, and remove `AP_mod_backup\main.scm` if it is

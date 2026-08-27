@@ -12,11 +12,13 @@ The original classic PC release of GTA: Vice City, executable 1.0
 (`gta-vc.exe`), with its original `data/main.scm`. This is the classic game and
 not the Definitive Edition, which is a different game the mod does not run on.
 
-The client fingerprints `data/main.scm` and installs nothing when it is not the
-original 1.0 script, naming what it found. The executable itself is not
-fingerprinted: the mod is built against 1.0 addresses and simply never attaches
-to another build, so a wrong executable shows up as a game where nothing
-Archipelago happens rather than as a refusal.
+The client checks both before it installs anything, and refuses by name when
+either is wrong: it reads which build the executable is, the way the mod's own
+hooks do, and it fingerprints `data/main.scm` against the original 1.0 script.
+The build check reads which build the executable is rather than hashing it, so a
+1.0 that has been patched still passes. An executable it cannot read at all is
+installed on anyway, with a line saying so, since a compressed one reads as
+nothing on disk and as itself once the game is running.
 
 You also need Ultimate ASI Loader and CLEO, two free community tools, in your
 game folder. The [Setup Guide](/tutorial/Grand%20Theft%20Auto%20Vice%20City/setup/en)

@@ -751,7 +751,7 @@ class GTAViceCityContext(CommonContext):
                 return False
             for line in installer.deploy(self.install_dir):
                 logger.info(line)
-        except installer.StockScriptRefused as refusal:
+        except installer.InstallRefused as refusal:
             # The refusal carries the whole message: what was found and what to
             # do about it. Logged as it stands, since rewording it here would be
             # a second place saying the same thing differently.
@@ -889,6 +889,17 @@ class GTAViceCityContext(CommonContext):
         executable = self.install_dir / "gta-vc.exe"
         if not executable.is_file():
             logger.error(f"gta-vc.exe not found at {executable}.")
+            return
+        # Asked here as well as at install time, because the two are reachable
+        # apart: with auto_install_mod off, and on /play, nothing installs and
+        # the build would go unexamined. Launching a game the mod cannot attach
+        # to is the silent failure the check exists to end, whichever way the
+        # launch was asked for.
+        from .. import installer
+        try:
+            installer.require_supported_game_build(self.install_dir)
+        except installer.GameBuildRefused as refusal:
+            logger.error(str(refusal))
             return
         try:
             self.game_process = subprocess.Popen([str(executable)], cwd=str(executable.parent))

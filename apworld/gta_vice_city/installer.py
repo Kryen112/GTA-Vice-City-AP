@@ -9,11 +9,13 @@ before putting each one in its place, backing up any stock file it replaces.
 Idempotent. It installs only our own files; the player supplies Ultimate ASI
 Loader and CLEO.
 
-An install whose main.scm is not the original 1.0 script cannot be patched, and
-that is a refusal (``StockScriptRefused``) naming what was found, never a
-best effort: a patch applied to the wrong bytes makes a game that fails
-somewhere else entirely. Removal never patches anything, so it works on an
-install that cannot be deployed to.
+Two things are refused rather than worked around, both as ``InstallRefused``
+carrying the whole message for the player: an executable that is a build the mod
+cannot attach to (``GameBuildRefused``), since installing there leaves a game
+that looks fine and sends nothing, and a main.scm that is not the original 1.0
+script (``StockScriptRefused``), since a patch applied to the wrong bytes makes
+a game that fails somewhere else entirely. Removal refuses neither and needs
+neither, so it works on an install that cannot be deployed to.
 
 When the apworld carries no payload, every entry point here is a no-op, so the
 installer can ship before the mod does without touching a game install.
@@ -43,12 +45,24 @@ import struct
 from pathlib import Path
 
 
-class StockScriptRefused(Exception):
-    """The install's own main.scm is not the script the payload patches.
+class InstallRefused(Exception):
+    """The install is one this mod will not touch, and why.
 
-    Carries the whole player-facing message, since every way to raise it has
-    something specific to say about what was found and how to put it right.
+    Carries the whole player-facing message, since every way to raise one of
+    these has something specific to say about what was found and how to put it
+    right. One base so the client catches refusals as a kind rather than by
+    listing them, and a new reason to refuse cannot be added without the client
+    already handling it.
     """
+
+
+class StockScriptRefused(InstallRefused):
+    """The install's own main.scm is not the script the payload patches."""
+
+
+class GameBuildRefused(InstallRefused):
+    """The executable is not the build the mod attaches to."""
+
 
 BACKUP_DIR_NAME = "AP_mod_backup"
 ASI_SUFFIX = ".asi"
@@ -481,6 +495,106 @@ def stock_script(install_dir: Path, expected_sha256: str) -> bytes:
         "folder to patch. Restore it from your own copy of the game files.")
 
 
+def _read_virtual_uint32(image: bytes, virtual_address: int) -> int | None:
+    """The four bytes at a virtual address, read out of the file on disk.
+
+    An executable's addresses are where Windows will map it, not where the bytes
+    sit in the file, so the section table is what turns one into the other. None
+    when the file is not a PE image, is truncated, or maps nothing there.
+    """
+    try:
+        headers = struct.unpack_from("<I", image, 0x3C)[0]
+        if image[headers:headers + 4] != b"PE\0\0":
+            return None
+        sections, = struct.unpack_from("<H", image, headers + 6)
+        optional_size, = struct.unpack_from("<H", image, headers + 20)
+        image_base, = struct.unpack_from("<I", image, headers + 24 + 28)
+        table = headers + 24 + optional_size
+        relative = virtual_address - image_base
+        for index in range(sections):
+            entry = table + index * 40
+            _virtual_size, address, raw_size, raw_offset = struct.unpack_from(
+                "<IIII", image, entry + 8)
+            # Against the RAW size and not the virtual one: the tail a section
+            # asks to be zero filled with has no bytes in the file, so an address
+            # in it would read whatever happens to sit at that offset instead.
+            offset = relative - address
+            if 0 <= offset and offset + 4 <= raw_size:
+                return struct.unpack_from("<I", image, raw_offset + offset)[0]
+    except struct.error:
+        return None
+    return None
+
+
+# How plugin-sdk tells one Vice City executable from another, from
+# plugin-sdk/shared/GameVersion.cpp: four bytes of a function prologue at an
+# address only that build puts it at. Read here rather than hashed, and the
+# difference matters: a hash covers the whole file, so it would refuse a
+# legitimately owned 1.0 that has been patched, which is most of them.
+#
+# The same table the ASI attaches by, deliberately: plugin-sdk installs hooks
+# only for the build it detects, so the mod runs on GAME_BUILD_SUPPORTED and
+# nowhere else. Reading it here says ahead of time what the ASI will do, with one
+# gap this side cannot close, which is why an unreadable build is not refused:
+# plugin-sdk reads the game in memory, where a compressed executable has already
+# unpacked itself, and this reads the file.
+GAME_EXECUTABLE = "gta-vc.exe"
+GAME_BUILD_PROLOGUE = 0x53E58955
+GAME_BUILD_ADDRESSES: dict[str, int] = {
+    "1.0 English": 0x667BF0,
+    "1.1 English": 0x667C40,
+    "Steam": 0x666BA0,
+}
+GAME_BUILD_SUPPORTED = "1.0 English"
+
+
+def detect_game_build(install_dir: Path) -> str | None:
+    """Which Vice City build the install holds, or None for one nothing knows.
+
+    None covers every way this can fail to be a build the mod knows: another
+    game's executable, a variant plugin-sdk has no address for, a file too
+    damaged to read. They are one answer because they have one consequence, which
+    is that the mod would not attach.
+    """
+    executable = Path(install_dir) / GAME_EXECUTABLE
+    try:
+        image = executable.read_bytes()
+    except OSError:
+        return None
+    for name, address in GAME_BUILD_ADDRESSES.items():
+        if _read_virtual_uint32(image, address) == GAME_BUILD_PROLOGUE:
+            return name
+    return None
+
+
+def require_supported_game_build(install_dir: Path) -> str | None:
+    """Refuses a build the mod cannot attach to. Hands back a line to log for one
+    it cannot read, and None when the build is the one the mod runs on.
+
+    A build it cannot read is NOT refused, and the difference is the whole
+    reason detection reads a prologue rather than the file. plugin-sdk reads the
+    game in memory, after Windows has mapped it and anything compressed has
+    unpacked itself, so a packed 1.0 reads as nothing on disk and as 1.0 in the
+    game: the ASI would attach to it perfectly. Refusing that install would turn
+    a working setup away over a file this side cannot see into, which is worse
+    than the silence the check exists to end.
+    """
+    build = detect_game_build(install_dir)
+    if build == GAME_BUILD_SUPPORTED:
+        return None
+    if build is None:
+        return (f"Could not tell which build {GAME_EXECUTABLE} is, so the mod is "
+                f"being installed anyway. It runs on the classic "
+                f"{GAME_BUILD_SUPPORTED} executable only. If nothing Archipelago "
+                "happens in game, that is the first thing to check.")
+    raise GameBuildRefused(
+        f"The mod could not be installed: {GAME_EXECUTABLE} is the {build} build, "
+        f"and the mod runs on the classic {GAME_BUILD_SUPPORTED} executable only. "
+        "It attaches to that build and to no other, so installing here would "
+        "leave you with a game that looks fine and sends no checks. This is the "
+        "classic PC release and not the Definitive Edition.")
+
+
 def _payload_manifest(entries: dict[str, bytes]) -> tuple[str, dict[str, str]]:
     """The stock hash and the target hashes the payload was built with.
 
@@ -627,11 +741,22 @@ def mod_is_current(install_dir: Path, payload: list[tuple[str, bytes]] | None = 
     an install that is already correct read as stale the moment its backup went
     missing, and deploy would then refuse to rebuild what is already in place
     and hold the game shut over a file nobody needs any more.
+
+    An install on a build the mod cannot attach to is never current, however well
+    its files match. This is the one place that answer can be given: current
+    means deploy is skipped, and a skipped deploy is a refusal nobody ever reads,
+    which is the silent broken game the build check exists to stop. It is asked
+    only of an apworld that HAS a payload, so one packaged without a mod is still
+    a no-op on every install, whatever executable is sitting there.
     """
-    if payload is not None:
-        return _install_matches(install_dir, [(relative, _sha256(data))
-                                              for relative, data in payload])
-    return _install_matches(install_dir, sorted(payload_target_sha256().items()))
+    expected = ([(relative, _sha256(data)) for relative, data in payload]
+                if payload is not None
+                else sorted(payload_target_sha256().items()))
+    if not expected:
+        return True
+    if detect_game_build(install_dir) not in (GAME_BUILD_SUPPORTED, None):
+        return False
+    return _install_matches(install_dir, expected)
 
 
 def _install_matches(install_dir: Path, expected: list[tuple[str, str]]) -> bool:
@@ -663,18 +788,26 @@ def deploy(install_dir: Path, payload: list[tuple[str, bytes]] | None = None) ->
     """Build the bundled mod from the install's own script and put it in place,
     backing up any stock file it replaces. Idempotent. Returns log lines.
 
-    Raises StockScriptRefused when the install's main.scm is not the script the
-    payload patches, with the whole message for the player in it. A payload
-    handed in directly skips that check, since it is already files rather than
-    patches: the tests are what pass one, and it is the one way left to record a
-    backup nothing verified.
+    Raises InstallRefused when the executable is not the build the mod attaches
+    to, or when the install's main.scm is not the script the payload patches,
+    with the whole message for the player in it. The build is asked about after
+    the payload, so an apworld carrying no mod still refuses on its own terms
+    rather than on the game folder's, and before anything is written, so a
+    refusal leaves the folder untouched.
+
+    A payload handed in directly skips the script check, since it is already
+    files rather than patches: the tests are what pass one, and it is the one way
+    left to record a backup nothing verified.
     """
     files = materialize_payload(install_dir) if payload is None else payload
     if not files:
         raise FileNotFoundError(
             "no mod payload in the apworld; it was packaged without data/mod")
+    unreadable_build = require_supported_game_build(install_dir)
     install_dir = Path(install_dir)
     log: list[str] = []
+    if unreadable_build:
+        log.append(unreadable_build)
     log.extend(_clear_stale_paths(install_dir))
     # Counted rather than listed. The payload is one mod in a dozen files, and a
     # player reading this wants to know it is in place, not which files carry it.

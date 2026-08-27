@@ -17,6 +17,7 @@ true.
 from __future__ import annotations
 
 import json
+import re
 import struct
 import tempfile
 import unittest
@@ -64,6 +65,42 @@ VANILLA_TABLE = build_text_table({
 })
 
 
+def build_executable(build: str = installer.GAME_BUILD_SUPPORTED) -> bytes:
+    """A minimal PE image carrying one build's prologue where plugin-sdk reads it.
+
+    Not a copy of anything: an MZ stub, a PE header, and one section big enough to
+    cover the addresses in the table. What makes it a given build is four bytes at
+    that build's own address, which is exactly what the detector looks at.
+    """
+    image_base = 0x400000
+    section_address = 0x1000
+    section_offset = 0x400
+    section_size = 0x400000
+    header = bytearray(section_offset)
+    header[0:2] = b"MZ"
+    struct.pack_into("<I", header, 0x3C, 0x80)
+    struct.pack_into("<IHH", header, 0x80, 0x4550, 0x14C, 1)
+    optional_size = 224
+    struct.pack_into("<H", header, 0x80 + 20, optional_size)
+    struct.pack_into("<I", header, 0x80 + 24 + 28, image_base)
+    table = 0x80 + 24 + optional_size
+    struct.pack_into("<8sIIII", header, table, b".text".ljust(8),
+                     section_size, section_address, section_size, section_offset)
+    body = bytearray(section_size)
+    address = installer.GAME_BUILD_ADDRESSES[build]
+    struct.pack_into("<I", body, address - image_base - section_address,
+                     installer.GAME_BUILD_PROLOGUE)
+    return bytes(header) + bytes(body)
+
+
+def install_executable(install_dir: Path, build: str = installer.GAME_BUILD_SUPPORTED) -> Path:
+    """Puts a build's executable where the detector looks for it."""
+    path = Path(install_dir) / installer.GAME_EXECUTABLE
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(build_executable(build))
+    return path
+
+
 class TestDestination(unittest.TestCase):
     def test_maps_each_file_to_its_place(self) -> None:
         root = Path("C:/game")
@@ -76,6 +113,7 @@ class TestDeploy(unittest.TestCase):
     def setUp(self) -> None:
         self._tmp = tempfile.TemporaryDirectory()
         self.install = Path(self._tmp.name)
+        install_executable(self.install)
 
     def tearDown(self) -> None:
         self._tmp.cleanup()
@@ -207,6 +245,7 @@ class TestRemove(unittest.TestCase):
     def setUp(self) -> None:
         self._tmp = tempfile.TemporaryDirectory()
         self.install = Path(self._tmp.name)
+        install_executable(self.install)
 
     def tearDown(self) -> None:
         self._tmp.cleanup()
@@ -403,6 +442,7 @@ class TestTextTableDeploy(unittest.TestCase):
     def setUp(self) -> None:
         self._tmp = tempfile.TemporaryDirectory()
         self.install = Path(self._tmp.name)
+        install_executable(self.install)
         text_dir = self.install / "TEXT"
         text_dir.mkdir()
         (text_dir / "american.gxt").write_bytes(VANILLA_TABLE)
@@ -553,6 +593,135 @@ class TestTextTableDeploy(unittest.TestCase):
                 self.assertEqual(table.read_bytes(), VANILLA_TABLE)
 
 
+class TestGameBuild(unittest.TestCase):
+    """Which executable the mod will attach to, read the way plugin-sdk reads it.
+
+    The mod hooks the build plugin-sdk detects and no other, so an install on
+    another build runs a game that looks fine and sends nothing. Refusing it is
+    the only way a player hears about that at all.
+    """
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.install = Path(self._tmp.name)
+
+    def tearDown(self) -> None:
+        self._tmp.cleanup()
+
+    def test_each_build_in_the_table_is_told_apart(self) -> None:
+        for build in installer.GAME_BUILD_ADDRESSES:
+            with self.subTest(build):
+                install_executable(self.install, build)
+                self.assertEqual(installer.detect_game_build(self.install), build)
+
+    def test_the_supported_build_installs(self) -> None:
+        install_executable(self.install)
+        installer.require_supported_game_build(self.install)
+
+    def test_another_build_is_refused_by_name(self) -> None:
+        # Named, because "not supported" sends a player looking at everything and
+        # the build they have is the one fact that resolves it.
+        for build in ("1.1 English", "Steam"):
+            with self.subTest(build):
+                install_executable(self.install, build)
+                with self.assertRaises(installer.GameBuildRefused) as refused:
+                    installer.require_supported_game_build(self.install)
+                self.assertIn(build, str(refused.exception))
+
+    def test_a_build_nothing_can_read_installs_anyway_and_says_so(self) -> None:
+        # Deliberately not a refusal. plugin-sdk reads the game in memory, where
+        # a compressed executable has unpacked itself, so a packed 1.0 reads as
+        # nothing here and as 1.0 there: the mod would attach to it perfectly,
+        # and refusing would turn a working install away over a file this side
+        # cannot see into.
+        executable = self.install / installer.GAME_EXECUTABLE
+        for content in (b"not an executable at all", build_executable()[:200], b""):
+            with self.subTest(len(content)):
+                executable.write_bytes(content)
+                self.assertIsNone(installer.detect_game_build(self.install))
+                warning = installer.require_supported_game_build(self.install)
+                self.assertIn("Could not tell which build", warning)
+
+    def test_no_executable_at_all_is_not_refused_either(self) -> None:
+        # The folder picker already refuses a folder with no gta-vc.exe, so this
+        # is only reachable on one deleted afterwards, and it is the same
+        # unreadable case.
+        self.assertIsNone(installer.detect_game_build(self.install))
+        self.assertIsNotNone(installer.require_supported_game_build(self.install))
+
+    def test_an_unreadable_build_is_still_installed_and_reported(self) -> None:
+        (self.install / installer.GAME_EXECUTABLE).write_bytes(b"packed, for all we know")
+        log = installer.deploy(self.install, payload=PAYLOAD)
+        self.assertTrue((self.install / "GtaVcAp.VC.asi").is_file())
+        self.assertTrue([line for line in log if "Could not tell which build" in line])
+
+    def test_an_apworld_with_no_payload_ignores_the_build(self) -> None:
+        # The no-op contract: an apworld shipped before the mod touches nothing,
+        # whatever executable is sitting in the folder. Asking about the build
+        # first would have made it refuse instead.
+        install_executable(self.install, "Steam")
+        self.assertTrue(installer.mod_is_current(self.install, payload=[]))
+        with self.assertRaises(FileNotFoundError):
+            installer.deploy(self.install, payload=[])
+
+    def test_deploy_refuses_before_it_writes_anything(self) -> None:
+        install_executable(self.install, "Steam")
+        with self.assertRaises(installer.GameBuildRefused):
+            installer.deploy(self.install, payload=PAYLOAD)
+        self.assertFalse((self.install / "GtaVcAp.VC.asi").exists())
+
+    def test_an_install_on_another_build_is_never_current(self) -> None:
+        # The one that makes the refusal reachable. Current means deploy is
+        # skipped, and a skipped deploy is a refusal nobody reads, which is the
+        # silent broken game this whole check exists to stop.
+        install_executable(self.install)
+        installer.deploy(self.install, payload=PAYLOAD)
+        self.assertTrue(installer.mod_is_current(self.install, payload=PAYLOAD))
+        install_executable(self.install, "1.1 English")
+        self.assertFalse(installer.mod_is_current(self.install, payload=PAYLOAD))
+
+    def test_removal_works_on_a_build_the_mod_refuses(self) -> None:
+        # Uninstalling is how a player undoes a mistake, so it must not need the
+        # thing that was mistaken. Same rule as removal not needing the script.
+        install_executable(self.install)
+        installer.deploy(self.install, payload=PAYLOAD)
+        install_executable(self.install, "Steam")
+        installer.remove(self.install, payload=PAYLOAD)
+        self.assertFalse((self.install / "GtaVcAp.VC.asi").exists())
+
+    def test_the_table_is_the_one_plugin_sdk_reads(self) -> None:
+        # The table is copied from plugin-sdk/shared/GameVersion.cpp, and the
+        # copy is only as good as its agreement with the original. Each address
+        # is paired with the version the SDK returns for it and with the prologue
+        # it expects, because the addresses alone would let 1.0 and 1.1 be
+        # swapped here and stay green while the check inverted: refuse the build
+        # the mod runs on, install on one it does not.
+        #
+        # A checkout of the SDK beside this one is not a given, so this reads it
+        # when it is there and says nothing when it is not.
+        source = (Path(__file__).resolve().parents[5]
+                  / "plugin-sdk" / "shared" / "GameVersion.cpp")
+        if not source.is_file():
+            self.skipTest("no plugin-sdk checkout beside this repository")
+        text = source.read_text(encoding="utf-8", errors="replace")
+        section = text.split("#ifdef GTAVC", 1)[1].split("#endif", 1)[0]
+        pairs = re.findall(
+            r"GetUInt\((0x[0-9A-Fa-f]+)\)\s*==\s*(0x[0-9A-Fa-f]+)\)\s*"
+            r"return\s+(GAME_\w+);", section)
+        self.assertEqual(len(pairs), len(installer.GAME_BUILD_ADDRESSES),
+                         "the SDK names a different number of builds")
+        sdk = {version: (int(address, 16), int(prologue, 16))
+               for address, prologue, version in pairs}
+        # The SDK's own spelling of each build, against ours.
+        ours = {"GAME_10EN": "1.0 English", "GAME_11EN": "1.1 English",
+                "GAME_STEAM": "Steam"}
+        self.assertEqual(set(sdk), set(ours), "the SDK names different builds")
+        for version, (address, prologue) in sdk.items():
+            with self.subTest(version):
+                self.assertEqual(installer.GAME_BUILD_ADDRESSES[ours[version]], address)
+                self.assertEqual(installer.GAME_BUILD_PROLOGUE, prologue)
+
+
 STOCK_SCRIPT = b"the game's own script, " * 40
 BUILT_SCRIPT = STOCK_SCRIPT + b"and the gates the mod adds"
 BUILT_CLEO = b"a watcher thread the mod adds"
@@ -591,6 +760,7 @@ class TestDeltaPayload(unittest.TestCase):
         self.root = Path(self._tmp.name)
         self.install = self.root / "game"
         self.install.mkdir()
+        install_executable(self.install)
         self.payload = build_delta_payload(self.root / "payload")
         self._patch = unittest.mock.patch.object(
             installer, "_payload_root", lambda: self.payload)
