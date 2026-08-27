@@ -1,29 +1,42 @@
-"""Writes the id snapshot the test suite holds the world's tables to.
+"""Writes the numbering snapshot the test suite holds the world to.
 
-    python scripts/freeze_ids.py              rewrite it, before release
-    python scripts/freeze_ids.py --first-run  write the very first one
+    python scripts/freeze_numbering.py              rewrite it, before release
+    python scripts/freeze_numbering.py --first-run  write the very first one
 
-Item and location ids are DERIVED: each table is its names in registry order,
+Three numberings, all derived and all breakable the same way. Item and location
+ids are DERIVED: each table is its names in registry order,
 numbered from a base. That makes a reorder in data.py a silent renumbering of
 everything after it, and after the first public release a renumbering breaks
 every seed and every tracker already out there. The snapshot is what turns that
-into a failing test.
+into a failing test. The reserved SCM globals are numbered the same way, from
+the same lists, and they are worse to move: they are compiled into main.scm and
+the CLEO scripts and written into save files, so a global that shifts points a
+running seed's save at the wrong word. That breaks a game in progress, which is
+why this half of the freeze matters before any release as well as after one.
 
 Before the release the snapshot is a mirror: change the tables on purpose, run
 this, and the diff shows exactly which ids moved. After it, when the snapshot
 says released, an id that already exists is fixed forever and this refuses to
 write a file that moves one.
 
-Adding is allowed after release, and only at the very end of a table. Each table
+Adding after release is narrower than it sounds, and for the globals it is
+narrower still. A table append has to be the tail of the LAST category, since
+each table is its category lists concatenated. And appending a LOCATION, which
+the id half allows, grows the completion block and pushes REWARD_BASE and every
+block above it up one, which this refuses: that shift is precisely the mid-seed
+save break. After release, then, a new location means a new numbering and a new
+apworld release, not an append.
+
+A new reserved global has no tail either. Every block is followed by another, so
+one added above the highest moves base:highest_reserved, which is frozen too and
+deliberately: add_markers.py sizes the marker scratch from it, so the top of the
+reserved block is itself a number main.scm is built against. Each table
 is its category lists concatenated, so a new trap or a tenth radio station lands
 in the middle of one and shifts every name after it, which is a move and is
 refused like any other.
 
-Two things this does NOT freeze, and both matter to a seed in progress. The
-reserved SCM globals are numbered from the same order (scm.py derives the
-completion block from the location list and the reward block from its length),
-so even a legal tail append shifts them and breaks a save that is mid-seed. And
-nothing here pins the tracker pack, which reads these ids from the world.
+One thing this does NOT freeze: the tracker pack, which reads these ids from the
+world and is pinned by nothing here.
 
 Flipping `released` to true is a hand edit of the snapshot, done once, at the
 release. Nothing automates it: it is the moment the ids stop being ours.
@@ -36,8 +49,8 @@ import sys
 
 from ap_env import REPOSITORY_ROOT, WORLD_SOURCE, archipelago_root, link_world
 
-SNAPSHOT = WORLD_SOURCE / "test" / "frozen_ids.json"
-KINDS = ("items", "locations")
+SNAPSHOT = WORLD_SOURCE / "test" / "frozen_numbering.json"
+KINDS = ("items", "locations", "scm_globals")
 
 
 def current_tables() -> dict[str, object]:
@@ -50,11 +63,13 @@ def current_tables() -> dict[str, object]:
     from worlds.gta_vice_city.items import ITEM_NAME_TO_ID
     from worlds.gta_vice_city.locations import ID_BASE as LOCATION_ID_BASE
     from worlds.gta_vice_city.locations import LOCATION_NAME_TO_ID
+    from worlds.gta_vice_city.scm import reserved_global_map
     return {
         "item_id_base": ITEM_ID_BASE,
         "location_id_base": LOCATION_ID_BASE,
         "items": dict(ITEM_NAME_TO_ID),
         "locations": dict(LOCATION_NAME_TO_ID),
+        "scm_globals": reserved_global_map(),
     }
 
 
@@ -139,7 +154,7 @@ def main() -> int:
     state = "released" if snapshot["released"] else "not yet released"
     print(f"Wrote {SNAPSHOT.relative_to(REPOSITORY_ROOT)}: "
           f"{len(snapshot['items'])} items, {len(snapshot['locations'])} "
-          f"locations, {state}.")
+          f"locations, {len(snapshot['scm_globals'])} reserved globals, {state}.")
     return 0
 
 

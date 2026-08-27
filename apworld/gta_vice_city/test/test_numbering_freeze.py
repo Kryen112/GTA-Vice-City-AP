@@ -1,4 +1,5 @@
-"""The id tables against the snapshot that freezes them.
+"""The id tables and the reserved SCM globals against the snapshot that
+freezes them.
 
 Ids are derived, name by name in registry order from a base, so inserting a
 location anywhere but the end renumbers every location after it and nothing in
@@ -6,11 +7,17 @@ the world notices. Once a seed exists, ids are the only names it and its tracker
 have for a check: renumbering breaks a session that is already being played, and
 no fix reaches the people playing it.
 
+The reserved SCM globals are the same shape and a harder failure. scm.py numbers
+each block from a list's order, and those numbers are compiled into main.scm and
+the CLEO scripts and written into saves, so a global that moves points a running
+save at the wrong word. That one breaks a seed in progress whether or not
+anything has been released.
+
 Two phases, decided by the snapshot's own `released` flag.
 
 Before release the snapshot is a mirror and this asks for an exact match, so a
 reorder nobody meant fails here and a reorder somebody meant is one run of
-scripts/freeze_ids.py. After release it is a floor: every id already in it must
+scripts/freeze_numbering.py. After release it is a floor: every id already in it must
 still be exactly where it was, and a name added at the very end may take the
 next id up.
 
@@ -36,10 +43,11 @@ from ..items import ID_BASE as ITEM_ID_BASE
 from ..items import ITEM_NAME_TO_ID
 from ..locations import ID_BASE as LOCATION_ID_BASE
 from ..locations import LOCATION_NAME_TO_ID
+from ..scm import reserved_global_map
 
-SNAPSHOT_PATH = Path(__file__).resolve().parent / "frozen_ids.json"
-REGENERATE = "python scripts/freeze_ids.py"
-KINDS = ("items", "locations")
+SNAPSHOT_PATH = Path(__file__).resolve().parent / "frozen_numbering.json"
+REGENERATE = "python scripts/freeze_numbering.py"
+KINDS = ("items", "locations", "scm_globals")
 
 
 def snapshot_faults(snapshot: object) -> list[str]:
@@ -103,17 +111,19 @@ def freeze_violations(snapshot: dict, tables: dict[str, dict[str, int]],
 
 
 def _current() -> tuple[dict[str, dict[str, int]], dict[str, int]]:
-    return ({"items": dict(ITEM_NAME_TO_ID), "locations": dict(LOCATION_NAME_TO_ID)},
+    return ({"items": dict(ITEM_NAME_TO_ID),
+             "locations": dict(LOCATION_NAME_TO_ID),
+             "scm_globals": reserved_global_map()},
             {"item_id_base": ITEM_ID_BASE, "location_id_base": LOCATION_ID_BASE})
 
 
-class TestIdFreeze(unittest.TestCase):
+class TestNumberingFreeze(unittest.TestCase):
     """The tables this repository actually ships, against the real snapshot."""
 
     def setUp(self) -> None:
         self.assertTrue(
             SNAPSHOT_PATH.is_file(),
-            f"no id snapshot at {SNAPSHOT_PATH.name}. It is checked in, so its "
+            f"no numbering snapshot at {SNAPSHOT_PATH.name}. It is checked in, so its "
             f"absence is a deletion, not a first run. Restore it, or write the "
             f"first one with {REGENERATE} --first-run.")
         try:
@@ -149,12 +159,15 @@ class TestFreezePhases(unittest.TestCase):
 
     def setUp(self) -> None:
         self.tables = {"items": {"Sprint": 10, "Jump": 11},
-                       "locations": {"An Old Friend": 20, "The Party": 21}}
+                       "locations": {"An Old Friend": 20, "The Party": 21},
+                       "scm_globals": {"base:UNLOCK_BASE": 9010,
+                                       "unlock:Rosenberg": 9010}}
         self.bases = {"item_id_base": 10, "location_id_base": 20}
         self.snapshot = {"released": False,
                          "item_id_base": 10, "location_id_base": 20,
                          "items": dict(self.tables["items"]),
-                         "locations": dict(self.tables["locations"])}
+                         "locations": dict(self.tables["locations"]),
+                         "scm_globals": dict(self.tables["scm_globals"])}
 
     def _violations(self) -> list[str]:
         return freeze_violations(self.snapshot, self.tables, self.bases)
@@ -205,6 +218,31 @@ class TestFreezePhases(unittest.TestCase):
         violations = self._violations()
         self.assertTrue(any("location_id_base was 20, now 2000" in line
                             for line in violations))
+
+    def test_a_new_global_above_the_top_is_refused_after_release(self) -> None:
+        # The globals have no tail to append to. One added above the highest
+        # moves base:highest_reserved_global, which is frozen on purpose since
+        # add_markers.py sizes the marker scratch from it, so main.scm is built
+        # against where the block ends.
+        self.snapshot["released"] = True
+        self.snapshot["scm_globals"]["base:highest_reserved_global"] = 9669
+        self.tables["scm_globals"]["base:highest_reserved_global"] = 9669
+        self.assertEqual(self._violations(), [])
+        self.tables["scm_globals"]["base:something_new"] = 9670
+        self.tables["scm_globals"]["base:highest_reserved_global"] = 9670
+        self.assertEqual(
+            self._violations(),
+            ["scm_globals: 'base:highest_reserved_global' moved from 9669 to 9670"])
+
+    def test_two_names_on_one_global_are_not_a_collision(self) -> None:
+        # Every block's base shares its number with that block's first entry,
+        # and thirteen pairs do it. They are the same global under two names,
+        # not two globals fighting, so the freeze must not read the pair as a
+        # new name stealing a frozen id.
+        self.snapshot["released"] = True
+        self.assertEqual(self.snapshot["scm_globals"]["base:UNLOCK_BASE"],
+                         self.snapshot["scm_globals"]["unlock:Rosenberg"])
+        self.assertEqual(self._violations(), [])
 
     def test_an_unusable_snapshot_is_named(self) -> None:
         for field, value, said in (

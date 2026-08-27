@@ -355,6 +355,77 @@ def highest_reserved_global() -> int:
     return FINALE_ACTIVE_GLOBAL
 
 
+def reserved_global_map() -> dict[str, int]:
+    """Every reserved global this module hands out, by a name for it.
+
+    Published so the numbering can be frozen the way the ids are, and it needs
+    freezing for a reason the ids do not have: these numbers are compiled into
+    main.scm and the CLEO scripts and written into save files, so a global that
+    moves does not merely mislabel a check, it points a running seed's save at
+    the wrong word. Every block below is numbered from a list's ORDER, so
+    inserting a strand, a reward, a district or an ability renumbers everything
+    after it in silence.
+
+    Prefixed keys rather than nested maps, so one comparison covers the lot and
+    a block added later cannot be a block nobody compares.
+    """
+    reserved = {
+        "base:SEED_HASH_BASE": SEED_HASH_BASE,
+        "base:APPLIED_INDEX_GLOBAL": APPLIED_INDEX_GLOBAL,
+        "base:UNLOCK_BASE": UNLOCK_BASE,
+        "base:COMPLETION_BASE": COMPLETION_BASE,
+        "base:REWARD_BASE": REWARD_BASE,
+        "base:PACKAGES_SHUFFLED_GLOBAL": PACKAGES_SHUFFLED_GLOBAL,
+        "base:EMERGENCY_SHUFFLED_GLOBAL": EMERGENCY_SHUFFLED_GLOBAL,
+        "base:RADIO_RANDOMIZED_GLOBAL": RADIO_RANDOMIZED_GLOBAL,
+        "base:RADIO_UNLOCK_BASE": RADIO_UNLOCK_BASE,
+        "base:RADIO_RESOLVE_BASE": RADIO_RESOLVE_BASE,
+        "base:RADIO_REQUEST_GLOBAL": RADIO_REQUEST_GLOBAL,
+        "base:OWNERSHIP_BASE": OWNERSHIP_BASE,
+        "base:MINIMAP_SHUFFLED_GLOBAL": MINIMAP_SHUFFLED_GLOBAL,
+        "base:MINIMAP_UNLOCK_GLOBAL": MINIMAP_UNLOCK_GLOBAL,
+        "base:SIDE_EVENTS_CASH_GLOBAL": SIDE_EVENTS_CASH_GLOBAL,
+        "base:STUNT_JUMPS_CASH_GLOBAL": STUNT_JUMPS_CASH_GLOBAL,
+        "base:RAMPAGES_CASH_GLOBAL": RAMPAGES_CASH_GLOBAL,
+        "base:PROPERTIES_CASH_GLOBAL": PROPERTIES_CASH_GLOBAL,
+        "base:SHOPS_ENABLED_GLOBAL": SHOPS_ENABLED_GLOBAL,
+        "base:ABILITY_LOCK_FLAG_BASE": ABILITY_LOCK_FLAG_BASE,
+        "base:ABILITY_UNLOCK_BASE": ABILITY_UNLOCK_BASE,
+        "base:CONTENT_LOCK_FLAG_BASE": CONTENT_LOCK_FLAG_BASE,
+        "base:CONTENT_UNLOCK_BASE": CONTENT_UNLOCK_BASE,
+        "base:DISTRICT_UNLOCK_BASE": DISTRICT_UNLOCK_BASE,
+        "base:FINALE_WARP_GLOBAL": FINALE_WARP_GLOBAL,
+        "base:FINALE_ACTIVE_GLOBAL": FINALE_ACTIVE_GLOBAL,
+    }
+    for word in range(SEED_HASH_GLOBAL_COUNT):
+        reserved[f"seed hash:{word}"] = SEED_HASH_BASE + word
+    for key in UNLOCK_KEYS:
+        reserved[f"unlock:{key}"] = unlock_global(key)
+    for location_name in _ORDERED_LOCATION_NAMES:
+        reserved[f"completion:{location_name}"] = completion_global(location_name)
+    for item_name in REWARD_KEYS:
+        reserved[f"reward:{item_name}"] = reward_global(item_name)
+    for item_name in OWNERSHIP_KEYS:
+        reserved[f"ownership:{item_name}"] = ownership_global(item_name)
+    for station in range(RADIO_STATION_COUNT):
+        reserved[f"radio unlock:{station}"] = RADIO_UNLOCK_BASE + station
+        reserved[f"radio resolve:{station}"] = RADIO_RESOLVE_BASE + station
+    for item_name in ABILITY_KEYS:
+        reserved[f"ability lock:{item_name}"] = ability_lock_flag_global(item_name)
+        reserved[f"ability unlock:{item_name}"] = ability_unlock_global(item_name)
+    for item_name in CONTENT_KEYS:
+        reserved[f"content lock:{item_name}"] = content_lock_flag_global(item_name)
+        reserved[f"content unlock:{item_name}"] = content_unlock_global(item_name)
+        for district in DISTRICT_KEYS:
+            reserved[f"district unlock:{item_name}|{district}"] = (
+                district_unlock_global(item_name, district))
+    # The top of the block, frozen deliberately and not merely as a duplicate of
+    # the last global: add_markers.py sizes the marker scratch from it, so where
+    # the reserved block ends is itself a number main.scm is built against.
+    reserved["base:highest_reserved_global"] = highest_reserved_global()
+    return reserved
+
+
 def mainland_routes(split_mainland_access: bool) -> list[dict]:
     """Every crossing off the start island, for the ASI to announce and to list.
 

@@ -4518,6 +4518,27 @@ class TestReservedGlobals(WorldTestBase):
         self.assertGreater(scm.FINALE_ACTIVE_GLOBAL,
                            max(scm.completion_watch().keys()))
 
+    def test_the_published_global_map_covers_the_whole_reserved_block(self) -> None:
+        # scm.reserved_global_map is what the numbering snapshot freezes, so a
+        # block missing from it is a block nothing pins: main.scm and the CLEO
+        # scripts are compiled against these numbers and saves hold them, and a
+        # shift nobody catches points a running seed at the wrong word. An
+        # omission is invisible from inside the map, so the test is coverage of
+        # the reserved range rather than a count of entries.
+        #
+        # The gap is build_scm.py's own scratch, which this module deliberately
+        # does not hand out: $9004 and $9007 swap the Starfish gate objects,
+        # $9006 counts collected packages, and $9008 and $9009 are unused.
+        published = set(scm.reserved_global_map().values())
+        scratch = {9004, 9006, 9007, 9008, 9009}
+        expected = set(range(scm.RESERVED_BASE, scm.highest_reserved_global() + 1))
+        missing = sorted(expected - published - scratch)
+        self.assertEqual(
+            missing, [],
+            f"{len(missing)} reserved globals are handed out and not published, "
+            "so the numbering freeze does not cover them")
+        self.assertEqual(sorted(published - expected), [])
+
     def test_no_reserved_global_collisions(self) -> None:
         seed_hash = set(range(scm.SEED_HASH_BASE, scm.SEED_HASH_BASE + scm.SEED_HASH_GLOBAL_COUNT))
         unlocks = {scm.unlock_global(key) for key in scm.UNLOCK_KEYS}
