@@ -60,8 +60,19 @@ UNLOCK_BASE = RESERVED_BASE + 10
 # one unlock global holding a count (progressive) or one (area).
 UNLOCK_KEYS: list[str] = list(data.progressive_strands().keys()) + list(data.AREA_ITEMS)
 
+# Every block here reserves more room than it uses, for the reason the
+# completion block does: each base is derived from the end of the one below, so
+# a list that grows renumbers everything above it, and these numbers are
+# compiled into main.scm and the CLEO scripts and written into save files. A
+# global that moves points a running seed's save at the wrong word.
+#
+# Capacities can only be widened BEFORE the numbering is released. Afterwards
+# they are what decides whether a strand, a reward, a property, an ability, a
+# content class or a district can be added at all.
+UNLOCK_CAPACITY = 48
+
 # Completion globals follow the unlock block, one per location in id order.
-COMPLETION_BASE = UNLOCK_BASE + len(UNLOCK_KEYS)
+COMPLETION_BASE = UNLOCK_BASE + UNLOCK_CAPACITY
 _ORDERED_LOCATION_NAMES: list[str] = list(locations.LOCATION_NAME_TO_ID.keys())
 
 # How much room the completion block takes, which is deliberately more than the
@@ -90,11 +101,12 @@ assert len(_ORDERED_LOCATION_NAMES) <= COMPLETION_CAPACITY, (
 # and the main.scm re-gates the vanilla respawning grant on it.
 REWARD_BASE = COMPLETION_BASE + COMPLETION_CAPACITY
 REWARD_KEYS: list[str] = list(data.PERSISTENT_REWARD_ITEMS)
+REWARD_CAPACITY = 32
 
 # Config flags the ASI stamps once from slot_data so the main.scm knows whether
 # each reward group is shuffled (AP-gated, vanilla trigger suppressed) or
 # vanilla. They sit just above the reward block.
-PACKAGES_SHUFFLED_GLOBAL = REWARD_BASE + len(REWARD_KEYS)
+PACKAGES_SHUFFLED_GLOBAL = REWARD_BASE + REWARD_CAPACITY
 EMERGENCY_SHUFFLED_GLOBAL = PACKAGES_SHUFFLED_GLOBAL + 1
 
 # Radio globals follow the config flags. The randomized flag gates the ASI's
@@ -126,6 +138,7 @@ RADIO_REQUEST_GLOBAL = RADIO_RESOLVE_BASE + RADIO_STATION_COUNT
 # purchase-only, the vanilla semantics.
 OWNERSHIP_BASE = RADIO_REQUEST_GLOBAL + 1
 OWNERSHIP_KEYS: list[str] = list(data.PROPERTY_OWNERSHIP_ITEMS)
+OWNERSHIP_CAPACITY = 24
 
 # Minimap globals follow the ownership block. Both are ASI-facing only (the
 # main.scm never reads them; they persist inside saves like every reserved
@@ -134,7 +147,7 @@ OWNERSHIP_KEYS: list[str] = list(data.PROPERTY_OWNERSHIP_ITEMS)
 # item_globals like any unlock. While the flag is set and the unlock is zero
 # the ASI holds the game's script-facing radar-hide flag; on unlock it
 # releases the flag back to the game once.
-MINIMAP_SHUFFLED_GLOBAL = OWNERSHIP_BASE + len(OWNERSHIP_KEYS)
+MINIMAP_SHUFFLED_GLOBAL = OWNERSHIP_BASE + OWNERSHIP_CAPACITY
 MINIMAP_UNLOCK_GLOBAL = MINIMAP_SHUFFLED_GLOBAL + 1
 
 # Class-cash flags follow the minimap globals, one per check class whose
@@ -167,8 +180,9 @@ SHOPS_ENABLED_GLOBAL = PROPERTIES_CASH_GLOBAL + 1
 # Order is data.ABILITY_ITEMS and never reorders. The content lock block sits
 # directly above this one.
 ABILITY_KEYS: list[str] = list(data.ABILITY_ITEMS)
+ABILITY_CAPACITY = 16
 ABILITY_LOCK_FLAG_BASE = SHOPS_ENABLED_GLOBAL + 1
-ABILITY_UNLOCK_BASE = ABILITY_LOCK_FLAG_BASE + len(ABILITY_KEYS)
+ABILITY_UNLOCK_BASE = ABILITY_LOCK_FLAG_BASE + ABILITY_CAPACITY
 
 # Content lock globals follow the ability block in the same shape: one lock
 # flag per content item (one while its content_locks key is selected, stamped
@@ -179,8 +193,9 @@ ABILITY_UNLOCK_BASE = ABILITY_LOCK_FLAG_BASE + len(ABILITY_KEYS)
 # data.CONTENT_ITEMS and never reorders. The SCM-internal marker scratch begins
 # right above this block.
 CONTENT_KEYS: list[str] = list(data.CONTENT_ITEMS)
-CONTENT_LOCK_FLAG_BASE = ABILITY_UNLOCK_BASE + len(ABILITY_KEYS)
-CONTENT_UNLOCK_BASE = CONTENT_LOCK_FLAG_BASE + len(CONTENT_KEYS)
+CONTENT_CAPACITY = 12
+CONTENT_LOCK_FLAG_BASE = ABILITY_UNLOCK_BASE + ABILITY_CAPACITY
+CONTENT_UNLOCK_BASE = CONTENT_LOCK_FLAG_BASE + CONTENT_CAPACITY
 
 # District content unlock globals: one per class per district, a uniform grid
 # rather than only the pairs that hold something, so a class and a district
@@ -200,8 +215,12 @@ CONTENT_UNLOCK_BASE = CONTENT_LOCK_FLAG_BASE + len(CONTENT_KEYS)
 # globals above stay, still driven by item_globals, since they are what tells the
 # ASI a whole class went at once for its own status listing.
 DISTRICT_KEYS: list[str] = list(data.CONTENT_DISTRICTS)
-DISTRICT_UNLOCK_BASE = CONTENT_UNLOCK_BASE + len(CONTENT_KEYS)
-DISTRICT_UNLOCK_COUNT = len(CONTENT_KEYS) * len(DISTRICT_KEYS)
+# Both dimensions of the grid are capacities, since the row stride is the
+# district count: padding only the class dimension would leave a district added
+# later moving every row after the first.
+DISTRICT_CAPACITY = 16
+DISTRICT_UNLOCK_BASE = CONTENT_UNLOCK_BASE + CONTENT_CAPACITY
+DISTRICT_UNLOCK_COUNT = CONTENT_CAPACITY * DISTRICT_CAPACITY
 
 # The finale warp flag sits one below the top of the reserved block. The client sets it in the status
 # frame once the hidden-packages goal is met and the ASI writes it here; the
@@ -212,7 +231,12 @@ DISTRICT_UNLOCK_COUNT = len(CONTENT_KEYS) * len(DISTRICT_KEYS)
 # other two goals cannot be met before that mission has passed, and the watcher
 # holds on the mission's own passed flag, so a game that has seen the ending
 # never sees it again.
-FINALE_WARP_GLOBAL = DISTRICT_UNLOCK_BASE + DISTRICT_UNLOCK_COUNT
+# Room for the single flags this layout keeps gaining, so the next one takes a
+# spare instead of moving the two finale globals and the top of the block.
+SPARE_FLAG_BASE = DISTRICT_UNLOCK_BASE + DISTRICT_UNLOCK_COUNT
+SPARE_FLAG_CAPACITY = 16
+
+FINALE_WARP_GLOBAL = SPARE_FLAG_BASE + SPARE_FLAG_CAPACITY
 
 # The finale raises this while it runs and drops it at its single exit, so the
 # ASI can keep the ambient pickup layout off the pool for the length of the
@@ -260,7 +284,7 @@ def content_unlock_global(item_name: str) -> int:
 
 def district_unlock_global(content_item: str, district: str) -> int:
     return (DISTRICT_UNLOCK_BASE
-            + CONTENT_KEYS.index(content_item) * len(DISTRICT_KEYS)
+            + CONTENT_KEYS.index(content_item) * DISTRICT_CAPACITY
             + DISTRICT_KEYS.index(district))
 
 

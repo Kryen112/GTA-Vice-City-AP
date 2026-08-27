@@ -382,10 +382,10 @@ class TestRadioStationsOn(WorldTestBase):
             )
 
     def test_reserved_block_stays_below_the_marker_globals(self) -> None:
-        # $9946 up is SCM-internal (marker handles and visibility flags, whose
+        # $10177 up is SCM-internal (marker handles and visibility flags, whose
         # bases live in add_markers.py); the reserved contract must never grow
-        # into it. The district content unlocks took $9889..$9943, the finale warp
-        # flag $9944 and the finale active flag $9945, which is why
+        # into it. The district content unlocks took $9967..$10041, the finale warp
+        # flag $10175 and the finale active flag $10176, which is why
         # add_markers.py's HANDLE_BASE moved with them: a reserved block growing
         # into the marker scratch would have the ASI writing over live marker
         # handles.
@@ -394,7 +394,7 @@ class TestRadioStationsOn(WorldTestBase):
         # reward block sits directly above the completion block, so a class
         # appended to the registry leaves the unlock and completion globals alone
         # and pushes everything from the rewards up by its own size.
-        self.assertLess(scm.highest_reserved_global(), 9946)
+        self.assertLess(scm.highest_reserved_global(), 10177)
 
 
 class TestRadioStationsOff(WorldTestBase):
@@ -4547,12 +4547,32 @@ class TestReservedGlobals(WorldTestBase):
         # $9006 counts collected packages, and $9008 and $9009 are unused.
         published = set(scm.reserved_global_map().values())
         scratch = {9004, 9006, 9007, 9008, 9009}
-        # The completion block's spare slots are reserved and unnamed: they hold
-        # the room a location added later takes instead of pushing every block
-        # above it up one. Nothing may hand them out, so nothing publishes them,
-        # and they are excluded by the range they occupy rather than by silence.
-        spare = set(range(scm.COMPLETION_BASE + len(scm.completion_watch()),
-                          scm.COMPLETION_BASE + scm.COMPLETION_CAPACITY))
+        # Every block reserves more than it uses, and those spare slots are
+        # reserved and unnamed: they hold the room a strand, a location, a
+        # reward, a property, an ability, a content class or a district added
+        # later takes, instead of pushing every block above it up one. Nothing
+        # hands one out, so nothing publishes one, and they are excluded by the
+        # ranges they occupy rather than by silence.
+        def tail(base, used, capacity):
+            return set(range(base + used, base + capacity))
+
+        spare = (
+            tail(scm.UNLOCK_BASE, len(scm.UNLOCK_KEYS), scm.UNLOCK_CAPACITY)
+            | tail(scm.COMPLETION_BASE, len(scm.completion_watch()), scm.COMPLETION_CAPACITY)
+            | tail(scm.REWARD_BASE, len(scm.REWARD_KEYS), scm.REWARD_CAPACITY)
+            | tail(scm.OWNERSHIP_BASE, len(scm.OWNERSHIP_KEYS), scm.OWNERSHIP_CAPACITY)
+            | tail(scm.ABILITY_LOCK_FLAG_BASE, len(scm.ABILITY_KEYS), scm.ABILITY_CAPACITY)
+            | tail(scm.ABILITY_UNLOCK_BASE, len(scm.ABILITY_KEYS), scm.ABILITY_CAPACITY)
+            | tail(scm.CONTENT_LOCK_FLAG_BASE, len(scm.CONTENT_KEYS), scm.CONTENT_CAPACITY)
+            | tail(scm.CONTENT_UNLOCK_BASE, len(scm.CONTENT_KEYS), scm.CONTENT_CAPACITY)
+            | tail(scm.SPARE_FLAG_BASE, 0, scm.SPARE_FLAG_CAPACITY)
+            | ({scm.DISTRICT_UNLOCK_BASE + offset
+                for offset in range(scm.DISTRICT_UNLOCK_COUNT)}
+               - {scm.district_unlock_global(item, district)
+                  for item in scm.CONTENT_KEYS for district in scm.DISTRICT_KEYS})
+        )
+        self.assertEqual(published & spare, set(),
+                         "a spare slot is published, so something hands it out")
         expected = set(range(scm.RESERVED_BASE, scm.highest_reserved_global() + 1))
         missing = sorted(expected - published - scratch - spare)
         self.assertEqual(
@@ -4658,28 +4678,31 @@ class TestReservedGlobals(WorldTestBase):
         # The ASI hard-codes the packages-shuffled index too
         # (scm_game_state.cpp): it gates taking back the package cash the
         # executable pays, which no script gate can reach.
-        self.assertEqual(scm.PACKAGES_SHUFFLED_GLOBAL, 9819)
+        self.assertEqual(scm.PACKAGES_SHUFFLED_GLOBAL, 9858)
         # The shops flag, which build_scm.py mirrors by literal as SHOPS_ENABLED
         # and every piece of the shop withholding reads before it changes the
         # world. It sits directly below the ability locks, so a shift moves both.
-        self.assertEqual(scm.SHOPS_ENABLED_GLOBAL, 9862)
-        self.assertEqual(scm.ABILITY_LOCK_FLAG_BASE, 9863)
-        self.assertEqual(scm.ABILITY_UNLOCK_BASE, 9871)
-        self.assertEqual(scm.CONTENT_LOCK_FLAG_BASE, 9879)
-        self.assertEqual(scm.CONTENT_UNLOCK_BASE, 9884)
+        self.assertEqual(scm.SHOPS_ENABLED_GLOBAL, 9910)
+        self.assertEqual(scm.ABILITY_LOCK_FLAG_BASE, 9911)
+        self.assertEqual(scm.ABILITY_UNLOCK_BASE, 9927)
+        self.assertEqual(scm.CONTENT_LOCK_FLAG_BASE, 9943)
+        self.assertEqual(scm.CONTENT_UNLOCK_BASE, 9955)
         # The district content unlocks, the block every content gate and every
         # content hold actually reads. build_scm.py mirrors the base and the
         # class-major stride by literal, so a shift here has to move with it.
-        self.assertEqual(scm.DISTRICT_UNLOCK_BASE, 9889)
-        self.assertEqual(scm.DISTRICT_UNLOCK_COUNT, 55)
+        self.assertEqual(scm.DISTRICT_UNLOCK_BASE, 9967)
+        # The grid reserves 12 rows of 16 so a class or a district added later
+        # moves nothing; 5 by 11 of it is in use.
+        self.assertEqual(scm.DISTRICT_UNLOCK_COUNT, 192)
+        self.assertEqual(len(scm.CONTENT_KEYS) * len(scm.DISTRICT_KEYS), 55)
         # The finale warp flag, hard-coded in the ASI (scm_game_state.cpp) and in
         # build_scm.py, which reads it in the APFIN watcher and in the mission
         # branch that jumps to the ending cutscene. It is also the foundation's
         # sizing line, which add_markers.py anchors on, so a shift here moves
         # four files at once.
-        self.assertEqual(scm.FINALE_WARP_GLOBAL, 9944)
-        self.assertEqual(scm.FINALE_ACTIVE_GLOBAL, 9945)
-        self.assertEqual(scm.highest_reserved_global(), 9945)
+        self.assertEqual(scm.FINALE_WARP_GLOBAL, 10175)
+        self.assertEqual(scm.FINALE_ACTIVE_GLOBAL, 10176)
+        self.assertEqual(scm.highest_reserved_global(), 10176)
         self.assertEqual(scm.ABILITY_KEYS, data.ABILITY_ITEMS)
         self.assertEqual(scm.CONTENT_KEYS, data.CONTENT_ITEMS)
 
@@ -4690,10 +4713,10 @@ class TestReservedGlobals(WorldTestBase):
         # so a reordered strand there repoints a launcher's completion write at
         # another mission's check. Pinned by literal, so that shift fails here:
         # update the script tables in the same change.
-        self.assertEqual(scm.completion_global("An Old Friend"), 9036)
-        self.assertEqual(scm.completion_global("Four Iron"), 9052)
-        self.assertEqual(scm.completion_global("Demolition Man"), 9053)
-        self.assertEqual(scm.completion_global("Two Bit Hit"), 9054)
+        self.assertEqual(scm.completion_global("An Old Friend"), 9058)
+        self.assertEqual(scm.completion_global("Four Iron"), 9074)
+        self.assertEqual(scm.completion_global("Demolition Man"), 9075)
+        self.assertEqual(scm.completion_global("Two Bit Hit"), 9076)
 
     def test_side_event_completion_globals_match_the_hand_written_mirrors(self) -> None:
         # build_scm.py hard-codes these in two tables: SIDE_EVENTS (win flag ->
@@ -4704,22 +4727,22 @@ class TestReservedGlobals(WorldTestBase):
         # event. Pinned by literal, so that shift fails here instead: update the
         # script tables in the same change.
         expected = {
-            "Hotring": 9307, "Bloodring": 9308, "Dirtring": 9309,
-            "Downtown Chopper Checkpoint": 9310,
-            "Ocean Beach Chopper Checkpoint": 9311,
-            "Vice Point Chopper Checkpoint": 9312,
-            "Little Haiti Chopper Checkpoint": 9313,
-            "RC Bandit Race": 9314, "RC Baron Race": 9315,
-            "RC Raider Pickup": 9316,
-            "Trial by Dirt": 9317, "Test Track": 9318,
-            "PCJ Playground": 9319, "Cone Crazy": 9320,
+            "Hotring": 9329, "Bloodring": 9330, "Dirtring": 9331,
+            "Downtown Chopper Checkpoint": 9332,
+            "Ocean Beach Chopper Checkpoint": 9333,
+            "Vice Point Chopper Checkpoint": 9334,
+            "Little Haiti Chopper Checkpoint": 9335,
+            "RC Bandit Race": 9336, "RC Baron Race": 9337,
+            "RC Raider Pickup": 9338,
+            "Trial by Dirt": 9339, "Test Track": 9340,
+            "PCJ Playground": 9341, "Cone Crazy": 9342,
         }
         self.assertEqual(sorted(expected), sorted(data.SIDE_EVENTS))
         for name, global_index in expected.items():
             self.assertEqual(scm.completion_global(name), global_index, name)
         # Every payout guard also reads the class-cash flag, so that a seed with
         # the class off pays vanilla; the same shift argument applies to it.
-        self.assertEqual(scm.SIDE_EVENTS_CASH_GLOBAL, 9858)
+        self.assertEqual(scm.SIDE_EVENTS_CASH_GLOBAL, 9906)
 
     def test_property_ownership_globals_match_the_hand_written_mirrors(self) -> None:
         # Each of these gates what its property gives: a safehouse's save
@@ -4733,23 +4756,23 @@ class TestReservedGlobals(WorldTestBase):
         # literal, so that shift fails here rather than in game, and the fix is
         # to move build_scm.py's OWNERSHIP_BASE with it.
         businesses = {
-            "Printworks": 9841,
-            "Sunshine Autos": 9842,
-            "Film Studio": 9843,
-            "Cherry Popper": 9844,
-            "Kaufman Cabs": 9845,
-            "Malibu Club": 9846,
-            "Boatyard": 9847,
-            "Pole Position": 9848,
+            "Printworks": 9880,
+            "Sunshine Autos": 9881,
+            "Film Studio": 9882,
+            "Cherry Popper": 9883,
+            "Kaufman Cabs": 9884,
+            "Malibu Club": 9885,
+            "Boatyard": 9886,
+            "Pole Position": 9887,
         }
         safehouses = {
-            "El Swanko Casa": 9849,
-            "Links View Apartment": 9850,
-            "Hyman Condo": 9851,
-            "Ocean Heights Apartment": 9852,
-            "1102 Washington Street": 9853,
-            "3321 Vice Point": 9854,
-            "Skumole Shack": 9855,
+            "El Swanko Casa": 9888,
+            "Links View Apartment": 9889,
+            "Hyman Condo": 9890,
+            "Ocean Heights Apartment": 9891,
+            "1102 Washington Street": 9892,
+            "3321 Vice Point": 9893,
+            "Skumole Shack": 9894,
         }
         for properties, items in ((businesses, data.BUSINESS_OWNERSHIP_ITEMS),
                                   (safehouses, data.SAFEHOUSE_OWNERSHIP_ITEMS)):
@@ -4793,8 +4816,11 @@ class TestReservedGlobals(WorldTestBase):
         # stamped reads held forever. With no key selected that means the whole
         # block has to be stamped, which is the toggle invariant itself; the
         # lock flags no longer decide anything.
-        block = {scm.DISTRICT_UNLOCK_BASE + offset
-                 for offset in range(scm.DISTRICT_UNLOCK_COUNT)}
+        # The cells in use. The grid reserves spare rows and columns so a class
+        # or a district added later moves nothing, and the stamp names none of
+        # them: an unnamed cell is not a class held forever, it is not a cell.
+        block = {scm.district_unlock_global(item, district)
+                 for item in scm.CONTENT_KEYS for district in scm.DISTRICT_KEYS}
         self.assertEqual(set(scm.unlocked_district_globals(frozenset())), block)
         for key in data.CONTENT_LOCK_ITEMS:
             with self.subTest(key=key):
@@ -4817,8 +4843,10 @@ class TestReservedGlobals(WorldTestBase):
         # class-district pair holding no content is covered by the stamp in every
         # mode, since no item names it: 13 of the 55, which the ASI would
         # otherwise read as a class held forever on the status page.
-        block = {scm.DISTRICT_UNLOCK_BASE + offset
-                 for offset in range(scm.DISTRICT_UNLOCK_COUNT)}
+        # The cells in use, not the whole grid: the padding leaves spare rows
+        # and columns that no class or district names, and nothing stamps them.
+        block = {scm.district_unlock_global(item, district)
+                 for item in scm.CONTENT_KEYS for district in scm.DISTRICT_KEYS}
         every = frozenset(data.CONTENT_LOCK_ITEMS)
         stamped = set(scm.unlocked_district_globals(every))
         self.assertEqual(len(stamped), 13)
@@ -5037,7 +5065,7 @@ class TestReservedGlobals(WorldTestBase):
         self.assertEqual(district_data.STORE_DISTRICTS, stores)
         # The block those tables index into. build_scm.py mirrors the base and
         # derives the stride from the class count, so both are pinned.
-        self.assertEqual(scm.DISTRICT_UNLOCK_BASE, 9889)
+        self.assertEqual(scm.DISTRICT_UNLOCK_BASE, 9967)
         self.assertEqual(len(scm.DISTRICT_KEYS), len(districts))
         self.assertEqual(scm.CONTENT_KEYS.index(data.STUNT_JUMPS_ITEM), 2)
         self.assertEqual(scm.CONTENT_KEYS.index(data.ROBBABLE_STORES_ITEM), 4)
@@ -5063,16 +5091,16 @@ class TestReservedGlobals(WorldTestBase):
         # which would point each race's payout guard at another race. Pinned by
         # literal, so that shift fails here: update the script tables with it.
         expected = {
-            "Sunshine Autos Import List 1": 9366,
-            "Sunshine Autos Import List 2": 9367,
-            "Sunshine Autos Import List 3": 9368,
-            "Sunshine Autos Import List 4": 9369,
-            "Sunshine Autos Race: Terminal Velocity": 9370,
-            "Sunshine Autos Race: Ocean Drive": 9371,
-            "Sunshine Autos Race: Border Run": 9372,
-            "Sunshine Autos Race: Capital Cruise": 9373,
-            "Sunshine Autos Race: Tour!": 9374,
-            "Sunshine Autos Race: V.C. Endurance": 9375,
+            "Sunshine Autos Import List 1": 9388,
+            "Sunshine Autos Import List 2": 9389,
+            "Sunshine Autos Import List 3": 9390,
+            "Sunshine Autos Import List 4": 9391,
+            "Sunshine Autos Race: Terminal Velocity": 9392,
+            "Sunshine Autos Race: Ocean Drive": 9393,
+            "Sunshine Autos Race: Border Run": 9394,
+            "Sunshine Autos Race: Capital Cruise": 9395,
+            "Sunshine Autos Race: Tour!": 9396,
+            "Sunshine Autos Race: V.C. Endurance": 9397,
         }
         self.assertEqual(
             sorted(expected),
@@ -5082,7 +5110,7 @@ class TestReservedGlobals(WorldTestBase):
             self.assertEqual(scm.completion_global(name), global_index, name)
         # The race payout guards read the properties class-cash flag, so a seed
         # with the class off pays vanilla; the same shift argument applies to it.
-        self.assertEqual(scm.PROPERTIES_CASH_GLOBAL, 9861)
+        self.assertEqual(scm.PROPERTIES_CASH_GLOBAL, 9909)
 
     def test_the_script_gated_content_items_keep_their_offsets(self) -> None:
         # The two classes with no icon for the ASI to hold gate in the script

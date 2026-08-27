@@ -104,19 +104,19 @@ STRANDS = {
     # completion global) and owned (the ownership global its AP item drives),
     # so the beam and blip stay hidden and the launcher stays unstarted until
     # the progressive, the purchase, and the ownership item all exist.
-    "Malibu": [("BANK1", [(9023, 1), (9341, 1), (9846, 1)]),
-               ("BANK2", [(9023, 2), (9341, 1), (9846, 1)]),
-               ("BANK3", [(9023, 3), (9341, 1), (9846, 1)]),
-               ("BANK4", [(9023, 4), (9341, 1), (9846, 1)])],
-    "FilmStudio": [("PORN1", [(9024, 1), (9338, 1), (9843, 1)]),
-                   ("PORN2", [(9024, 2), (9338, 1), (9843, 1)]),
-                   ("PORN3", [(9024, 3), (9338, 1), (9843, 1)]),
-                   ("PORN4", [(9024, 4), (9338, 1), (9843, 1)])],
-    "Printworks": [("COU1", [(9025, 1), (9336, 1), (9841, 1)]),
-                   ("COU2", [(9025, 2), (9336, 1), (9841, 1)])],
-    "KaufmanCabs": [("TWAR1", [(9026, 1), (9340, 1), (9845, 1)]),
-                    ("TWAR2", [(9026, 2), (9340, 1), (9845, 1)]),
-                    ("TWAR3", [(9026, 3), (9340, 1), (9845, 1)])],
+    "Malibu": [("BANK1", [(9023, 1), (9363, 1), (9885, 1)]),
+               ("BANK2", [(9023, 2), (9363, 1), (9885, 1)]),
+               ("BANK3", [(9023, 3), (9363, 1), (9885, 1)]),
+               ("BANK4", [(9023, 4), (9363, 1), (9885, 1)])],
+    "FilmStudio": [("PORN1", [(9024, 1), (9360, 1), (9882, 1)]),
+                   ("PORN2", [(9024, 2), (9360, 1), (9882, 1)]),
+                   ("PORN3", [(9024, 3), (9360, 1), (9882, 1)]),
+                   ("PORN4", [(9024, 4), (9360, 1), (9882, 1)])],
+    "Printworks": [("COU1", [(9025, 1), (9358, 1), (9880, 1)]),
+                   ("COU2", [(9025, 2), (9358, 1), (9880, 1)])],
+    "KaufmanCabs": [("TWAR1", [(9026, 1), (9362, 1), (9884, 1)]),
+                    ("TWAR2", [(9026, 2), (9362, 1), (9884, 1)]),
+                    ("TWAR3", [(9026, 3), (9362, 1), (9884, 1)])],
 }
 
 # Fresh scratch globals, all above the reserved block, whose top is the finale
@@ -124,13 +124,13 @@ STRANDS = {
 # global once, and this scratch starts one above it. Both halves of that
 # relation live here so they move together, and the write before DST is checked
 # against it. One handle, one started-flag, one shown-flag per managed mission.
-SIZING_GLOBAL = 9945
+SIZING_GLOBAL = 10176
 
 # The ambient pickup checks. Their completion globals are contiguous from
 # here, one per slot in pickup_data order, because the pickup class is the
 # last one in the world's registry and completion globals follow location id
 # order. The handles come from pickup_data itself rather than from a copy.
-PICKUP_COMPLETION_BASE = 9376
+PICKUP_COMPLETION_BASE = 9398
 
 # The shop checks, contiguous from here for the same reason: the shop class is
 # registered after the pickup class, so its completion globals follow the whole
@@ -516,21 +516,21 @@ lines = [ln for ln in lines
 # collectable pickup to its coordinate), so the CLEO watcher no longer counts
 # them; it polls the stat and activity/side-event flags only.
 cleo = ["{$CLEO .cs}", "", "0000:", "", ":AW_LOOP", "wait 500"]
-stat_checks = ([(f"${1439 + n} == 1", 9180 + n) for n in range(35)]
-               + [(f"${795 + n} == 1", 9215 + n) for n in range(36)]
-               + [(f"$369 >= {10 * n}", 9286 + n) for n in range(1, 11)])
+stat_checks = ([(f"${1439 + n} == 1", 9202 + n) for n in range(35)]
+               + [(f"${795 + n} == 1", 9237 + n) for n in range(36)]
+               + [(f"$369 >= {10 * n}", 9308 + n) for n in range(1, 11)])
 for idx, (cond, comp) in enumerate(stat_checks):
     cleo += ["if ", f"  {cond}", f"goto_if_false @AW_S{idx}", f"${comp} = 1", f":AW_S{idx}"]
 # Activity + side events (APACT), mirroring build_scm.add_activity_watcher:
 # Checkpoint Charlie ($607), the six Sunshine Autos races ($1588..$1593, one
 # check each in showroom menu order), and 14 side-event win flags. Every flag is
 # an independent set-once signal, so each writes its own completion global.
-activity_flags = ([(607, 9365)]
-                  + [(1587 + race, 9369 + race) for race in range(1, 7)]
-                  + [(1597, 9307), (1598, 9308), (55, 9309), (1584, 9310),
-                     (1585, 9311), (1586, 9312), (1587, 9313), (8241, 9314),
-                     (8485, 9315), (8156, 9316), (363, 9317), (364, 9318),
-                     (339, 9319), (351, 9320)])
+activity_flags = ([(607, 9387)]
+                  + [(1587 + race, 9391 + race) for race in range(1, 7)]
+                  + [(1597, 9329), (1598, 9330), (55, 9331), (1584, 9332),
+                     (1585, 9333), (1586, 9334), (1587, 9335), (8241, 9336),
+                     (8485, 9337), (8156, 9338), (363, 9339), (364, 9340),
+                     (339, 9341), (351, 9342)])
 for idx, (flag, comp) in enumerate(activity_flags):
     cleo += ["if ", f"  ${flag} == 1", f"goto_if_false @AW_E{idx}", f"${comp} = 1", f":AW_E{idx}"]
 cleo += ["goto @AW_LOOP", ""]
