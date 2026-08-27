@@ -38,8 +38,23 @@ REPOSITORY_ROOT = pathlib.Path(__file__).resolve().parent.parent
 # sites _literal_table_problems checks. The success line reports both, so they
 # are declared once here rather than written down again in the message, where
 # they went stale the moment a site was added.
+SHOP_SCRIPTS = ("apammu1.cs", "apammu2.cs", "apammu3.cs",
+                "aphard1.cs", "aphard2.cs", "aphard3.cs")
 CLEO_SCRIPTS = ("aprewd.cs", "apradio.cs", "apwatchers.cs", "aparea.cs", "appad.cs",
-                "appickup.cs")
+                "appickup.cs", *SHOP_SCRIPTS)
+
+# How many globals add_markers.py takes above the reserved block for its own
+# scratch: one handle, one started flag and one shown flag for each of the sixty
+# managed missions. The top of that scratch is the highest global anything in
+# this build can name, so a byte pair decoding above it is noise rather than a
+# reference, and apammu1.cs holds one that reads as $16374.
+#
+# Derived rather than picked, because the two directions are not equally safe. A
+# ceiling that is too high reports the scan's own false positives as stale
+# artefacts, which is what kept the six shop scripts out of this check. One that
+# is too low DROPS real references and reports a stale script as clean, which is
+# the failure this file exists to refuse.
+MARKER_SCRATCH_GLOBALS = 3 * 60
 
 # The bare-literal sites, by the name each is reported under. The success line
 # counts these and _literal_table_problems asserts it visited exactly them, so a
@@ -66,8 +81,9 @@ def _constants(path: pathlib.Path, pattern: str) -> dict[str, int]:
     return found
 
 
-def _decode_reserved(raw: bytes) -> set[int]:
-    """Every reserved global a compiled script's bytes name. See the caller."""
+def _decode_reserved(raw: bytes, ceiling: int) -> set[int]:
+    """Every reserved global a compiled script's bytes name, up to the ceiling.
+    See the caller."""
     found: set[int] = set()
     for position in range(len(raw) - 2):
         if raw[position] != 0x02:
@@ -76,12 +92,12 @@ def _decode_reserved(raw: bytes) -> set[int]:
         if offset % 4:
             continue
         index = offset // 4
-        if index >= 9000:
+        if 9000 <= index <= ceiling:
             found.add(index)
     return found
 
 
-def _reserved_references(path: pathlib.Path) -> set[int]:
+def _reserved_references(path: pathlib.Path, ceiling: int) -> set[int]:
     """Every reserved global a compiled CLEO script reads or writes.
 
     In a compiled script a global variable parameter is the byte 0x02 followed by
@@ -91,7 +107,7 @@ def _reserved_references(path: pathlib.Path) -> set[int]:
     nothing, but one outside it reads as a stale artefact when it may be a byte
     pair that only looks like a parameter, so the failure says both.
     """
-    return _decode_reserved(path.read_bytes())
+    return _decode_reserved(path.read_bytes(), ceiling)
 
 
 def _enum_terminator(source: str, opening: str, terminator: str) -> int | None:
@@ -252,7 +268,7 @@ def _literal_table_problems(scm_dir: pathlib.Path,
 
 
 def _cleo_problems(cleo_dir: pathlib.Path, scm: types.ModuleType,
-                   data: types.ModuleType) -> list[str]:
+                   data: types.ModuleType, scratch_top: int) -> list[str]:
     """Checks the compiled CLEO scripts against the block they were built for.
 
     These are build artefacts: add_markers.py carves each thread out of the
@@ -270,6 +286,14 @@ def _cleo_problems(cleo_dir: pathlib.Path, scm: types.ModuleType,
     been; what it does catch is a block moving out from under a script.
     """
     reward_top = scm.REWARD_BASE + len(scm.REWARD_KEYS) - 1
+    # The completion globals actually in use, which is NOT the whole block: it is
+    # sized with spare room so a location added later moves nothing, and no
+    # script may name a spare slot, because nothing is there. Bounding the runs
+    # here rather than at REWARD_BASE is what keeps a stale artefact visible: a
+    # flag that used to sit above the block lands inside the spare tail once the
+    # block is padded, and a run reaching the top of the block would read it as
+    # an ordinary completion global.
+    completion_top = scm.COMPLETION_BASE + len(scm.completion_watch()) - 1
     # Phil's four stands, which the pickup watcher polls even though the shop
     # class owns them: they are in-shop pickups the engine sells, so no shop
     # thread can reach them. They are the last four rows of shop_data, so they
@@ -297,8 +321,9 @@ def _cleo_problems(cleo_dir: pathlib.Path, scm: types.ModuleType,
                        f"(${scm.RADIO_RANDOMIZED_GLOBAL}.."
                        f"${scm.RADIO_REQUEST_GLOBAL})"),
         # Completion globals only: the watchers set checks, they read no rewards.
-        "apwatchers.cs": (((scm.COMPLETION_BASE, scm.REWARD_BASE - 1),),
-                          "the completion block"),
+        "apwatchers.cs": (((scm.COMPLETION_BASE, completion_top),),
+                          f"the completion globals in use "
+                          f"(${scm.COMPLETION_BASE}..${completion_top})"),
         # The pickup watcher reads each slot's handle, which is a vanilla global
         # below the reserved block, and writes only the completion global of the
         # slot or stand it polled, so its runs are the pickup run inside the
@@ -321,6 +346,25 @@ def _cleo_problems(cleo_dir: pathlib.Path, scm: types.ModuleType,
         "appad.cs": (((0, scm.COMPLETION_BASE - 1),),
                      "the vanilla mission flags below the completion block"),
     }
+    # The six weapon shops, the most expensive scripts to leave unchecked: each
+    # reads the shops-enabled flag
+    # before it hides what a shop sells, so a stale one reads a spare completion
+    # slot instead, finds zero, and hands the whole class back to vanilla with
+    # the class switched on. Their runs are the completion block (their own check
+    # globals and the property completions their gates read), that one flag, and
+    # the district unlocks of the store class, which the robbery handlers copied
+    # into their label space read.
+    store_districts = [scm.district_unlock_global("Robbable Stores", district)
+                       for district in scm.DISTRICT_KEYS]
+    for shop in SHOP_SCRIPTS:
+        bands[shop] = (((scm.COMPLETION_BASE, completion_top),
+                        (scm.SHOPS_ENABLED_GLOBAL, scm.SHOPS_ENABLED_GLOBAL),
+                        (min(store_districts), max(store_districts))),
+                       f"the completion globals in use (${scm.COMPLETION_BASE}.."
+                       f"${completion_top}), the shops-enabled flag "
+                       f"(${scm.SHOPS_ENABLED_GLOBAL}) and the store district "
+                       f"unlocks (${min(store_districts)}.."
+                       f"${max(store_districts)})")
     # The success line counts CLEO_SCRIPTS; this is what actually judges them, so
     # a script added to one and not the other is a script reported as read and
     # never looked at.
@@ -334,7 +378,7 @@ def _cleo_problems(cleo_dir: pathlib.Path, scm: types.ModuleType,
             continue
         # Anything below the completion block is bookkeeping or an unlock global,
         # and none of those moved, so the band applies from there up.
-        stray = sorted(index for index in _reserved_references(path)
+        stray = sorted(index for index in _reserved_references(path, scratch_top)
                        if index >= scm.COMPLETION_BASE
                        and not any(low <= index <= high for low, high in runs))
         if stray:
@@ -417,9 +461,15 @@ def _self_test() -> None:
     # 0x02 then the index times four, little endian. 9486 * 4 is 0x9438, so the
     # bytes are 02 38 94; the trailing pair is not divisible by four and the
     # leading one decodes below the reserved block, so neither is read.
-    assert _decode_reserved(bytes([0x02, 0x38, 0x94])) == {9486}
-    assert _decode_reserved(bytes([0x02, 0x01, 0x00])) == set()
-    assert _decode_reserved(bytes([0x02, 0x04, 0x00])) == set()
+    ceiling = 10_125
+    assert _decode_reserved(bytes([0x02, 0x38, 0x94]), ceiling) == {9486}
+    assert _decode_reserved(bytes([0x02, 0x01, 0x00]), ceiling) == set()
+    assert _decode_reserved(bytes([0x02, 0x04, 0x00]), ceiling) == set()
+    # And above the ceiling, which is the branch that lets the six shop scripts
+    # be judged at all: 16374 * 4 is 0xFFD8, a pair apammu1.cs really holds, and
+    # reading it as a reference reports a rebuilt script as stale.
+    assert _decode_reserved(bytes([0x02, 0xD8, 0xFF]), ceiling) == set()
+    assert _decode_reserved(bytes([0x02, 0xD8, 0xFF]), 16_374) == {16374}
 
     keys = chr(10).join([
         'SHOP_PENDING_NAME_KEY = "APITEM"',
@@ -771,6 +821,9 @@ def main() -> int:
         ("build_scm.py", build, "STUNT_JUMPS_ENABLED", scm.STUNT_JUMPS_CASH_GLOBAL),
         ("build_scm.py", build, "RAMPAGES_ENABLED", scm.RAMPAGES_CASH_GLOBAL),
         ("build_scm.py", build, "PROPERTIES_ENABLED", scm.PROPERTIES_CASH_GLOBAL),
+        # The last mirror above the completion block, and the only one a
+        # layout shift would otherwise move by band rule alone.
+        ("build_scm.py", build, "SHOPS_ENABLED", scm.SHOPS_ENABLED_GLOBAL),
         ("build_scm.py", build, "CONTENT_LOCK_FLAG_BASE", scm.CONTENT_LOCK_FLAG_BASE),
         ("build_scm.py", build, "CONTENT_UNLOCK_BASE", scm.CONTENT_UNLOCK_BASE),
         ("build_scm.py", build, "DISTRICT_UNLOCK_BASE", scm.DISTRICT_UNLOCK_BASE),
@@ -831,9 +884,14 @@ def main() -> int:
     ]
 
     cleo_dir = REPOSITORY_ROOT / "mod" / "cleo"
+    # The top of the marker scratch, which is the highest global this build can
+    # name. Read from add_markers.py's own sizing constant rather than restated,
+    # so growing the reserved block raises the ceiling with it instead of
+    # quietly pushing real references above it.
+    scratch_top = markers["SIZING_GLOBAL"] + MARKER_SCRATCH_GLOBALS
 
     problems: list[str] = list(asi_collisions)
-    problems.extend(_cleo_problems(cleo_dir, scm, data))
+    problems.extend(_cleo_problems(cleo_dir, scm, data, scratch_top))
     problems.extend(_literal_table_problems(scm_dir, scm))
     problems.extend(_district_list_problems(scm_dir, scm))
     problems.extend(_pad_door_problems(scm_dir, data))

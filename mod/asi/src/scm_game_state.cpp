@@ -71,16 +71,16 @@ constexpr int kAppliedIndexGlobal = 9005;
 // The hidden-packages shuffled flag, matching apworld scm.py: one while the
 // hidden-packages class is on, which is when its rewards are AP items and the
 // executable's own package cash has to go. A world test pins the index.
-constexpr int kPackagesShuffledGlobal = 9543;
+constexpr int kPackagesShuffledGlobal = 9819;
 // The radio contract, matching apworld scm.py: the randomized flag, nine
 // station unlock globals (engine station id order), nine resolve globals the
 // ASI recomputes each frame, and the retune request global the APRADIO
 // watcher consumes (encoded station id plus one, so the zero-initialized
 // global idles).
-constexpr int kRadioRandomizedGlobal = 9545;
-constexpr int kRadioUnlockBase = 9546;
-constexpr int kRadioResolveBase = 9555;
-constexpr int kRadioRequestGlobal = 9564;
+constexpr int kRadioRandomizedGlobal = 9821;
+constexpr int kRadioUnlockBase = 9822;
+constexpr int kRadioResolveBase = 9831;
+constexpr int kRadioRequestGlobal = 9840;
 // A script-channel request for station 9 selects the MP3 player, which the
 // game remaps to the city ambience: the radio-off soundscape. The ambience
 // track id equals the off position (10), so the commit's writeback leaves the
@@ -91,14 +91,14 @@ constexpr int kRadioAmbientRequest = 9;
 // Minimap item's unlock global. Both are ASI-facing only; the main.scm never
 // reads them, but as reserved globals they persist inside saves, so the
 // enforcement keeps working offline from a save.
-constexpr int kMinimapShuffledGlobal = 9580;
-constexpr int kMinimapUnlockGlobal = 9581;
+constexpr int kMinimapShuffledGlobal = 9856;
+constexpr int kMinimapUnlockGlobal = 9857;
 // The finale warp flag, one below the top of the reserved block in apworld
 // scm.py. The client raises it once the hidden-packages goal is met; the APFIN
 // watcher launches Keep Your Friends Close... from it, straight into the ending
 // cutscene. When the mission may start is the script's business, exactly as it
 // is for every vanilla launcher, so the mod only carries the ask across.
-constexpr int kFinaleWarpGlobal = 9668;
+constexpr int kFinaleWarpGlobal = 9944;
 
 // The three VANILLA globals the taxi and pizza rows read. Most constants here
 // are reserved globals this mod owns; these and the on-mission flag below belong
@@ -221,7 +221,7 @@ constexpr const char* kAbilityBlockedText[kAbilityCount] = {
 // mansion siege is on: the mission places its own pickups to be survived with,
 // and a shuffle that turned one of them into a melee weapon would be deciding
 // the ending.
-constexpr int kFinaleActiveGlobal = 9669;
+constexpr int kFinaleActiveGlobal = 9945;
 
 // $onmission, the game's own "a mission is running" flag, from Sanny's
 // CustomVariables for Vice City. Read only, and only to tell a finale still

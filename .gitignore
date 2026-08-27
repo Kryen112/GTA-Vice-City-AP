@@ -32,6 +32,13 @@ mod/cleo/*.cs
 # ships is the difference from it.
 mod/scm/stock.scm
 
+# Everything the SCM pipeline writes on the way from that script to the payload.
+# clean.txt is the vanilla decompile and built.txt and built.markers.txt are it
+# with our edits on top, so all three are Rockstar's source with ours mixed in,
+# and the twelve relocated threads are cut straight out of them. None may ever be
+# committed. The pipeline regenerates all of it from the player's own file.
+mod/scm/*.txt
+
 # The payload staged into the world package for the length of one build.
 # The build clears it again; an interrupted one leaves it behind.
 apworld/gta_vice_city/data/mod/

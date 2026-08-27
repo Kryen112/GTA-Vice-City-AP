@@ -47,14 +47,14 @@ enum ContentIndex {
 // Only the flags are read, to decide which classes the status page lists. The
 // five per-class unlocks above them are written by item_globals and read by
 // nothing here: what is held comes from the district block below.
-constexpr int kContentLockFlagBase = 9603;
+constexpr int kContentLockFlagBase = 9879;
 
 // The district block, matching apworld scm.py: one unlock global per class per
 // district, class-major, so a class and a district give a global by formula.
 // Eleven districts in apworld district_data.DISTRICTS order; the main.scm's
 // per-site gates index the same block the same way.
 constexpr int kDistrictCount = 11;
-constexpr int kDistrictUnlockBase = 9613;
+constexpr int kDistrictUnlockBase = 9889;
 
 constexpr int DistrictUnlockGlobal(int content_index, int district) {
   return kDistrictUnlockBase + content_index * kDistrictCount + district;

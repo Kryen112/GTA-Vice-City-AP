@@ -382,10 +382,10 @@ class TestRadioStationsOn(WorldTestBase):
             )
 
     def test_reserved_block_stays_below_the_marker_globals(self) -> None:
-        # $9670 up is SCM-internal (marker handles and visibility flags, whose
+        # $9946 up is SCM-internal (marker handles and visibility flags, whose
         # bases live in add_markers.py); the reserved contract must never grow
-        # into it. The district content unlocks took $9613..$9667, the finale warp
-        # flag $9668 and the finale active flag $9669, which is why
+        # into it. The district content unlocks took $9889..$9943, the finale warp
+        # flag $9944 and the finale active flag $9945, which is why
         # add_markers.py's HANDLE_BASE moved with them: a reserved block growing
         # into the marker scratch would have the ASI writing over live marker
         # handles.
@@ -394,7 +394,7 @@ class TestRadioStationsOn(WorldTestBase):
         # reward block sits directly above the completion block, so a class
         # appended to the registry leaves the unlock and completion globals alone
         # and pushes everything from the rewards up by its own size.
-        self.assertLess(scm.highest_reserved_global(), 9670)
+        self.assertLess(scm.highest_reserved_global(), 9946)
 
 
 class TestRadioStationsOff(WorldTestBase):
@@ -4518,6 +4518,22 @@ class TestReservedGlobals(WorldTestBase):
         self.assertGreater(scm.FINALE_ACTIVE_GLOBAL,
                            max(scm.completion_watch().keys()))
 
+    def test_the_blocks_above_the_completions_do_not_move_with_the_locations(self) -> None:
+        # The property the padding exists to create, and the one thing here that
+        # a pinned number cannot say: every block above the completion block is
+        # numbered from the block's CAPACITY and not from how much of it is used,
+        # so a location added later takes a spare slot and moves nothing. Written
+        # as the relation rather than as values, since the values are pinned
+        # elsewhere and would pass while the relation was broken.
+        self.assertEqual(scm.REWARD_BASE,
+                         scm.COMPLETION_BASE + scm.COMPLETION_CAPACITY)
+        self.assertGreater(scm.COMPLETION_CAPACITY, len(scm.completion_watch()),
+                           "the completion block has no spare room, so the next "
+                           "location moves every global above it")
+        # And the overflow guard, which is a module-level assert in scm.py and so
+        # is stripped by -O. Restated here, where nothing strips it.
+        self.assertLessEqual(len(scm.completion_watch()), scm.COMPLETION_CAPACITY)
+
     def test_the_published_global_map_covers_the_whole_reserved_block(self) -> None:
         # scm.reserved_global_map is what the numbering snapshot freezes, so a
         # block missing from it is a block nothing pins: main.scm and the CLEO
@@ -4531,8 +4547,14 @@ class TestReservedGlobals(WorldTestBase):
         # $9006 counts collected packages, and $9008 and $9009 are unused.
         published = set(scm.reserved_global_map().values())
         scratch = {9004, 9006, 9007, 9008, 9009}
+        # The completion block's spare slots are reserved and unnamed: they hold
+        # the room a location added later takes instead of pushing every block
+        # above it up one. Nothing may hand them out, so nothing publishes them,
+        # and they are excluded by the range they occupy rather than by silence.
+        spare = set(range(scm.COMPLETION_BASE + len(scm.completion_watch()),
+                          scm.COMPLETION_BASE + scm.COMPLETION_CAPACITY))
         expected = set(range(scm.RESERVED_BASE, scm.highest_reserved_global() + 1))
-        missing = sorted(expected - published - scratch)
+        missing = sorted(expected - published - scratch - spare)
         self.assertEqual(
             missing, [],
             f"{len(missing)} reserved globals are handed out and not published, "
@@ -4636,28 +4658,28 @@ class TestReservedGlobals(WorldTestBase):
         # The ASI hard-codes the packages-shuffled index too
         # (scm_game_state.cpp): it gates taking back the package cash the
         # executable pays, which no script gate can reach.
-        self.assertEqual(scm.PACKAGES_SHUFFLED_GLOBAL, 9543)
+        self.assertEqual(scm.PACKAGES_SHUFFLED_GLOBAL, 9819)
         # The shops flag, which build_scm.py mirrors by literal as SHOPS_ENABLED
         # and every piece of the shop withholding reads before it changes the
         # world. It sits directly below the ability locks, so a shift moves both.
-        self.assertEqual(scm.SHOPS_ENABLED_GLOBAL, 9586)
-        self.assertEqual(scm.ABILITY_LOCK_FLAG_BASE, 9587)
-        self.assertEqual(scm.ABILITY_UNLOCK_BASE, 9595)
-        self.assertEqual(scm.CONTENT_LOCK_FLAG_BASE, 9603)
-        self.assertEqual(scm.CONTENT_UNLOCK_BASE, 9608)
+        self.assertEqual(scm.SHOPS_ENABLED_GLOBAL, 9862)
+        self.assertEqual(scm.ABILITY_LOCK_FLAG_BASE, 9863)
+        self.assertEqual(scm.ABILITY_UNLOCK_BASE, 9871)
+        self.assertEqual(scm.CONTENT_LOCK_FLAG_BASE, 9879)
+        self.assertEqual(scm.CONTENT_UNLOCK_BASE, 9884)
         # The district content unlocks, the block every content gate and every
         # content hold actually reads. build_scm.py mirrors the base and the
         # class-major stride by literal, so a shift here has to move with it.
-        self.assertEqual(scm.DISTRICT_UNLOCK_BASE, 9613)
+        self.assertEqual(scm.DISTRICT_UNLOCK_BASE, 9889)
         self.assertEqual(scm.DISTRICT_UNLOCK_COUNT, 55)
         # The finale warp flag, hard-coded in the ASI (scm_game_state.cpp) and in
         # build_scm.py, which reads it in the APFIN watcher and in the mission
         # branch that jumps to the ending cutscene. It is also the foundation's
         # sizing line, which add_markers.py anchors on, so a shift here moves
         # four files at once.
-        self.assertEqual(scm.FINALE_WARP_GLOBAL, 9668)
-        self.assertEqual(scm.FINALE_ACTIVE_GLOBAL, 9669)
-        self.assertEqual(scm.highest_reserved_global(), 9669)
+        self.assertEqual(scm.FINALE_WARP_GLOBAL, 9944)
+        self.assertEqual(scm.FINALE_ACTIVE_GLOBAL, 9945)
+        self.assertEqual(scm.highest_reserved_global(), 9945)
         self.assertEqual(scm.ABILITY_KEYS, data.ABILITY_ITEMS)
         self.assertEqual(scm.CONTENT_KEYS, data.CONTENT_ITEMS)
 
@@ -4697,7 +4719,7 @@ class TestReservedGlobals(WorldTestBase):
             self.assertEqual(scm.completion_global(name), global_index, name)
         # Every payout guard also reads the class-cash flag, so that a seed with
         # the class off pays vanilla; the same shift argument applies to it.
-        self.assertEqual(scm.SIDE_EVENTS_CASH_GLOBAL, 9582)
+        self.assertEqual(scm.SIDE_EVENTS_CASH_GLOBAL, 9858)
 
     def test_property_ownership_globals_match_the_hand_written_mirrors(self) -> None:
         # Each of these gates what its property gives: a safehouse's save
@@ -4711,23 +4733,23 @@ class TestReservedGlobals(WorldTestBase):
         # literal, so that shift fails here rather than in game, and the fix is
         # to move build_scm.py's OWNERSHIP_BASE with it.
         businesses = {
-            "Printworks": 9565,
-            "Sunshine Autos": 9566,
-            "Film Studio": 9567,
-            "Cherry Popper": 9568,
-            "Kaufman Cabs": 9569,
-            "Malibu Club": 9570,
-            "Boatyard": 9571,
-            "Pole Position": 9572,
+            "Printworks": 9841,
+            "Sunshine Autos": 9842,
+            "Film Studio": 9843,
+            "Cherry Popper": 9844,
+            "Kaufman Cabs": 9845,
+            "Malibu Club": 9846,
+            "Boatyard": 9847,
+            "Pole Position": 9848,
         }
         safehouses = {
-            "El Swanko Casa": 9573,
-            "Links View Apartment": 9574,
-            "Hyman Condo": 9575,
-            "Ocean Heights Apartment": 9576,
-            "1102 Washington Street": 9577,
-            "3321 Vice Point": 9578,
-            "Skumole Shack": 9579,
+            "El Swanko Casa": 9849,
+            "Links View Apartment": 9850,
+            "Hyman Condo": 9851,
+            "Ocean Heights Apartment": 9852,
+            "1102 Washington Street": 9853,
+            "3321 Vice Point": 9854,
+            "Skumole Shack": 9855,
         }
         for properties, items in ((businesses, data.BUSINESS_OWNERSHIP_ITEMS),
                                   (safehouses, data.SAFEHOUSE_OWNERSHIP_ITEMS)):
@@ -5015,7 +5037,7 @@ class TestReservedGlobals(WorldTestBase):
         self.assertEqual(district_data.STORE_DISTRICTS, stores)
         # The block those tables index into. build_scm.py mirrors the base and
         # derives the stride from the class count, so both are pinned.
-        self.assertEqual(scm.DISTRICT_UNLOCK_BASE, 9613)
+        self.assertEqual(scm.DISTRICT_UNLOCK_BASE, 9889)
         self.assertEqual(len(scm.DISTRICT_KEYS), len(districts))
         self.assertEqual(scm.CONTENT_KEYS.index(data.STUNT_JUMPS_ITEM), 2)
         self.assertEqual(scm.CONTENT_KEYS.index(data.ROBBABLE_STORES_ITEM), 4)
@@ -5060,7 +5082,7 @@ class TestReservedGlobals(WorldTestBase):
             self.assertEqual(scm.completion_global(name), global_index, name)
         # The race payout guards read the properties class-cash flag, so a seed
         # with the class off pays vanilla; the same shift argument applies to it.
-        self.assertEqual(scm.PROPERTIES_CASH_GLOBAL, 9585)
+        self.assertEqual(scm.PROPERTIES_CASH_GLOBAL, 9861)
 
     def test_the_script_gated_content_items_keep_their_offsets(self) -> None:
         # The two classes with no icon for the ASI to hold gate in the script

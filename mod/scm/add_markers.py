@@ -104,19 +104,19 @@ STRANDS = {
     # completion global) and owned (the ownership global its AP item drives),
     # so the beam and blip stay hidden and the launcher stays unstarted until
     # the progressive, the purchase, and the ownership item all exist.
-    "Malibu": [("BANK1", [(9023, 1), (9341, 1), (9570, 1)]),
-               ("BANK2", [(9023, 2), (9341, 1), (9570, 1)]),
-               ("BANK3", [(9023, 3), (9341, 1), (9570, 1)]),
-               ("BANK4", [(9023, 4), (9341, 1), (9570, 1)])],
-    "FilmStudio": [("PORN1", [(9024, 1), (9338, 1), (9567, 1)]),
-                   ("PORN2", [(9024, 2), (9338, 1), (9567, 1)]),
-                   ("PORN3", [(9024, 3), (9338, 1), (9567, 1)]),
-                   ("PORN4", [(9024, 4), (9338, 1), (9567, 1)])],
-    "Printworks": [("COU1", [(9025, 1), (9336, 1), (9565, 1)]),
-                   ("COU2", [(9025, 2), (9336, 1), (9565, 1)])],
-    "KaufmanCabs": [("TWAR1", [(9026, 1), (9340, 1), (9569, 1)]),
-                    ("TWAR2", [(9026, 2), (9340, 1), (9569, 1)]),
-                    ("TWAR3", [(9026, 3), (9340, 1), (9569, 1)])],
+    "Malibu": [("BANK1", [(9023, 1), (9341, 1), (9846, 1)]),
+               ("BANK2", [(9023, 2), (9341, 1), (9846, 1)]),
+               ("BANK3", [(9023, 3), (9341, 1), (9846, 1)]),
+               ("BANK4", [(9023, 4), (9341, 1), (9846, 1)])],
+    "FilmStudio": [("PORN1", [(9024, 1), (9338, 1), (9843, 1)]),
+                   ("PORN2", [(9024, 2), (9338, 1), (9843, 1)]),
+                   ("PORN3", [(9024, 3), (9338, 1), (9843, 1)]),
+                   ("PORN4", [(9024, 4), (9338, 1), (9843, 1)])],
+    "Printworks": [("COU1", [(9025, 1), (9336, 1), (9841, 1)]),
+                   ("COU2", [(9025, 2), (9336, 1), (9841, 1)])],
+    "KaufmanCabs": [("TWAR1", [(9026, 1), (9340, 1), (9845, 1)]),
+                    ("TWAR2", [(9026, 2), (9340, 1), (9845, 1)]),
+                    ("TWAR3", [(9026, 3), (9340, 1), (9845, 1)])],
 }
 
 # Fresh scratch globals, all above the reserved block, whose top is the finale
@@ -124,7 +124,7 @@ STRANDS = {
 # global once, and this scratch starts one above it. Both halves of that
 # relation live here so they move together, and the write before DST is checked
 # against it. One handle, one started-flag, one shown-flag per managed mission.
-SIZING_GLOBAL = 9669
+SIZING_GLOBAL = 9945
 
 # The ambient pickup checks. Their completion globals are contiguous from
 # here, one per slot in pickup_data order, because the pickup class is the

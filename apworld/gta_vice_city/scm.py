@@ -64,10 +64,31 @@ UNLOCK_KEYS: list[str] = list(data.progressive_strands().keys()) + list(data.ARE
 COMPLETION_BASE = UNLOCK_BASE + len(UNLOCK_KEYS)
 _ORDERED_LOCATION_NAMES: list[str] = list(locations.LOCATION_NAME_TO_ID.keys())
 
+# How much room the completion block takes, which is deliberately more than the
+# locations need. Every block above it is numbered from where it ends, so sizing
+# it by the location count would mean a location added later shifting every
+# reward, config, radio, ownership, ability, content and district global up with
+# it. Those numbers are compiled into main.scm and the CLEO scripts and written
+# into save files, so that shift points a running seed's save at the wrong word.
+#
+# Spare slots cost nothing at runtime. The completion watch is built from the
+# locations that exist, so a slot nothing names is a zero nobody reads, and the
+# only price is script space: 276 spare globals are 1,104 bytes of a MAIN
+# section with 24,256 bytes to spare. Room for two more classes the size of the
+# ambient pickups.
+#
+# It can only be widened BEFORE the numbering is released. Afterwards this is
+# the number that lets a location be added at all.
+COMPLETION_CAPACITY = 768
+assert len(_ORDERED_LOCATION_NAMES) <= COMPLETION_CAPACITY, (
+    f"{len(_ORDERED_LOCATION_NAMES)} locations against a completion block of "
+    f"{COMPLETION_CAPACITY}; widening it moves every global above it"
+)
+
 # Persistent-reward globals follow the completion block. The ASI sets each to
 # one when its item is received (through item_globals, like an unlock count),
 # and the main.scm re-gates the vanilla respawning grant on it.
-REWARD_BASE = COMPLETION_BASE + len(_ORDERED_LOCATION_NAMES)
+REWARD_BASE = COMPLETION_BASE + COMPLETION_CAPACITY
 REWARD_KEYS: list[str] = list(data.PERSISTENT_REWARD_ITEMS)
 
 # Config flags the ASI stamps once from slot_data so the main.scm knows whether
