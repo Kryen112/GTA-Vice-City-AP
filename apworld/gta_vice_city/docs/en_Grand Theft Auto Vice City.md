@@ -98,9 +98,9 @@ Crazy, PCJ Playground, Trial by Dirt and Test Track.
 Mostly it does not look like anything: a check is an activity you complete, so
 the world is the vanilla city with vanilla scenery. The two exceptions are the
 optional classes that put a check on an object. An ambient pickup that still
-holds its check spins as an Archipelago marker instead of the weapon or the
-health it normally is, and a shop stand holding its check sells "AP Item" in
-place of its stock.
+holds its check spins as a GTA III logo instead of the weapon or the health it
+normally is, which is the one sprite the game itself never uses, and a shop
+stand holding its check sells "AP Item" in place of its stock.
 
 ## When the player receives an item, what happens?
 
@@ -135,5 +135,4 @@ DeathLink is supported and off by default. It sends on Wasted only, so an arrest
 is not a death, and the client can turn it on or off for a session without
 regenerating.
 
-Universal Tracker is supported, and a PopTracker pack generated from this world's
-own logic ships with the release.
+Universal Tracker is supported, and a PopTracker pack ships with the release.

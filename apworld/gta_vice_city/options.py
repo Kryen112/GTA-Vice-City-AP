@@ -106,7 +106,7 @@ class EnableSideEvents(DefaultOnToggle):
 class EnablePickups(Toggle):
     """If on, the 116 pickups lying around the world are checks the first time
     each one is taken: weapons, health, body armor, adrenaline and bribes.
-    An untaken pickup shows an Archipelago marker (currently a GTAIII logo),
+    An untaken pickup shows a GTA III logo, the one sprite the game never uses,
     and once its check is taken it goes back to being an ordinary pickup, shuffled if
     randomize_pickups is on. Ten of them sit inside hospitals and pharmacies
     and charge $1000 for the marker."""
