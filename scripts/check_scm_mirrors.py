@@ -866,12 +866,25 @@ def main() -> int:
         ("ASI", asi, "kDistrictAbsent", scm.DISTRICT_ABSENT),
         ("ASI", asi, "kFinaleActiveGlobal", scm.FINALE_ACTIVE_GLOBAL),
         ("ASI", asi, "kFinaleWarpGlobal", scm.FINALE_WARP_GLOBAL),
-        # The district block is addressed as base plus class times stride plus
-        # district, so this count is the stride. A base that drifts moves every
-        # global together and shows up immediately; a stride that drifts still
-        # addresses district zero of class zero correctly and misses everything
-        # else, which is the harder failure to see.
+        # The district block is addressed as base plus class times STRIDE plus
+        # district, and the stride is the grid's reserved width rather than the
+        # number of districts in it: the grid is padded in both dimensions so a
+        # class or a district added later moves no global. The two were the same
+        # number until the padding, and this entry pinned the count while the
+        # world moved to the capacity, which is how the ASI came to read every
+        # row but the first off the end of its own.
+        #
+        # A base that drifts moves every global together and shows up at once. A
+        # stride that drifts addresses class zero correctly and misses every
+        # class after it, landing on spare slots nothing stamps, which read as
+        # held forever. That is the harder failure to see and the worse one.
+        ("ASI", asi, "kDistrictStride", scm.DISTRICT_CAPACITY),
         ("ASI", asi, "kDistrictCount", len(scm.DISTRICT_KEYS)),
+        # The SCM builder's own copy of the same two, and of the spare flags
+        # between the grid and the finale globals.
+        ("build_scm.py", build, "DISTRICT_STRIDE", scm.DISTRICT_CAPACITY),
+        ("build_scm.py", build, "CONTENT_ROWS", scm.CONTENT_CAPACITY),
+        ("build_scm.py", build, "SPARE_FLAGS", scm.SPARE_FLAG_CAPACITY),
         ("ASI", asi, "kRadioStationCount", scm.RADIO_STATION_COUNT),
         ("ASI", asi, "kSeedHashBase", scm.SEED_HASH_BASE),
         ("ASI", asi, "kSeedHashGlobalCount", scm.SEED_HASH_GLOBAL_COUNT),

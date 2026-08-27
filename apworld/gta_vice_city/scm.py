@@ -71,6 +71,9 @@ UNLOCK_KEYS: list[str] = list(data.progressive_strands().keys()) + list(data.ARE
 # content class or a district can be added at all.
 UNLOCK_CAPACITY = 48
 
+assert len(UNLOCK_KEYS) <= UNLOCK_CAPACITY, (
+    f"{len(UNLOCK_KEYS)} unlock keys against a block of {UNLOCK_CAPACITY}")
+
 # Completion globals follow the unlock block, one per location in id order.
 COMPLETION_BASE = UNLOCK_BASE + UNLOCK_CAPACITY
 _ORDERED_LOCATION_NAMES: list[str] = list(locations.LOCATION_NAME_TO_ID.keys())
@@ -102,6 +105,8 @@ assert len(_ORDERED_LOCATION_NAMES) <= COMPLETION_CAPACITY, (
 REWARD_BASE = COMPLETION_BASE + COMPLETION_CAPACITY
 REWARD_KEYS: list[str] = list(data.PERSISTENT_REWARD_ITEMS)
 REWARD_CAPACITY = 32
+assert len(REWARD_KEYS) <= REWARD_CAPACITY, (
+    f"{len(REWARD_KEYS)} reward keys against a block of {REWARD_CAPACITY}")
 
 # Config flags the ASI stamps once from slot_data so the main.scm knows whether
 # each reward group is shuffled (AP-gated, vanilla trigger suppressed) or
@@ -139,6 +144,9 @@ RADIO_REQUEST_GLOBAL = RADIO_RESOLVE_BASE + RADIO_STATION_COUNT
 OWNERSHIP_BASE = RADIO_REQUEST_GLOBAL + 1
 OWNERSHIP_KEYS: list[str] = list(data.PROPERTY_OWNERSHIP_ITEMS)
 OWNERSHIP_CAPACITY = 24
+assert len(OWNERSHIP_KEYS) <= OWNERSHIP_CAPACITY, (
+    f"{len(OWNERSHIP_KEYS)} ownership keys against a block of "
+    f"{OWNERSHIP_CAPACITY}")
 
 # Minimap globals follow the ownership block. Both are ASI-facing only (the
 # main.scm never reads them; they persist inside saves like every reserved
@@ -181,6 +189,8 @@ SHOPS_ENABLED_GLOBAL = PROPERTIES_CASH_GLOBAL + 1
 # directly above this one.
 ABILITY_KEYS: list[str] = list(data.ABILITY_ITEMS)
 ABILITY_CAPACITY = 16
+assert len(ABILITY_KEYS) <= ABILITY_CAPACITY, (
+    f"{len(ABILITY_KEYS)} ability keys against a block of {ABILITY_CAPACITY}")
 ABILITY_LOCK_FLAG_BASE = SHOPS_ENABLED_GLOBAL + 1
 ABILITY_UNLOCK_BASE = ABILITY_LOCK_FLAG_BASE + ABILITY_CAPACITY
 
@@ -194,6 +204,8 @@ ABILITY_UNLOCK_BASE = ABILITY_LOCK_FLAG_BASE + ABILITY_CAPACITY
 # right above this block.
 CONTENT_KEYS: list[str] = list(data.CONTENT_ITEMS)
 CONTENT_CAPACITY = 12
+assert len(CONTENT_KEYS) <= CONTENT_CAPACITY, (
+    f"{len(CONTENT_KEYS)} content keys against a block of {CONTENT_CAPACITY}")
 CONTENT_LOCK_FLAG_BASE = ABILITY_UNLOCK_BASE + ABILITY_CAPACITY
 CONTENT_UNLOCK_BASE = CONTENT_LOCK_FLAG_BASE + CONTENT_CAPACITY
 
@@ -219,6 +231,8 @@ DISTRICT_KEYS: list[str] = list(data.CONTENT_DISTRICTS)
 # district count: padding only the class dimension would leave a district added
 # later moving every row after the first.
 DISTRICT_CAPACITY = 16
+assert len(DISTRICT_KEYS) <= DISTRICT_CAPACITY, (
+    f"{len(DISTRICT_KEYS)} districts against a grid row of {DISTRICT_CAPACITY}")
 DISTRICT_UNLOCK_BASE = CONTENT_UNLOCK_BASE + CONTENT_CAPACITY
 DISTRICT_UNLOCK_COUNT = CONTENT_CAPACITY * DISTRICT_CAPACITY
 

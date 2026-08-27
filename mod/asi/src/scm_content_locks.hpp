@@ -56,8 +56,16 @@ constexpr int kContentLockFlagBase = 9943;
 constexpr int kDistrictCount = 11;
 constexpr int kDistrictUnlockBase = 9967;
 
+// The row stride, which is NOT the district count. The grid reserves more than
+// it uses in both dimensions so a class or a district added later moves no
+// global, and a row therefore starts every kDistrictStride globals rather than
+// every kDistrictCount. Striding by the count instead reads row zero correctly
+// and every row after it off by a growing margin, landing on spare slots that
+// nothing stamps and so read as held forever.
+constexpr int kDistrictStride = 16;
+
 constexpr int DistrictUnlockGlobal(int content_index, int district) {
-  return kDistrictUnlockBase + content_index * kDistrictCount + district;
+  return kDistrictUnlockBase + content_index * kDistrictStride + district;
 }
 
 // What a district unlock holds, matching apworld scm.py. Zero is the absence of

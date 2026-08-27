@@ -4695,6 +4695,17 @@ class TestReservedGlobals(WorldTestBase):
         # moves nothing; 5 by 11 of it is in use.
         self.assertEqual(scm.DISTRICT_UNLOCK_COUNT, 192)
         self.assertEqual(len(scm.CONTENT_KEYS) * len(scm.DISTRICT_KEYS), 55)
+        # The STRIDE, pinned through a cell in a row above the first. The base
+        # and the product are the same under either stride, so they say nothing
+        # about it: the ASI mirrored the district COUNT as its stride and read
+        # every class after the first off the end of its own row, which this is
+        # the assertion that shows.
+        self.assertEqual(scm.DISTRICT_CAPACITY, 16)
+        self.assertEqual(
+            scm.district_unlock_global(scm.CONTENT_KEYS[1], scm.DISTRICT_KEYS[0]),
+            scm.DISTRICT_UNLOCK_BASE + scm.DISTRICT_CAPACITY)
+        self.assertEqual(
+            scm.district_unlock_global(scm.CONTENT_KEYS[1], scm.DISTRICT_KEYS[0]), 9983)
         # The finale warp flag, hard-coded in the ASI (scm_game_state.cpp) and in
         # build_scm.py, which reads it in the APFIN watcher and in the mission
         # branch that jumps to the ending cutscene. It is also the foundation's

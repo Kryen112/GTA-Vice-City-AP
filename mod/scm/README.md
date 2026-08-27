@@ -186,8 +186,12 @@ version control.
   stores. No gate reads either range: the flags only tell the ASI which classes
   to list on its status page, and a whole-class release reaches the script
   through the district block below.
-- District content locks: `$9967..$10041`, one unlock per content class per
-  district, class-major over eleven districts in the apworld's
+- District content locks: the grid at `$9967..$10158`, one unlock per content
+  class per district, class-major. A row is DISTRICT_CAPACITY wide, sixteen, and
+  not the eleven districts in it: the grid reserves spare rows and columns so a
+  class or a district added later moves no global, so the stride is the reserved
+  width and striding by the district count instead reads every row but the first
+  off the end of its own. The eleven in use are in the apworld's
   `district_data.DISTRICTS` order. This is the block every content gate and
   every content hold reads, whatever `split_content_locks` is set to, because
   an item releases every global it covers: one for a class-in-one-district
