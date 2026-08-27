@@ -86,6 +86,14 @@ STOCK_SCM_SHA256 = "0fb3fd45b6a6dc21870cb48d9abe983510284b2b09b0c3d0eeac51d5dff3
 # file this world starts committing later survives it.
 STAGED_PAYLOAD = WORLD_SOURCE / "data" / "mod"
 
+# The licence and its notice, staged into the world package for the length of a
+# build the way the payload is. What a player receives is the apworld, not this
+# repository, so a licence that lives only at the repository root travels with
+# nothing: every copy of the world, the client and the ASI would go out with no
+# notice attached, including the third party notices the ASI's own dependencies
+# require to accompany it.
+LICENCE_FILES = ("LICENSE", "NOTICE")
+
 # What the ASI is compiled from, for the staleness check below. The harness is
 # left out because it builds its own binaries and is named by no ClCompile entry,
 # and nothing under src includes it. The vendored header IS in, since protocol.hpp
@@ -363,6 +371,27 @@ def _write_delta(stock: bytes, source: pathlib.Path, destination: pathlib.Path) 
     return hashlib.sha256(target).hexdigest()
 
 
+def stage_licence_files() -> list[str]:
+    """Copies the licence and its notice into the world package."""
+    staged = []
+    for name in LICENCE_FILES:
+        source = REPOSITORY_ROOT / name
+        if not source.is_file():
+            raise SystemExit(
+                f"Refusing to package: no {name} at the repository root. It "
+                "ships inside the apworld, so a package without it is one every "
+                "player receives with no licence attached.")
+        shutil.copyfile(source, WORLD_SOURCE / name)
+        staged.append(name)
+    return staged
+
+
+def clear_licence_files() -> None:
+    """Removes the staged licence files from the world package."""
+    for name in LICENCE_FILES:
+        (WORLD_SOURCE / name).unlink(missing_ok=True)
+
+
 def clear_staged_payload() -> None:
     """Removes the staged payload from the world package.
 
@@ -512,10 +541,12 @@ def main() -> int:
     # local data/mod to the packaged one, and half a payload is one the mod
     # cannot run on.
     try:
+        stage_licence_files()
         stage_mod_payload()
         built = package(root, game)
     finally:
         clear_staged_payload()
+        clear_licence_files()
     if built is None:
         return 1
 

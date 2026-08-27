@@ -62,6 +62,7 @@ mission has no requirement at all.
 from __future__ import annotations
 
 from collections.abc import Callable
+from typing import NamedTuple
 
 from BaseClasses import CollectionState
 
@@ -75,6 +76,25 @@ Requirement = tuple[str, int]
 # One counted threshold: the alternative requirement sets and how many of them
 # must hold.
 Threshold = tuple[list[list[Requirement]], int]
+
+
+class LocationRequirements(NamedTuple):
+    """What a location asks of the state, before it becomes a predicate.
+
+    The terms all have to hold, and each threshold counts how many of its
+    alternatives must. This is the form the logic is BUILT in;
+    compile_requirements turns one into the closure Archipelago wants, and
+    build_location_requirements hands the structures to anything that needs to
+    read the logic rather than run it. The tracker pack generates its
+    rules from these, which is what keeps it from reimplementing them and
+    drifting.
+
+    Read-only to callers. Several locations share one threshold list, since the
+    property sale terms are built once and handed to each location that carries
+    them, so editing one in place would rewrite another location's logic.
+    """
+    requirements: list[Requirement]
+    thresholds: list[Threshold]
 
 
 def _requires(requirements: list[Requirement]) -> RulePredicate:
@@ -354,7 +374,7 @@ def _predecessor_requirements(mission: str, giver: str,
     # three can be left behind: the progressives an inherited mission opens on,
     # its own locks, and, through _inherited_regions walking the same set, its
     # region. A venue's ownership item and the property-sale requirements are not
-    # among them; build_location_rules adds those for the mission's own strand,
+    # among them; build_location_requirements adds those for the mission's own strand,
     # so an edge into a venue strand would inherit the three and not those.
     # A mission's own strand count is already the highest in its strand, so the
     # in-strand progressives here only ever restate it; the counts that matter
@@ -380,7 +400,7 @@ def _mission_requirements(mission: str, giver: str, active_items: frozenset[str]
     # the mission's ability terms and those of the earlier missions of its
     # strand. The SCM mission gates mirror the unlock counts; a venue's
     # ownership and purchase requirements are added on top in
-    # build_location_rules (in game the gate reads the ownership global and the
+    # build_location_requirements (in game the gate reads the ownership global and the
     # purchase's completion global), and an ability lock is ASI-enforced, not
     # gated in the SCM.
     requirements: list[Requirement] = []
@@ -592,13 +612,18 @@ def _finale_asset_terms(
     return mandatory, optional
 
 
-def build_location_rules(
+def build_location_requirements(
     properties_enabled: bool = True,
     ability_locks: frozenset[str] = frozenset(),
     content_locks: frozenset[str] = frozenset(),
     split_mainland_access: bool = False,
     split_content_locks: int = data.CONTENT_SPLIT_OFF,
-) -> dict[str, RulePredicate]:
+) -> dict[str, LocationRequirements]:
+    """Every location that carries a rule, and what that rule asks for.
+
+    A location absent from this asks nothing and is reachable from its region
+    alone, which is why the map is not every location in the world.
+    """
     # One active set for both lock families: a term binds when its own key is
     # selected, and every predicate below filters against this.
     # The class item is what says a class is locked, whatever the granularity,
@@ -609,7 +634,7 @@ def build_location_rules(
         [item for key in ability_locks for item in data.ABILITY_LOCK_ITEMS[key]]
         + [data.CONTENT_LOCK_ITEMS[key] for key in content_locks]
     )
-    rules: dict[str, RulePredicate] = {}
+    requirements_by_location: dict[str, LocationRequirements] = {}
     sale_requirements, sale_thresholds = _property_sale_requirements(
         active_items, split_content_locks, split_mainland_access, properties_enabled)
     finale_mandatory, finale_optional = _finale_asset_terms(
@@ -636,7 +661,7 @@ def build_location_rules(
             mission_thresholds = _deduplicated_thresholds(
                 [*mission_thresholds, *sale_thresholds])
             if properties_enabled:
-                rules[mission] = _requires_with_thresholds(
+                requirements_by_location[mission] = LocationRequirements(
                     requirements + finale_mandatory,
                     [*mission_thresholds,
                      (finale_optional, data.FINALE_OPTIONAL_ASSETS_REQUIRED)],
@@ -653,22 +678,18 @@ def build_location_rules(
                 off_requirements = (
                     requirements + sale_requirements
                     + _any_property_content_terms(active_items, split_content_locks))
-                rules[mission] = (
-                    _requires_with_thresholds(off_requirements, mission_thresholds)
-                    if mission_thresholds else _requires(off_requirements)
-                )
+                requirements_by_location[mission] = LocationRequirements(
+                    off_requirements, mission_thresholds)
             continue
-        if mission_thresholds:
-            rules[mission] = _requires_with_thresholds(requirements, mission_thresholds)
-        elif requirements:
-            rules[mission] = _requires(requirements)
+        if mission_thresholds or requirements:
+            requirements_by_location[mission] = LocationRequirements(
+                requirements, mission_thresholds)
     for purchase in data.BUSINESS_PURCHASES:
         purchase_requirements = (
             sale_requirements
             + _property_content_terms(purchase, active_items, split_content_locks))
-        rules[purchase] = (
-            _requires_with_thresholds(purchase_requirements, sale_thresholds)
-            if sale_thresholds else _requires(purchase_requirements))
+        requirements_by_location[purchase] = LocationRequirements(
+            purchase_requirements, sale_thresholds)
     # A venue's own activities carry no progressive unlock: vanilla opens them
     # all the moment the venue is bought, so they need the venue bought and
     # owned and nothing more, plus their own lock terms.
@@ -688,9 +709,8 @@ def build_location_rules(
                 *_ability_alternative_thresholds(activity, active_items,
                                                  split_mainland_access),
             ])
-            rules[activity] = (
-                _requires_with_thresholds(activity_requirements, activity_thresholds)
-                if activity_thresholds else _requires(activity_requirements))
+            requirements_by_location[activity] = LocationRequirements(
+                activity_requirements, activity_thresholds)
     # Every remaining location with a lock term: the collectible and activity
     # classes and the safehouse purchases, which carry no other rule. A
     # business purchase and a venue activity are already ruled above, with the
@@ -712,10 +732,9 @@ def build_location_rules(
                       *_mission_terms(location_name)]
         thresholds = _ability_alternative_thresholds(location_name, active_items,
                                                      split_mainland_access)
-        if thresholds:
-            rules[location_name] = _requires_with_thresholds(lock_terms, thresholds)
-        elif lock_terms:
-            rules[location_name] = _requires(lock_terms)
+        if thresholds or lock_terms:
+            requirements_by_location[location_name] = LocationRequirements(
+                lock_terms, thresholds)
     # An event per mission something else waits on, ruled here so the world can
     # set it like any other location.
     for mission in data.ROUTE_MISSIONS:
@@ -726,7 +745,32 @@ def build_location_rules(
             raise ValueError(
                 f"{mission} stands for something else and needs nothing itself; "
                 f"an event with no rule hands over whatever waits on it")
-        rules[data.mission_event_name(mission)] = (
-            _requires_with_thresholds(event_requirements, event_thresholds)
-            if event_thresholds else _requires(event_requirements))
-    return rules
+        requirements_by_location[data.mission_event_name(mission)] = (
+            LocationRequirements(event_requirements, event_thresholds))
+    return requirements_by_location
+
+
+def compile_requirements(entry: LocationRequirements) -> RulePredicate:
+    """One location's requirements as the closure Archipelago calls."""
+    return (_requires_with_thresholds(entry.requirements, entry.thresholds)
+            if entry.thresholds else _requires(entry.requirements))
+
+
+def build_location_rules(
+    properties_enabled: bool = True,
+    ability_locks: frozenset[str] = frozenset(),
+    content_locks: frozenset[str] = frozenset(),
+    split_mainland_access: bool = False,
+    split_content_locks: int = data.CONTENT_SPLIT_OFF,
+) -> dict[str, RulePredicate]:
+    """Every location's rule, as the predicates the world sets on them."""
+    return {
+        name: compile_requirements(entry)
+        for name, entry in build_location_requirements(
+            properties_enabled=properties_enabled,
+            ability_locks=ability_locks,
+            content_locks=content_locks,
+            split_mainland_access=split_mainland_access,
+            split_content_locks=split_content_locks,
+        ).items()
+    }

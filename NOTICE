@@ -1,0 +1,31 @@
+GTA: Vice City for Archipelago
+Copyright (c) 2026 Kryen112, under the MIT License in LICENSE.
+
+WHAT THAT COVERS
+
+This repository's own work: the Archipelago world, the bridge client, the ASI
+plugin, the CLEO scripts, the SCM build tooling, and the documentation.
+
+WHAT IT DOES NOT COVER
+
+Any part of Grand Theft Auto: Vice City, which is Rockstar Games' and is not
+distributed here in any form. The mod is built from the player's own copy of the
+game: the released package carries differences from the player's script rather
+than the script, and the game's own files are never redistributed.
+
+THIRD PARTY COMPONENTS
+
+The compiled ASI plugin embeds and links the following. Their notices travel
+with any copy of it.
+
+nlohmann/json
+  Copyright (c) 2013-2023 Niels Lohmann <https://nlohmann.me>
+  MIT License, the same terms as LICENSE above.
+  Vendored at mod/asi/third_party/json.hpp.
+
+plugin-sdk
+  Copyright (c) 2013-2014 Dmitry K., fastman92, LINK/2012 and contributors
+  zlib License. The software is provided as-is with no warranty; the origin
+  must not be misrepresented, altered source versions must be marked as such,
+  and this notice may not be removed from a source distribution.
+  Linked at build time; not distributed here.

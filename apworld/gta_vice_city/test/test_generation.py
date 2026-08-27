@@ -4175,6 +4175,52 @@ class TestTables(WorldTestBase):
                 )
                 self.assertNotIn(opening, built, (properties, split))
 
+    def test_the_rules_are_the_published_requirements_compiled(self) -> None:
+        # The tracker pack renders its logic from build_location_requirements
+        # rather than reimplementing it, so the structures are a published
+        # surface and this is what keeps them honest: every rule the world sets
+        # is exactly the published structure put through compile_requirements,
+        # for the same location, under the same options. If the two ever part,
+        # the pack tracks logic the generator does not run.
+        for properties in (True, False):
+            for locks in (frozenset(), frozenset(_ALL_ABILITY_LOCKS)):
+                with self.subTest(properties=properties, locks=bool(locks)):
+                    options = {"properties_enabled": properties,
+                               "ability_locks": locks,
+                               "content_locks": frozenset(_ALL_CONTENT_LOCKS) if locks
+                               else frozenset()}
+                    published = rules.build_location_requirements(**options)
+                    built = rules.build_location_rules(**options)
+                    self.assertEqual(list(built), list(published))
+                    self.assertTrue(published, "the world published no rules at all")
+                    for name, entry in published.items():
+                        # A published entry that asks for nothing is a rule that
+                        # would have been left unset, which is not the same thing
+                        # as a rule that always passes.
+                        self.assertTrue(entry.requirements or entry.thresholds, name)
+
+    def test_a_compiled_requirement_answers_what_it_asks_for(self) -> None:
+        # compile_requirements is the whole of how a structure becomes a rule,
+        # so both of its branches are pinned here rather than only through the
+        # rules that happen to use them today.
+        multiworld = self.multiworld
+        player = self.player
+        flat = rules.compile_requirements(
+            rules.LocationRequirements([("Progressive Rosenberg", 2)], []))
+        counted = rules.compile_requirements(rules.LocationRequirements(
+            [], [([[("Progressive Rosenberg", 1)], [("Mainland Access", 1)]], 2)]))
+        state = CollectionState(multiworld)
+        self.assertFalse(flat(state, player))
+        self.assertFalse(counted(state, player))
+        state.collect(self.world.create_item("Progressive Rosenberg"), prevent_sweep=True)
+        self.assertFalse(flat(state, player))
+        state.collect(self.world.create_item("Progressive Rosenberg"), prevent_sweep=True)
+        self.assertTrue(flat(state, player))
+        # One of the two alternatives holds, and the threshold wants both.
+        self.assertFalse(counted(state, player))
+        state.collect(self.world.create_item("Mainland Access"), prevent_sweep=True)
+        self.assertTrue(counted(state, player))
+
     def test_the_in_game_passed_gates_cannot_outrun_logic(self) -> None:
         # build_scm.py and add_markers.py gate the strands in this table on a
         # vanilla mission having PASSED, not on the items that open it: the
