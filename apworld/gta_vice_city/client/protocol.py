@@ -100,7 +100,18 @@ ASI to client:
     hello        {seed_hash}  first frame after connect
     check        {location}   a location was completed in game
     goal_reached {}           the goal completion signal
-    applied      {index}      an item index was durably applied (for logging)
+    applied      {index}      the game has acted on the received item at this
+                              index: its unlock globals hold their targets, or
+                              the applied-index has passed its one-shot effect.
+                              The client turns each into the row the player
+                              reads, which is why a received item is toasted
+                              from here and not from the server's own ItemSend
+                              print: grants leave at a paced rate, so a row
+                              posted on arrival names an ability the player
+                              cannot use for another minute. Sent in received
+                              order, which is Archipelago's order rather than
+                              the order the grants happen to take, so the stack
+                              agrees with the client window and every tracker.
     progress     {percentage} the game's own completion percentage, as its stats
                               menu prints it, sent whenever it changes. The
                               client publishes it to the AP data store, where the
@@ -133,7 +144,14 @@ import json
 # or reports. The mod's log names the frame it dropped, and the client installs
 # the ASI from its own payload on connect, so the window is a mod install the
 # client could not replace: the game was running, or auto_install_mod is off.
-PROTOCOL_VERSION = 4
+#
+# The applied frame is the one type that is load-bearing rather than ignorable,
+# which is why the number stands where it does. It is the client's only source of
+# a row for an item the player RECEIVES, so a mod that never sends one plays a
+# seed where nothing arriving is ever announced in game. That reads as a broken
+# toast stack rather than as a feature quietly not happening, and refusing the
+# pair outright is what the handshake is for.
+PROTOCOL_VERSION = 5
 
 # A single frame, including its trailing newline, never exceeds this many bytes.
 MAX_FRAME_BYTES = 4096

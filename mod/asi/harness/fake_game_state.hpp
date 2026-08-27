@@ -113,6 +113,11 @@ class FakeGameState : public GameState {
     gtavc::RequeueChecks(pending_checks_, undelivered);
   }
 
+  // Never any, since nothing in the harness stands in for the game frame that
+  // finds a landing. The interop check drives the frames this fake has, and the
+  // report planner is exercised directly by the console self-test instead.
+  std::vector<std::int64_t> TakeAppliedReports() override { return {}; }
+
   bool TakeGoalReached() override {
     std::lock_guard<std::mutex> lock(mutex_);
     const bool reached = goal_pending_;

@@ -1,6 +1,7 @@
 // Standalone protocol self-test: round-trips framing (small and chunked) and
 // checks the guards, with no socket and no game. Proves the C++ protocol layer
 // compiles and behaves in the 32-bit MSVC toolchain.
+#include <algorithm>
 #include <array>
 #include <iostream>
 #include <limits>
@@ -12,6 +13,7 @@
 
 #include "../src/protocol.hpp"
 #include "../src/scm_ability_locks.hpp"
+#include "../src/scm_applied_reports.hpp"
 #include "../src/scm_completion.hpp"
 #include "../src/scm_content_locks.hpp"
 #include "../src/scm_crossings.hpp"
@@ -172,12 +174,13 @@ int main() {
     // the function the boundary actually calls rather than against a drain.
     std::vector<std::int64_t> across = {542000004, 542000005};
     GameScopedGrants grants;
-    grants.last_raised_index = 9042;
+    grants.cursor = UnlockCursor{7, 9042};
     TakeGrantSlot(grants.pacer, 1000, 250, 5000, 8);
     ResetGrantsForNewGame(grants, across);
     Expect(across.size() == 2 && across[0] == 542000004 && across[1] == 542000005,
            "a game boundary leaves every queued check where it is");
-    Expect(grants.last_raised_index == -1 && !grants.pacer.started,
+    Expect(grants.cursor.arrival_index == -1 && grants.cursor.global_index == -1 &&
+               !grants.pacer.started,
            "and takes the pacer and the rotation cursor with it");
     Expect(DrainChecks(across, false).size() == 2,
            "so both reach the server in the game after");
@@ -522,32 +525,32 @@ int main() {
     // cannot pass by behaving as "the cursor plus one" or "the next position".
     const std::vector<UnlockObservation> pending = {
         {9010, 3, 0, false}, {9017, 5, 1, false}, {9026, 2, 0, false}};
-    const UnlockPlan from_start = PlanUnlocks(pending, -1);
+    const UnlockPlan from_start = PlanUnlocks(pending, UnlockCursor{});
     Expect(from_start.has_raise && from_start.raise_index == 9010 &&
                from_start.raise_value == 3,
            "the first raise of a pass is the lowest pending global");
-    Expect(PlanUnlocks(pending, 9010).raise_index == 9017 &&
-               PlanUnlocks(pending, 9010).raise_value == 5,
+    Expect(PlanUnlocks(pending, UnlockCursor{0, 9010}).raise_index == 9017 &&
+               PlanUnlocks(pending, UnlockCursor{0, 9010}).raise_value == 5,
            "the next starts past the one just handed over");
-    Expect(PlanUnlocks(pending, 9017).raise_index == 9026 &&
-               PlanUnlocks(pending, 9017).raise_value == 2,
+    Expect(PlanUnlocks(pending, UnlockCursor{0, 9017}).raise_index == 9026 &&
+               PlanUnlocks(pending, UnlockCursor{0, 9017}).raise_value == 2,
            "and the next past that, so a stuck global costs one slot a pass");
     // The wrap carries the TARGET, not what the global already holds: a wrap
     // that wrote the current value would spin forever on the same global and
     // its item would never apply.
-    Expect(PlanUnlocks(pending, 9026).raise_index == 9010 &&
-               PlanUnlocks(pending, 9026).raise_value == 3,
+    Expect(PlanUnlocks(pending, UnlockCursor{0, 9026}).raise_index == 9010 &&
+               PlanUnlocks(pending, UnlockCursor{0, 9026}).raise_value == 3,
            "a pass that runs out wraps to the lowest pending global again");
-    Expect(PlanUnlocks(pending, 9999).raise_index == 9010 &&
-               PlanUnlocks(pending, 9999).raise_value == 3,
+    Expect(PlanUnlocks(pending, UnlockCursor{0, 9999}).raise_index == 9010 &&
+               PlanUnlocks(pending, UnlockCursor{0, 9999}).raise_value == 3,
            "a cursor above every pending global wraps rather than stalling");
 
     // One pending global that keeps needing the same raise is served every
     // pass rather than skipped for being the one just handed over.
     const std::vector<UnlockObservation> alone = {{9010, 4, 1, false}};
-    Expect(PlanUnlocks(alone, 9010).has_raise &&
-               PlanUnlocks(alone, 9010).raise_index == 9010 &&
-               PlanUnlocks(alone, 9010).raise_value == 4,
+    Expect(PlanUnlocks(alone, UnlockCursor{0, 9010}).has_raise &&
+               PlanUnlocks(alone, UnlockCursor{0, 9010}).raise_index == 9010 &&
+               PlanUnlocks(alone, UnlockCursor{0, 9010}).raise_value == 4,
            "a single pending global is retried, at its target, not starved");
 
     // Lowering is not paced and not rationed: every global above its target
@@ -555,19 +558,163 @@ int main() {
     const std::vector<UnlockObservation> mixed = {
         {9010, 0, 3, false}, {9011, 2, 0, false}, {9012, 1, 4, false},
         {9013, 0, 2, true}};
-    const UnlockPlan both = PlanUnlocks(mixed, -1);
+    const UnlockPlan both = PlanUnlocks(mixed, UnlockCursor{});
     Expect(both.to_lower.size() == 2 && both.to_lower[0].first == 9010 &&
                both.to_lower[0].second == 0 && both.to_lower[1].first == 9012 &&
                both.to_lower[1].second == 1,
            "every global above its target is lowered in one plan");
     Expect(both.has_raise && both.raise_index == 9011 && both.raise_value == 2,
            "and exactly one raise is chosen alongside them");
-    Expect(!PlanUnlocks({{9013, 0, 2, true}}, -1).has_raise &&
-               PlanUnlocks({{9013, 0, 2, true}}, -1).to_lower.empty(),
+    Expect(!PlanUnlocks({{9013, 0, 2, true}}, UnlockCursor{}).has_raise &&
+               PlanUnlocks({{9013, 0, 2, true}}, UnlockCursor{}).to_lower.empty(),
            "a stamped global is neither raised nor lowered");
 
-    Expect(!PlanUnlocks({}, -1).has_raise,
+    Expect(!PlanUnlocks({}, UnlockCursor{}).has_raise,
            "nothing pending is nothing planned");
+
+    // THE SWEEP IS IN ARRIVAL ORDER, and every case above carries arrival 0 so
+    // the key falls back to global index and they mean what they always meant.
+    // Here the two orders DISAGREE, which is the ordinary case: global numbering
+    // has nothing to do with when an item arrived.
+    //
+    // What this defends is measured, not argued. Sweeping by global index while
+    // reporting in received order showed the player nothing for eleven seconds on
+    // a twenty-item release and then all twenty in one frame, because the item
+    // that arrived first sat on the highest global and so was granted last.
+    const std::vector<UnlockObservation> reversed = {
+        {9010, 1, 0, false, 2}, {9017, 1, 0, false, 1}, {9026, 1, 0, false, 0}};
+    const UnlockPlan first_arrival = PlanUnlocks(reversed, UnlockCursor{});
+    Expect(first_arrival.has_raise && first_arrival.raise_index == 9026,
+           "the first raise serves the item that arrived first, not the lowest "
+           "global");
+    Expect(PlanUnlocks(reversed, UnlockCursor{0, 9026}).raise_index == 9017,
+           "and the next serves the item that arrived after it");
+    Expect(PlanUnlocks(reversed, UnlockCursor{1, 9017}).raise_index == 9010,
+           "and so on down the arrival order");
+    Expect(PlanUnlocks(reversed, UnlockCursor{2, 9010}).raise_index == 9026,
+           "a pass that runs out wraps to the earliest arrival again");
+
+    // Ties break on global index, so the district globals one content item
+    // releases are consecutive in the sweep. Served one per pass instead, that
+    // item would need eleven passes to land and would hold every later report
+    // for all of them.
+    const std::vector<UnlockObservation> one_item_many_globals = {
+        {9101, 1, 0, false, 4}, {9102, 1, 0, false, 4}, {9103, 1, 0, false, 4},
+        {9200, 1, 0, false, 5}};
+    Expect(PlanUnlocks(one_item_many_globals, UnlockCursor{}).raise_index == 9101,
+           "a tied arrival starts at the lowest global");
+    Expect(PlanUnlocks(one_item_many_globals, UnlockCursor{4, 9101}).raise_index == 9102,
+           "and the next tied global follows it rather than the next arrival");
+    Expect(PlanUnlocks(one_item_many_globals, UnlockCursor{4, 9103}).raise_index == 9200,
+           "and the next arrival only comes once the tie is exhausted");
+
+    // The rotation still bounds a global that cannot hold its target, on the
+    // arrival key rather than the global index.
+    const std::vector<UnlockObservation> stuck_early = {
+        {9010, 1, 0, false, 0}, {9017, 1, 0, false, 1}};
+    Expect(PlanUnlocks(stuck_early, UnlockCursor{0, 9010}).raise_index == 9017,
+           "an early global that cannot hold costs one slot a pass, not every "
+           "slot");
+
+    // The plan carries the key it chose, so the caller sets its cursor from the
+    // selection rather than searching the observations for it again. A cursor
+    // pinned by a search that missed would reinstate the starvation the rotation
+    // exists to prevent.
+    Expect(first_arrival.raise_arrival_index == 0,
+           "the plan reports the arrival key of the raise it chose");
+    Expect(PlanUnlocks(reversed, UnlockCursor{2, 9010}).raise_arrival_index == 0,
+           "and reports it on the wrap too, not only inside a pass");
+
+    // ONE-SHOT EFFECTS ARE ORDERED AGAINST THE RAISES, since both draw on the
+    // same grant budget. Without a key of their own the unlock path took every
+    // slot while any global was below its target, so an effect early in the list
+    // waited out the whole unlock backlog and held every landing report behind it.
+    const std::map<std::int64_t, ItemEffect> paced_effects = {
+        {6001, ItemEffect{"cash", 500, true}}, {6002, ItemEffect{"armor", 0, false}}};
+    const std::vector<std::pair<std::int64_t, std::int64_t>> effects_and_unlocks = {
+        {0, 5001}, {1, 6001}, {2, 5002}, {3, 6002}};
+    const NextEffect first_effect =
+        NextPendingEffect(effects_and_unlocks, paced_effects, 0);
+    Expect(first_effect.pending && first_effect.received_index == 1,
+           "the next pending effect is named by its RECEIVED index, not its "
+           "position among the effects");
+    const NextEffect second_effect =
+        NextPendingEffect(effects_and_unlocks, paced_effects, 1);
+    Expect(second_effect.pending && second_effect.received_index == 3,
+           "and the index moving on names the one after it");
+    Expect(!NextPendingEffect(effects_and_unlocks, paced_effects, 2).pending,
+           "an index past every effect leaves none pending");
+    Expect(!NextPendingEffect(effects_and_unlocks, {}, 0).pending,
+           "a seed whose items carry no effects has none pending");
+    Expect(!NextPendingEffect({}, paced_effects, 0).pending,
+           "and neither does an empty item list");
+
+    // THE YIELD RULE, which decides which of the two kinds spends this frame's
+    // slot. Held here rather than inline in OnGameFrame because the harness cannot
+    // compile that file, which is the one reason the 2026-08-21 note gives for how
+    // both of its shipped defects got past every gate in the repo.
+    Expect(RaiseYieldsToEffect(true, 9, true, 4, true),
+           "a raise gives up its slot to an effect that arrived before it");
+    Expect(!RaiseYieldsToEffect(true, 4, true, 9, true),
+           "and keeps it against an effect that arrived after it");
+    Expect(!RaiseYieldsToEffect(true, 9, true, 9, true),
+           "an equal key is not earlier, so the raise keeps its slot");
+    Expect(!RaiseYieldsToEffect(true, 9, false, 0, true),
+           "nothing to yield to is not a yield");
+    // Yielding to an effect that cannot run would spend the frame on neither: the
+    // effect path needs a player ped to write into.
+    Expect(!RaiseYieldsToEffect(true, 9, true, 4, false),
+           "and neither is yielding to an effect with no player to apply it to");
+    Expect(!RaiseYieldsToEffect(false, 0, true, 4, true),
+           "no raise is not a yield either, since the effect takes the slot on "
+           "its own");
+
+    // WHETHER THE WORLD IS PLAYABLE AT ALL, which is what a grant and a landing
+    // report wait for. Every field is a separate reason, so a state that reads
+    // playable has to clear all of them.
+    PlayableState live;
+    live.controllable = true;
+    live.player_playing = true;
+    Expect(WorldIsPlayable(live), "a live world hands things over");
+
+    PlayableState in_cutscene = live;
+    in_cutscene.controllable = false;
+    Expect(!WorldIsPlayable(in_cutscene),
+           "a cutscene holds, which is the one condition that always held");
+
+    PlayableState user_paused = live;
+    user_paused.paused = true;
+    Expect(!WorldIsPlayable(user_paused), "the game's own pause holds");
+
+    PlayableState menu = live;
+    menu.menu_open = true;
+    Expect(!WorldIsPlayable(menu),
+           "and so does the frontend menu, which the pause flags do not always "
+           "answer for");
+
+    PlayableState wasted = live;
+    wasted.player_playing = false;
+    Expect(!WorldIsPlayable(wasted),
+           "a wasted or arrested Tommy holds, since he is not playing");
+
+    // The shop stand needs BOTH halves. An interior alone would hold every indoor
+    // mission for as long as it lasted, and the help box alone is the channel
+    // every tutorial hint in the game uses.
+    PlayableState at_a_stand = live;
+    at_a_stand.in_interior = true;
+    at_a_stand.help_message_up = true;
+    Expect(!WorldIsPlayable(at_a_stand), "a shop stand's help box indoors holds");
+
+    PlayableState indoors_only = live;
+    indoors_only.in_interior = true;
+    Expect(WorldIsPlayable(indoors_only),
+           "being indoors on its own does not, so an indoor mission keeps "
+           "flowing");
+
+    PlayableState hint_outdoors = live;
+    hint_outdoors.help_message_up = true;
+    Expect(WorldIsPlayable(hint_outdoors),
+           "and neither does a help box outdoors, which is every tutorial hint");
 
     // A clock that restarts is caught by the pacer itself, on the only
     // evidence there is: a `now` earlier than one it was already handed. The
@@ -675,6 +822,226 @@ int main() {
              "no five second span holds more than eight grants, however the "
              "window boundaries fall");
     }
+
+    // THE SHIPPED NUMBERS, as a tripwire and not as coverage. The repo
+    // deliberately does not pin the derived figures, but the window cap is the
+    // number the 2026-08-21 note names as the one to lower if a streaming crash
+    // comes back, so it should not be possible to move it without saying so.
+    //
+    // The literal is the point. Comparing the measured drain against
+    // kGrantsPerWindow instead passes at every value, which is the same shape as
+    // pinning a chosen index rather than a chosen value.
+    Expect(kGrantsPerWindow == 16,
+           "the shipped window cap is sixteen grants");
+    Expect(kGrantIntervalMs == 250 && kGrantWindowMs == 5000,
+           "at one grant every 250 ms over a five second window");
+    // What that combination MEANS, which is the part worth a test rather than a
+    // constant: a whole window's worth of grants fits inside one window, so the
+    // interval is what paces a backlog and the cap only ever trims the tail.
+    // A cap of twenty makes the two exactly equal and the assertion below fails,
+    // so twenty is already too many rather than the last one that fits.
+    Expect(static_cast<unsigned int>(kGrantsPerWindow) * kGrantIntervalMs <
+               kGrantWindowMs,
+           "so a full window of grants fits inside one window and the interval "
+           "is the binding constraint");
+    {
+      GrantPacer shipped;
+      int granted = 0;
+      for (unsigned int now = 0; now < 4000; now += 10) {
+        if (TakeGrantSlot(shipped, now, kGrantIntervalMs, kGrantWindowMs,
+                          kGrantsPerWindow)) {
+          ++granted;
+        }
+      }
+      Expect(granted == 16,
+             "and a backlog really does drain sixteen inside four seconds");
+      Expect(!TakeGrantSlot(shipped, 4990, kGrantIntervalMs, kGrantWindowMs,
+                            kGrantsPerWindow),
+             "the seventeenth waits for the oldest to age out");
+      Expect(TakeGrantSlot(shipped, 5000, kGrantIntervalMs, kGrantWindowMs,
+                           kGrantsPerWindow),
+             "and goes as soon as it has");
+    }
+  }
+
+  // Landing reports: which received items the game has acted on, in received
+  // order, so a toast names a grant that has happened rather than a packet that
+  // has arrived. The order is Archipelago's and not the grants', so a pending
+  // item holds the ones behind it, and the one global no grant can ever raise is
+  // read as landed so that hold cannot become permanent.
+  {
+    // Three items on three globals, ascending as PlanUnlocks requires. Unequal
+    // gaps, so "the next global up" cannot be told from "the index plus one".
+    const std::map<std::int64_t, int> item_globals = {
+        {5001, 9010}, {5002, 9017}, {5003, 9026}};
+    const std::map<std::int64_t, std::vector<int>> no_districts;
+    const std::map<std::int64_t, ItemEffect> no_effects;
+    const std::vector<std::pair<std::int64_t, std::int64_t>> three = {
+        {0, 5001}, {1, 5002}, {2, 5003}};
+
+    // Every global holding its target: the whole list reports, in received order.
+    const std::vector<UnlockObservation> all_held = {
+        {9010, 1, 1, false}, {9017, 1, 1, false}, {9026, 1, 1, false}};
+    const AppliedReportPlan every = PlanAppliedReports(
+        three, item_globals, no_districts, no_effects, all_held, 0, {},
+        AppliedReportOrder::kHoldForArrival);
+    Expect(every.to_report.size() == 3 && every.to_report[0] == 0 &&
+               every.to_report[1] == 1 && every.to_report[2] == 2,
+           "every landed item reports, in received order");
+
+    // The middle one still pending: the first reports and the LAST WAITS, even
+    // though its own global is held. Received order is the whole point, so a
+    // later landing never overtakes an earlier one.
+    const std::vector<UnlockObservation> middle_pending = {
+        {9010, 1, 1, false}, {9017, 1, 0, false}, {9026, 1, 1, false}};
+    const AppliedReportPlan held_back = PlanAppliedReports(
+        three, item_globals, no_districts, no_effects, middle_pending, 0, {},
+        AppliedReportOrder::kHoldForArrival);
+    Expect(held_back.to_report.size() == 1 && held_back.to_report[0] == 0,
+           "a pending item holds every item behind it, whatever their globals "
+           "hold");
+
+    // Nothing reports twice, and an item marked already told does not block the
+    // ones behind it: the baseline marks whatever a save held wherever it sits.
+    const AppliedReportPlan past_told = PlanAppliedReports(
+        three, item_globals, no_districts, no_effects, all_held, 0, {0, 1},
+        AppliedReportOrder::kHoldForArrival);
+    Expect(past_told.to_report.size() == 1 && past_told.to_report[0] == 2,
+           "an index already reported is walked past and never repeated");
+
+    // A global the config stamp owns is read as landed. PlanUnlock refuses to
+    // raise one, so an item waiting for that raise would hold every later report
+    // for the rest of the seed. Mutating `true` to `false` here turns this red.
+    const std::vector<UnlockObservation> stamped_short = {
+        {9010, 2, 0, true}, {9017, 1, 1, false}, {9026, 1, 1, false}};
+    const AppliedReportPlan stamped = PlanAppliedReports(
+        three, item_globals, no_districts, no_effects, stamped_short, 0, {},
+        AppliedReportOrder::kHoldForArrival);
+    Expect(stamped.to_report.size() == 3,
+           "an item on a stamped global lands rather than holding the queue");
+
+    // Two copies of one item raise one global straight to two, so both land in
+    // the same frame and both get a row: the player received two things.
+    const std::vector<std::pair<std::int64_t, std::int64_t>> two_copies = {
+        {0, 5001}, {1, 5001}};
+    const std::vector<UnlockObservation> counted_two = {{9010, 2, 2, false}};
+    const AppliedReportPlan copies = PlanAppliedReports(
+        two_copies, item_globals, no_districts, no_effects, counted_two, 0, {},
+        AppliedReportOrder::kHoldForArrival);
+    Expect(copies.to_report.size() == 2,
+           "both copies behind one raise report, one row per item received");
+    const std::vector<UnlockObservation> counted_one = {{9010, 2, 1, false}};
+    Expect(PlanAppliedReports(two_copies, item_globals, no_districts, no_effects,
+                              counted_one, 0, {},
+                              AppliedReportOrder::kHoldForArrival).to_report.empty(),
+           "a global short of its count has landed for neither copy");
+
+    // A content item releases many district globals and has landed only when
+    // every one of them holds. Its own class global counts too, so both maps are
+    // asked and the answers are ANDed.
+    const std::map<std::int64_t, std::vector<int>> districts = {
+        {5001, {9101, 9102, 9103}}};
+    const std::vector<std::pair<std::int64_t, std::int64_t>> one_content = {{0, 5001}};
+    const std::vector<UnlockObservation> two_of_three = {
+        {9010, 1, 1, false}, {9101, 1, 1, false}, {9102, 1, 1, false},
+        {9103, 1, 0, false}};
+    Expect(PlanAppliedReports(one_content, item_globals, districts, no_effects,
+                              two_of_three, 0, {},
+                              AppliedReportOrder::kHoldForArrival).to_report.empty(),
+           "a content item with one district still pending has not landed");
+    const std::vector<UnlockObservation> all_three = {
+        {9010, 1, 1, false}, {9101, 1, 1, false}, {9102, 1, 1, false},
+        {9103, 1, 1, false}};
+    Expect(PlanAppliedReports(one_content, item_globals, districts, no_effects,
+                              all_three, 0, {},
+                              AppliedReportOrder::kHoldForArrival).to_report.size() == 1,
+           "a content item reports once every district it releases holds");
+
+    // One-shot effects land as the saved applied-index passes their position
+    // among the effect items, which is the same count PlanEffects keeps.
+    const std::map<std::int64_t, ItemEffect> effects = {
+        {6001, ItemEffect{"cash", 500, true}}, {6002, ItemEffect{"armor", 0, false}}};
+    const std::vector<std::pair<std::int64_t, std::int64_t>> mixed = {
+        {0, 6001}, {1, 5001}, {2, 6002}};
+    const std::vector<UnlockObservation> unlock_held = {{9010, 1, 1, false}};
+    const AppliedReportPlan none_applied = PlanAppliedReports(
+        mixed, item_globals, no_districts, effects, unlock_held, 0, {},
+        AppliedReportOrder::kHoldForArrival);
+    Expect(none_applied.to_report.empty(),
+           "an effect the applied-index has not reached holds the list");
+    const AppliedReportPlan first_applied = PlanAppliedReports(
+        mixed, item_globals, no_districts, effects, unlock_held, 1, {},
+        AppliedReportOrder::kHoldForArrival);
+    Expect(first_applied.to_report.size() == 2 &&
+               first_applied.to_report[0] == 0 && first_applied.to_report[1] == 1,
+           "an applied-index of one lands the first effect and the unlock past it");
+    Expect(PlanAppliedReports(mixed, item_globals, no_districts, effects,
+                              unlock_held, 2, {},
+                              AppliedReportOrder::kHoldForArrival).to_report.size() == 3,
+           "the second effect lands as the index reaches it");
+
+    // An item in none of the three maps does nothing in game, so there is
+    // nothing for it to wait on. The hunt goal's package fragment is the one
+    // such item: the client counts it and the game never sees it.
+    const std::vector<std::pair<std::int64_t, std::int64_t>> unmapped = {{0, 7777}};
+    Expect(PlanAppliedReports(unmapped, item_globals, no_districts, no_effects,
+                              {}, 0, {},
+                              AppliedReportOrder::kHoldForArrival).to_report.size() == 1,
+           "an item that maps to nothing lands the moment it arrives");
+
+    // An empty item list reports nothing.
+    Expect(PlanAppliedReports({}, item_globals, no_districts, no_effects,
+                              all_held, 0, {},
+                              AppliedReportOrder::kHoldForArrival).to_report.empty(),
+           "an empty item list reports nothing");
+
+    // A BASELINE pass marks every landed item wherever it sits, rather than
+    // holding at the first that has not landed. It announces nothing, so order
+    // cannot matter to it, and it runs once per boundary: an item it skipped for
+    // being out of order would never be marked and would be announced on the next
+    // load instead. The mid-delivery state is exactly this shape.
+    const AppliedReportPlan baselined = PlanAppliedReports(
+        three, item_globals, no_districts, no_effects, middle_pending, 0, {},
+        AppliedReportOrder::kEverythingLanded);
+    Expect(baselined.to_report.size() == 2 && baselined.to_report[0] == 0 &&
+               baselined.to_report[1] == 2,
+           "a baseline pass marks the landed items a reporting pass would hold");
+    Expect(held_back.to_report.size() == 1,
+           "and the reporting pass over the same state still holds at the first "
+           "item that has not landed");
+
+    // A BASELINE OVER EFFECTS, which is the case whose absence let a real defect
+    // through: every baseline case above passes no effects at all. A baseline
+    // marks an effect the index has passed WITHOUT emitting it, so the caller must
+    // answer from an index taken before the frame's own effect application. Read
+    // afterwards, an effect applied on the baselining frame is marked as already
+    // told and loses its row for good, since only a game boundary clears that
+    // record and the next boundary baselines it again.
+    const std::vector<std::pair<std::int64_t, std::int64_t>> effect_first = {
+        {0, 6001}, {1, 5001}};
+    const std::map<std::int64_t, ItemEffect> one_effect = {
+        {6001, ItemEffect{"cash", 500, true}}};
+    const std::vector<UnlockObservation> unlock_at_target = {{9010, 1, 1, false}};
+    // The claim is about the EFFECT at index 0 and nothing else. The unlock at
+    // index 1 is at its target either way, so a baseline marks it in both runs;
+    // that is correct and is not what this is pinning.
+    const AppliedReportPlan before_grants = PlanAppliedReports(
+        effect_first, item_globals, no_districts, one_effect, unlock_at_target, 0,
+        {}, AppliedReportOrder::kEverythingLanded);
+    Expect(std::find(before_grants.to_report.begin(), before_grants.to_report.end(),
+                     0) == before_grants.to_report.end(),
+           "a baseline answered from the pre-grant index leaves the effect "
+           "unmarked, so its row survives");
+    // The index AFTER the frame's own application: the effect reads as landed, a
+    // baseline marks it told, and nothing ever sends it. Pinned so the caller
+    // cannot go back to reading the index late.
+    const AppliedReportPlan after_grants = PlanAppliedReports(
+        effect_first, item_globals, no_districts, one_effect, unlock_at_target, 1,
+        {}, AppliedReportOrder::kEverythingLanded);
+    Expect(std::find(after_grants.to_report.begin(), after_grants.to_report.end(),
+                     0) != after_grants.to_report.end(),
+           "and from the post-grant index it would swallow it, which is why the "
+           "caller snapshots the index before either grant path runs");
   }
 
   // Radio planning: the resolve map sends a locked station to the next
@@ -2811,6 +3178,16 @@ int main() {
   const std::vector<json> progress_result = RoundTrip(progress);
   Expect(progress_result.size() == 1 && progress_result[0] == progress,
          "progress round-trip");
+
+  // The landing report, which the client turns into the row the player reads. Its
+  // own frame rather than only the planner behind it, since it is the client's one
+  // source of a row for an item arriving and a frame that does not decode leaves
+  // the stack silent about everything received.
+  const json applied = AppliedMessage(41);
+  const std::vector<json> applied_result = RoundTrip(applied);
+  Expect(applied_result.size() == 1 && applied_result[0] == applied &&
+             applied_result[0]["index"] == 41,
+         "applied round-trip, carrying the received index");
 
   if (failures == 0) {
     std::cout << "OK: protocol self-test passed\n";

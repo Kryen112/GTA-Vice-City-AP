@@ -17,6 +17,7 @@
 #include "game_state.hpp"
 #include "scm_grant_pacing.hpp"
 #include "scm_ability_locks.hpp"
+#include "scm_applied_reports.hpp"
 #include "scm_completion.hpp"
 #include "scm_content_locks.hpp"
 #include "scm_death_link.hpp"
@@ -61,6 +62,7 @@ class ScmGameState : public GameState {
   void SetClientStatus(const ClientStatus& status) override;
   std::vector<std::int64_t> TakeNewChecks() override;
   void RequeueChecks(const std::vector<std::int64_t>& undelivered) override;
+  std::vector<std::int64_t> TakeAppliedReports() override;
   bool TakeGoalReached() override;
   bool TakeProgressPercentage(int& percentage) override;
   void ApplyDeathLink(const std::string& source) override;
@@ -141,9 +143,15 @@ class ScmGameState : public GameState {
   // the hospital and the stats are all the game's own.
   static void ApplyLinkedDeath();
   // True when the game hands the player control: not in a cutscene, on a
-  // mission pass/fail screen, or otherwise script-owned. The one flag all item
-  // application keys on: unlock globals and one-shot effects alike wait for it.
+  // mission pass/fail screen, or otherwise script-owned. One of the things
+  // WorldIsPlayable asks, and the whole of what LOWERING and DeathLink wait for:
+  // raises, one-shot effects and landing reports wait for the predicate instead.
   static bool PlayerIsControllable();
+  // Everything the game says about whether the player is playing, for
+  // WorldIsPlayable. Reads the pause flags, the frontend menu, the player state,
+  // the interior and the help box, so it runs on the game frame like every other
+  // game read.
+  static PlayableState ReadPlayableState();
   // The pause-mode millisecond clock, which advances in real time regardless of
   // any time-scale trap, so a trap's own effect cannot distort its own timer.
   static unsigned int RealTimeMs();
@@ -245,6 +253,22 @@ class ScmGameState : public GameState {
   // completion is a change away from a zero baseline. Captured once per game.
   std::map<int, int> baseline_;
   std::vector<std::int64_t> outbound_checks_;
+  // Received indices whose grant has landed, waiting for the bridge to carry
+  // them to the client, which turns each into the row the player reads. Dropped
+  // at a game boundary and never handed back on a failed send: a landing is an
+  // event, and the item behind it is not lost with the line describing it.
+  std::vector<std::int64_t> outbound_applied_;
+  // Which received indices the client has already been told about, so no landing
+  // reports twice. A set and not a watermark, because the baseline below marks
+  // whatever a save already held wherever those items sit in the list.
+  std::set<std::int64_t> reported_applied_;
+  // Set when a GAME BOUNDARY means the landings already in the world are not
+  // news: the next report pass marks everything it finds landed as told WITHOUT
+  // sending any of it, so loading a save full of unlocks says nothing while a new
+  // game, whose globals are all zero, still reports the whole list as the pacer
+  // hands it over. A boundary and nothing else arms it: which rows the player has
+  // seen belongs to the game, so a client reconnecting has nothing to forget.
+  bool baseline_applied_reports_ = true;
   // The toast stack: what is on screen, what is waiting, and the notices holding
   // their place. The frame advances it and the HUD draw reads it, both on the game
   // thread and both under mutex_, since the bridge thread adds to it.
@@ -275,6 +299,11 @@ class ScmGameState : public GameState {
   // both and nothing else.
   GameScopedGrants grants_;
   std::map<int, int> unlock_targets_;
+  // The earliest received index of any item counting toward each global, tallied
+  // beside the targets and from the same list. This is what puts the raises in
+  // the order Archipelago handed the items over rather than in global-index
+  // order, which is unrelated to it.
+  std::map<int, std::int64_t> unlock_arrivals_;
   // Refilled each frame from the targets and the live globals, kept as a
   // member so a frame that changes nothing allocates nothing.
   std::vector<UnlockObservation> unlock_observations_;

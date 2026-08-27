@@ -555,8 +555,7 @@ class TestItemToast(unittest.TestCase):
                      mock.patch.object(context.location_names, "lookup_in_slot",
                                        return_value=location_name):
                     return context._item_toast_segments(
-                        {"type": "ItemSend", "receiving": receiving,
-                         "item": NetworkItem(42, location, item_player, flags)})
+                        NetworkItem(42, location, item_player, flags), receiving)
 
         return asyncio.run(scenario())
 
@@ -648,12 +647,8 @@ class TestItemToast(unittest.TestCase):
                                        return_value=name), \
                      mock.patch.object(context.location_names, "lookup_in_slot",
                                        return_value="Somewhere"):
-                    mine = context._item_toast_segments(
-                        {"type": "ItemSend", "receiving": 1,
-                         "item": NetworkItem(42, 100, 2, 0)})
-                    theirs = context._item_toast_segments(
-                        {"type": "ItemSend", "receiving": 2,
-                         "item": NetworkItem(42, 100, 1, 0)})
+                    mine = context._item_toast_segments(NetworkItem(42, 100, 2, 0), 1)
+                    theirs = context._item_toast_segments(NetworkItem(42, 100, 1, 0), 2)
             mine_color = next(c for t, c in mine if t == name)
             theirs_color = next(c for t, c in theirs if t == name)
             return mine_color, theirs_color
@@ -687,7 +682,10 @@ class TestItemToast(unittest.TestCase):
 
         asyncio.run(scenario())
 
-    def test_on_print_json_toasts_my_event_and_ignores_others(self) -> None:
+    def test_on_print_json_toasts_what_this_slot_sends_and_nothing_else(self) -> None:
+        # The print channel carries the rows for items going OUT. Anything this
+        # slot receives is toasted from the mod's applied report instead, so a
+        # row lands with the grant rather than minutes ahead of it.
         async def scenario() -> None:
             with _fake_settings(""):
                 from NetUtils import NetworkItem
@@ -707,8 +705,111 @@ class TestItemToast(unittest.TestCase):
                         {"type": "ItemSend", "receiving": 2, "data": [],
                          "item": NetworkItem(42, 100, 3, 0)})
                     schedule.assert_not_called()
+                    # Our own find, which the applied report owns: the game has
+                    # not acted on it yet, so nothing is announced here.
+                    context.on_print_json(
+                        {"type": "ItemSend", "receiving": 1, "data": [],
+                         "item": NetworkItem(42, 100, 1, 0)})
+                    schedule.assert_not_called()
+                    # And an item somebody else found for us, for the same reason.
+                    context.on_print_json(
+                        {"type": "ItemSend", "receiving": 1, "data": [],
+                         "item": NetworkItem(42, 100, 2, 0)})
+                    schedule.assert_not_called()
 
         asyncio.run(scenario())
+
+
+class TestAppliedToast(unittest.TestCase):
+    """The row for an item the player RECEIVES, which the mod asks for at the
+    moment the game acts on that item rather than the moment it arrived."""
+
+    def _context_with_items(self, context, count: int = 3):
+        from NetUtils import NetworkItem
+        context.slot = 1
+        context.slot_info = {}
+        context.player_names = {1: "Me", 2: "PlayerTwo"}
+        # Found by PlayerTwo for us, so the row names them.
+        context.items_received = [NetworkItem(42, 100 + index, 2, 1)
+                                  for index in range(count)]
+        return context
+
+    def test_an_applied_report_toasts_that_index(self) -> None:
+        async def scenario() -> list:
+            with _fake_settings(""):
+                context = self._context_with_items(_context())
+                with mock.patch.object(context.item_names, "lookup_in_slot",
+                                       return_value="Progressive Cortez"), \
+                     mock.patch.object(context.location_names, "lookup_in_slot",
+                                       return_value="Cortez Mission"), \
+                     mock.patch.object(context, "_send_toast") as send_toast:
+                    await context.on_bridge_applied(1)
+                    self.assertEqual(send_toast.await_count, 1)
+                    return send_toast.await_args.args[0]
+
+        segments = asyncio.run(scenario())
+        text = "".join(text for text, color in segments
+                       if color != protocol.TOAST_NEWLINE)
+        self.assertEqual(
+            text, "You received Progressive Cortez from PlayerTwo (Cortez Mission)")
+
+    def test_a_report_past_the_end_of_the_list_is_dropped(self) -> None:
+        # The mod's list came from this client, so a report past its end means a
+        # reconnect rebuilt items_received while an older report was in flight.
+        # The next resync settles it, so the row goes rather than a wrong one.
+        async def scenario() -> int:
+            with _fake_settings(""):
+                context = self._context_with_items(_context())
+                with mock.patch.object(context, "_send_toast") as send_toast:
+                    await context.on_bridge_applied(99)
+                    await context.on_bridge_applied(-1)
+                    return send_toast.await_count
+
+        self.assertEqual(asyncio.run(scenario()), 0)
+
+    def test_no_row_before_the_slot_is_known(self) -> None:
+        async def scenario() -> int:
+            with _fake_settings(""):
+                context = self._context_with_items(_context())
+                context.slot = None
+                with mock.patch.object(context, "_send_toast") as send_toast:
+                    await context.on_bridge_applied(0)
+                    return send_toast.await_count
+
+        self.assertEqual(asyncio.run(scenario()), 0)
+
+    def test_the_context_hands_its_handler_to_the_bridge(self) -> None:
+        # The wiring itself. The callback defaulted to a no-op for as long as
+        # nothing sent the frame, so a context that forgets to pass its handler
+        # would drop every landing in silence and pass every other test here.
+        async def scenario() -> bool:
+            with _fake_settings(""):
+                context = _context()
+                return context.bridge._on_applied == context.on_bridge_applied
+
+        self.assertTrue(asyncio.run(scenario()))
+
+    def test_an_applied_frame_reaches_the_handler_the_context_gave(self) -> None:
+        async def scenario() -> list:
+            with _fake_settings(""):
+                seen: list[int] = []
+
+                async def record(index: int) -> None:
+                    seen.append(index)
+
+                context = _context()
+                bridge = type(context.bridge)(
+                    "127.0.0.1", 0,
+                    expected_seed_hash=context.expected_seed_hash,
+                    on_check=context.on_bridge_check,
+                    on_goal_reached=context.on_bridge_goal,
+                    on_applied=record,
+                    on_connected=context.on_bridge_connected,
+                )
+                await bridge._dispatch({"type": protocol.APPLIED, "index": 7})
+                return seen
+
+        self.assertEqual(asyncio.run(scenario()), [7])
 
 
 def _run_goal(configure) -> tuple[int, bool]:

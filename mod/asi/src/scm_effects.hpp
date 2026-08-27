@@ -40,6 +40,39 @@ struct EffectPlan {
 // the index can step over.
 constexpr int kEffectsPerFrame = 1;
 
+// The next one-shot effect waiting to be applied, as its position in the received
+// item list. Unlock raises and effects draw on the same grant budget, so the frame
+// weighs one against the other, and this is the effect side's key: the same
+// received index the unlock side sorts by.
+//
+// Without it the unlock path took every slot while any global was below its
+// target, whatever their arrival order, and an effect early in the list waited
+// out the whole unlock backlog. That is invisible in delivery, since nothing is
+// lost either way, and loud in the landing reports: they hold at the first item
+// that has not landed, so an early effect held every row behind it for the length
+// of the release and then let the whole run go at once.
+struct NextEffect {
+  bool pending = false;
+  std::int64_t received_index = 0;
+};
+
+// The caller must be somewhere the effect path is reached this frame, which today
+// means inside the controllable branch: PlanEffects returns nothing without
+// control, so "pending" there would hand a slot to a plan that comes back empty.
+// This takes no controllable flag of its own precisely so the two cannot disagree
+// about what the saved index means.
+inline NextEffect NextPendingEffect(
+    const std::vector<std::pair<std::int64_t, std::int64_t>>& items,
+    const std::map<std::int64_t, ItemEffect>& item_effects, int applied_index) {
+  int effect_position = 0;
+  for (const auto& [received_index, item_id] : items) {
+    if (item_effects.find(item_id) == item_effects.end()) continue;
+    if (effect_position >= applied_index) return {true, received_index};
+    ++effect_position;
+  }
+  return {};
+}
+
 inline EffectPlan PlanEffects(
     const std::vector<std::pair<std::int64_t, std::int64_t>>& items,
     const std::map<std::int64_t, ItemEffect>& item_effects,

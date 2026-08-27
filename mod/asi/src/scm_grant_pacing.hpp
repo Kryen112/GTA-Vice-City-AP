@@ -10,8 +10,10 @@
 // the game survives rather than the rate the server sends them at.
 //
 // The rate is one grant every kGrantIntervalMs and never more than
-// kGrantsPerWindow inside ANY window of kGrantWindowMs, which is a burst of
-// eight over two seconds and then a pause.
+// kGrantsPerWindow inside ANY window of kGrantWindowMs, which at these numbers is
+// sixteen over just under four seconds and then a short wait. The interval is the
+// binding constraint almost always, since sixteen intervals fit inside one window,
+// so what a backlog actually drains at is close to four a second.
 //
 // The window SLIDES: each grant's time is remembered and a grant is refused
 // while kGrantsPerWindow of them are less than kGrantWindowMs old, so the cap
@@ -35,10 +37,16 @@
 
 namespace gtavc {
 
-// One grant every quarter second, eight to any five second window.
+// One grant every quarter second, sixteen to any five second window.
+//
+// THE WINDOW CAP IS THE NUMBER TO LOWER IF A STREAMING CRASH COMES BACK. The
+// crash this pacer exists for was in a streaming routine, and streaming is the
+// one thing here that is explicitly cross-frame, so a per-frame argument does not
+// bound it. Sixteen inside four seconds is close to the ceiling the 2026-08-21
+// note recorded as untested, now as the steady state rather than as a worst case.
 constexpr unsigned int kGrantIntervalMs = 250;
 constexpr unsigned int kGrantWindowMs = 5000;
-constexpr int kGrantsPerWindow = 8;
+constexpr int kGrantsPerWindow = 16;
 
 // The sliding window remembers one time per grant it can admit, so it needs a
 // slot for each. Sized from the cap rather than beside it, and TakeGrantSlot
@@ -153,7 +161,41 @@ struct UnlockObservation {
   int target = 0;
   int current = 0;
   bool stamped = false;
+  // The earliest received index of any item that counts toward this global,
+  // which is what orders the raises: the player gets things in the order
+  // Archipelago handed them over, not in the order the globals happen to be
+  // numbered. Always at or below the index of every item needing this global, so
+  // a global an early item needs is always swept before one only a later item
+  // needs, which is what bounds how long a landing report can wait for the ones
+  // that arrived before it.
+  std::int64_t arrival_index = 0;
 };
+
+// Where the raise sweep left off: the key of the last global handed over. A pair
+// rather than one number because the key is a pair, and the rotation needs a
+// distinct total order to be finite. Global index breaks the tie, so the eleven
+// district globals one content item releases are consecutive in the sweep and
+// that item lands within one run of them rather than one per pass.
+struct UnlockCursor {
+  std::int64_t arrival_index = -1;
+  int global_index = -1;
+};
+
+// Whether one key comes after another in the sweep.
+inline bool UnlockKeyAfter(std::int64_t arrival_index, int global_index,
+                           const UnlockCursor& cursor) {
+  if (arrival_index != cursor.arrival_index) {
+    return arrival_index > cursor.arrival_index;
+  }
+  return global_index > cursor.global_index;
+}
+
+// Whether one key comes before another, for picking the lowest pending.
+inline bool UnlockKeyBefore(std::int64_t arrival_index, int global_index,
+                            std::int64_t other_arrival, int other_global) {
+  if (arrival_index != other_arrival) return arrival_index < other_arrival;
+  return global_index < other_global;
+}
 
 // What a frame does to the unlock globals: every lowering, which is unpaced,
 // and at most one raise, which costs a grant.
@@ -162,61 +204,169 @@ struct UnlockPlan {
   bool has_raise = false;
   int raise_index = 0;
   int raise_value = 0;
+  // The arrival key of the chosen raise, so the caller sets its cursor from what
+  // was selected rather than searching the observations for it again. It is also
+  // what the caller weighs the next pending one-shot effect against, since both
+  // kinds of grant are ordered by the same received index.
+  std::int64_t raise_arrival_index = 0;
 };
 
-// The raise goes round the table rather than always to the lowest index. A
-// global that cannot hold its target, because something else in the game
-// writes it every frame, would otherwise take every slot forever and stop
-// every later unlock. Starting past the last one handed over bounds that to
-// one wasted slot per pass. When nothing is left above it the pass is done and
-// the next starts at the lowest pending global again, which is also what
-// serves a single pending global that keeps needing the same raise.
+// THE SWEEP IS IN ARRIVAL ORDER, by (arrival_index, global_index), which is the
+// order Archipelago handed the items over. Global numbering has nothing to do
+// with when an item arrived, so sweeping by global index delivered an item list
+// in an order unrelated to the one every other Archipelago surface shows, and
+// the landing reports built on top of it either had to follow that order or wait
+// for it. Twenty items whose globals run opposite to their arrival showed the
+// player nothing for eleven seconds and then all twenty at once, because the
+// report walk holds at the first item that has not landed and the item that
+// arrived first was granted last.
 //
-// `observed` is expected in ascending global order with no index twice.
-// Ascending is what makes the rotation stable and the pass finite. Distinct is
-// what lets the caller read every global before writing any of them: with a
-// repeated index the second reading would have to see the first write.
+// The raise still goes ROUND the table rather than always to the lowest key. A
+// global that cannot hold its target, because something else in the game writes
+// it every frame, would otherwise take every slot forever and stop every later
+// unlock. Starting past the last one handed over bounds that to one wasted slot
+// per pass. When nothing is left above it the pass is done and the next starts at
+// the lowest pending key again, which is also what serves a single pending global
+// that keeps needing the same raise.
+//
+// `observed` may be in any order, and the lowest and next-above-the-cursor
+// candidates are both picked by comparison rather than by position: the caller
+// keeps it in ascending global order so that reading a global is a search rather
+// than a scan, and sorting it by key every frame would buy nothing. What is
+// required is that no global appears twice, which is what lets the caller read
+// every global before writing any of them (with a repeated index the second
+// reading would have to see the first write) and what makes the key a distinct
+// total order, so the rotation is finite.
 inline UnlockPlan PlanUnlocks(const std::vector<UnlockObservation>& observed,
-                              int last_raised_index) {
+                              const UnlockCursor& cursor) {
   UnlockPlan plan;
-  bool has_first = false;
-  int first_index = 0;
-  int first_value = 0;
+  bool has_lowest = false;
+  std::int64_t lowest_arrival = 0;
+  int lowest_index = 0;
+  int lowest_value = 0;
+  bool has_next = false;
+  std::int64_t next_arrival = 0;
+  int next_index = 0;
   for (const UnlockObservation& entry : observed) {
     switch (PlanUnlock(entry.target, entry.current, entry.stamped)) {
       case UnlockAction::kLowerNow:
         plan.to_lower.push_back({entry.global_index, entry.target});
         break;
       case UnlockAction::kRaiseAsGrant:
-        if (!has_first) {
-          has_first = true;
-          first_index = entry.global_index;
-          first_value = entry.target;
+        if (!has_lowest ||
+            UnlockKeyBefore(entry.arrival_index, entry.global_index,
+                            lowest_arrival, lowest_index)) {
+          has_lowest = true;
+          lowest_arrival = entry.arrival_index;
+          lowest_index = entry.global_index;
+          lowest_value = entry.target;
         }
-        if (!plan.has_raise && entry.global_index > last_raised_index) {
+        if (UnlockKeyAfter(entry.arrival_index, entry.global_index, cursor) &&
+            (!has_next ||
+             UnlockKeyBefore(entry.arrival_index, entry.global_index,
+                             next_arrival, next_index))) {
+          has_next = true;
+          next_arrival = entry.arrival_index;
+          next_index = entry.global_index;
           plan.has_raise = true;
           plan.raise_index = entry.global_index;
           plan.raise_value = entry.target;
+          plan.raise_arrival_index = entry.arrival_index;
         }
         break;
       case UnlockAction::kNone:
         break;
     }
   }
-  if (!plan.has_raise && has_first) {
+  // Nothing left above the cursor ends the pass, and the next one starts at the
+  // lowest pending key.
+  if (!plan.has_raise && has_lowest) {
     plan.has_raise = true;
-    plan.raise_index = first_index;
-    plan.raise_value = first_value;
+    plan.raise_index = lowest_index;
+    plan.raise_value = lowest_value;
+    plan.raise_arrival_index = lowest_arrival;
   }
   return plan;
 }
 
+// Everything the game says about whether the player is actually playing, read on
+// the frame and answered by WorldIsPlayable below.
+struct PlayableState {
+  // The game hands the player control: not a cutscene, not a mission pass or fail
+  // screen, not otherwise script-owned.
+  bool controllable = false;
+  // The game's own pause, either the player's or the code's.
+  bool paused = false;
+  // The frontend menu is up, which is its own state: the pause flags and the menu
+  // are set by different things and a load from the menu reaches neither reliably.
+  bool menu_open = false;
+  // The player state is PLAYING rather than wasted, arrested or failed.
+  bool player_playing = false;
+  // Inside one of the game's interiors, which is where the shops are.
+  bool in_interior = false;
+  // The game is showing its help box, which is what a shop stand puts on screen
+  // while the player stands at it.
+  bool help_message_up = false;
+};
+
+// Whether a grant may leave and a landing may be reported at all.
+//
+// THIS IS A DEFERRAL LIST, which the framework invariant in CLAUDE.md forbade
+// until it was amended for this. The reason the clause gives for forbidding one is
+// that a second condition is where lost grants hide, and nothing here can lose a
+// grant: every unlock target is re-read from the live globals on every frame and
+// the one-shot applied-index lives in the save, so a condition that is false today
+// costs a delay and never a delivery. That is why the amendment is safe, and it is
+// also the property any further condition added here has to keep.
+//
+// What it does NOT gate is LOWERING. Taking an ability back stays immediate, since
+// an ability left usable for as long as one of these states lasts is a hole rather
+// than a nicety, which is the same reason lowering was never paced.
+inline bool WorldIsPlayable(const PlayableState& state) {
+  if (!state.controllable) return false;
+  if (state.paused || state.menu_open) return false;
+  if (!state.player_playing) return false;
+  // A shop stand shows a help box while the player is standing at it, and the
+  // stands are indoors. Both halves are needed: an interior on its own would hold
+  // every indoor mission for as long as it lasted, and a help box on its own is
+  // the channel every tutorial hint in the game uses.
+  if (state.in_interior && state.help_message_up) return false;
+  return true;
+}
+
+// Whether this frame's unlock raise gives up its grant slot to a one-shot effect.
+//
+// Both kinds of grant draw on one budget and both are ordered by the same received
+// index, so the earlier arrival goes first. Without this the unlock path took
+// every slot while ANY global was below its target, whatever their arrival order,
+// and an effect early in the list waited out the whole unlock backlog. Nothing is
+// lost by that in delivery, and everything is lost by it in the landing reports:
+// they hold at the first item that has not landed, so an early effect held every
+// row behind it for the length of the release and then let the run go at once.
+//
+// `player_exists` is what keeps a yield from wasting the frame: the effect path
+// needs a player ped to write into, so yielding to an effect that cannot run would
+// spend the slot on neither. The caller must also be somewhere the effect path
+// will actually be reached this frame, which is why the one call site sits inside
+// the controllable branch: PlanEffects returns nothing without control, and a
+// yield to it there would be a yield to nothing.
+inline bool RaiseYieldsToEffect(bool has_raise, std::int64_t raise_arrival_index,
+                                bool effect_pending,
+                                std::int64_t effect_arrival_index,
+                                bool player_exists) {
+  // No raise is not a yield: there is nothing to give up, and the effect path
+  // takes the slot on its own.
+  if (!has_raise) return false;
+  if (!effect_pending || !player_exists) return false;
+  return effect_arrival_index < raise_arrival_index;
+}
+
 // What a game hands to the next one: nothing. The pacer reads a clock the next
-// game restarts, and the rotation cursor counted globals in the game that is
-// over.
+// game restarts, and the rotation cursor points into the sweep of the game that
+// is over.
 struct GameScopedGrants {
   GrantPacer pacer;
-  int last_raised_index = -1;
+  UnlockCursor cursor;
 };
 
 // Reset at a game boundary. The outbound check queue is passed in precisely so

@@ -109,30 +109,59 @@ or `git add .`.
   death or old saves stay lost.
 - Bridge protocol: newline guard on every outbound frame, chunked large
   frames, version handshake, seed-hash refusal on mismatch.
-- All item application (unlock globals, one-shot effects) and DeathLink
-  defer on exactly one condition, the game's player-not-controllable flag.
-  No other deferral list exists. Beyond that one condition a fixed rate limit
-  paces how fast grants leave, since delivering a backlog at once takes the game
-  down: one grant per interval and no more than the window's count inside ANY
-  window of it, measured back from now rather than from a boundary. The limit
-  DELAYS and never drops, so every pending raise is delivered, and it may take
-  minutes on a slot holding everything at once. Three things sit outside it
-  deliberately, and each is a correctness requirement rather than a convenience:
-  lowering a global happens at once, so a stale save cannot keep an ability for
-  the seconds a pace would cost; a value the config stamp owns is neither raised
-  nor lowered by the applier, because the stamp rewrites it in the same frame and
-  a raise that cannot take would spend a slot forever ahead of everything else;
-  and the order of paced raises ROTATES rather than running lowest-first, so one
-  global that cannot hold its target cannot starve the rest. Any further
-  withholding condition is the thing this clause exists to forbid, because a
-  second one is where lost grants hide.
-- DeathLink is that one deferral and no queue. A linked death that still cannot
-  land is DROPPED rather than held: Tommy already dying or arrested, no game
-  connected, a game boundary. A death is an event and not a fact about the slot,
-  which is the opposite of a queued check, and those are still never dropped.
-  It holds, like a grant, on a frame with no player ped to write into. The
-  pacer never applies: it paces GRANTS, and a death is not one, so the three
-  exemptions above stay three. The mod never reports back the death its own
+- All item application (unlock globals, one-shot effects) and every landing
+  report defers on ONE question, whether the world is playable, and that
+  question has ONE answer in ONE place: `WorldIsPlayable`. It is false in a
+  cutscene or wherever else the game takes control away, while the game is
+  paused or the frontend menu is up, while Tommy is wasted or arrested rather
+  than playing, and at a shop stand, which is an interior with the help box
+  showing. A new state belongs in that predicate or nowhere.
+  WHAT MAKES A LIST SAFE HERE, and it is the only thing that does: every
+  condition in the predicate may DELAY and none may DROP. Unlock targets are
+  re-read from the live globals on every frame and the one-shot applied-index
+  lives in the save, so a state that is false now costs a wait and never a
+  delivery. A condition that could lose a grant is the thing this clause
+  forbids, whatever it gates, because that is where lost grants hide.
+  A REPORT is marked told when it is planned, not when it arrives, so two things
+  mark one told without the player seeing it and both are deliberate: the
+  baseline, and a send that fails. What the baseline answers from is therefore
+  snapshotted before the frame's own grants, or it swallows what those grants
+  just landed, which is a row lost rather than delayed.
+  A landing report IS droppable elsewhere, and only elsewhere, because it is a
+  line of the log rather than a delivery: a failed send drops it and so does a
+  game boundary, both permanently, since the item behind it is never lost with
+  it. That is the opposite of a queued check and it is the reason the two are
+  never handled by the same code.
+  Beyond that one question a fixed rate limit paces how fast grants leave,
+  since delivering a backlog at once takes the game down: one grant per
+  interval and no more than the window's count inside ANY window of it,
+  measured back from now rather than from a boundary. The limit DELAYS and
+  never drops, so every pending raise is delivered, and it may take minutes on
+  a slot holding everything at once. The window cap is the number to lower if a
+  streaming crash comes back.
+  Four things sit outside all of it deliberately, and each is a correctness
+  requirement rather than a convenience: lowering a global happens at once and
+  is not even gated on the world being playable, so a stale save cannot keep an
+  ability for the seconds a wait would cost; a value the config stamp owns is
+  neither raised nor lowered by the applier, because the stamp rewrites it in
+  the same frame and a raise that cannot take would spend a slot forever ahead
+  of everything else; the order of paced raises follows ARRIVAL, the received
+  index Archipelago handed the items over in, rather than global numbering, and
+  rotates within that so one global that cannot hold its target cannot starve
+  the rest; and a raise YIELDS its slot to a one-shot effect that arrived
+  earlier, so both kinds of grant leave in the one order the player is shown
+  everywhere else.
+- DeathLink is the CONTROL FLAG alone and no queue, deliberately NOT the
+  playable predicate above. A linked death that still cannot land is DROPPED
+  rather than held: Tommy already dying or arrested, no game connected, a game
+  boundary. A death is an event and not a fact about the slot, which is the
+  opposite of a queued check, and those are still never dropped. It holds, like
+  a grant, on a frame with no player ped to write into. The pacer never
+  applies: it paces GRANTS, and a death is not one, so the four exemptions
+  above stay four. Widening it to the playable predicate would mean HOLDING a
+  death across a pause or a shop stand, and a death held is a death whose
+  sender has long since moved on, which is the one thing the drop rule exists
+  to refuse. The mod never reports back the death its own
   kill caused, which is what keeps two linked slots from bouncing one death
   forever, and it reports the game's own wasted state only, so an arrest is
   not a death. The option is

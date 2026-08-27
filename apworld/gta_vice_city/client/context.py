@@ -41,7 +41,7 @@ from CommonClient import (
     handle_url_arg,
     server_loop,
 )
-from NetUtils import ClientStatus
+from NetUtils import ClientStatus, NetworkItem
 
 from . import protocol, saves
 from .bridge import AsiBridge
@@ -205,6 +205,7 @@ class GTAViceCityContext(CommonContext):
             expected_seed_hash=self.expected_seed_hash,
             on_check=self.on_bridge_check,
             on_goal_reached=self.on_bridge_goal,
+            on_applied=self.on_bridge_applied,
             on_progress=self.on_bridge_progress,
             on_death=self.on_bridge_death,
             on_connected=self.on_bridge_connected,
@@ -302,11 +303,17 @@ class GTAViceCityContext(CommonContext):
 
     def on_print_json(self, args: dict) -> None:
         super().on_print_json(args)
-        # Turn each item movement that concerns this player into an in-game
-        # toast, so completing a check shows what it sent or found.
+        # Turn each item movement OUT of this slot into an in-game toast, so
+        # completing a check shows what it sent. Nothing this slot RECEIVES is
+        # toasted here: an item arrives on the server's clock and lands in game on
+        # the mod's grant pacer, which is minutes behind it on a slot holding
+        # everything at once, so the row belongs to the landing and the mod says
+        # when that happens. on_bridge_applied is the other half.
         if args.get("type") != "ItemSend" or self.is_uninteresting_item_send(args):
             return
-        segments = self._item_toast_segments(args)
+        if self.slot_concerns_self(args["receiving"]):
+            return
+        segments = self._item_toast_segments(args["item"], args["receiving"])
         if segments:
             self._schedule(self._send_toast(segments))
 
@@ -340,8 +347,14 @@ class GTAViceCityContext(CommonContext):
             return protocol.TOAST_TRAP
         return protocol.TOAST_FILLER
 
-    def _item_toast_segments(self, args: dict) -> list[tuple[str, str]] | None:
+    def _item_toast_segments(self, item: NetworkItem,
+                             receiving: int) -> list[tuple[str, str]] | None:
         """One item movement as the coloured segments the in-game stack draws.
+
+        Takes the movement's two halves rather than a print_json packet, because
+        both toast paths compose through here: a send is read off the packet the
+        server printed, and a landing is read off the received-items list at the
+        index the mod reports, where no packet exists.
 
         Modelled on the Harry Potter 2 world's own toasts, which is the closest
         prior art in the multiworld, with one deliberate difference: it names our
@@ -354,8 +367,6 @@ class GTAViceCityContext(CommonContext):
         to the row below it. A movement with no location is a cheat-sent item, and
         then there is nothing to name.
         """
-        item = args["item"]
-        receiving = args["receiving"]
         item_name = self.item_names.lookup_in_slot(item.item, receiving)
         found_it = self.slot_concerns_self(item.player)
         got_it = self.slot_concerns_self(receiving)
@@ -393,6 +404,38 @@ class GTAViceCityContext(CommonContext):
 
     def _player_name(self, slot: int) -> str:
         return self.player_names.get(slot, str(slot))
+
+    async def on_bridge_applied(self, index: int) -> None:
+        """One received item has landed in game, so the player gets its row now.
+
+        This is the whole reason the row is not posted when the item arrives. The
+        mod hands grants over at a paced rate, one every 250 ms and sixteen to any
+        five seconds, so a release the server delivers in one packet takes the game
+        the better part of a minute to actually apply. A row posted on arrival names an
+        ability the player cannot use yet and is long gone by the time they can.
+
+        The mod reports the position in the list this client sent it, which is the
+        position in items_received, so the row is composed from that entry rather
+        than from a print_json packet: the packet may never have existed at all,
+        since Archipelago replays ReceivedItems on connect but never replays
+        PrintJSON, which is why items that arrived while the game was closed used
+        to reach the player in silence.
+        """
+        if self.slot is None:
+            return
+        if index < 0 or index >= len(self.items_received):
+            # The mod's list came from this client, so a report past its end means
+            # the two have diverged: a reconnect rebuilt items_received while a
+            # report from the session before it was still in flight. The resync
+            # realigns the index space, but the mod has already marked that index
+            # reported and only a game boundary clears that, so this row is gone
+            # rather than replayed. Dropped anyway: a wrong row naming whatever
+            # item happens to sit at that index is worse than no row.
+            logger.debug("dropping an applied report for unknown index %d", index)
+            return
+        segments = self._item_toast_segments(self.items_received[index], self.slot)
+        if segments:
+            await self._send_toast(segments)
 
     async def _send_toast(self, segments: list[tuple[str, str]]) -> None:
         if self.bridge.connected:

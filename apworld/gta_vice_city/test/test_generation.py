@@ -5032,6 +5032,23 @@ class TestReservedGlobals(WorldTestBase):
         for effect in scm.item_effects().values():
             self.assertIn(effect[0], known_types)
 
+    def test_every_item_maps_to_something_the_mod_can_land(self) -> None:
+        # The mod tells the client an item has LANDED, and it answers that from
+        # these three tables: the count global an item raises, the district
+        # globals a content item releases, and the one-shot effect it applies. An
+        # item in none of them has nothing to wait on, so the mod reports it the
+        # moment it arrives, which is right for a client-side item and a silent
+        # lie for one that was meant to do something in game.
+        #
+        # The hunt goal's fragment is the one item that legitimately does nothing
+        # in game: the client counts it toward the goal and the SCM never sees it.
+        # Anything else landing here is a table gap, not a new exception.
+        mapped = (set(scm.item_globals())
+                  | set(scm.item_effects())
+                  | set(scm.content_district_globals()))
+        client_side_only = {ITEM_NAME_TO_ID[data.PACKAGE_FRAGMENT_ITEM]}
+        self.assertEqual(set(ITEM_NAME_TO_ID.values()) - mapped, client_side_only)
+
     def test_completion_watch_covers_every_location(self) -> None:
         watch = scm.completion_watch()
         self.assertEqual(sorted(watch.values()), sorted(LOCATION_NAME_TO_ID.values()))

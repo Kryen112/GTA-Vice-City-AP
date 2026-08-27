@@ -176,6 +176,18 @@ class GameState {
   // location twice, so a caller that drains must return what it fails to send.
   virtual void RequeueChecks(const std::vector<std::int64_t>& undelivered) = 0;
 
+  // Received indices the game has newly acted on since the last call, in
+  // received order (drains the queue). The client turns each into the row the
+  // player reads, so a toast reports a grant landing rather than a packet
+  // arriving: grants leave at a paced rate and a row posted on arrival names an
+  // ability the player does not have yet.
+  //
+  // Dropped rather than handed back when a send fails, and dropped at a game
+  // boundary, unlike a check: a landing is an event and the item itself is not
+  // lost by it, since every unlock global is re-read from the game every frame.
+  // What is lost is one line of the record.
+  virtual std::vector<std::int64_t> TakeAppliedReports() = 0;
+
   // True once when the goal was newly reached.
   virtual bool TakeGoalReached() = 0;
 

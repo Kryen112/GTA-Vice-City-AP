@@ -29,6 +29,8 @@
 #include <ePickupType.h>
 #include <CPad.h>
 #include <CTimer.h>
+#include <CGame.h>
+#include <CMenuManager.h>
 #include <CStats.h>
 #include <CWanted.h>
 #include <CPools.h>
@@ -680,6 +682,18 @@ void ScmGameState::ApplyConfig(const std::map<std::int64_t, int>& item_globals,
   // A fresh connection is a fresh client, which may never have been told this
   // game's percentage, so the next frame reports it again.
   reported_percentage_ = -1;
+  // The landing reports are deliberately NOT touched here. Which rows the player
+  // has already seen is a fact about the GAME, not about the client session: the
+  // mod's own stack drew them and the client only composed the text, so a
+  // reconnect has nothing to forget. Clearing the record instead re-announced
+  // whatever the reconnect found still short of its target, which a counted item
+  // that gained a copy while the socket was down always is: the earlier copy
+  // reported before the drop, the baseline could not mark it because the global no
+  // longer held its new target, and the raise then gave it a second row.
+  //
+  // A queued report survives too, so a landing found while the socket was down
+  // reaches the player once the client is back rather than being dropped for
+  // having happened at the wrong moment.
   location_to_global_.clear();
   for (const auto& [global_index, location] : completion_watch_) {
     location_to_global_[location] = global_index;
@@ -735,6 +749,18 @@ bool ScmGameState::PlayerIsControllable() {
   // No pad yet (still loading) reads as not controllable, so items wait.
   if (pad == nullptr) return false;
   return pad->DisablePlayerControls == 0;
+}
+
+PlayableState ScmGameState::ReadPlayableState() {
+  PlayableState state;
+  state.controllable = PlayerIsControllable();
+  state.paused = CTimer::m_UserPause || CTimer::m_CodePause;
+  state.menu_open = FrontEndMenuManager.m_bMenuActive;
+  state.player_playing = PlayerState() == PLAYERSTATE_PLAYING;
+  // Non-zero is one of the game's interiors, which is where every shop is.
+  state.in_interior = CGame::currArea != 0;
+  state.help_message_up = CHud::IsHelpMessageBeingDisplayed();
+  return state;
 }
 
 int ScmGameState::PlayerState() {
@@ -1302,8 +1328,11 @@ void ScmGameState::ShowToast(const ToastRow& row) {
   if (toasts_.waiting.size() < kToastQueueMax) {
     toasts_.waiting.push_back(QueuedToast(row));
   }
-  // The record the pause page reads, newest first, whether or not the row has
-  // been drawn yet: a player who paused during a flood should see what is coming.
+  // The record the pause page reads, newest first, whether or not the row has been
+  // drawn yet, so a player who paused mid-marquee can still read what went past.
+  // A log of what has happened rather than a look ahead at what has not: a row for
+  // a received item exists only once the game has acted on that item, and one for
+  // an item sent onward describes something already done.
   recent_toasts_.insert(recent_toasts_.begin(), row);
   if (recent_toasts_.size() > kRecentToastMax) recent_toasts_.resize(kRecentToastMax);
 }
@@ -1460,6 +1489,18 @@ std::vector<std::int64_t> ScmGameState::TakeNewChecks() {
 void ScmGameState::RequeueChecks(const std::vector<std::int64_t>& undelivered) {
   std::lock_guard<std::mutex> lock(mutex_);
   gtavc::RequeueChecks(outbound_checks_, undelivered);
+}
+
+std::vector<std::int64_t> ScmGameState::TakeAppliedReports() {
+  std::lock_guard<std::mutex> lock(mutex_);
+  // Not held the way the checks are, and never handed back. A check waits for a
+  // stamped game because it is a permanent fact about the slot that must reach
+  // the server exactly once; a landing is an event whose only cost, if it is
+  // lost, is the line describing it. The frame only ever finds one inside a
+  // running game anyway.
+  std::vector<std::int64_t> drained;
+  drained.swap(outbound_applied_);
+  return drained;
 }
 
 bool ScmGameState::TakeGoalReached() {
@@ -1710,8 +1751,21 @@ void ScmGameState::ForgetGameScopedState() {
   // Emptied and marked stale together: an empty cache that reads clean is
   // one no frame rebuilds, and the next game would apply no unlock at all.
   unlock_targets_.clear();
+  unlock_arrivals_.clear();
   items_dirty_ = true;
   outbound_checks_held_ = true;
+  // What the last game's globals had reached says nothing about this one's, so
+  // the record of what the player was told goes with it and the next pass takes
+  // its baseline from the world that is coming up. That single rule answers both
+  // boundaries: a loaded save holds its unlocks already, so the whole list is
+  // baselined and nothing is announced, while a new game holds none of them, so
+  // nothing is baselined and every item reports as the pacer hands it over.
+  // A report already found and not yet pumped goes too, unlike a queued check: it
+  // describes a landing in the game just left, and the item behind it is re-read
+  // from the globals of the next one anyway.
+  outbound_applied_.clear();
+  reported_applied_.clear();
+  baseline_applied_reports_ = true;
   // A death belongs to the game it happened in, both ways: one waiting to be
   // reported has nowhere left to go, and one waiting to be delivered would land
   // on whoever loads next. The same reason the client drops a death that arrives
@@ -1780,6 +1834,25 @@ void ScmGameState::OnGameFrame() {
   // Pending items simply wait: the dirty flag holds until the first
   // controllable frame.
   const bool controllable = PlayerIsControllable();
+  // Everything the game says about whether the player is playing, which is what
+  // a grant and a landing report wait for. Wider than the control flag alone: a
+  // pause, the frontend menu, a wasted or arrested Tommy and a shop stand's help
+  // box are all frames where handing something over means handing it to nobody.
+  // Read once, so every use this frame answers the same question.
+  const bool playable = WorldIsPlayable(ReadPlayableState());
+  // The one-shot applied-index as it reads before this frame has granted
+  // ANYTHING, which is half of what the landing reports are answered from; the
+  // other half is the unlock observations, taken before the raise for the same
+  // reason.
+  //
+  // AT THE TOP OF THE FRAME AND CONST, so being pre-grant is a fact about where it
+  // sits rather than a rule a comment asks the next reader to keep. Read after the
+  // effect path instead, the index carries that path's own write, and a baseline
+  // pass then marks an effect applied on this very frame as already told, which
+  // loses its row for good: only a game boundary clears that record and the next
+  // boundary baselines it again. The harness cannot compile this file, so nothing
+  // would catch that ordering moving back.
+  const int applied_index_before_grants = GetGlobal(kAppliedIndexGlobal);
 
   // The hunt goal's ending, raised for as long as the client asks for it, so a
   // load or a reconnect re-arms it in the game it landed in. The deferral is the
@@ -1815,6 +1888,7 @@ void ScmGameState::OnGameFrame() {
   // fifteen property icons sink and rise again, and each class announces
   // itself). The same guard ShouldReDeriveUnlocks already applies.
   bool granted_this_frame = false;
+  bool observations_are_fresh = false;
   if (controllable && !items_.empty()) {
     // Re-derive every unlock global from the full item list: zero each distinct
     // unlock global, then tally received copies per global. This is the target,
@@ -1823,21 +1897,39 @@ void ScmGameState::OnGameFrame() {
     // between. What the GAME holds is read fresh below, every frame.
     if (items_dirty_) {
       std::map<int, int> counts;
+      // Tallied beside the counts: the earliest received index of any item
+      // counting toward each global, which is what orders the raises. Sweeping by
+      // global index handed the list over in an order unrelated to the one
+      // Archipelago gave it in, and a landing report cannot precede one that
+      // arrived earlier, so the first item to arrive being granted last showed the
+      // player nothing until it was.
+      std::map<int, std::int64_t> arrivals;
       for (const auto& [item_id, global_index] : item_globals_) counts[global_index] = 0;
       for (const auto& [item_id, global_indices] : content_district_globals_) {
         for (const int global_index : global_indices) counts[global_index] = 0;
       }
       for (const auto& [received_index, item_id] : items_) {
         const auto it = item_globals_.find(item_id);
-        if (it != item_globals_.end()) ++counts[it->second];
+        if (it != item_globals_.end()) {
+          ++counts[it->second];
+          if (arrivals.find(it->second) == arrivals.end()) {
+            arrivals[it->second] = received_index;
+          }
+        }
         // A content item also releases every district it covers, which is one
         // global for a split item and eleven for a whole class.
         const auto districts = content_district_globals_.find(item_id);
         if (districts != content_district_globals_.end()) {
-          for (const int global_index : districts->second) ++counts[global_index];
+          for (const int global_index : districts->second) {
+            ++counts[global_index];
+            if (arrivals.find(global_index) == arrivals.end()) {
+              arrivals[global_index] = received_index;
+            }
+          }
         }
       }
       unlock_targets_.swap(counts);
+      unlock_arrivals_.swap(arrivals);
       items_dirty_ = false;
       if (logger_) logger_("re-derived the unlock targets");
     }
@@ -1853,11 +1945,17 @@ void ScmGameState::OnGameFrame() {
     // changes nothing allocates nothing.
     unlock_observations_.clear();
     for (const auto& [global_index, target] : unlock_targets_) {
+      // A global with no arrival on record is one no received item counts toward.
+      // The tally therefore leaves its target at zero, and PlanUnlock never
+      // returns a raise for a target of zero, so it can never become a raise
+      // candidate and the key it sorts under is never compared.
+      const auto arrival = unlock_arrivals_.find(global_index);
       unlock_observations_.push_back(
           {global_index, target, GetGlobal(global_index),
-           config_globals_.find(global_index) != config_globals_.end()});
+           config_globals_.find(global_index) != config_globals_.end(),
+           arrival != unlock_arrivals_.end() ? arrival->second : 0});
     }
-    const UnlockPlan plan = PlanUnlocks(unlock_observations_, grants_.last_raised_index);
+    const UnlockPlan plan = PlanUnlocks(unlock_observations_, grants_.cursor);
     for (const auto& [global_index, value] : plan.to_lower) {
       SetGlobal(global_index, value);
     }
@@ -1866,13 +1964,36 @@ void ScmGameState::OnGameFrame() {
     // the SCM reacts to, and those reactions are what a flood costs: package
     // rewards spawning vehicles, content classes releasing their pickups, area
     // gates opening. One per slot keeps a backlog of them off a single frame.
-    if (plan.has_raise &&
+    //
+    // The raise YIELDS to a one-shot effect that arrived before it, so both kinds
+    // of grant leave in received order. The rule is RaiseYieldsToEffect's, which
+    // the harness can hold; this reads the two candidates and does what it says.
+    //
+    // Asked only when there is a raise to give up, since the walk of the item list
+    // is wasted otherwise, and answered with `world_loaded` rather than a second
+    // FindPlayerPed, which is the same read this frame already took.
+    NextEffect next_effect;
+    if (plan.has_raise) {
+      next_effect =
+          NextPendingEffect(items_, item_effects_, GetGlobal(kAppliedIndexGlobal));
+    }
+    const bool yields_to_effect = RaiseYieldsToEffect(
+        plan.has_raise, plan.raise_arrival_index, next_effect.pending,
+        next_effect.received_index, world_loaded);
+    if (plan.has_raise && playable && !yields_to_effect &&
         TakeGrantSlot(grants_.pacer, RealTimeMs(), kGrantIntervalMs,
                       kGrantWindowMs, kGrantsPerWindow)) {
       SetGlobal(plan.raise_index, plan.raise_value);
-      grants_.last_raised_index = plan.raise_index;
+      // The sweep resumes past the KEY of what just went, in arrival order rather
+      // than in global order.
+      grants_.cursor = UnlockCursor{plan.raise_arrival_index, plan.raise_index};
       granted_this_frame = true;
     }
+    // The observations above are a read of this frame's own globals, which is
+    // what the landing report is answered from. Nothing else in the frame builds
+    // them, so a frame that skipped this block reports nothing rather than
+    // answering from a read that belongs to an earlier one.
+    observations_are_fresh = true;
   }
 
   // Stamp the config flags every frame so the SCM knows which reward groups are
@@ -1899,7 +2020,7 @@ void ScmGameState::OnGameFrame() {
   // both kinds still arrives at one thing at a time. A weapon does a blocking
   // load and a trap can touch every vehicle in the world, so this is the half
   // that stalls hardest.
-  if (FindPlayerPed() != nullptr && !granted_this_frame) {
+  if (FindPlayerPed() != nullptr && playable && !granted_this_frame) {
     const int applied = GetGlobal(kAppliedIndexGlobal);
     const EffectPlan plan = PlanEffects(items_, item_effects_, applied,
                                         controllable, kEffectsPerFrame);
@@ -1910,6 +2031,46 @@ void ScmGameState::OnGameFrame() {
       SetGlobal(kAppliedIndexGlobal, plan.new_applied_index);
       if (logger_) logger_("applied one-shot effects");
     }
+  }
+
+  // Which received items the game has now actually acted on, so the client can
+  // give each one the row the player reads. A row per landing and none per
+  // arrival: grants leave at the paced rate, so a slot holding everything spends
+  // minutes handing it over, and a stack posted on arrival would finish long
+  // before the game did and name abilities the player did not have yet.
+  //
+  // AFTER both grant paths, so a global raised or an effect index moved this
+  // frame is already in what this reads. The raise itself is not patched back
+  // into the observations: they are a read of the globals, and the item whose
+  // raise just went out reports on the next frame from a real read rather than
+  // from a prediction of one.
+  //
+  // No pacing of its own, deliberately. A grant is at most one per frame and one
+  // per interval, and PlanUnlocks sweeps in the same received order this reports
+  // in, so the rows follow the grants one for one. Anything else here would be a
+  // second answer to a question the pacer has already answered.
+  if (observations_are_fresh && playable) {
+    // A baseline pass marks every landed item wherever it sits; a reporting pass
+    // holds at the first that has not landed. The difference matters: the
+    // baseline runs ONCE per boundary, so an item it skipped for being out of
+    // order is never marked and is announced on the next load instead.
+    const AppliedReportPlan reports = PlanAppliedReports(
+        items_, item_globals_, content_district_globals_, item_effects_,
+        unlock_observations_, applied_index_before_grants, reported_applied_,
+        baseline_applied_reports_ ? AppliedReportOrder::kEverythingLanded
+                                  : AppliedReportOrder::kHoldForArrival);
+    for (const std::int64_t received_index : reports.to_report) {
+      reported_applied_.insert(received_index);
+      // The baseline marks without telling. What a loaded save already holds is
+      // not news to the player who watched it arrive, and it is the whole item
+      // list on any save past the first few minutes.
+      if (!baseline_applied_reports_) outbound_applied_.push_back(received_index);
+    }
+    if (baseline_applied_reports_ && logger_) {
+      logger_("baselined " + std::to_string(reports.to_report.size()) +
+              " landed items without reporting them");
+    }
+    baseline_applied_reports_ = false;
   }
 
   // Hold or revert the timed traps (sped-up or slowed clock, hostile

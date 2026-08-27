@@ -315,6 +315,19 @@ void BridgeClient::PumpOutbound() {
       return;
     }
   }
+  // The landings, in received order, each of which the client turns into one row
+  // for the player. Dropped rather than handed back on a failed send, unlike a
+  // check: the item behind a landing is not lost with it, since every unlock
+  // global is re-read from the game every frame, so what a dropped report costs is
+  // one line of the log and nothing else. It costs that PERMANENTLY, since the
+  // game state marks the index reported and only a game boundary ever clears
+  // that, which is the whole reason the policy is worth stating rather than
+  // assuming. A stop at the first failure all the same, so the rest are not
+  // written into a socket that has already gone and the order the player reads
+  // them in stays the order they arrived in.
+  for (const std::int64_t received_index : game_->TakeAppliedReports()) {
+    if (!SendMessage(AppliedMessage(received_index))) break;
+  }
   if (game_->TakeGoalReached()) {
     SendMessage(GoalReachedMessage());
   }
