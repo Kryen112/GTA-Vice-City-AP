@@ -562,12 +562,50 @@ pickup_cleo = ["{$CLEO .cs}", "", "0000:", "", ":APPICK_LOOP", "wait 0"]
 # one thing that says the ASI has seen this seed.
 pickup_cleo += ["if ", f"  ${SEED_HASH_GLOBAL} > 0",
                 "goto_if_false @APPICK_LOOP"]
+# A slot whose handle another site creates SOMEWHERE ELSE cannot be trusted to
+# the handle alone. Mission 52 stores a pickup at the mansion into slot 62's
+# handle without removing slot 62's own first, so for the length of that window
+# the handle names a pickup 70 units away, and taking THAT one would latch slot
+# 62's check for nothing. Such a slot gets a proximity condition as well: the
+# collection only counts while the player is standing where the slot is.
+#
+# Read out of the decompile rather than written down, so a second reuse
+# introduced by another mission is guarded the moment it appears. The radius is
+# far wider than the walk-over that produced the collection and far tighter than
+# any reuse: the one that exists is 70 units off.
+PROXIMITY_RADIUS = 10.0
+# Every way the script creates a pickup into a handle, not just create_pickup:
+# 31 of the sites are create_weapon_pickup, and a scan that cannot see those
+# cannot see a reuse of a weapon slot either.
+PICKUP_CREATION = re.compile(r"\$(\d+) = create_\w*pickup\w* .*? at "
+                             r"(-?[\d.]+) (-?[\d.]+) (-?[\d.]+)")
+handle_slots = {handle: slot
+                for slot, handle in enumerate(pickup_data.PICKUP_HANDLE_GLOBALS)}
+reused_slots: set[int] = set()
+for line in lines:
+    match = PICKUP_CREATION.search(line)
+    if match is None:
+        continue
+    slot = handle_slots.get(int(match.group(1)))
+    if slot is None:
+        continue
+    place = tuple(float(match.group(index)) for index in (2, 3, 4))
+    belongs = pickup_data.PICKUP_SLOTS[slot][:3]
+    if max(abs(a - b) for a, b in zip(place, belongs, strict=True)) > 1.0:
+        reused_slots.add(slot)
+assert reused_slots == {62}, (
+    f"handle reuse away from the slot changed: {sorted(reused_slots)}. Each of "
+    f"these latches on a pickup somewhere else unless it is guarded, and the "
+    f"guard below is what does it")
+
 # Each slot, then each shop stand, as (label, handle global, completion global,
-# whether the handle can still be zero). One list so the emitted pass has one
-# shape, and the labels stay unique across the two halves.
-polled: list[tuple[str, int, int, bool]] = [
+# whether the handle can still be zero, where the player must be). One list so
+# the emitted pass has one shape, and the labels stay unique across the two
+# halves.
+polled: list[tuple[str, int, int, bool, tuple[float, float, float] | None]] = [
     (f"APPICK_{slot}", handle, PICKUP_COMPLETION_BASE + slot,
-     slot >= pickup_data.MISSION_CREATED_FIRST_SLOT)
+     slot >= pickup_data.MISSION_CREATED_FIRST_SLOT,
+     pickup_data.PICKUP_SLOTS[slot][:3] if slot in reused_slots else None)
     for slot, handle in enumerate(pickup_data.PICKUP_HANDLE_GLOBALS)
 ]
 # Phil's Place. Its stands are in-shop pickups the engine sells, so they are
@@ -585,10 +623,10 @@ assert sorted(stand_offsets) == sorted(stand_handles), (
     f"check's completion global")
 polled += [
     (f"APPICK_STAND_{index}", handle,
-     SHOP_COMPLETION_BASE + stand_offsets[handle], True)
+     SHOP_COMPLETION_BASE + stand_offsets[handle], True, None)
     for index, handle in enumerate(stand_handles)
 ]
-for label, handle, completion, may_be_zero in polled:
+for label, handle, completion, may_be_zero, near in polled:
     # Set unconditionally while collected rather than testing the global
     # first: the write is idempotent, the ASI reads it as a latch, and one
     # condition per slot keeps the pass cheap.
@@ -602,8 +640,19 @@ for label, handle, completion, may_be_zero in polled:
     if may_be_zero:
         pickup_cleo += ["if ", f"  ${handle} > 0", f"goto_if_false @{label}"]
     pickup_cleo += ["if ", f"  has_pickup_been_collected ${handle}",
-                    f"goto_if_false @{label}",
-                    f"${completion} = 1", f":{label}"]
+                    f"goto_if_false @{label}"]
+    if near is not None:
+        # Tested AFTER the collection, because the collection read consumes the
+        # ring entry either way: a pickup taken somewhere else has to be spent
+        # here rather than left for the next frame to find again.
+        pickup_cleo += [
+            "if and",
+            "  is_player_playing $player_char",
+            f"  locate_player_any_means_3d $player_char 0 {near[0]} {near[1]} "
+            f"{near[2]} radius {PROXIMITY_RADIUS} {PROXIMITY_RADIUS} "
+            f"{PROXIMITY_RADIUS}",
+            f"goto_if_false @{label}"]
+    pickup_cleo += [f"${completion} = 1", f":{label}"]
 pickup_cleo += ["goto @APPICK_LOOP", ""]
 if CLEO_OUT:
     target = os.path.join(os.path.dirname(os.path.abspath(CLEO_OUT)),
