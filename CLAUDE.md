@@ -122,16 +122,22 @@ or `git add .`.
   lives in the save, so a state that is false now costs a wait and never a
   delivery. A condition that could lose a grant is the thing this clause
   forbids, whatever it gates, because that is where lost grants hide.
-  A REPORT is marked told when it is planned, not when it arrives, so two things
-  mark one told without the player seeing it and both are deliberate: the
-  baseline, and a send that fails. What the baseline answers from is therefore
-  snapshotted before the frame's own grants, or it swallows what those grants
-  just landed, which is a row lost rather than delayed.
-  A landing report IS droppable elsewhere, and only elsewhere, because it is a
-  line of the log rather than a delivery: a failed send drops it and so does a
-  game boundary, both permanently, since the item behind it is never lost with
-  it. That is the opposite of a queued check and it is the reason the two are
-  never handled by the same code.
+  A REPORT is marked told when it is PLANNED, not when the player reads it, so
+  every step between there and the screen can lose the row, and each place that
+  does is deliberate: the baseline never sends one at all; the mod drops it on a
+  failed bridge send and at a game boundary; and the CLIENT drops it whenever it
+  cannot compose one, which means no slot yet or an index its own list no longer
+  covers. That last one is not rare: an AP server drop empties the client's slot
+  and item list while the bridge socket stays up, so everything the game lands
+  during the outage is marked told and never shown. What the baseline answers
+  from is therefore snapshotted before the frame's own grants, or it swallows
+  what those grants just landed as well.
+  A landing report IS droppable, unlike a check, because it is a line of the log
+  rather than a delivery: the item behind it is re-derived from the live globals
+  every frame and is never lost with it. Every drop above is permanent, since
+  only a game boundary clears what has been marked told. That is the opposite of
+  a queued check and it is the reason the two are never handled by the same
+  code.
   Beyond that one question a fixed rate limit paces how fast grants leave,
   since delivering a backlog at once takes the game down: one grant per
   interval and no more than the window's count inside ANY window of it,

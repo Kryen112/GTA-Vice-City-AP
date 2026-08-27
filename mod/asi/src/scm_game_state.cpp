@@ -691,9 +691,12 @@ void ScmGameState::ApplyConfig(const std::map<std::int64_t, int>& item_globals,
   // reported before the drop, the baseline could not mark it because the global no
   // longer held its new target, and the raise then gave it a second row.
   //
-  // A queued report survives too, so a landing found while the socket was down
-  // reaches the player once the client is back rather than being dropped for
-  // having happened at the wrong moment.
+  // A queued report is NOT held for the client, and saying so here because the
+  // paragraph above is about the AP server's socket rather than this one: the
+  // bridge stays up through an AP outage, so a landing is pumped to a client that
+  // has no slot to compose it against and is dropped there. Those rows are gone,
+  // which is the log's cost for an outage and not the item's, since every unlock
+  // global is read again on the next frame.
   location_to_global_.clear();
   for (const auto& [global_index, location] : completion_watch_) {
     location_to_global_[location] = global_index;
