@@ -1,9 +1,12 @@
 """Tests for the mod installer, on a temporary install with a fake payload.
 
-Each test passes an explicit payload, so the real bundled payload (staged by
-the build once the mod compiles) never matters here. Covers deploy, backup,
-idempotency, the no-payload path, the removal manifest, remove, and the text
-table patch that carries the pause menu's Archipelago label.
+The tests up to TestDeltaPayload pass an explicit payload, so the real bundled
+payload (staged by the build once the mod compiles) never matters to them: they
+cover deploy, backup, idempotency, the no-payload path, the removal manifest,
+remove, and the text table patch that carries the pause menu's Archipelago
+label. TestDeltaPayload is the other half, where a payload of patches is put
+where the installer looks for the bundled one, since building the files from the
+install's own script is the thing an explicit payload skips.
 
 The text tables here are built by build_text_table, not copied from a game: the
 structure is the game's (a TABL of table offsets, then per-table TKEY records
@@ -13,9 +16,11 @@ true.
 
 from __future__ import annotations
 
+import json
 import struct
 import tempfile
 import unittest
+import unittest.mock
 from pathlib import Path
 
 from ... import installer
@@ -546,6 +551,200 @@ class TestTextTableDeploy(unittest.TestCase):
                 table.write_bytes(installer.add_gxt_key(VANILLA_TABLE, key, value))
                 installer.remove(self.install, payload=PAYLOAD)
                 self.assertEqual(table.read_bytes(), VANILLA_TABLE)
+
+
+STOCK_SCRIPT = b"the game's own script, " * 40
+BUILT_SCRIPT = STOCK_SCRIPT + b"and the gates the mod adds"
+BUILT_CLEO = b"a watcher thread the mod adds"
+
+
+def build_delta_payload(root: Path, stock: bytes = STOCK_SCRIPT,
+                        targets: dict[str, bytes] | None = None) -> Path:
+    """A bundled payload of the shape the build stages: the ASI whole, every
+    script as a delta against the stock one, and the manifest that says what
+    each delta must reconstruct."""
+    import hashlib
+
+    import bsdiff4
+    if targets is None:
+        targets = {"main.scm": BUILT_SCRIPT, "cleo/apwatchers.cs": BUILT_CLEO}
+    root.mkdir(parents=True, exist_ok=True)
+    (root / "GtaVcAp.VC.asi").write_bytes(b"asi-bytes")
+    manifest = {"stock_main_scm_sha256": hashlib.sha256(stock).hexdigest(),
+                "targets": {"GtaVcAp.VC.asi": hashlib.sha256(b"asi-bytes").hexdigest()}}
+    for destination, data in targets.items():
+        path = root.joinpath(*f"{destination}{installer.DELTA_SUFFIX}".split("/"))
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(bsdiff4.diff(stock, data))
+        manifest["targets"][destination] = hashlib.sha256(data).hexdigest()
+    (root / installer.PAYLOAD_MANIFEST_NAME).write_text(
+        json.dumps(manifest), encoding="utf-8")
+    return root
+
+
+class TestDeltaPayload(unittest.TestCase):
+    """The payload carries no script of the game's, so every script the mod
+    installs is built here from the player's own file."""
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self._tmp.name)
+        self.install = self.root / "game"
+        self.install.mkdir()
+        self.payload = build_delta_payload(self.root / "payload")
+        self._patch = unittest.mock.patch.object(
+            installer, "_payload_root", lambda: self.payload)
+        self._patch.start()
+
+    def tearDown(self) -> None:
+        self._patch.stop()
+        self._tmp.cleanup()
+
+    def _script(self, data: bytes) -> Path:
+        path = self.install / "data" / "main.scm"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(data)
+        return path
+
+    def _backup(self, data: bytes) -> Path:
+        path = self.install / installer.BACKUP_DIR_NAME / "main.scm"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(data)
+        return path
+
+    def test_the_payload_is_built_from_the_installs_own_script(self) -> None:
+        self._script(STOCK_SCRIPT)
+        self.assertEqual(dict(installer.materialize_payload(self.install)), {
+            "GtaVcAp.VC.asi": b"asi-bytes",
+            "cleo/apwatchers.cs": BUILT_CLEO,
+            "main.scm": BUILT_SCRIPT,
+        })
+
+    def test_the_backup_is_the_source_once_it_exists(self) -> None:
+        # After the first deploy the game folder holds our script, so the stock
+        # one is only in the backup. Reading the live file here would patch a
+        # patched file, which is how a payload builds itself twice into nothing.
+        self._backup(STOCK_SCRIPT)
+        self._script(BUILT_SCRIPT)
+        self.assertEqual(dict(installer.materialize_payload(self.install))["main.scm"],
+                         BUILT_SCRIPT)
+
+    def test_a_backup_that_is_not_stock_refuses_even_when_the_live_file_is(self) -> None:
+        # The strict rule, deliberately: repairing the backup from the live file
+        # would be the mod rewriting the player's only copy of a game file on its
+        # own reasoning about which of the two is real.
+        self._backup(b"another mod's script")
+        self._script(STOCK_SCRIPT)
+        with self.assertRaises(installer.StockScriptRefused) as refused:
+            installer.materialize_payload(self.install)
+        self.assertIn(installer.BACKUP_DIR_NAME, str(refused.exception))
+
+    def test_a_script_that_is_not_the_1_0_one_refuses_by_hash(self) -> None:
+        self._script(b"a 1.1 script")
+        with self.assertRaises(installer.StockScriptRefused) as refused:
+            installer.materialize_payload(self.install)
+        message = str(refused.exception)
+        self.assertIn("data/main.scm", message)
+        # The hash found and the hash wanted, so a report says which file it is.
+        import hashlib
+        self.assertIn(hashlib.sha256(b"a 1.1 script").hexdigest(), message)
+
+    def test_no_script_at_all_refuses(self) -> None:
+        with self.assertRaises(installer.StockScriptRefused) as refused:
+            installer.materialize_payload(self.install)
+        self.assertIn("no data/main.scm", str(refused.exception))
+
+    def test_a_rebuild_that_misses_its_target_refuses(self) -> None:
+        # The patch applies to anything; only the target hash says whether what
+        # came out is the file the build made.
+        manifest = json.loads(
+            (self.payload / installer.PAYLOAD_MANIFEST_NAME).read_text(encoding="utf-8"))
+        manifest["targets"]["main.scm"] = "0" * 64
+        (self.payload / installer.PAYLOAD_MANIFEST_NAME).write_text(
+            json.dumps(manifest), encoding="utf-8")
+        self._script(STOCK_SCRIPT)
+        with self.assertRaises(installer.StockScriptRefused) as refused:
+            installer.materialize_payload(self.install)
+        self.assertIn("main.scm", str(refused.exception))
+
+    def test_deploy_puts_the_built_files_in_place_and_backs_up_the_stock_one(self) -> None:
+        self._script(STOCK_SCRIPT)
+        installer.deploy(self.install)
+        self.assertEqual((self.install / "data" / "main.scm").read_bytes(), BUILT_SCRIPT)
+        self.assertEqual((self.install / "CLEO" / "apwatchers.cs").read_bytes(), BUILT_CLEO)
+        self.assertEqual(
+            (self.install / installer.BACKUP_DIR_NAME / "main.scm").read_bytes(),
+            STOCK_SCRIPT)
+        self.assertTrue(installer.mod_is_current(self.install))
+
+    def test_an_install_that_cannot_be_patched_is_not_current(self) -> None:
+        # Reported, not raised: deploy is where the refusal belongs, and a check
+        # that throws would reach the client as an install failure with no name.
+        self._script(b"a 1.1 script")
+        self.assertFalse(installer.mod_is_current(self.install))
+
+    def test_a_payload_with_no_manifest_refuses(self) -> None:
+        # Nothing then says which script the patches were made against, and
+        # patching against a guess is how a game folder fills with rubbish.
+        (self.payload / installer.PAYLOAD_MANIFEST_NAME).unlink()
+        self._script(STOCK_SCRIPT)
+        with self.assertRaises(installer.StockScriptRefused) as refused:
+            installer.materialize_payload(self.install)
+        self.assertIn("Reinstall the apworld", str(refused.exception))
+
+    def test_a_manifest_that_will_not_read_refuses(self) -> None:
+        # Both ways it can fail to be the thing: not json at all, and json of
+        # another shape. The second is the one that would otherwise escape as a
+        # KeyError with no message for the player on it.
+        for content in (b"{not json at all", b'{"targets": "not a mapping"}',
+                        b'["a list"]', b'{"stock_main_scm_sha256": 7}'):
+            with self.subTest(content=content):
+                (self.payload / installer.PAYLOAD_MANIFEST_NAME).write_bytes(content)
+                self._script(STOCK_SCRIPT)
+                with self.assertRaises(installer.StockScriptRefused):
+                    installer.materialize_payload(self.install)
+
+    def test_a_current_install_stays_current_without_its_backup(self) -> None:
+        # The backup is a game file a player may well tidy away. Asking whether
+        # the mod is in place must not depend on it: answering no here would
+        # send deploy to rebuild what is already there, and deploy would refuse
+        # for want of a stock script and hold the game shut over it.
+        self._script(STOCK_SCRIPT)
+        installer.deploy(self.install)
+        (self.install / installer.BACKUP_DIR_NAME / "main.scm").unlink()
+        self.assertTrue(installer.mod_is_current(self.install))
+
+    def test_the_manifest_is_not_a_file_the_mod_installs(self) -> None:
+        self.assertEqual(installer.payload_paths(),
+                         ["GtaVcAp.VC.asi", "cleo/apwatchers.cs", "main.scm"])
+
+    def test_uninstalling_needs_no_stock_script(self) -> None:
+        # The install a player most wants to undo is the one that cannot be
+        # patched, so removal reads destinations and never a delta.
+        self._script(STOCK_SCRIPT)
+        installer.deploy(self.install)
+        (self.install / installer.BACKUP_DIR_NAME / "main.scm").unlink()
+        (self.install / "data" / "main.scm").unlink()
+        installer.remove(self.install)
+        self.assertFalse((self.install / "GtaVcAp.VC.asi").exists())
+        self.assertFalse((self.install / "CLEO" / "apwatchers.cs").exists())
+
+    def test_removal_restores_the_script_this_payload_would_have_installed(self) -> None:
+        # Recognised by hash rather than by bytes, since the payload holds a
+        # delta and not the file. Anything else in data/main.scm is the player's.
+        self._script(STOCK_SCRIPT)
+        installer.deploy(self.install)
+        installer.remove(self.install)
+        self.assertEqual((self.install / "data" / "main.scm").read_bytes(), STOCK_SCRIPT)
+
+    def test_removal_leaves_a_script_this_payload_did_not_install(self) -> None:
+        self._script(STOCK_SCRIPT)
+        installer.deploy(self.install)
+        (self.install / "data" / "main.scm").write_bytes(b"the player's own build")
+        log = installer.remove(self.install)
+        self.assertEqual((self.install / "data" / "main.scm").read_bytes(),
+                         b"the player's own build")
+        self.assertTrue([line for line in log if "not recognized" in line])
 
 
 if __name__ == "__main__":

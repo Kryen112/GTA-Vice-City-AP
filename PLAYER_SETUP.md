@@ -58,6 +58,8 @@ Type these in the client console:
 | `/setfolder` | Re-pick the install folder (the one holding `gta-vc.exe`). |
 | `/installmod` | Reinstall or update the bundled mod. Close the game first. |
 | `/restore` | Restore your normal saves and stop Archipelago save isolation. Close the game first. |
+| `/uninstall` | Take the mod out of the game folder, put your original `main.scm` back, and restore your normal saves. Close the game first. |
+| `/deathlink` | Turn DeathLink on or off for this session, or hand it back to your YAML with `/deathlink seed`. |
 
 ## The Archipelago page
 
@@ -69,13 +71,25 @@ open, and, for whatever your YAML enabled, which abilities are locked, which
 content classes are still held, which radio stations you have, and whether the
 radar is hidden.
 
+## What the mod does to your game folder
+
+The mod's mission gating lives in the game's own script file, `data/main.scm`. The apworld does not carry a copy of that file: it carries the differences, and the client builds the modded script from **your** copy when it installs.
+
+Two things follow from that.
+
+- Your `data/main.scm` has to be the original 1.0 one. If it is not, the client says so, prints the fingerprint it found, and installs nothing. Restore `data/main.scm` from your own copy of the game files and connect again. It also refuses when `AP_mod_backup\main.scm` exists and is not the original; delete that file and reconnect.
+- The mod backs your original script up to `AP_mod_backup\main.scm` in the game folder the first time it installs, and that backup is the copy it patches from every time after. Leave the folder alone. `/uninstall` puts the backup back and then removes it; if you delete it yourself, restore `data/main.scm` from your own copy of the game files.
+
+The client will not launch the game when the install is refused, since a Vice City running on an unpatched script sends no checks and receives no items.
+
 ## Saves are kept separate
 
-Each seed gets its own save slots, and your existing Vice City saves are left untouched. Your original `main.scm` is backed up once when the mod installs. Run `/restore` (with the game closed) to switch back to your normal saves.
+Each seed gets its own save slots, and your existing Vice City saves are left untouched. Run `/restore` (with the game closed) to switch back to your normal saves.
 
 ## If something goes wrong
 
 - **The client says your executable is not 1.0.** It names the build it detected. You need an original 1.0 `gta-vc.exe`; no other build is supported.
 - **The game starts but nothing Archipelago happens.** Confirm Ultimate ASI Loader is present as `dinput8.dll` and CLEO is installed, then run `/installmod` with the game closed and relaunch.
+- **The client says your `main.scm` is not the original 1.0 script.** It prints the fingerprint it found and the one it wants. Restore `data/main.scm` from your own copy of the game files, and remove `AP_mod_backup\main.scm` if it is there and is not the original. Another Vice City mod that replaces the script is the usual cause.
 - **The client cannot find the game.** Run `/setfolder` and pick the folder that holds `gta-vc.exe`.
 - **You started before connecting.** Progress re-derives from the server on every load and reconnect, so connect the client and reload your save.

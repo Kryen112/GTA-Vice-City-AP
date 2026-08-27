@@ -1,10 +1,19 @@
 """Installs the GTA Vice City mod into a game install, from the client.
 
 A packaged apworld may carry the mod under ``data/mod`` (staged by
-build_apworld.py once the mod is complete): the compiled ASI, the CLEO scripts,
-and the compiled main.scm. ``deploy`` copies each file to its place in the
-install, backing up any stock file it replaces, and is idempotent. It installs
-only our own files; the player supplies Ultimate ASI Loader and CLEO.
+build_apworld.py once the mod is complete): the compiled ASI, and a bsdiff4
+delta for every file the game loads as script, which is main.scm and the CLEO
+scripts. The package holds no copy of the game's script, only the differences
+from it, so ``deploy`` builds those files from the install's own stock main.scm
+before putting each one in its place, backing up any stock file it replaces.
+Idempotent. It installs only our own files; the player supplies Ultimate ASI
+Loader and CLEO.
+
+An install whose main.scm is not the original 1.0 script cannot be patched, and
+that is a refusal (``StockScriptRefused``) naming what was found, never a
+best effort: a patch applied to the wrong bytes makes a game that fails
+somewhere else entirely. Removal never patches anything, so it works on an
+install that cannot be deployed to.
 
 When the apworld carries no payload, every entry point here is a no-op, so the
 installer can ship before the mod does without touching a game install.
@@ -27,13 +36,37 @@ Destinations follow the standard GTA Vice City layout:
 from __future__ import annotations
 
 import bisect
+import hashlib
+import json
 import shutil
 import struct
 from pathlib import Path
 
+
+class StockScriptRefused(Exception):
+    """The install's own main.scm is not the script the payload patches.
+
+    Carries the whole player-facing message, since every way to raise it has
+    something specific to say about what was found and how to put it right.
+    """
+
 BACKUP_DIR_NAME = "AP_mod_backup"
 ASI_SUFFIX = ".asi"
 MAIN_SCM = "main.scm"
+
+# The payload carries no copy of the game's script. Every file the game's script
+# layer loads, main.scm and every CLEO script, ships as a bsdiff4 delta against
+# the player's own stock main.scm and is reconstructed here at deploy time; only
+# the ASI, which is our own compiled code, ships whole. Deltas keep their
+# destination's name with this suffix on the end, so the path a delta deploys to
+# is its own name with the suffix taken off.
+DELTA_SUFFIX = ".bsdiff4"
+
+# What the build writes beside the deltas: the sha256 of the stock main.scm they
+# were taken against, and the sha256 each one must reconstruct. Reading the
+# hashes from the payload rather than from constants here means a rebuilt payload
+# carries its own, and nothing in this file has to be edited to match it.
+PAYLOAD_MANIFEST_NAME = "payload.json"
 
 # Every relative path any payload has ever deployed, so removal cleans a modded
 # install even when this apworld carries no payload of its own. main.scm is
@@ -352,13 +385,179 @@ def _walk(node, prefix: str = "") -> list[tuple[str, bytes]]:
     return files
 
 
-def payload_files() -> list[tuple[str, bytes]]:
-    """Every file in the bundled mod payload, as (posix relative path, bytes).
-    Empty when the apworld carries no payload."""
+def _walk_names(node, prefix: str = "") -> list[str]:
+    """Every file in the payload by name, without reading any of them."""
+    names: list[str] = []
+    for entry in node.iterdir():
+        name = f"{prefix}{entry.name}"
+        if entry.is_dir():
+            names.extend(_walk_names(entry, name + "/"))
+        else:
+            names.append(name)
+    return names
+
+
+def _deployed_path(entry_name: str) -> str | None:
+    """The destination a payload entry deploys to, or None when it deploys
+    nowhere. The manifest is the one entry that stays behind: it describes the
+    payload rather than belonging to the install."""
+    if entry_name == PAYLOAD_MANIFEST_NAME:
+        return None
+    if entry_name.endswith(DELTA_SUFFIX):
+        return entry_name[:-len(DELTA_SUFFIX)]
+    return entry_name
+
+
+def payload_paths() -> list[str]:
+    """Every destination the bundled payload deploys to, reading no file.
+
+    Removal works in destinations and never needs the bytes, which is what keeps
+    /uninstall working on an install this mod cannot patch: the moment the stock
+    script is missing or wrong is exactly the moment someone reaches for it.
+    """
     root = _payload_root()
     if root is None:
         return []
-    return sorted(_walk(root))
+    return sorted(path for path in (_deployed_path(name) for name in _walk_names(root))
+                  if path is not None)
+
+
+def _sha256(data: bytes) -> str:
+    return hashlib.sha256(data).hexdigest()
+
+
+def payload_target_sha256() -> dict[str, str]:
+    """What each payload file hashes to once built, by destination.
+
+    Read from the manifest, so removal can tell a main.scm this mod installed
+    from one the player put there without patching anything. A payload staged by
+    hand carries no manifest and its files are already what they deploy as, so
+    their own bytes answer the same question. A manifest that will not read
+    leaves every destination unrecognized, which keeps removal off files it
+    cannot account for.
+    """
+    root = _payload_root()
+    if root is None:
+        return {}
+    manifest_file = root / PAYLOAD_MANIFEST_NAME
+    if not manifest_file.is_file():
+        return {name: _sha256(data) for name, data in _walk(root)}
+    try:
+        manifest = json.loads(manifest_file.read_bytes().decode("utf-8"))
+        return dict(manifest["targets"])
+    except (UnicodeDecodeError, json.JSONDecodeError, KeyError, TypeError):
+        return {}
+
+
+def stock_script(install_dir: Path, expected_sha256: str) -> bytes:
+    """The install's own stock main.scm, or a refusal naming what was found.
+
+    The backup is the source once it exists, and a backup that is not the stock
+    script is refused even when data/main.scm would have passed. Repairing it
+    here would mean the mod silently rewriting the only copy of a game file the
+    player still has, on its own reasoning about which of two files is real.
+
+    Before there is a backup there is only data/main.scm, which is stock on an
+    install this mod has never touched. Deploy backs it up in the same run, so
+    this branch is the first install and nothing else.
+    """
+    backup = install_dir / BACKUP_DIR_NAME / MAIN_SCM
+    live = install_dir / "data" / MAIN_SCM
+    for path, description in ((backup, f"{BACKUP_DIR_NAME}/{MAIN_SCM}"),
+                              (live, f"data/{MAIN_SCM}")):
+        if not path.is_file():
+            continue
+        data = path.read_bytes()
+        if _sha256(data) == expected_sha256:
+            return data
+        raise StockScriptRefused(
+            f"The mod could not be installed: {description} is not the original "
+            f"1.0 script. It hashes {_sha256(data)}, and the mod patches "
+            f"{expected_sha256}. Restore data/{MAIN_SCM} from your own copy of "
+            f"the game files, and if {BACKUP_DIR_NAME}/{MAIN_SCM} is there and "
+            "is not the original, remove it.")
+    raise StockScriptRefused(
+        f"The mod could not be installed: no data/{MAIN_SCM} in the game "
+        "folder to patch. Restore it from your own copy of the game files.")
+
+
+def _payload_manifest(entries: dict[str, bytes]) -> tuple[str, dict[str, str]]:
+    """The stock hash and the target hashes the payload was built with.
+
+    Every way the manifest can fail to say those two things is one refusal, so
+    nothing downstream indexes into it: a file that is json but not this json
+    would otherwise leave a KeyError to reach the player as an install failure
+    with no name on it.
+    """
+    reinstall = "Reinstall the apworld."
+    manifest = entries.get(PAYLOAD_MANIFEST_NAME)
+    if manifest is None:
+        raise StockScriptRefused(
+            f"The mod could not be installed: the apworld's payload carries no "
+            f"{PAYLOAD_MANIFEST_NAME}, so nothing says which script its patches "
+            f"were made against. {reinstall}")
+    try:
+        content = json.loads(manifest.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise StockScriptRefused(
+            f"The mod could not be installed: the payload's "
+            f"{PAYLOAD_MANIFEST_NAME} does not read as json ({error}). "
+            f"{reinstall}") from error
+    stock_sha256 = content.get("stock_main_scm_sha256") if isinstance(content, dict) else None
+    targets = content.get("targets") if isinstance(content, dict) else None
+    if not isinstance(stock_sha256, str) or not isinstance(targets, dict):
+        raise StockScriptRefused(
+            f"The mod could not be installed: the payload's "
+            f"{PAYLOAD_MANIFEST_NAME} does not name the script its patches were "
+            f"made against and what each one builds. {reinstall}")
+    return stock_sha256, targets
+
+
+def materialize_payload(install_dir: Path) -> list[tuple[str, bytes]]:
+    """The bundled payload as (destination, bytes), patches applied.
+
+    Every file the game loads as script is a delta against the player's own
+    stock main.scm, so this is where the payload becomes files. Reads only, and
+    measured at 11 ms for four of the thirteen patches over a 1.27 MB source, so
+    deploy pays it once and nothing has to cache it.
+
+    Each result is checked against the hash the build recorded for it, which is
+    what turns a patch that applied to the wrong bytes into a refusal rather
+    than a game folder full of plausible rubbish. Empty when the apworld carries
+    no payload.
+    """
+    root = _payload_root()
+    if root is None:
+        return []
+    entries = dict(_walk(root))
+    deltas = {name: data for name, data in entries.items()
+              if name.endswith(DELTA_SUFFIX)}
+    if not deltas:
+        return sorted((name, data) for name, data in entries.items()
+                      if _deployed_path(name) is not None)
+    import bsdiff4
+
+    stock_sha256, targets = _payload_manifest(entries)
+    stock = stock_script(Path(install_dir), stock_sha256)
+    files: list[tuple[str, bytes]] = []
+    for name, data in entries.items():
+        destination = _deployed_path(name)
+        if destination is None:
+            continue
+        if name not in deltas:
+            files.append((destination, data))
+            continue
+        rebuilt = bsdiff4.patch(stock, data)
+        if _sha256(rebuilt) != targets.get(destination):
+            # The script this patched was already matched against the hash the
+            # payload was built against, so the file it started from is right
+            # and the payload is what disagrees with itself.
+            raise StockScriptRefused(
+                f"The mod could not be installed: patching {destination} from "
+                "this install's script did not produce the file the apworld "
+                "was built with. Reinstall the apworld.")
+        files.append((destination, rebuilt))
+    return sorted(files)
 
 
 def _destination(install_dir: Path, relative_path: str) -> Path:
@@ -421,9 +620,24 @@ def _backup_once(install_dir: Path, path: Path) -> None:
 def mod_is_current(install_dir: Path, payload: list[tuple[str, bytes]] | None = None) -> bool:
     """Whether the install already runs this apworld's mod, byte for byte. An
     apworld packaged without a mod counts as current, so it never triggers an
-    install loop."""
-    files = payload_files() if payload is None else payload
-    if not files:
+    install loop.
+
+    Answered from the hashes the payload records, so it never patches anything
+    and never needs the stock script. Building the payload to answer would make
+    an install that is already correct read as stale the moment its backup went
+    missing, and deploy would then refuse to rebuild what is already in place
+    and hold the game shut over a file nobody needs any more.
+    """
+    if payload is not None:
+        return _install_matches(install_dir, [(relative, _sha256(data))
+                                              for relative, data in payload])
+    return _install_matches(install_dir, sorted(payload_target_sha256().items()))
+
+
+def _install_matches(install_dir: Path, expected: list[tuple[str, str]]) -> bool:
+    """Whether every destination holds the file the payload would put there,
+    each named by the sha256 it has to have."""
+    if not expected:
         return True
     install_dir = Path(install_dir)
     # A leftover copy from an earlier build is loaded as a second instance, so
@@ -432,10 +646,10 @@ def mod_is_current(install_dir: Path, payload: list[tuple[str, bytes]] | None = 
     for stale_path in STALE_PAYLOAD_PATHS:
         if install_dir.joinpath(*stale_path.split("/")).is_file():
             return False
-    for relative_path, data in files:
+    for relative_path, expected_sha256 in expected:
         destination = _destination(install_dir, relative_path)
         try:
-            if destination.read_bytes() != data:
+            if _sha256(destination.read_bytes()) != expected_sha256:
                 return False
         except OSError:
             return False
@@ -446,9 +660,16 @@ def mod_is_current(install_dir: Path, payload: list[tuple[str, bytes]] | None = 
 
 
 def deploy(install_dir: Path, payload: list[tuple[str, bytes]] | None = None) -> list[str]:
-    """Copy the bundled mod into the install, backing up any stock file it
-    replaces. Idempotent. Returns log lines."""
-    files = payload_files() if payload is None else payload
+    """Build the bundled mod from the install's own script and put it in place,
+    backing up any stock file it replaces. Idempotent. Returns log lines.
+
+    Raises StockScriptRefused when the install's main.scm is not the script the
+    payload patches, with the whole message for the player in it. A payload
+    handed in directly skips that check, since it is already files rather than
+    patches: the tests are what pass one, and it is the one way left to record a
+    backup nothing verified.
+    """
+    files = materialize_payload(install_dir) if payload is None else payload
     if not files:
         raise FileNotFoundError(
             "no mod payload in the apworld; it was packaged without data/mod")
@@ -485,13 +706,25 @@ def remove(install_dir: Path, payload: list[tuple[str, bytes]] | None = None) ->
     covers the bundled payload plus every file the mod has ever shipped, so an
     apworld packaged without a payload still cleans a modded install. Missing
     pieces are skipped, so a partial install cleans up the same way. Idempotent.
-    Returns log lines; an empty list means the install was already stock."""
-    files = payload_files() if payload is None else payload
+    Returns log lines; an empty list means the install was already stock.
+
+    Reads the payload's destinations and the hash of the main.scm it would have
+    installed, never the payload's bytes, so an install whose script cannot be
+    patched still uninstalls. That is the install a player most wants to undo.
+    """
+    if payload is None:
+        payload_destinations = payload_paths()
+        payload_scm_sha256 = payload_target_sha256().get(MAIN_SCM)
+    else:
+        payload_destinations = [relative for relative, _ in payload]
+        payload_scm_bytes = dict(payload).get(MAIN_SCM)
+        payload_scm_sha256 = (None if payload_scm_bytes is None
+                              else _sha256(payload_scm_bytes))
     install_dir = Path(install_dir)
     log: list[str] = []
 
     log.extend(_clear_stale_paths(install_dir))
-    relative_paths = sorted({relative for relative, _ in files} | set(SHIPPED_PAYLOAD_PATHS))
+    relative_paths = sorted(set(payload_destinations) | set(SHIPPED_PAYLOAD_PATHS))
     # Counted, like the install. The paths an earlier build left behind stay
     # named individually below, since one of those is news rather than routine.
     removed = 0
@@ -520,13 +753,14 @@ def remove(install_dir: Path, payload: list[tuple[str, bytes]] | None = None) ->
     backup_dir = install_dir / BACKUP_DIR_NAME
     backup = backup_dir / MAIN_SCM
     installed_scm = install_dir / "data" / MAIN_SCM
-    payload_scm = dict(files).get(MAIN_SCM)
     installed_bytes = installed_scm.read_bytes() if installed_scm.is_file() else None
+    installed_is_ours = (installed_bytes is not None
+                         and _sha256(installed_bytes) == payload_scm_sha256)
     keep_backup = False
     if backup.is_file():
         if installed_bytes == backup.read_bytes():
             pass  # already stock; only the backup is left to clean up
-        elif installed_bytes is None or installed_bytes == payload_scm:
+        elif installed_bytes is None or installed_is_ours:
             installed_scm.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(backup, installed_scm)
             log.append("Restored the stock main.scm.")
@@ -534,7 +768,7 @@ def remove(install_dir: Path, payload: list[tuple[str, bytes]] | None = None) ->
             keep_backup = True
             log.append("data/main.scm was not recognized, so it was left alone; "
                        f"the stock backup stays in {BACKUP_DIR_NAME}.")
-    elif payload_scm is not None and installed_bytes == payload_scm:
+    elif installed_is_ours:
         log.append("No main.scm backup found, so the modded main.scm is still "
                    "in place. Restore data/main.scm from your own copy of the "
                    "game files.")

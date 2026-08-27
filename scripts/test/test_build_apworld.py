@@ -22,11 +22,28 @@ from build_apworld import stale_sources  # noqa: E402
 GLOBS = ("src/**/*.cpp", "src/**/*.hpp", "plugin/project.vcxproj")
 
 
-def _write(path: pathlib.Path, mtime: float) -> pathlib.Path:
+def _write(path: pathlib.Path, mtime: float, text: str = "x") -> pathlib.Path:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text("x", encoding="utf-8")
+    path.write_text(text, encoding="utf-8")
     os.utime(path, (mtime, mtime))
     return path
+
+
+# A stand-in for the stock main.scm. The real one is the game's file and is never
+# in the repository, and nothing these tests check needs it: a delta is a delta.
+STOCK_TEXT = "the game's own script, " * 40
+
+
+def _stock(tmp_path: pathlib.Path, monkeypatch) -> bytes:
+    """Puts a fake stock script where the build reads one, and pins its hash."""
+    import hashlib
+    path = _write(tmp_path / "stock.scm", 1000, STOCK_TEXT)
+    data = path.read_bytes()
+    monkeypatch.delenv(build_apworld.STOCK_SCM_VARIABLE, raising=False)
+    monkeypatch.setattr(build_apworld, "STOCK_SCM", path)
+    monkeypatch.setattr(build_apworld, "STOCK_SCM_SHA256",
+                        hashlib.sha256(data).hexdigest())
+    return data
 
 
 def test_absent_artifact_is_not_stale(tmp_path: pathlib.Path) -> None:
@@ -291,11 +308,12 @@ def test_the_repository_manifest_is_the_one_that_ships() -> None:
 
 def _payload(tmp_path: pathlib.Path, monkeypatch, cleo_names: tuple = ("apwatchers.cs",)):
     """A staging setup on temporary paths: both artifacts, some CLEO, a stage."""
-    asi = _write(tmp_path / "GtaVcAp.VC.asi", 1000)
-    scm = _write(tmp_path / "main.scm", 1000)
+    _stock(tmp_path, monkeypatch)
+    asi = _write(tmp_path / "GtaVcAp.VC.asi", 1000, "compiled asi")
+    scm = _write(tmp_path / "main.scm", 1000, STOCK_TEXT + "and our gates")
     cleo_dir = tmp_path / "cleo"
     for name in cleo_names:
-        _write(cleo_dir / name, 1000)
+        _write(cleo_dir / name, 1000, f"the {name} thread")
     staged = tmp_path / "world" / "data" / "mod"
     monkeypatch.setattr(build_apworld, "MOD_ASI", asi)
     monkeypatch.setattr(build_apworld, "MOD_SCM", scm)
@@ -305,12 +323,135 @@ def _payload(tmp_path: pathlib.Path, monkeypatch, cleo_names: tuple = ("apwatche
 
 
 def test_staging_writes_the_payload_the_component_packages(tmp_path: pathlib.Path, monkeypatch) -> None:
+    # The names it reports are destinations, which is what the removal manifest
+    # and the installer are written in terms of; what it writes is deltas.
     staged = _payload(tmp_path, monkeypatch)
     assert build_apworld.stage_mod_payload() == [
         "GtaVcAp.VC.asi", "cleo/apwatchers.cs", "main.scm"]
     assert (staged / "GtaVcAp.VC.asi").is_file()
-    assert (staged / "main.scm").is_file()
-    assert (staged / "cleo" / "apwatchers.cs").is_file()
+    assert (staged / "main.scm.bsdiff4").is_file()
+    assert (staged / "cleo" / "apwatchers.cs.bsdiff4").is_file()
+    assert (staged / "payload.json").is_file()
+
+
+def test_no_script_of_the_game_is_staged(tmp_path: pathlib.Path, monkeypatch) -> None:
+    # Not the whole property, which is a matter of how much of a file bsdiff
+    # carries over verbatim, but the crude half of it that a build can regress
+    # into: a staged file that IS one of the scripts. Checked as bytes rather
+    # than by name, since the name is the easy half to get right.
+    staged = _payload(tmp_path, monkeypatch)
+    build_apworld.stage_mod_payload()
+    scripts = {build_apworld.MOD_SCM.read_bytes(),
+               (build_apworld.MOD_CLEO_DIR / "apwatchers.cs").read_bytes(),
+               (tmp_path / "stock.scm").read_bytes()}
+    for path in staged.rglob("*"):
+        if path.is_file():
+            assert path.read_bytes() not in scripts, f"{path.name} ships as itself"
+
+
+def test_the_staged_deltas_rebuild_the_scripts(tmp_path: pathlib.Path, monkeypatch) -> None:
+    # What the installer will do, done here: the delta plus the player's own
+    # script has to be the file the build made, or the payload installs nothing
+    # that runs.
+    import bsdiff4
+    staged = _payload(tmp_path, monkeypatch)
+    stock = (tmp_path / "stock.scm").read_bytes()
+    build_apworld.stage_mod_payload()
+    for destination, source in (("main.scm", build_apworld.MOD_SCM),
+                                ("cleo/apwatchers.cs",
+                                 build_apworld.MOD_CLEO_DIR / "apwatchers.cs")):
+        delta = staged.joinpath(*f"{destination}.bsdiff4".split("/")).read_bytes()
+        assert bsdiff4.patch(stock, delta) == source.read_bytes()
+
+
+def test_the_manifest_pins_the_stock_and_every_target(tmp_path: pathlib.Path, monkeypatch) -> None:
+    # The installer patches against the hash in here and checks each result
+    # against its target, so a manifest naming the wrong script or missing a
+    # destination is an install that cannot verify what it just built.
+    import hashlib
+    staged = _payload(tmp_path, monkeypatch)
+    build_apworld.stage_mod_payload()
+    manifest = json.loads((staged / "payload.json").read_text(encoding="utf-8"))
+    assert manifest["stock_main_scm_sha256"] == build_apworld.STOCK_SCM_SHA256
+    # Every destination, the copied ASI included: the installer reads this to
+    # tell a current install from a stale one, so a file missing from it is a
+    # file that can never read as out of date.
+    assert set(manifest["targets"]) == {
+        "GtaVcAp.VC.asi", "main.scm", "cleo/apwatchers.cs"}
+    expected = hashlib.sha256(build_apworld.MOD_SCM.read_bytes()).hexdigest()
+    assert manifest["targets"]["main.scm"] == expected
+
+
+def test_a_delta_that_does_not_rebuild_refuses(tmp_path: pathlib.Path, monkeypatch) -> None:
+    # The round trip is the gate, so it has to be a gate: with the patch made to
+    # return anything else, staging must refuse rather than write the delta.
+    _payload(tmp_path, monkeypatch)
+    monkeypatch.setattr(build_apworld.bsdiff4, "patch", lambda stock, delta: b"not it")
+    try:
+        build_apworld.stage_mod_payload()
+    except SystemExit as refusal:
+        assert "does not reconstruct" in str(refusal)
+    else:
+        raise AssertionError("a delta that does not rebuild its file must refuse")
+
+
+def test_an_absent_stock_script_refuses(tmp_path: pathlib.Path, monkeypatch) -> None:
+    monkeypatch.delenv(build_apworld.STOCK_SCM_VARIABLE, raising=False)
+    monkeypatch.setattr(build_apworld, "STOCK_SCM", tmp_path / "absent.scm")
+    try:
+        build_apworld.stock_script_bytes()
+    except SystemExit as refusal:
+        assert "no stock main.scm" in str(refusal)
+    else:
+        raise AssertionError("a build with no stock script must refuse")
+
+
+def test_a_stock_script_of_another_build_refuses(tmp_path: pathlib.Path, monkeypatch) -> None:
+    # A delta only applies to the file it was taken from, so a payload built
+    # against a 1.1 or a modded script installs on nobody's game, including the
+    # machine that built it once its own backup is verified.
+    _stock(tmp_path, monkeypatch)
+    monkeypatch.setattr(build_apworld, "STOCK_SCM_SHA256", "0" * 64)
+    try:
+        build_apworld.stock_script_bytes()
+    except SystemExit as refusal:
+        assert "not the known good" in str(refusal)
+    else:
+        raise AssertionError("a stock script that is not the 1.0 one must refuse")
+
+
+def test_the_environment_names_the_stock_script(tmp_path: pathlib.Path, monkeypatch) -> None:
+    # The path in the repository is the default and the variable is the override,
+    # which is what keeps a machine path out of the checkout.
+    _stock(tmp_path, monkeypatch)
+    elsewhere = _write(tmp_path / "elsewhere" / "stock.scm", 1000, STOCK_TEXT)
+    monkeypatch.setattr(build_apworld, "STOCK_SCM", tmp_path / "absent.scm")
+    monkeypatch.setenv(build_apworld.STOCK_SCM_VARIABLE, str(elsewhere))
+    assert build_apworld.stock_script_path() == elsewhere
+    assert build_apworld.stock_script_bytes() == elsewhere.read_bytes()
+
+
+def test_an_installer_that_cannot_rebuild_deltas_refuses(tmp_path: pathlib.Path, monkeypatch) -> None:
+    # The build packages the installer beside it. One that predates the delta
+    # payload would deploy files named for a patch format into the game folder,
+    # leaving the game with no script of ours at all.
+    _stock(tmp_path, monkeypatch)
+    monkeypatch.setattr(build_apworld, "MOD_SCM", _write(tmp_path / "main.scm", 1000))
+    monkeypatch.setattr(build_apworld, "_installer_module", lambda: object())
+    try:
+        build_apworld._refuse_unpatchable_payload()
+    except SystemExit as refusal:
+        assert "materialize_payload" in str(refusal)
+    else:
+        raise AssertionError("an installer that cannot rebuild deltas must refuse")
+
+
+def test_the_installer_this_build_packages_can_rebuild_deltas(tmp_path: pathlib.Path, monkeypatch) -> None:
+    # And the same check against the real file, which is what catches the two
+    # halves of the payload format drifting apart.
+    _stock(tmp_path, monkeypatch)
+    monkeypatch.setattr(build_apworld, "MOD_SCM", _write(tmp_path / "main.scm", 1000))
+    build_apworld._refuse_unpatchable_payload()
 
 
 def test_clearing_leaves_no_payload_in_the_world_package(tmp_path: pathlib.Path, monkeypatch) -> None:
@@ -327,11 +468,11 @@ def test_staging_replaces_what_an_earlier_build_left(tmp_path: pathlib.Path, mon
     # A script that stopped shipping still sits in the stage after an interrupted
     # build, and the component packages whatever it finds there.
     staged = _payload(tmp_path, monkeypatch)
-    _write(staged / "cleo" / "apwatchers.cs", 1000)
-    stale = _write(staged / "cleo" / "apshops.cs", 1000)
+    _write(staged / "cleo" / "apwatchers.cs.bsdiff4", 1000)
+    stale = _write(staged / "cleo" / "apshops.cs.bsdiff4", 1000)
     build_apworld.stage_mod_payload()
     assert not stale.exists()
-    assert (staged / "cleo" / "apwatchers.cs").is_file()
+    assert (staged / "cleo" / "apwatchers.cs.bsdiff4").is_file()
 
 
 def test_no_artifacts_stages_nothing_and_clears_a_leftover(tmp_path: pathlib.Path, monkeypatch) -> None:
@@ -430,13 +571,14 @@ def test_nothing_is_staged_until_every_gate_has_passed(tmp_path: pathlib.Path, m
     monkeypatch.setattr(build_apworld, "manifest_game", records("manifest", "Grand Theft Auto Vice City"))
     monkeypatch.setattr(build_apworld, "_refuse_unshippable_payload", records("payload"))
     monkeypatch.setattr(build_apworld, "_refuse_oversized_main", records("main"))
+    monkeypatch.setattr(build_apworld, "_refuse_unpatchable_payload", records("deltas"))
     monkeypatch.setattr(build_apworld, "stage_mod_payload", records("stage", []))
     monkeypatch.setattr(build_apworld, "clear_staged_payload", records("clear"))
     monkeypatch.setattr(build_apworld, "package", records("package", None))
     monkeypatch.setattr(sys, "argv", ["build_apworld.py"])
 
     assert build_apworld.main() == 1
-    for gate in ("manifest", "payload", "main"):
+    for gate in ("manifest", "payload", "main", "deltas"):
         assert order.index(gate) < order.index("stage"), f"{gate} runs after the payload is staged"
     # And the stage is cleared whatever the packaging did, which is why it is
     # the last thing to happen on a run that packaged nothing.

@@ -675,30 +675,49 @@ class GTAViceCityContext(CommonContext):
                                "gta_vice_city_options -> install_folder in host.yaml.")
         if not self.install_dir:
             return
+        # A failed install stops the launch. Starting the game anyway would run
+        # it on whatever script is in the folder, which is a game that sends no
+        # checks and takes no items, and the refusal that explains why would be
+        # a line above a window the player is already looking away from.
+        installed = True
         if self._auto_install_mod_enabled():
-            self.install_mod(announce_current=False)
-        if not self.game_launched and self._auto_launch_enabled():
+            installed = self.install_mod(announce_current=False)
+        if installed and not self.game_launched and self._auto_launch_enabled():
             self.launch_game()
 
-    def install_mod(self, announce_current: bool = True) -> None:
+    def install_mod(self, announce_current: bool = True) -> bool:
+        """Puts the mod in the game folder. True when it is there afterwards.
+
+        The answer gates the game launch: a game started on a script the mod
+        never patched sends no checks and reads to the player as a mod that does
+        not work, which is a worse thing to be handed than the refusal.
+        """
         from .. import installer
         if not self.install_dir:
             logger.warning("No install folder set. Use /setfolder first.")
-            return
+            return False
         try:
             # Check first, so a current mod (or an apworld with no payload) is a
             # silent no-op and never warns about a running game needlessly.
             if installer.mod_is_current(self.install_dir):
                 if announce_current:
                     logger.info("The mod is already up to date.")
-                return
+                return True
             if self.game_running():
                 logger.warning("Close the game before installing the mod.")
-                return
+                return False
             for line in installer.deploy(self.install_dir):
                 logger.info(line)
+        except installer.StockScriptRefused as refusal:
+            # The refusal carries the whole message: what was found and what to
+            # do about it. Logged as it stands, since rewording it here would be
+            # a second place saying the same thing differently.
+            logger.error(str(refusal))
+            return False
         except Exception as error:
             logger.error(f"Could not install the mod ({error}).")
+            return False
+        return True
 
     def uninstall_mod(self) -> None:
         """Take the mod back out of the install and bring the normal saves home

@@ -27,6 +27,11 @@ mod/asi/plugin/obj/
 mod/scm/main.scm
 mod/cleo/*.cs
 
+# The player's own stock script, which the build reads to compute the deltas it
+# ships. It is the game's file, so it is never committed and never packaged: what
+# ships is the difference from it.
+mod/scm/stock.scm
+
 # The payload staged into the world package for the length of one build.
 # The build clears it again; an interrupted one leaves it behind.
 apworld/gta_vice_city/data/mod/

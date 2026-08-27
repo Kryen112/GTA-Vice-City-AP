@@ -401,6 +401,50 @@ class TestModInstall(unittest.TestCase):
 
         asyncio.run(scenario())
 
+    def test_a_refused_install_says_so_and_reports_it_did_not_install(self) -> None:
+        # The refusal carries the whole message, so it is logged as it stands
+        # rather than wrapped in a second sentence saying less.
+        async def scenario() -> None:
+            with _install_folder_with_exe() as folder, _fake_settings(folder):
+                context = _context()
+                refusal = installer.StockScriptRefused(
+                    "The mod could not be installed: data/main.scm is not the "
+                    "original 1.0 script.")
+                with mock.patch.object(context, "game_running", return_value=False), \
+                     mock.patch.object(installer, "mod_is_current", return_value=False), \
+                     mock.patch.object(installer, "deploy", side_effect=refusal), \
+                     self.assertLogs("Client", level="ERROR") as logged:
+                    self.assertFalse(context.install_mod())
+                self.assertIn("not the original 1.0 script", "\n".join(logged.output))
+
+        asyncio.run(scenario())
+
+    def test_a_refused_install_does_not_launch_the_game(self) -> None:
+        # A game started on a script the mod never patched sends no checks and
+        # takes no items, which reads as a broken mod rather than as a refusal.
+        async def scenario() -> None:
+            with _install_folder_with_exe() as folder, \
+                    _fake_settings(folder, auto_launch_game=True, auto_install_mod=True):
+                context = _context()
+                with mock.patch.object(context, "install_mod", return_value=False), \
+                     mock.patch.object(context, "launch_game") as launch_game:
+                    await context.setup_and_launch()
+                    launch_game.assert_not_called()
+
+        asyncio.run(scenario())
+
+    def test_an_install_that_went_in_launches_the_game(self) -> None:
+        async def scenario() -> None:
+            with _install_folder_with_exe() as folder, \
+                    _fake_settings(folder, auto_launch_game=True, auto_install_mod=True):
+                context = _context()
+                with mock.patch.object(context, "install_mod", return_value=True), \
+                     mock.patch.object(context, "launch_game") as launch_game:
+                    await context.setup_and_launch()
+                    launch_game.assert_called_once_with()
+
+        asyncio.run(scenario())
+
 
 class TestModUninstall(unittest.TestCase):
     def test_restores_saves_removes_the_mod_and_discards_state(self) -> None:
