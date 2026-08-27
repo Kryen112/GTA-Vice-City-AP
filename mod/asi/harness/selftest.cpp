@@ -1803,11 +1803,44 @@ int main() {
 
     // The band's capacity comes out of the geometry, so the measured default is
     // what the drain rate is reasoned about. The anchor sits near the top of an
-    // empty corner and the floor clears the radar.
+    // empty corner and the floor, plus a line's own advance, clears the radar.
     ToastGeometry geometry;
-    Expect(ToastLineCapacity(geometry) == 16,
-           "the measured band holds sixteen lines, and a message is one line, so "
-           "sixteen of them");
+    Expect(ToastLineCapacity(geometry) == 18,
+           "the measured band holds eighteen lines, and a message is one line, so "
+           "eighteen of them");
+    // The band must never be the thing that paces the drip. One row per grant is
+    // the whole design, so the band has to turn over at least as fast as grants
+    // arrive. As a product rather than a quotient: exact, and with no divide by a
+    // capacity that other cases here deliberately drive to zero.
+    // A geometry change that cut the capacity far enough would put the block back
+    // into a burst that fills the band and then stalls for the rest of a lifetime,
+    // which is the bug this whole channel was rewritten to remove.
+    Expect(ToastLineCapacity(geometry) * kGrantIntervalMs > geometry.lifetime_ms,
+           "and turns over faster than grants arrive, so the band never paces the "
+           "rows instead of the pacer");
+    // THE FOOT OF A FULL STACK CLEARS THE RADAR, which was a comment and nothing
+    // more until shrinking the font broke it: smaller text fits more lines, so the
+    // foot moves DOWN as the font goes down.
+    //
+    // Asserted on the FLOOR and not on where the last line happens to start, so it
+    // holds for every top rather than for the anchor alone. The drawing clips on
+    // `y > floor_y`, so a line may start exactly at the floor, and a tutorial box
+    // pushes the top to an arbitrary real number, so some box height lands the band
+    // exactly there. A version of this pinned the anchor case only, which is the
+    // same one-point guarantee the whole change was made to replace.
+    Expect(geometry.floor_y + ToastLineAdvance(geometry) <= kRadarTopY,
+           "and no line it admits can reach the radar, from any top");
+    // A hand-edited file may tune the leading but not make the rows overlap.
+    const ToastGeometry crushed = ParseToastGeometry(
+        {"[toasts]", "line_height = 6", "scale_y = 1.0"});
+    Expect(crushed.line_height >= ToastLineAdvance(crushed),
+           "and a file asking for less leading than the glyphs need is floored at "
+           "them");
+    // The leading clears the font's own advance, which the scale does NOT carry
+    // with it: 16 * scale_y + 2, where the 2 is constant, so a proportional step
+    // down overlaps the rows.
+    Expect(geometry.line_height > 16.0f * geometry.scale_y + 2.0f,
+           "and a line is taller than the glyphs it holds");
     ToastGeometry narrow;
     narrow.floor_y = narrow.anchor_y;
     Expect(ToastLineCapacity(narrow) == 1,

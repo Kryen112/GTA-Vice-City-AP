@@ -145,6 +145,12 @@ struct ToastStackState {
 constexpr float kVirtualScreenWidth = 640.0f;
 constexpr float kVirtualScreenHeight = 448.0f;
 
+// The top edge of the radar disc, which is what the band's foot has to stay above:
+// 0x68FD34 puts it 116 up from the bottom of 448, less its own 76 of height. Named
+// rather than written twice, since the geometry's floor and the self-test both
+// measure against it.
+constexpr float kRadarTopY = 256.0f;
+
 // Where the stack draws, in the frontend's own 640x448 units. Defaults are the
 // measured band: the anchor sits near the top of an otherwise empty corner, the
 // floor clears the radar, and the width holds a sentence with its location on one
@@ -159,17 +165,38 @@ struct ToastGeometry {
   float anchor_y = 30.0f;
   // How wide a line may draw before the font folds it.
   float width = 340.0f;
-  // The lowest a line may draw, which is what bounds the band. Just clear of the
-  // radar, whose top edge is y 256 (0x68FD34 = 116 up from the bottom of 448, less
-  // its own 76 of height).
-  float floor_y = 250.0f;
-  // Measured in game and brought down from 0.55/0.9 at 17: a row at that size took
-  // a fifth of the screen's height on its own and its location line still had to be
-  // cut. Smaller text also means more of a location fits, so a row says more in
-  // less space, and the band holds six two-line rows where it held four.
-  float line_height = 14.0f;
-  float scale_x = 0.42f;
-  float scale_y = 0.72f;
+  // The lowest a line may START, which is what bounds the band, and it is a start
+  // rather than a bottom: a line occupies 16 * scale_y + 2 below this, so what has
+  // to clear the radar is the floor PLUS that. The radar's top edge is y 256
+  // (0x68FD34 = 116 up from the bottom of 448, less its own 76 of height).
+  //
+  // Which is why this moved when the font shrank. Smaller text fits MORE lines in
+  // the same band, so the foot of a full stack goes DOWN, not up: at 250 the
+  // nineteenth line started at 246 and ran to 257.3, over the radar's edge.
+  //
+  // The bound is on the FLOOR ITSELF and not on where the last line happens to
+  // start, because a line may start exactly at the floor: the drawing clips on
+  // `y > floor_y`, and a tutorial box pushes the top down to an arbitrary real
+  // number, so some box height makes the band land exactly on it. So
+  // `floor_y + advance <= kRadarTopY`, which is 244.72 at this scale. 244 holds it
+  // for every top rather than for the anchor alone, and the capacity is quantised
+  // so it still gives the same eighteen lines.
+  float floor_y = 244.0f;
+  // Stepped down twice from 0.55/0.9 at 17, through 0.42/0.72 at 14: a row at the
+  // first size took a fifth of the screen's height on its own and its location
+  // line still had to be cut. Smaller text also means more of a location fits, so
+  // a row says more in less space, and the band holds eighteen lines.
+  //
+  // LINE HEIGHT DOES NOT SCALE WITH THE FONT, and rounding it proportionally
+  // overlaps the rows. The font's own advance is 16 * scale_y + 2 (the 32 at
+  // 0x6971CC halved by the 0.5 at 0x6971D0, plus the 2 at 0x6971D4), and that 2 is
+  // a constant, so smaller text needs proportionally MORE leading rather than
+  // less. At 0.58 the advance is 11.28, so the 11 a proportional step gives would
+  // draw each line 0.28 into the one above it. Twelve leaves 0.72 clear, which is
+  // wider than either size before it had.
+  float line_height = 12.0f;
+  float scale_x = 0.34f;
+  float scale_y = 0.58f;
   // How far a row's second and later lines are set in from the first, so the
   // location reads as belonging to the sentence above it.
   float continuation_indent = 10.0f;
@@ -185,6 +212,16 @@ struct ToastGeometry {
 // Takes the band's top as an argument rather than reading anchor_y, because the top
 // MOVES: a tutorial box owns the corner while it is up and the stack drops below it
 // for as long as that lasts.
+// How far down the font's own line advance carries a line below where it starts,
+// in the units the geometry is written in. Decoded from the help box's own extent
+// at 0x550BD5: the 32 at 0x6971CC halved by the 0.5 at 0x6971D0, plus the 2 at
+// 0x6971D4. THE 2 DOES NOT SCALE, which is why leading cannot be stepped down in
+// proportion with the font: at a smaller scale a line needs proportionally MORE of
+// it, not less.
+inline float ToastLineAdvance(const ToastGeometry& geometry) {
+  return 16.0f * geometry.scale_y + 2.0f;
+}
+
 inline std::size_t ToastLineCapacityFrom(const ToastGeometry& geometry, float top_y) {
   if (geometry.line_height <= 0.0f) return 1;
   const float band = geometry.floor_y - top_y;
@@ -307,7 +344,7 @@ inline void AdvanceToastStack(ToastStackState& state, unsigned int now_ms,
       // leaving it to wherever the floor happens to fall.
       //
       // Only reachable through a hand-edited geometry: the measured band holds
-      // sixteen lines and a row carries one, or four at the very most.
+      // eighteen lines and a row carries one, or four at the very most.
       if (!state.visible.empty() || rotating_capacity == 0) break;
       LiveToast trimmed = queued;
       trimmed.row.lines.resize(rotating_capacity);
@@ -718,10 +755,21 @@ inline ToastGeometry BoundToastGeometry(ToastGeometry geometry) {
                                    kVirtualScreenWidth - geometry.anchor_x);
   geometry.line_height = ClampToastValue(geometry.line_height, kToastMinLineHeight,
                                          kVirtualScreenHeight);
+
   geometry.scale_x =
       ClampToastValue(geometry.scale_x, kToastMinScale, kToastMaxScale);
   geometry.scale_y =
       ClampToastValue(geometry.scale_y, kToastMinScale, kToastMaxScale);
+  // The leading is floored at the font's own advance, AFTER the scale it depends on
+  // has been clamped. A file may tune the spacing but not draw every row into the
+  // one above it, which is the same rule the bounds above follow for the stack's
+  // position: the file moves the stack, it does not get to break it. Nothing
+  // stopped `line_height = 6` at `scale_y = 1.0` before, which overlapped every row
+  // by twelve units while the geometry's own comments presented non-overlap as a
+  // property.
+  if (geometry.line_height < ToastLineAdvance(geometry)) {
+    geometry.line_height = ToastLineAdvance(geometry);
+  }
   geometry.continuation_indent =
       ClampToastValue(geometry.continuation_indent, 0.0f, geometry.width / 2.0f);
   if (geometry.lifetime_ms < kToastMinLifetimeMs) {
