@@ -112,6 +112,33 @@ CONFIGURATIONS: list[tuple[str, dict]] = [
         "enable_emergency_vehicles": True, "enable_properties": True,
         "enable_robbable_stores": True, "enable_side_events": True,
     }),
+    # Shops are the newest check class and the second the game's own completion
+    # stat never counted, so they are fuzzed for the pool shapes they make
+    # rather than for the goal. All 36 sit behind Boomshine Saigon and their own
+    # stock gates, which is the deepest any class hides its checks.
+    ("shops on", {"shuffle_shops": True}),
+    # The tightest pool the class can make: every other optional class off, so
+    # the story pool's items have 36 homes and all of them are behind one
+    # mission partway down a strand.
+    ("story plus shops", {
+        "shuffle_shops": True,
+        "enable_hidden_packages": False, "enable_rampages": False,
+        "enable_stunt_jumps": False, "enable_emergency_vehicles": False,
+        "enable_properties": False, "enable_robbable_stores": False,
+        "enable_side_events": False,
+    }),
+    # Every shop check is a purchase, so the wallet key puts the Wallet item on
+    # all 36 at once, which is the largest single block of checks any one
+    # ability term gates.
+    ("shops on, wallet lock", {
+        "shuffle_shops": True, "ability_locks": ["wallet"],
+    }),
+    # The uncounted-class path: the 100 percent goal neither demands shops nor
+    # counts them, so a seed with both has 36 checks the goal ignores and must
+    # still generate and still be beatable.
+    ("shops on, 100 percent", {
+        "shuffle_shops": True, "goal": "hundred_percent",
+    }),
     ("100 percent, all classes on", {
         "goal": "hundred_percent", "enable_hidden_packages": True,
         "enable_rampages": True, "enable_stunt_jumps": True,
