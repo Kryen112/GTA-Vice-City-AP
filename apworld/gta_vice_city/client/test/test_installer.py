@@ -683,6 +683,29 @@ class TestDeltaPayload(unittest.TestCase):
         self._script(b"a 1.1 script")
         self.assertFalse(installer.mod_is_current(self.install))
 
+    def test_the_payload_reads_the_same_from_inside_an_apworld(self) -> None:
+        # A packaged apworld is a zip, so the payload arrives as a traversable
+        # rather than a directory. That is the only shape a player ever installs
+        # from, and every other test here uses a directory, so nothing else
+        # would catch a walk or a read that only works on real paths.
+        import zipfile
+        archive = self.root / "packaged.apworld"
+        with zipfile.ZipFile(archive, "w") as packaged:
+            for path in sorted(self.payload.rglob("*")):
+                if path.is_file():
+                    packaged.write(
+                        path, f"data/mod/{path.relative_to(self.payload).as_posix()}")
+        self._script(STOCK_SCRIPT)
+        traversable = zipfile.Path(zipfile.ZipFile(archive), "data/mod/")
+        with unittest.mock.patch.object(installer, "_payload_root", lambda: traversable):
+            self.assertEqual(installer.payload_paths(),
+                             ["GtaVcAp.VC.asi", "cleo/apwatchers.cs", "main.scm"])
+            self.assertEqual(dict(installer.materialize_payload(self.install)), {
+                "GtaVcAp.VC.asi": b"asi-bytes",
+                "cleo/apwatchers.cs": BUILT_CLEO,
+                "main.scm": BUILT_SCRIPT,
+            })
+
     def test_a_payload_with_no_manifest_refuses(self) -> None:
         # Nothing then says which script the patches were made against, and
         # patching against a guess is how a game folder fills with rubbish.
