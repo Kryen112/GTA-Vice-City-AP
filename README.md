@@ -5,8 +5,12 @@ executable 1.0). It turns Vice City into a multiworld game.
 
 ## For players
 
-To install and play, see [PLAYER_SETUP.md](PLAYER_SETUP.md). You supply an
-original 1.0 `gta-vc.exe`; this project never distributes the game.
+To install and play, see the
+[setup guide](apworld/gta_vice_city/docs/setup_en.md), which ships inside the
+apworld and is what an Archipelago WebHost serves as this world's tutorial. The
+[game page](apworld/gta_vice_city/docs/en_Grand%20Theft%20Auto%20Vice%20City.md)
+says what the randomizer does to the game. You supply an original 1.0
+`gta-vc.exe`; this project never distributes the game.
 
 ## For developers
 

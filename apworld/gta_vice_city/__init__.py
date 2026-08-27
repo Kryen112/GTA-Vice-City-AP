@@ -25,8 +25,9 @@ from BaseClasses import (
     Location,
     LocationProgressType,
     Region,
+    Tutorial,
 )
-from Options import OptionError
+from Options import DeathLink, OptionError, OptionGroup
 from worlds.AutoWorld import WebWorld, World
 from worlds.LauncherComponents import Component, Type, components
 from worlds.LauncherComponents import launch as launch_component
@@ -45,8 +46,29 @@ from .options import (
     CHECK_CLASS_OPTIONS,
     HUNDRED_PERCENT_CLASS_OPTIONS,
     UNCOUNTED_CLASS_KEYS,
+    AbilityLocks,
+    ContentLocks,
+    EnableEmergencyVehicles,
+    EnableHiddenPackages,
+    EnablePickups,
+    EnableProperties,
+    EnableRampages,
+    EnableRobbableStores,
+    EnableSideEvents,
+    EnableStuntJumps,
     Goal,
     GTAViceCityOptions,
+    HiddenPackagesRequired,
+    RandomizePickups,
+    RandomizeRadioStations,
+    ShuffleEmergencyRewards,
+    ShuffleMinimap,
+    ShuffleShops,
+    SplitContentLocks,
+    SplitMainlandAccess,
+    StartingAbilityUnlock,
+    StartingContentUnlock,
+    TrapPercentage,
 )
 
 # How many checks a seed must leave reachable on a new game before it needs no
@@ -135,8 +157,52 @@ class GTAViceCityLocation(Location):
 
 
 class GTAViceCityWeb(WebWorld):
-    """Web frontend metadata for archipelago.gg."""
-    theme = "dirt"
+    """Web frontend metadata for archipelago.gg.
+
+    The pages themselves live in docs/ and ship inside the apworld: a WebHost
+    reads them out of the archive, so a custom world serves its own game page and
+    setup guide.
+    """
+    # Purple, hot pink and lime, which is the city's own palette.
+    theme = "partyTime"
+    bug_report_page = "https://github.com/Kryen112/GTA-Vice-City-AP/issues"
+
+    tutorials: typing.ClassVar[list[Tutorial]] = [Tutorial(
+        "Multiworld Setup Guide",
+        "A guide to setting up GTA Vice City for Archipelago, from the apworld "
+        "to a running game.",
+        "English",
+        "setup_en.md",
+        "setup/en",
+        ["Kryen112"],
+    )]
+
+    # Ordered the way a player decides: what they are playing for, what counts as
+    # a check, what the seed changes about the city, what it takes away until an
+    # item arrives, and what it throws at them. The check group is exactly
+    # CHECK_CLASS_OPTIONS, which a test holds it to; the rest is a reading for
+    # players, so content_locks sits under Locks beside the ability locks rather
+    # than with the in-world modifiers CLAUDE.md files it with.
+    # shuffle_emergency_rewards is a modifier and not a check class either way:
+    # it moves the emergency payouts into the pool whether or not those levels
+    # are checks.
+    option_groups: typing.ClassVar[list[OptionGroup]] = [
+        OptionGroup("Goal", [Goal, HiddenPackagesRequired]),
+        OptionGroup("Check Classes", [
+            EnableHiddenPackages, EnableRampages, EnableStuntJumps,
+            EnableEmergencyVehicles, EnableProperties, EnableRobbableStores,
+            EnableSideEvents, EnablePickups, ShuffleShops,
+        ]),
+        OptionGroup("In-World Modifiers", [
+            ShuffleEmergencyRewards, RandomizePickups, RandomizeRadioStations,
+            ShuffleMinimap, SplitMainlandAccess,
+        ]),
+        OptionGroup("Locks", [
+            AbilityLocks, StartingAbilityUnlock, ContentLocks,
+            SplitContentLocks, StartingContentUnlock,
+        ]),
+        OptionGroup("Traps and DeathLink", [TrapPercentage, DeathLink]),
+    ]
 
 
 class GTAViceCityWorld(World):
