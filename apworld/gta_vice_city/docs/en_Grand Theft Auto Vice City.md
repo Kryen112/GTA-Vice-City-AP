@@ -23,9 +23,12 @@ nothing on disk and as itself once the game is running.
 You also need
 [Ultimate ASI Loader](https://github.com/ThirteenAG/Ultimate-ASI-Loader) and
 [CLEO](https://github.com/cleolibrary/III.VC.CLEO), two free community tools, in
-your game folder. The
-[Setup Guide](/tutorial/Grand%20Theft%20Auto%20Vice%20City/setup/en) says which
-download to take from each and covers all the rest.
+your game folder. There is also an optional one,
+[Windowed Mode](https://github.com/ThirteenAG/III.VC.SA.WindowedMode), which is
+worth installing: Vice City's own fullscreen mode can make the game very slow on
+modern PCs and can cause crashes, and this plugin avoids both.
+The [Setup Guide](/tutorial/Grand%20Theft%20Auto%20Vice%20City/setup/en) says
+which download to take from each and covers all the rest.
 
 ## What does randomization do in this game?
 

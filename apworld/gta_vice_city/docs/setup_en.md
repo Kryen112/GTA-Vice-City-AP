@@ -27,10 +27,16 @@ then connect the client. The client installs the in-game mod for you.
   plugins on its own, so this is required.
 - **[CLEO for Vice City](https://github.com/cleolibrary/III.VC.CLEO)**,
   installed in your game folder.
+- **Optional, and strongly recommended:
+  [Windowed Mode](https://github.com/ThirteenAG/III.VC.SA.WindowedMode)**, which
+  runs the game in a window, or in borderless fullscreen, instead of the
+  fullscreen mode Vice City uses on its own. On a modern PC that fullscreen mode
+  can make the game very slow, and it can cause crashes. This plugin fixes both,
+  and it does not change anything in the game itself.
 
-Both are free community tools, and each link goes to the project's own GitHub,
-where the downloads and the source both live. Step 2 says which download to
-take from each.
+All three are free community tools, and each link goes to the project's own
+GitHub, where the downloads and the source both live. Section 2 says which
+download to take from each.
 
 ## 1. Install the Archipelago world
 
@@ -62,9 +68,20 @@ download the mod separately.
    extract it there. It brings `VC.CLEO.asi` and a `CLEO` folder. The mod is
    verified against CLEO 2.1.1; if a newer release misbehaves, that is the one
    to fall back to.
+4. Optional, and strongly recommended: install Windowed Mode into the same
+   folder. Take the archive from its
+   [releases page](https://github.com/ThirteenAG/III.VC.SA.WindowedMode/releases)
+   and extract `III.VC.SA.WindowedMode.asi` next to the executable. One file
+   covers GTA III, Vice City and San Andreas, so you do not have to pick a
+   version. Press **Alt+Enter** in game to switch between a window and
+   borderless fullscreen. Newer releases also add an ini file next to the
+   plugin, which sets which of the two the game starts in. Archipelago does not
+   need this plugin, but the entry **The game is very slow, or it crashes when
+   you Alt+Tab away from it**, under **If something goes wrong** at the end of
+   this page, explains what it fixes.
 
 You do not copy any Archipelago mod files by hand. The client does that in
-step 4.
+section 4, Connect and play.
 
 ## 3. Create or join a multiworld
 
@@ -157,9 +174,9 @@ saves.
   in game.
 - **The game starts but nothing Archipelago happens.** Confirm Ultimate ASI
   Loader is present as `dinput8.dll` and CLEO is installed, both covered in
-  step 2, then run `/installmod` with the game closed and relaunch. CLEO prints
-  its version in the bottom left corner of the main menu, so no banner there
-  sends you back to those two before anything else.
+  section 2, then run `/installmod` with the game closed and relaunch. CLEO
+  prints its version in the bottom left corner of the main menu, so no banner
+  there sends you back to those two before anything else.
 - **The client says your `main.scm` is not the original 1.0 script.** It prints
   the fingerprint it found and the one it wants. Restore `data/main.scm` from
   your own copy of the game files, and remove `AP_mod_backup\main.scm` if it is
@@ -169,3 +186,17 @@ saves.
   holds `gta-vc.exe`.
 - **You started before connecting.** Progress re-derives from the server on every
   load and reconnect, so connect the client and reload your save.
+- **The game is very slow, or it crashes when you Alt+Tab away from it.**
+  Install Windowed Mode from section 2 and press Alt+Enter. Vice City's own
+  fullscreen mode takes over your whole screen, which modern PCs handle badly.
+  It is worse if your screen has a high refresh rate, or if you have more than
+  one screen. That same fullscreen mode can also crash the game when you switch
+  to another window. Windowed Mode runs the game in a window instead, and avoids
+  both. This is a Vice City problem, not an Archipelago one: it happens the same
+  way without the mod, so the client cannot fix it for you.
+- **The game crashes a few seconds after you start it, in `quartz.dll`.** Those
+  are the two intro videos. The game plays them with an old Windows video
+  component that does not always work any more. Rename `GTAtitles.mpg` and
+  `Logo.mpg` in the `movies` folder, to `.bak` or anything else, and the game
+  skips them. This is normal Vice City behavior, not Archipelago, and the game
+  starts faster without them.
