@@ -1,7 +1,7 @@
 """Runs the world and client tests against a real Archipelago checkout.
 
 The single test entry point for pre-commit, CI, and manual runs. Locates the
-Archipelago checkout (AP_ROOT override, else the sibling directory), links the
+Archipelago checkout (AP_ROOT override, else the nearest one up the tree), links the
 world package into it, and runs pytest over the world tests and the bundled
 client tests (the client is a subpackage of the world).
 """
@@ -9,7 +9,7 @@ client tests (the client is a subpackage of the world).
 import subprocess
 import sys
 
-from ap_env import REPOSITORY_ROOT, WORLD_SOURCE, archipelago_root, link_world
+from ap_env import REPOSITORY_ROOT, WORLD_SOURCE, archipelago_root, link_world, missing_checkout_message
 
 
 def main() -> int:
@@ -18,7 +18,7 @@ def main() -> int:
         return 0
     root = archipelago_root()
     if root is None:
-        print("No Archipelago checkout found. Set AP_ROOT or clone 0.6.7 as a sibling directory.")
+        print(missing_checkout_message())
         return 1
     target = link_world(root)
     if target is None:

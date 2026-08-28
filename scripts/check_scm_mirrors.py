@@ -30,7 +30,7 @@ import sys
 import tempfile
 import types
 
-from ap_env import archipelago_root, link_world
+from ap_env import archipelago_root, link_world, missing_checkout_message
 
 REPOSITORY_ROOT = pathlib.Path(__file__).resolve().parent.parent
 
@@ -749,7 +749,7 @@ def main() -> int:
     _self_test()
     root = archipelago_root()
     if root is None:
-        print("No Archipelago checkout found. Set AP_ROOT or clone 0.6.7 as a sibling.")
+        print(missing_checkout_message())
         return 1
     if link_world(root) is None:
         return 1

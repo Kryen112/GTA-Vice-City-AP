@@ -38,7 +38,7 @@ import subprocess
 import sys
 
 import bsdiff4
-from ap_env import WORLD_NAME, WORLD_SOURCE, archipelago_root, link_world
+from ap_env import WORLD_NAME, WORLD_SOURCE, archipelago_root, link_world, missing_checkout_message
 
 REPOSITORY_ROOT = pathlib.Path(__file__).resolve().parent.parent
 
@@ -524,7 +524,7 @@ def main() -> int:
         return 1
     root = archipelago_root()
     if root is None:
-        print("No Archipelago checkout found. Set AP_ROOT or clone 0.6.7 as a sibling directory.")
+        print(missing_checkout_message())
         return 1
     if link_world(root) is None:
         return 1

@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import sys
 
-from ap_env import WORLD_SOURCE, archipelago_root, link_world
+from ap_env import WORLD_SOURCE, archipelago_root, link_world, missing_checkout_message
 
 GAME = "Grand Theft Auto Vice City"
 
@@ -329,7 +329,7 @@ REFUSAL_GUARDS: dict[str, str] = {
 def main() -> int:
     root = archipelago_root()
     if root is None:
-        print("No Archipelago checkout found. Set AP_ROOT or clone 0.6.7 as a sibling.")
+        print(missing_checkout_message())
         return 1
     if not WORLD_SOURCE.is_dir():
         print(f"No world package at {WORLD_SOURCE}.")

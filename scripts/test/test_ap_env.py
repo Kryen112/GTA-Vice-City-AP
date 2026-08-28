@@ -2,12 +2,18 @@
 
 Both halves exist because a checkout moves. The search walks ancestors rather
 than checking one sibling, so this repository can sit some folders below the one
-Archipelago is cloned into; the link removal clears what the old layout left
+Archipelago is cloned into; the link removal clears what an old layout left
 behind, since a junction outlives the path it points at and then blocks every
 run with a name that already exists.
 
-Nothing here touches the real checkout. Each test builds a tree under tmp_path
-and points the module's repository root into it.
+The search runs to the drive root, so a test asserting that nothing is found is
+asserting about the real folders above tmp_path as well as the tree it built.
+The marker is what keeps that honest: a candidate has to carry the world API
+file, which no folder merely named Archipelago holds by accident. Every checkout
+here is built through _checkout so it carries one.
+
+The real checkout is never touched. Each test builds its tree under tmp_path and
+points the module's repository root into it.
 """
 
 import os
@@ -23,14 +29,23 @@ import ap_env  # noqa: E402
 
 
 def _checkout(at: pathlib.Path) -> pathlib.Path:
-    """An Archipelago checkout, which is what holding a worlds folder means."""
-    (at / "worlds").mkdir(parents=True)
+    """An Archipelago checkout, which is the marker file and not the folder name."""
+    marker = at / ap_env.CHECKOUT_MARKER
+    marker.parent.mkdir(parents=True)
+    marker.write_text("", encoding="utf-8")
     return at
 
 
 def _repository_at(monkeypatch, root: pathlib.Path) -> None:
     root.mkdir(parents=True, exist_ok=True)
     monkeypatch.setattr(ap_env, "REPOSITORY_ROOT", root.resolve())
+
+
+def _world_source_at(monkeypatch, tmp_path: pathlib.Path) -> pathlib.Path:
+    source = tmp_path / "repository" / "apworld" / ap_env.WORLD_NAME
+    source.mkdir(parents=True)
+    monkeypatch.setattr(ap_env, "WORLD_SOURCE", source)
+    return source
 
 
 def _link(target: pathlib.Path, destination: pathlib.Path) -> None:
@@ -43,12 +58,11 @@ def _link(target: pathlib.Path, destination: pathlib.Path) -> None:
 
 
 def test_override_wins_over_any_search(tmp_path, monkeypatch) -> None:
-    beside = _checkout(tmp_path / "beside" / "Archipelago")
+    _checkout(tmp_path / "beside" / "Archipelago")
     chosen = _checkout(tmp_path / "chosen")
     _repository_at(monkeypatch, tmp_path / "beside" / "world")
     monkeypatch.setenv("AP_ROOT", str(chosen))
     assert ap_env.archipelago_root() == chosen.resolve()
-    assert beside.exists()
 
 
 def test_override_that_is_not_a_checkout_finds_nothing(tmp_path, monkeypatch) -> None:
@@ -83,10 +97,26 @@ def test_the_nearest_checkout_wins(tmp_path, monkeypatch) -> None:
 
 
 def test_a_folder_named_archipelago_is_not_a_checkout(tmp_path, monkeypatch) -> None:
-    (tmp_path / "Archipelago").mkdir()
+    """The name is not the test, and a bare worlds folder is not either."""
+    (tmp_path / "Archipelago" / "worlds").mkdir(parents=True)
     _repository_at(monkeypatch, tmp_path / "world")
     monkeypatch.delenv("AP_ROOT", raising=False)
     assert ap_env.archipelago_root() is None
+
+
+def test_a_rejected_override_is_named_in_the_message(monkeypatch) -> None:
+    """Telling someone who set AP_ROOT to set AP_ROOT is the one useless answer."""
+    monkeypatch.setenv("AP_ROOT", "somewhere/that/is/not/a/checkout")
+    message = ap_env.missing_checkout_message()
+    assert "somewhere/that/is/not/a/checkout" in message
+    assert "AP_ROOT is set to" in message
+
+
+def test_an_empty_search_says_where_a_checkout_may_go(monkeypatch) -> None:
+    monkeypatch.delenv("AP_ROOT", raising=False)
+    message = ap_env.missing_checkout_message()
+    assert "Set AP_ROOT" in message
+    assert "ancestors" in message
 
 
 def test_a_dangling_link_is_removed(tmp_path) -> None:
@@ -120,3 +150,44 @@ def test_a_real_directory_is_left_alone(tmp_path) -> None:
     (target / "kept.py").write_text("", encoding="utf-8")
     assert ap_env._remove_dangling_link(target) is False
     assert (target / "kept.py").is_file()
+
+
+def test_link_world_links_into_an_empty_checkout(tmp_path, monkeypatch) -> None:
+    source = _world_source_at(monkeypatch, tmp_path)
+    root = _checkout(tmp_path / "Archipelago")
+    target = ap_env.link_world(root)
+    assert target is not None
+    assert target.resolve() == source.resolve()
+
+
+def test_link_world_replaces_a_link_an_old_layout_left(tmp_path, monkeypatch) -> None:
+    """The failure this change exists for: the name is taken by a link to nothing."""
+    source = _world_source_at(monkeypatch, tmp_path)
+    root = _checkout(tmp_path / "Archipelago")
+    moved_away = tmp_path / "old"
+    moved_away.mkdir()
+    _link(root / "worlds" / ap_env.WORLD_NAME, moved_away)
+    moved_away.rmdir()
+    target = ap_env.link_world(root)
+    assert target is not None
+    assert target.resolve() == source.resolve()
+
+
+def test_link_world_refuses_a_live_link_elsewhere(tmp_path, monkeypatch) -> None:
+    """A link to a live path that is not this repository is refused, not deleted."""
+    _world_source_at(monkeypatch, tmp_path)
+    root = _checkout(tmp_path / "Archipelago")
+    other = tmp_path / "another-worlds-copy"
+    other.mkdir()
+    link = root / "worlds" / ap_env.WORLD_NAME
+    _link(link, other)
+    assert ap_env.link_world(root) is None
+    assert link.resolve() == other.resolve()
+
+
+def test_link_world_accepts_a_link_already_pointing_here(tmp_path, monkeypatch) -> None:
+    source = _world_source_at(monkeypatch, tmp_path)
+    root = _checkout(tmp_path / "Archipelago")
+    link = root / "worlds" / ap_env.WORLD_NAME
+    _link(link, source)
+    assert ap_env.link_world(root) == link

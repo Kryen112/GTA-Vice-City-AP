@@ -47,7 +47,7 @@ from __future__ import annotations
 import json
 import sys
 
-from ap_env import REPOSITORY_ROOT, WORLD_SOURCE, archipelago_root, link_world
+from ap_env import REPOSITORY_ROOT, WORLD_SOURCE, archipelago_root, link_world, missing_checkout_message
 
 SNAPSHOT = WORLD_SOURCE / "test" / "frozen_numbering.json"
 KINDS = ("items", "locations", "scm_globals")
@@ -104,8 +104,7 @@ def main() -> int:
     first_run = "--first-run" in sys.argv[1:]
     root = archipelago_root()
     if root is None:
-        print("No Archipelago checkout found. Set AP_ROOT or clone 0.6.7 as a "
-              "sibling directory.")
+        print(missing_checkout_message())
         return 1
     if link_world(root) is None:
         return 1

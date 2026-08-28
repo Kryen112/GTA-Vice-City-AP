@@ -17,9 +17,16 @@ WORLD_NAME = "gta_vice_city"
 WORLD_SOURCE = REPOSITORY_ROOT / "apworld" / WORLD_NAME
 
 
+# What tells an Archipelago checkout from a folder that merely shares its name.
+# The search below walks to the drive root, so any folder called Archipelago in
+# any ancestor is a candidate, and a bare worlds directory is a name two projects
+# could both have. This file is the world API every checkout carries.
+CHECKOUT_MARKER = pathlib.Path("worlds") / "AutoWorld.py"
+
+
 def _is_checkout(candidate: pathlib.Path) -> bool:
     """Whether a path is an Archipelago checkout rather than a folder named one."""
-    return (candidate / "worlds").is_dir()
+    return (candidate / CHECKOUT_MARKER).is_file()
 
 
 def archipelago_root() -> pathlib.Path | None:
@@ -46,6 +53,24 @@ def archipelago_root() -> pathlib.Path | None:
     return None
 
 
+def missing_checkout_message() -> str:
+    """What to print when archipelago_root finds nothing, which is two failures.
+
+    A rejected AP_ROOT and an empty search both come back as None, and they need
+    opposite advice. Telling someone who set the override to set the override is
+    the one instruction that cannot help them, so that case names the value it
+    turned down instead. Every entry point prints this rather than its own words,
+    which is what keeps the wording from drifting apart across six files.
+    """
+    override = os.environ.get("AP_ROOT")
+    if override:
+        return (f"AP_ROOT is set to {override}, which is not an Archipelago "
+                f"checkout: it has no {CHECKOUT_MARKER.as_posix()}. Point it at a "
+                "0.6.7 checkout, or unset it to search beside this repository.")
+    return ("No Archipelago checkout found. Set AP_ROOT, or clone 0.6.7 as "
+            "Archipelago beside this repository or beside one of its ancestors.")
+
+
 def _remove_dangling_link(target: pathlib.Path) -> bool:
     """Delete a link at target whose destination is gone, and say whether it did.
 
@@ -54,15 +79,21 @@ def _remove_dangling_link(target: pathlib.Path) -> bool:
     exists, so the stale entry blocks every run until it goes. Removing it can
     take no file with it: the entry is a link, and it is one to nothing.
 
-    Only a link to a path that no longer exists is removed. A link to a live path
-    that is not this repository is left for the caller to refuse, since it may be
-    another checkout's and is not this script's to delete.
+    Only a link whose destination does not resolve is removed. A link to a live
+    path that is not this repository is left for the caller to refuse, since it
+    may be another checkout's and is not this script's to delete. Unreachable
+    counts as gone here, so a link into a disconnected share or an absent drive
+    is taken as well; the name is one the linking below would claim regardless,
+    and no file behind it is reachable to lose.
     """
     if not os.path.lexists(target) or target.exists():
         return False
     try:
         if sys.platform == "win32":
-            os.rmdir(target)
+            try:
+                os.rmdir(target)
+            except NotADirectoryError:
+                target.unlink()
         else:
             target.unlink()
     except OSError:
