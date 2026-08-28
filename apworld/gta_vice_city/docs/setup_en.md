@@ -22,12 +22,15 @@ then connect the client. The client installs the in-game mod for you.
   not the Definitive Edition, which is a different game the mod does not run on.
   The client checks both and refuses to install when either is wrong, naming
   which build of the game it found and what it wanted.
-- **Ultimate ASI Loader**, installed in your game folder as `dinput8.dll`. Vice
-  City does not load `.asi` plugins on its own, so this is required.
-- **CLEO for Vice City**, installed in your game folder.
+- **[Ultimate ASI Loader](https://github.com/ThirteenAG/Ultimate-ASI-Loader)**,
+  installed in your game folder as `dinput8.dll`. Vice City does not load `.asi`
+  plugins on its own, so this is required.
+- **[CLEO for Vice City](https://github.com/cleolibrary/III.VC.CLEO)**,
+  installed in your game folder.
 
-Ultimate ASI Loader and CLEO are free community tools. Install each into your
-Vice City folder following its own instructions.
+Both are free community tools, and each link goes to the project's own GitHub,
+where the downloads and the source both live. Step 2 says which download to
+take from each.
 
 ## 1. Install the Archipelago world
 
@@ -47,9 +50,18 @@ download the mod separately.
    before it installs and before it launches the game, and tells you which build
    it found, so you do not have to know how to look; the mod attaches to 1.0 and
    to nothing else.
-2. Install Ultimate ASI Loader (`dinput8.dll`) into the folder that holds
-   `gta-vc.exe`.
-3. Install CLEO into the same folder.
+2. Install Ultimate ASI Loader into the folder that holds `gta-vc.exe`. Take
+   `Ultimate-ASI-Loader.zip` from its
+   [releases page](https://github.com/ThirteenAG/Ultimate-ASI-Loader/releases).
+   Vice City is a 32-bit game, so every `_x64` asset there is the wrong one. The
+   archive holds a single `dinput8.dll`, already under the name Vice City needs,
+   so extract it next to the executable and you are done.
+3. Install CLEO into the same folder. Take the Vice City archive from its
+   [releases page](https://github.com/cleolibrary/III.VC.CLEO/releases), not the
+   GTA III one, since that page serves both games from the same release, and
+   extract it there. It brings `VC.CLEO.asi` and a `CLEO` folder. The mod is
+   verified against CLEO 2.1.1; if a newer release misbehaves, that is the one
+   to fall back to.
 
 You do not copy any Archipelago mod files by hand. The client does that in
 step 4.
@@ -144,8 +156,10 @@ saves.
   game starts. It is worth remembering only if nothing Archipelago then happens
   in game.
 - **The game starts but nothing Archipelago happens.** Confirm Ultimate ASI
-  Loader is present as `dinput8.dll` and CLEO is installed, then run
-  `/installmod` with the game closed and relaunch.
+  Loader is present as `dinput8.dll` and CLEO is installed, both covered in
+  step 2, then run `/installmod` with the game closed and relaunch. CLEO prints
+  its version in the bottom left corner of the main menu, so no banner there
+  sends you back to those two before anything else.
 - **The client says your `main.scm` is not the original 1.0 script.** It prints
   the fingerprint it found and the one it wants. Restore `data/main.scm` from
   your own copy of the game files, and remove `AP_mod_backup\main.scm` if it is

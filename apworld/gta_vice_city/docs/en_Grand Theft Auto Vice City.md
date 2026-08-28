@@ -20,9 +20,12 @@ The build check reads which build the executable is rather than hashing it, so a
 installed on anyway, with a line saying so, since a compressed one reads as
 nothing on disk and as itself once the game is running.
 
-You also need Ultimate ASI Loader and CLEO, two free community tools, in your
-game folder. The [Setup Guide](/tutorial/Grand%20Theft%20Auto%20Vice%20City/setup/en)
-covers all of it.
+You also need
+[Ultimate ASI Loader](https://github.com/ThirteenAG/Ultimate-ASI-Loader) and
+[CLEO](https://github.com/cleolibrary/III.VC.CLEO), two free community tools, in
+your game folder. The
+[Setup Guide](/tutorial/Grand%20Theft%20Auto%20Vice%20City/setup/en) says which
+download to take from each and covers all the rest.
 
 ## What does randomization do in this game?
 
