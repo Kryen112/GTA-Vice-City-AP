@@ -40,9 +40,10 @@ or `git add .`.
   AI attribution. Commit directly to main.
 
 ## Python (apworld, client, tools)
-- Framework pin: Archipelago 0.6.7, sibling checkout `..\Archipelago`,
-  overridable with `AP_ROOT`. Compatible with Python 3.11 through 3.13;
-  3.12 is the dev interpreter.
+- Framework pin: Archipelago 0.6.7, found as an `Archipelago` beside this
+  repository or beside any ancestor of it, nearest first, overridable with
+  `AP_ROOT`. Compatible with Python 3.11 through 3.13; 3.12 is the dev
+  interpreter.
 - Lint: ruff, config in this repo's `ruff.toml` (mirrors Archipelago's).
   Passing lint unprompted is part of the definition of done.
 - Every behavior change adds or updates a `WorldTestBase` test, unprompted.
