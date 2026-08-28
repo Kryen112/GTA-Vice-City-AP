@@ -42,8 +42,8 @@ def archipelago_root() -> pathlib.Path | None:
     repository sits some folders deeper than the one Archipelago is cloned into.
     Nearest wins, so a checkout beside this repository still beats a further one.
     """
-    override = os.environ.get("AP_ROOT")
-    if override:
+    override = _override()
+    if override is not None:
         candidate = pathlib.Path(override)
         return candidate.resolve() if _is_checkout(candidate) else None
     for ancestor in REPOSITORY_ROOT.parents:
@@ -51,6 +51,17 @@ def archipelago_root() -> pathlib.Path | None:
         if _is_checkout(candidate):
             return candidate.resolve()
     return None
+
+
+def _override() -> str | None:
+    """The AP_ROOT override, or None when it is unset or empty.
+
+    Both the lookup and the message that explains a failed one ask through here,
+    so the two cannot reach different conclusions about whether the override is
+    the thing that failed. An empty AP_ROOT counts as unset, since a variable
+    cleared to nothing is not a path anyone meant to point at.
+    """
+    return os.environ.get("AP_ROOT") or None
 
 
 def missing_checkout_message() -> str:
@@ -62,13 +73,20 @@ def missing_checkout_message() -> str:
     turned down instead. Every entry point prints this rather than its own words,
     which is what keeps the wording from drifting apart across six files.
     """
-    override = os.environ.get("AP_ROOT")
-    if override:
-        return (f"AP_ROOT is set to {override}, which is not an Archipelago "
-                f"checkout: it has no {CHECKOUT_MARKER.as_posix()}. Point it at a "
-                "0.6.7 checkout, or unset it to search beside this repository.")
-    return ("No Archipelago checkout found. Set AP_ROOT, or clone 0.6.7 as "
-            "Archipelago beside this repository or beside one of its ancestors.")
+    override = _override()
+    if override is None:
+        return ("No Archipelago checkout found. Set AP_ROOT, or clone 0.6.7 as "
+                "Archipelago beside this repository or beside one of its ancestors.")
+    advice = ("Point it at a 0.6.7 checkout, or unset it to search beside this "
+              "repository.")
+    # A mistyped path is the commonest way this fails, and telling someone their
+    # folder lacks a file when the folder itself is absent sends them looking
+    # inside something that is not there.
+    if not pathlib.Path(override).is_dir():
+        return f"AP_ROOT is set to {override}, which is not a folder. {advice}"
+    return (f"AP_ROOT is set to {override}, which is a folder but not an "
+            f"Archipelago checkout: it has no {CHECKOUT_MARKER.as_posix()}. "
+            f"{advice}")
 
 
 def _remove_dangling_link(target: pathlib.Path) -> bool:

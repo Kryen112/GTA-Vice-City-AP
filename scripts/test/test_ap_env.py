@@ -96,6 +96,14 @@ def test_the_nearest_checkout_wins(tmp_path, monkeypatch) -> None:
     assert ap_env.archipelago_root() == nearer.resolve()
 
 
+def test_an_empty_override_still_searches(tmp_path, monkeypatch) -> None:
+    """An AP_ROOT cleared to nothing is unset, not a refusal to look."""
+    root = _checkout(tmp_path / "Archipelago")
+    _repository_at(monkeypatch, tmp_path / "world")
+    monkeypatch.setenv("AP_ROOT", "")
+    assert ap_env.archipelago_root() == root.resolve()
+
+
 def test_a_folder_named_archipelago_is_not_a_checkout(tmp_path, monkeypatch) -> None:
     """The name is not the test, and a bare worlds folder is not either."""
     (tmp_path / "Archipelago" / "worlds").mkdir(parents=True)
@@ -104,12 +112,29 @@ def test_a_folder_named_archipelago_is_not_a_checkout(tmp_path, monkeypatch) -> 
     assert ap_env.archipelago_root() is None
 
 
-def test_a_rejected_override_is_named_in_the_message(monkeypatch) -> None:
+def test_a_rejected_override_is_named_in_the_message(tmp_path, monkeypatch) -> None:
     """Telling someone who set AP_ROOT to set AP_ROOT is the one useless answer."""
-    monkeypatch.setenv("AP_ROOT", "somewhere/that/is/not/a/checkout")
+    folder = tmp_path / "not-a-checkout"
+    folder.mkdir()
+    monkeypatch.setenv("AP_ROOT", str(folder))
     message = ap_env.missing_checkout_message()
-    assert "somewhere/that/is/not/a/checkout" in message
+    assert str(folder) in message
     assert "AP_ROOT is set to" in message
+    assert ap_env.CHECKOUT_MARKER.as_posix() in message
+
+
+def test_an_override_pointing_nowhere_says_so(tmp_path, monkeypatch) -> None:
+    """A mistyped path is the commonest failure; do not blame a missing file."""
+    monkeypatch.setenv("AP_ROOT", str(tmp_path / "never-created"))
+    message = ap_env.missing_checkout_message()
+    assert "is not a folder" in message
+    assert ap_env.CHECKOUT_MARKER.as_posix() not in message
+
+
+def test_an_empty_override_counts_as_unset(monkeypatch) -> None:
+    """A variable cleared to nothing is not a path anyone meant to point at."""
+    monkeypatch.setenv("AP_ROOT", "")
+    assert "No Archipelago checkout found" in ap_env.missing_checkout_message()
 
 
 def test_an_empty_search_says_where_a_checkout_may_go(monkeypatch) -> None:
