@@ -1589,21 +1589,29 @@ PACKAGE_ABILITY_ALTERNATIVES: dict[int, list[list[str]]] = {
 # over a pickup takes nothing; getting to one is the question these answer, and
 # only the slots the audit writes a term on are here.
 #
-# The three bribes are over ramps a car has to take, and the Viceport sniper is
-# on the bridge rail, which takes a jump and then either a car to jump off or a
-# sprint into it.
+# One slot, the Viceport sniper on the bridge rail: a jump outright, and then
+# either a car to jump off or a sprint into it, which is the alternatives table's
+# half. The three ramp bribes were here on a flat Land Vehicles term and are not
+# any more; each hangs in open air over its ramp, so a helicopter flown through
+# one takes it as surely as the car the ramp is there for, and a flat term would
+# have called a seed unreachable that is not.
 PICKUP_ABILITY_REQUIREMENTS: dict[int, list[str]] = {
-    8: [LAND_VEHICLES_ITEM],
-    10: [LAND_VEHICLES_ITEM],
-    12: [LAND_VEHICLES_ITEM],
     41: [JUMP_ITEM],
 }
 
 # The pickup slots with several ways in, same shape as the package table. Three
-# are inside Leaf Links and one is the Viceport bridge rail, reached off a car or
-# at a run; the other ten are roofs, which is why so many read "a helicopter or
-# the mission that leaves one standing there".
+# are the police bribes hanging over their ramp jumps, taken by the car the ramp
+# is built for or by a helicopter flown through them; three more are inside Leaf
+# Links and one is the Viceport bridge rail, reached off a car or at a run; the
+# other ten are roofs, which is why so many read "a helicopter or the mission
+# that leaves one standing there".
+#
+# The ramp three read land first because the car is the route the ramp is for.
+# Order changes no rule: a routes row is a one-of whichever way it is written.
 PICKUP_ABILITY_ALTERNATIVES: dict[int, list[list[str]]] = {
+    8: [[LAND_VEHICLES_ITEM], [AIR_VEHICLES_ITEM]],
+    10: [[LAND_VEHICLES_ITEM], [AIR_VEHICLES_ITEM]],
+    12: [[LAND_VEHICLES_ITEM], [AIR_VEHICLES_ITEM]],
     22: [[AIR_VEHICLES_ITEM], [JUMP_ITEM]],
     31: [[AIR_VEHICLES_ITEM], [LAND_VEHICLES_ITEM]],
     33: LEAF_LINKS_ROUTES,

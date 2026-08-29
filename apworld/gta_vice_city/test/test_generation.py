@@ -990,8 +990,8 @@ class TestPickupReach(WorldTestBase):
         # the other ninety-odd slots carrying nothing is the claim that matters:
         # a slot with no term is one the audit walked and found free, not one
         # nobody looked at.
-        self.assertEqual(len(data.PICKUP_ABILITY_REQUIREMENTS), 4)
-        self.assertEqual(len(data.PICKUP_ABILITY_ALTERNATIVES), 14)
+        self.assertEqual(len(data.PICKUP_ABILITY_REQUIREMENTS), 1)
+        self.assertEqual(len(data.PICKUP_ABILITY_ALTERNATIVES), 17)
         for index, items in data.PICKUP_ABILITY_REQUIREMENTS.items():
             name = data.pickup_name(index)
             with self.subTest(pickup=name):
@@ -1007,6 +1007,39 @@ class TestPickupReach(WorldTestBase):
         self.assertFalse(self.can_reach_location(sniper))
         self.collect_by_name([data.SPRINT_ITEM])
         self.assertTrue(self.can_reach_location(sniper))
+
+    def test_a_ramp_bribe_takes_the_car_or_the_helicopter(self) -> None:
+        # The three police bribes hanging over ramp jumps. The car the ramp is
+        # built for is one way in; each bribe hangs in open air over its ramp, so
+        # a helicopter flown through it is another. The helicopter half is what
+        # makes them worth writing down: they carried a flat Land Vehicles term
+        # until it was noticed, and a flat term calls a seed unreachable that a
+        # player can finish.
+        bribes = [data.pickup_name(index) for index in (8, 10, 12)]
+        self.collect_by_name(["Mainland Access"])
+        for name in bribes:
+            with self.subTest(pickup=name):
+                self.assertIn("(Ramp jump)", name)
+                self.assertNotIn(name, data.LOCATION_ABILITY_REQUIREMENTS)
+                self.assertEqual(
+                    data.LOCATION_ABILITY_ALTERNATIVES[name],
+                    [[data.LAND_VEHICLES_ITEM], [data.AIR_VEHICLES_ITEM]])
+                self.assertFalse(self.can_reach_location(name), name)
+        # The helicopter alone, with no car anywhere: the half the flat term hid.
+        self.collect_by_name([data.AIR_VEHICLES_ITEM])
+        for name in bribes:
+            self.assertTrue(self.can_reach_location(name), name)
+
+    def test_a_ramp_bribe_still_takes_the_car_on_its_own(self) -> None:
+        # The other half, from a fresh state since the two routes have to open
+        # the slot one at a time or the row says nothing the flat term did not.
+        bribes = [data.pickup_name(index) for index in (8, 10, 12)]
+        self.collect_by_name(["Mainland Access"])
+        for name in bribes:
+            self.assertFalse(self.can_reach_location(name), name)
+        self.collect_by_name([data.LAND_VEHICLES_ITEM])
+        for name in bribes:
+            self.assertTrue(self.can_reach_location(name), name)
 
     def test_the_leaf_links_pickups_take_the_same_five_ways_in(self) -> None:
         # The three ambient slots inside the golf course carry the package
