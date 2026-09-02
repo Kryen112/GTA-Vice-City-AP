@@ -126,9 +126,11 @@ class GTAViceCitySettings(settings.Group):
         required = False
 
     class AutoLaunchGame(settings.Bool):
-        """Launch gta-vc.exe automatically when the client connects, once per
-        client session. On by default; set false to launch it yourself or with
-        the /play command."""
+        """Launch gta-vc.exe automatically each time you connect (the Connect
+        button or /connect), unless the game is already running. A reconnect the
+        client makes by itself after a dropped connection never launches. On by
+        default; set false to launch it yourself or with the /play command. The
+        client's /autoplay command overrides this for one client session."""
 
     class IsolateSaves(settings.Bool):
         """Keep each Archipelago seed's GTA Vice City saves in their own set,

@@ -115,7 +115,7 @@ class TestLaunchGame(unittest.TestCase):
                 with mock.patch.object(context_module.subprocess, "Popen") as popen:
                     context.launch_game()
                     popen.assert_called_once()
-                    self.assertTrue(context.game_launched)
+                    self.assertIs(context.game_process, popen.return_value)
 
         asyncio.run(scenario())
 
@@ -143,14 +143,65 @@ class TestLaunchGame(unittest.TestCase):
 
 
 class TestSetupAndLaunch(unittest.TestCase):
-    def test_auto_launches_once_when_the_folder_is_known(self) -> None:
+    """Auto-launch opens the game on a connection the player asked for (the
+    Connect button, /connect, the startup connect) and never on the framework's
+    automatic retry after a dropped socket. Whether a game is already up is read
+    from the bridge and the process probe, not from a launch flag, so a game the
+    player closed comes back on the connect they make next."""
+
+    def test_a_player_connect_launches_and_consumes_the_arm(self) -> None:
+        # Drives the real up-check with the probe saying no. A dropped await on
+        # that check would read a bare coroutine as up and fail here.
         async def scenario() -> None:
             with _install_folder_with_exe() as folder, _fake_settings(folder, auto_launch_game=True):
                 context = _context()
-                with mock.patch.object(context_module.subprocess, "Popen") as popen:
+                context._player_connect_pending = True
+                with mock.patch.object(context, "game_running", return_value=False), \
+                     mock.patch.object(context_module.subprocess, "Popen") as popen:
                     await context.setup_and_launch()
-                    await context.setup_and_launch()  # guarded by game_launched
-                    self.assertEqual(popen.call_count, 1)
+                    popen.assert_called_once()
+                self.assertFalse(context._player_connect_pending)
+
+        asyncio.run(scenario())
+
+    def test_an_automatic_reconnect_never_launches(self) -> None:
+        # The framework's retry bypasses connect(), so nothing arms the launch.
+        async def scenario() -> None:
+            with _install_folder_with_exe() as folder, _fake_settings(folder, auto_launch_game=True):
+                context = _context()
+                with mock.patch.object(context, "game_running", return_value=False), \
+                     mock.patch.object(context_module.subprocess, "Popen") as popen:
+                    await context.setup_and_launch()
+                    popen.assert_not_called()
+
+        asyncio.run(scenario())
+
+    def test_a_closed_game_launches_again_on_the_next_player_connect(self) -> None:
+        async def scenario() -> None:
+            with _install_folder_with_exe() as folder, _fake_settings(folder, auto_launch_game=True):
+                context = _context()
+                with mock.patch.object(context, "game_running", return_value=False), \
+                     mock.patch.object(context_module.subprocess, "Popen") as popen:
+                    context._player_connect_pending = True
+                    await context.setup_and_launch()
+                    context._player_connect_pending = True
+                    await context.setup_and_launch()
+                    self.assertEqual(popen.call_count, 2)
+
+        asyncio.run(scenario())
+
+    def test_a_running_game_is_not_duplicated_and_the_reply_names_play(self) -> None:
+        async def scenario() -> None:
+            with _install_folder_with_exe() as folder, _fake_settings(folder, auto_launch_game=True):
+                context = _context()
+                context._player_connect_pending = True
+                with mock.patch.object(context, "game_running", return_value=True), \
+                     mock.patch.object(context_module.subprocess, "Popen") as popen, \
+                     self.assertLogs("Client", level="INFO") as logged:
+                    await context.setup_and_launch()
+                    popen.assert_not_called()
+                self.assertIn("/play", logged.output[-1])
+                self.assertFalse(context._player_connect_pending)
 
         asyncio.run(scenario())
 
@@ -158,9 +209,28 @@ class TestSetupAndLaunch(unittest.TestCase):
         async def scenario() -> None:
             with _install_folder_with_exe() as folder, _fake_settings(folder, auto_launch_game=False):
                 context = _context()
+                context._player_connect_pending = True
                 with mock.patch.object(context_module.subprocess, "Popen") as popen:
                     await context.setup_and_launch()
                     popen.assert_not_called()
+                # Spent all the same, so a retry Connected cannot inherit it.
+                self.assertFalse(context._player_connect_pending)
+
+        asyncio.run(scenario())
+
+    def test_the_arm_is_spent_even_when_the_step_stops_short(self) -> None:
+        # Consumed at the top of the step, so a connect that never reaches the
+        # launch (here: headless with no folder) spends it too.
+        async def scenario() -> None:
+            with _fake_settings(""):
+                context = _context()
+                context._player_connect_pending = True
+                with mock.patch.object(context_module, "gui_enabled", False), \
+                     mock.patch.object(context_module.subprocess, "Popen") as popen, \
+                     self.assertLogs("Client", level="WARNING"):
+                    await context.setup_and_launch()
+                    popen.assert_not_called()
+                self.assertFalse(context._player_connect_pending)
 
         asyncio.run(scenario())
 
@@ -187,6 +257,46 @@ class TestSetupAndLaunch(unittest.TestCase):
                     pick.assert_not_called()
                     popen.assert_not_called()
                     self.assertIsNone(context.install_dir)
+
+        asyncio.run(scenario())
+
+
+class TestConnectArmsTheLaunch(unittest.TestCase):
+    def test_connect_arms_then_defers_to_the_framework(self) -> None:
+        async def scenario() -> None:
+            with _fake_settings(""):
+                context = _context()
+                with mock.patch.object(context_module.CommonContext, "connect",
+                                       new=mock.AsyncMock()) as base:
+                    await context.connect("host:38281")
+                self.assertTrue(context._player_connect_pending)
+                base.assert_awaited_once_with("host:38281")
+
+        asyncio.run(scenario())
+
+
+class TestGameIsUp(unittest.TestCase):
+    """The real up-check, with only the process probe stubbed."""
+
+    def test_a_connected_game_counts_without_probing_the_process(self) -> None:
+        async def scenario() -> None:
+            with _fake_settings(""):
+                context = _context()
+                with mock.patch.object(type(context.bridge), "connected",
+                                       new_callable=mock.PropertyMock, return_value=True), \
+                     mock.patch.object(context, "game_running", side_effect=AssertionError):
+                    self.assertTrue(await context.game_is_up())
+
+        asyncio.run(scenario())
+
+    def test_an_unconnected_game_is_read_from_the_process_probe(self) -> None:
+        async def scenario() -> None:
+            with _fake_settings(""):
+                context = _context()
+                for running in (True, False):
+                    with self.subTest(running=running), \
+                         mock.patch.object(context, "game_running", return_value=running):
+                        self.assertEqual(await context.game_is_up(), running)
 
         asyncio.run(scenario())
 
@@ -300,6 +410,95 @@ class TestCommands(unittest.TestCase):
                 with mock.patch.object(context, "uninstall_mod") as uninstall_mod:
                     context_module.GTAViceCityCommandProcessor(context)._cmd_uninstall()
                     uninstall_mod.assert_called_once_with()
+
+        asyncio.run(scenario())
+
+    def test_deathlink_reads_the_shared_on_off_words(self) -> None:
+        # The words come from the same table /autoplay reads, so the two commands
+        # cannot drift apart in what they accept.
+        async def scenario() -> None:
+            with _fake_settings(""):
+                context = _context()
+                processor = context_module.GTAViceCityCommandProcessor(context)
+                with mock.patch.object(context, "refresh_death_link"), \
+                     self.assertLogs("Client", level="INFO"):
+                    processor._cmd_deathlink(" On ")
+                    self.assertTrue(context.death_link_override)
+                    processor._cmd_deathlink("0")
+                    self.assertFalse(context.death_link_override)
+                    processor._cmd_deathlink("seed")
+                    self.assertIsNone(context.death_link_override)
+
+        asyncio.run(scenario())
+
+
+class TestAutoplayCommand(unittest.TestCase):
+    """/autoplay overrides the auto_launch_game setting for the client session."""
+
+    def test_bare_flips_from_the_setting(self) -> None:
+        async def scenario() -> None:
+            with _fake_settings("", auto_launch_game=True):
+                context = _context()
+                processor = context_module.GTAViceCityCommandProcessor(context)
+                with self.assertLogs("Client", level="INFO") as logged:
+                    processor._cmd_autoplay("")
+                self.assertFalse(context.auto_launch_wanted())
+                self.assertIn("Auto-launch is off", logged.output[-1])
+                with self.assertLogs("Client", level="INFO") as logged:
+                    processor._cmd_autoplay("")
+                self.assertTrue(context.auto_launch_wanted())
+                self.assertIn("Auto-launch is on", logged.output[-1])
+
+        asyncio.run(scenario())
+
+    def test_explicit_on_off_beats_the_setting(self) -> None:
+        async def scenario() -> None:
+            with _fake_settings("", auto_launch_game=True) as fake:
+                context = _context()
+                processor = context_module.GTAViceCityCommandProcessor(context)
+                with self.assertLogs("Client", level="INFO"):
+                    processor._cmd_autoplay("off")
+                self.assertFalse(context.auto_launch_wanted())
+                fake.auto_launch_game = False
+                with self.assertLogs("Client", level="INFO"):
+                    processor._cmd_autoplay(" ON ")
+                self.assertTrue(context.auto_launch_wanted())
+
+        asyncio.run(scenario())
+
+    def test_bad_argument_prints_usage_and_changes_nothing(self) -> None:
+        async def scenario() -> None:
+            with _fake_settings(""):
+                context = _context()
+                with self.assertLogs("Client", level="INFO") as logged:
+                    context_module.GTAViceCityCommandProcessor(context)._cmd_autoplay("maybe")
+                self.assertIsNone(context.auto_launch_override)
+                self.assertIn("Usage: /autoplay", logged.output[-1])
+
+        asyncio.run(scenario())
+
+    def test_override_off_stops_a_connect_from_launching(self) -> None:
+        async def scenario() -> None:
+            with _install_folder_with_exe() as folder, _fake_settings(folder, auto_launch_game=True):
+                context = _context()
+                context.auto_launch_override = False
+                context._player_connect_pending = True
+                with mock.patch.object(context, "launch_game") as launch_game:
+                    await context.setup_and_launch()
+                    launch_game.assert_not_called()
+
+        asyncio.run(scenario())
+
+    def test_override_on_launches_with_the_setting_off(self) -> None:
+        async def scenario() -> None:
+            with _install_folder_with_exe() as folder, _fake_settings(folder, auto_launch_game=False):
+                context = _context()
+                context.auto_launch_override = True
+                context._player_connect_pending = True
+                with mock.patch.object(context, "game_running", return_value=False), \
+                     mock.patch.object(context, "launch_game") as launch_game:
+                    await context.setup_and_launch()
+                    launch_game.assert_called_once_with()
 
         asyncio.run(scenario())
 
@@ -431,6 +630,7 @@ class TestModInstall(unittest.TestCase):
             with _install_folder_with_exe() as folder, \
                     _fake_settings(folder, auto_launch_game=True, auto_install_mod=True):
                 context = _context()
+                context._player_connect_pending = True
                 with mock.patch.object(context, "install_mod", return_value=False), \
                      mock.patch.object(context, "launch_game") as launch_game:
                     await context.setup_and_launch()
@@ -443,7 +643,9 @@ class TestModInstall(unittest.TestCase):
             with _install_folder_with_exe() as folder, \
                     _fake_settings(folder, auto_launch_game=True, auto_install_mod=True):
                 context = _context()
+                context._player_connect_pending = True
                 with mock.patch.object(context, "install_mod", return_value=True), \
+                     mock.patch.object(context, "game_running", return_value=False), \
                      mock.patch.object(context, "launch_game") as launch_game:
                     await context.setup_and_launch()
                     launch_game.assert_called_once_with()

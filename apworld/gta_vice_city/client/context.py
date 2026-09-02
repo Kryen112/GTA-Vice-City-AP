@@ -13,9 +13,10 @@ Normally launched from the Archipelago Launcher's "GTA Vice City Client"
 button. During development, from inside the Archipelago repo:
     python -m worlds.gta_vice_city.client.context --connect localhost:38281 --name Player1
 
-On connect it makes sure the install folder is known, opening a folder picker
-the first time and saving the choice to host.yaml, then launches gta-vc.exe
-when auto-launch is on. The /play command launches the game on demand and
+On a connect the player made it makes sure the install folder is known, opening
+a folder picker the first time and saving the choice to host.yaml, then launches
+gta-vc.exe when auto-launch is on and no game is up. The /play command launches
+the game on demand, /autoplay turns auto-launch on or off for the session, and
 /setfolder re-picks the install folder.
 """
 
@@ -49,6 +50,10 @@ from .saves import SaveManager
 
 DEFAULT_BRIDGE_PORT = 52300
 logger = logging.getLogger("Client")
+
+# Accepted arguments to a toggle command, mapping to the state they set.
+_ON_OFF_ARGS = {"on": True, "true": True, "1": True,
+                "off": False, "false": False, "0": False}
 
 
 def looks_like_install(path: Path) -> bool:
@@ -100,10 +105,8 @@ class GTAViceCityCommandProcessor(ClientCommandProcessor):
         Usage: /deathlink [on | off | seed]. Bare flips it, and 'seed' hands it
         back to the seed's own option."""
         wanted = state.strip().lower()
-        if wanted in ("on", "true", "1"):
-            self.ctx.death_link_override = True
-        elif wanted in ("off", "false", "0"):
-            self.ctx.death_link_override = False
+        if wanted in _ON_OFF_ARGS:
+            self.ctx.death_link_override = _ON_OFF_ARGS[wanted]
         elif wanted == "seed":
             self.ctx.death_link_override = None
         elif not wanted:
@@ -116,6 +119,26 @@ class GTAViceCityCommandProcessor(ClientCommandProcessor):
                   else "your override for this session")
         self.output(f"DeathLink is {'on' if self.ctx.death_link_enabled else 'off'} "
                     f"({source}).")
+
+    def _cmd_autoplay(self, state: str = "") -> None:
+        """Turn auto-launch on or off for this client session, whatever
+        auto_launch_game in host.yaml says. Usage: /autoplay [on | off]. Bare
+        flips it. Applies to your next connect; /play starts the game now."""
+        wanted = state.strip().lower()
+        if wanted in _ON_OFF_ARGS:
+            self.ctx.auto_launch_override = _ON_OFF_ARGS[wanted]
+        elif not wanted:
+            self.ctx.auto_launch_override = not self.ctx.auto_launch_wanted()
+        else:
+            self.output("Usage: /autoplay [on | off]. Bare /autoplay flips it.")
+            return
+        if self.ctx.auto_launch_wanted():
+            self.output("Auto-launch is on: the game starts when you connect (/play starts "
+                        "it now). Resets when the client restarts.")
+        else:
+            self.output("Auto-launch is off: the game stays closed when you connect (/play "
+                        "starts it). Resets when the client restarts. Set auto_launch_game "
+                        "in host.yaml to make it permanent.")
 
     def _cmd_restore(self) -> None:
         """Restore your normal saves, undoing Archipelago save isolation. Close
@@ -151,7 +174,14 @@ class GTAViceCityContext(CommonContext):
         if slot_name:
             self.auth = slot_name
         self.bridge_port = bridge_port
-        self.game_launched = False
+        # Armed by connect() and the startup connect, consumed by setup_and_launch
+        # on the next Connected: only a connection the player asked for opens the
+        # game. The framework's automatic retry bypasses connect() and never arms
+        # it.
+        self._player_connect_pending: bool = False
+        # /autoplay for this client session. None follows the auto_launch_game
+        # setting; True or False beats it on every connect.
+        self.auto_launch_override: bool | None = None
         self.game_process: subprocess.Popen | None = None
         # Set by /restore, so a reconnect does not swap the normal saves back
         # out after the player asked for them.
@@ -219,6 +249,14 @@ class GTAViceCityContext(CommonContext):
             await self.get_username()
         await self.send_connect()
 
+    async def connect(self, address: str | None = None) -> None:
+        """Every connection the player asks for (the Connect button, /connect)
+        comes through here. The framework's automatic retry starts server_loop
+        directly and skips it, so arming here is what keeps a reconnect the
+        player did not ask for from opening the game."""
+        self._player_connect_pending = True
+        await super().connect(address)
+
     def make_gui(self) -> type:
         """Name the client window after the game. kvui builds the rest of the
         title around base_title, appending the Archipelago version and the
@@ -244,7 +282,8 @@ class GTAViceCityContext(CommonContext):
         if cmd == "RoomInfo":
             self.seed_name = args.get("seed_name")
         # Capture the ASI configuration from slot_data on connect, then make
-        # sure the install folder is known and auto-launch the game.
+        # sure the install folder is known and auto-launch the game when the
+        # player made this connect.
         if cmd == "Connected":
             slot_data = args.get("slot_data") or {}
             self.asi_config = {
@@ -694,6 +733,13 @@ class GTAViceCityContext(CommonContext):
         from .. import GTAViceCityWorld
         return bool(getattr(GTAViceCityWorld.settings, "auto_launch_game", False))
 
+    def auto_launch_wanted(self) -> bool:
+        """Whether a connect launches the game: the /autoplay override when set,
+        else the auto_launch_game setting."""
+        if self.auto_launch_override is not None:
+            return self.auto_launch_override
+        return self._auto_launch_enabled()
+
     def _isolate_saves_enabled(self) -> bool:
         from .. import GTAViceCityWorld
         return bool(getattr(GTAViceCityWorld.settings, "isolate_saves", False))
@@ -705,7 +751,12 @@ class GTAViceCityContext(CommonContext):
     async def setup_and_launch(self) -> None:
         """On connect: isolate this seed's saves, make sure an install folder is
         known (picker on first run), install the mod, then auto-launch the game
-        if that setting is on."""
+        when the connect was the player's own, the /autoplay override (or failing
+        that the setting) says to, and no game is up."""
+        # Consume the arm first: a Connected the player did not ask for (the
+        # framework's automatic retry) never launches, whatever else runs here.
+        player_asked = self._player_connect_pending
+        self._player_connect_pending = False
         # Isolation moves save files, so it runs on the loop (serialized with
         # other connects) rather than racing in a thread; its one blocking step,
         # the tasklist check, is bounded to a few seconds.
@@ -725,8 +776,15 @@ class GTAViceCityContext(CommonContext):
         installed = True
         if self._auto_install_mod_enabled():
             installed = self.install_mod(announce_current=False)
-        if installed and not self.game_launched and self._auto_launch_enabled():
-            self.launch_game()
+        if not installed or not player_asked or not self.auto_launch_wanted():
+            return
+        # A game that is up must not get a duplicate: one the player started by
+        # hand, or one still booting that has not connected to the bridge yet.
+        if await self.game_is_up():
+            logger.info("Not auto-launching: GTA Vice City looks to be running already. "
+                        "If it is not, type /play.")
+            return
+        self.launch_game()
 
     def install_mod(self, announce_current: bool = True) -> bool:
         """Puts the mod in the game folder. True when it is there afterwards.
@@ -812,6 +870,14 @@ class GTAViceCityContext(CommonContext):
         if self.game_process is not None and self.game_process.poll() is None:
             return True
         return game_process_running()
+
+    async def game_is_up(self) -> bool:
+        """Whether a game is up: connected to the bridge, or visible as a process.
+        A game still booting is a process long before it connects. The process
+        check shells out, so it runs off the event loop."""
+        if self.bridge.connected:
+            return True
+        return await asyncio.get_event_loop().run_in_executor(None, self.game_running)
 
     def _isolate_saves(self) -> None:
         """Swap in this seed's own save set, unless disabled. Skipped while the
@@ -903,7 +969,6 @@ class GTAViceCityContext(CommonContext):
             return
         try:
             self.game_process = subprocess.Popen([str(executable)], cwd=str(executable.parent))
-            self.game_launched = True
             logger.info("Launched GTA Vice City.")
         except OSError as error:
             logger.error("Could not launch GTA Vice City: %s", error)
@@ -912,6 +977,10 @@ class GTAViceCityContext(CommonContext):
 async def _run(context: GTAViceCityContext) -> None:
     await context.bridge.start()
     logger.info("GTA Vice City bridge listening on 127.0.0.1:%d", context.bridge.port)
+    # A startup connect is the player's own (they opened the client with a room
+    # to join), so it arms the launch like the Connect button does.
+    if context.server_address:
+        context._player_connect_pending = True
     context.server_task = asyncio.create_task(server_loop(context), name="server loop")
     if gui_enabled:
         context.run_gui()

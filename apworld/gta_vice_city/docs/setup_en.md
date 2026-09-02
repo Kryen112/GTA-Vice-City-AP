@@ -105,7 +105,12 @@ is the same here; the game name is **Grand Theft Auto Vice City**.
 3. **First connection only:** a folder picker opens. Choose the folder that holds
    `gta-vc.exe`. The choice is saved, so later connections skip this.
 4. The client installs the in-game mod into that folder and launches the game for
-   you. Start a **New Game** to begin the seed.
+   you. Start a **New Game** to begin the seed. Every connect you make yourself
+   (the Connect button or `/connect`) launches it again if the game is not
+   running, so closing the game and reconnecting brings it back. A dropped
+   connection that the client repairs by itself never launches the game. To keep
+   the game closed on connect, type `/autoplay off` for this session, or set
+   `auto_launch_game` to false in host.yaml for good.
 
 If your goal is the hidden-package hunt, the last Package Fragment you receive
 ends the game for you: whatever you are doing at the time, Tommy goes straight
@@ -118,6 +123,7 @@ Type these in the client console:
 | Command | What it does |
 | --- | --- |
 | `/play` | Launch the game, or relaunch it after quitting. |
+| `/autoplay` | Turn auto-launch on or off for this client session (`/autoplay on`, `/autoplay off`; bare `/autoplay` flips it). Applies to your next connect. Set `auto_launch_game` in host.yaml to make it permanent. |
 | `/setfolder` | Re-pick the install folder (the one holding `gta-vc.exe`). |
 | `/installmod` | Reinstall or update the bundled mod. Close the game first. |
 | `/restore` | Restore your normal saves and stop Archipelago save isolation. Close the game first. |
