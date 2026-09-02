@@ -3,7 +3,7 @@
 An Archipelago world plus in-game mod for GTA: Vice City (classic PC,
 executable 1.0). It turns Vice City into a multiworld game.
 
-Current release: v0.1.0.
+Current release: v1.0.0.
 
 ## What randomization does
 
