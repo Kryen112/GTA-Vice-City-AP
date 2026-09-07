@@ -70,6 +70,22 @@ Wasted only, so an arrest is not a death.
 
 ## In game
 
+Enabled, unfinished non-mission checks appear on the minimap and pause-menu map as colored dots.
+Packages are green, robberies light red, rampages dark red, pickups orange, stunt jumps blue,
+properties yellow, side events cyan, and shop stock purple.
+Dots disappear when checked.
+
+The ASI connects directly to Archipelago using
+[randomcodegen's APCc fork](https://github.com/randomcodegen/APCc). Set `server`,
+`slot`, and optional `password` under `[archipelago]` in `GtaVcAp.VC.ini` beside
+the ASI, then launch the game. Archipelago Launcher provides **GTA Vice City Setup**
+for offline installation; the legacy Python client is no longer included. Unacknowledged checks are saved in
+`GtaVcAp.<seed-hash>.json` beside the ASI and replayed after reconnecting.
+
+Use `host:port` for the server (`127.0.0.1:38281` for a local room). Remote hosts
+use TLS; an explicit `ws://host:port` selects an unencrypted server, and
+`wss://host:port` selects TLS. Room credentials stay in your local INI.
+
 Received items slide in down the left edge of the screen, naming the item, who
 it came from and where it was found. Items apply as they arrive, including in
 the middle of a mission.
@@ -103,6 +119,19 @@ apworld and is what an Archipelago WebHost serves as this world's tutorial. The
 says what the randomizer does to the game.
 
 ## For developers
+
+The native client requires the x86 static vcpkg packages `jansson`,
+`libwebsockets`, and `glib`. With Visual Studio C++ Build Tools, `PLUGIN_SDK_DIR`,
+and vcpkg in the sibling `vcpkg` directory, run `scripts/build_native_client.ps1`.
+Use `-VcpkgRoot` for another vcpkg location. `-Test` builds and runs the native
+session checks; then run `python scripts/native_interop_check.py
+.build/native_harness.exe` to test the actual APCc transport against a local
+test server. This test never connects to your multiworld.
+
+`python scripts/build_native_data.py` regenerates the compiled location, item,
+and marker tables from the world (requires `AP_ROOT` like the world tests).
+Use `--check` to verify the checked-in tables. APCc's pinned revision and local
+patches are recorded in `mod/asi/third_party/apcc/README.md`.
 
 Start with `NEXT_APWORLD_PLAYBOOK.md`. It is the build playbook and process
 guardrails distilled from the HP2PC and Viscera Cleanup Detail projects: what to

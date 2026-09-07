@@ -24,7 +24,7 @@ import unittest
 import unittest.mock
 from pathlib import Path
 
-from ... import installer
+from .. import installer
 
 ASI = ("GtaVcAp.VC.asi", b"asi-bytes")
 SCM = ("main.scm", b"scm-bytes")

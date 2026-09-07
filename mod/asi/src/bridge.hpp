@@ -19,6 +19,8 @@ class GameState;
 
 using Logger = std::function<void(const std::string&)>;
 
+bool ApplyClientMessage(GameState* game, const json& message, const Logger& logger);
+
 class BridgeClient {
  public:
   BridgeClient(std::string host, int port, GameState* game, Logger logger);
@@ -33,7 +35,6 @@ class BridgeClient {
   void RunLoop();
   bool RunSession();
   bool SendMessage(const json& message);
-  void HandleMessage(const json& message);
   void PumpOutbound();
   void SleepInterruptible(int milliseconds);
 

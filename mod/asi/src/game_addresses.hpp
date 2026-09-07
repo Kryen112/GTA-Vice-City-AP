@@ -7,6 +7,10 @@
 
 namespace gtavc {
 
+// CMenuManager::PrintMap calls CRadar::DrawBlips after its nine map tiles and
+// before the legend. The map projection is active here (classic VC 1.0).
+constexpr unsigned int kMainMapBlipsCallSite10 = 0x49B34C;
+
 // The music manager's radio retune press count (gNumRetunePresses in the
 // decompilation), classic 1.0 executable only. Pinned from the executable:
 // the single call site of CPad::ChangeStationJustDown (plugin-sdk 1.0 address

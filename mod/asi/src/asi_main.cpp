@@ -1,5 +1,5 @@
-// The ASI entry point. Starts the bridge on a background thread (it connects to
-// the client's localhost listener with retry), drives the game-state on the
+// The ASI entry point. Connects directly to Archipelago through APCc on a
+// background thread and drives the game-state on the
 // game frame, so all SCM memory access stays on the game thread, and draws the
 // pause menu's status page from the menu's own draw event. Received item
 // unlocks reach the script and completed checks flow back, both keyed by the
@@ -17,7 +17,7 @@
 #include <CDraw.h>
 #include <CHud.h>
 
-#include "bridge.hpp"
+#include "ap_client.hpp"
 #include "game_addresses.hpp"
 #include "scm_game_state.hpp"
 #include "status_page.hpp"
@@ -35,6 +35,9 @@ namespace {
 // it detects, so any other executable simply never patches it.
 CdeclEvent<AddressListMulti<gtavc::kBeforeWorldProcessCallSite10, GAME_10EN, H_CALL>,
            PRIORITY_AFTER, ArgPickNone, void()> beforeWorldProcessEvent;
+
+CdeclEvent<AddressListMulti<gtavc::kMainMapBlipsCallSite10, GAME_10EN, H_CALL>,
+           PRIORITY_BEFORE, ArgPickNone, void()> mainMapBlipsEvent;
 
 std::mutex g_log_mutex;
 
@@ -63,13 +66,13 @@ void LogLine(const std::string& line) {
 struct AsiMain {
   gtavc::ScmGameState game;
   gtavc::StatusPage status_page;
-  gtavc::BridgeClient bridge;
+  gtavc::ArchipelagoClient bridge;
 
   AsiMain()
       : game([](const std::string& line) { LogLine("game: " + line); }),
         status_page([](const std::string& line) { LogLine("page: " + line); }),
-        bridge("127.0.0.1", 52300, &game,
-               [](const std::string& line) { LogLine("bridge: " + line); }) {
+        bridge(&game,
+               [](const std::string& line) { LogLine("APCc: " + line); }) {
     LogLine("loaded");
     // Register the frame handlers before starting the bridge, so the game
     // thread is priming the seed-hash cache by the time the bridge presents it.
@@ -105,12 +108,15 @@ struct AsiMain {
     // would be flushed before the HUD drew over it; and not the pre-world hook,
     // which is before any drawing at all.
     Events::drawHudEvent += [] { instance.OnDrawHud(); };
+    mainMapBlipsEvent += [] { instance.game.DrawCheckMarkers(); };
     bridge.Start();
   }
 
   ~AsiMain() { bridge.Stop(); }
 
-  void OnGameProcess() { game.OnGameFrame(); }
+  void OnGameProcess() {
+    game.OnGameFrame();
+  }
   void OnGameStarted() { game.OnGameStarted(); }
 
   void OnBeforeWorldProcess() { game.OnBeforeWorldProcess(); }
@@ -125,6 +131,7 @@ struct AsiMain {
     // And not over a fade. The HUD draw runs whatever the fade is doing, so a row
     // would otherwise print over a black screen or the load blur.
     if (CDraw::FadeValue != 0 || TheCamera.m_bFading) return;
+    game.DrawCheckMarkers();
     game.DrawToasts();
   }
 

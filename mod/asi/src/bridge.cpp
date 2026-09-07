@@ -1,6 +1,7 @@
 #include "bridge.hpp"
 
 #include <chrono>
+#include <cmath>
 #include <utility>
 #include <cstddef>
 #include <vector>
@@ -67,7 +68,7 @@ bool BridgeClient::RunSession() {
       try {
         for (const json& message : reader_.Feed(buffer, static_cast<std::size_t>(received))) {
           if (welcomed) {
-            HandleMessage(message);
+            ApplyClientMessage(game_, message, logger_);
             continue;
           }
           const std::string type = message.value("type", std::string());
@@ -116,7 +117,7 @@ bool BridgeClient::SendMessage(const json& message) {
   return true;
 }
 
-void BridgeClient::HandleMessage(const json& message) {
+bool ApplyClientMessage(GameState* game, const json& message, const Logger& logger) {
   try {
     const std::string type = message.value("type", std::string());
     if (type == msg::kConfig) {
@@ -232,21 +233,51 @@ void BridgeClient::HandleMessage(const json& message) {
           pickup_districts.push_back(placed);
         }
       }
-      game_->ApplyConfig(item_globals, completion_watch, item_effects, config_globals,
+      CheckMarkers check_markers;
+      if (message.contains("check_markers") && message.at("check_markers").is_object()) {
+        const json& markers = message.at("check_markers");
+        for (const auto& [global_index, location] : completion_watch) {
+          const auto position = markers.find(std::to_string(global_index));
+          if (position == markers.end() || !position->is_array() ||
+              (position->size() != 2 && position->size() != 3) ||
+              !position->at(0).is_number() || !position->at(1).is_number()) continue;
+          const float x = position->at(0).get<float>();
+          const float y = position->at(1).get<float>();
+          const int category = position->size() == 3 && position->at(2).is_number_integer()
+                                   ? position->at(2).get<int>() : 0;
+          if (std::isfinite(x) && std::isfinite(y)) check_markers[global_index] = {x, y, category};
+        }
+      }
+      const auto validate_global = [](int index) {
+        // VC ScriptSpace is 260512 bytes. Never trust server-supplied offsets.
+        if (index < 0 || index >= 65128) throw std::runtime_error("SCM global outside ScriptSpace");
+      };
+      for (const auto& entry : item_globals) validate_global(entry.second);
+      for (const auto& entry : completion_watch) validate_global(entry.first);
+      for (const auto& entry : config_globals) validate_global(entry.first);
+      for (const auto& entry : package_locations) validate_global(entry.completion_global);
+      for (const auto& entry : pickup_targets) validate_global(entry.check_global);
+      for (const auto& entry : mainland_routes) {
+        validate_global(entry.unlock_global);
+        validate_global(entry.needs_global);
+      }
+      for (const auto& entry : content_district_globals)
+        for (const int index : entry.second) validate_global(index);
+      game->ApplyConfig(item_globals, completion_watch, item_effects, config_globals,
                          package_locations, pickup_targets, mainland_routes,
-                         content_district_globals, pickup_districts);
+                         content_district_globals, pickup_districts, check_markers);
     } else if (type == msg::kItems) {
       std::vector<std::pair<std::int64_t, std::int64_t>> items;
       for (const json& entry : message.at("items")) {
         items.emplace_back(entry.at(0).get<std::int64_t>(), entry.at(1).get<std::int64_t>());
       }
-      game_->ApplyItems(items);
+      game->ApplyItems(items);
     } else if (type == msg::kChecked) {
       std::vector<std::int64_t> locations;
       for (const json& location : message.at("locations")) {
         locations.push_back(location.get<std::int64_t>());
       }
-      game_->MarkChecked(locations);
+      game->MarkChecked(locations);
     } else if (type == msg::kToast) {
       // The client composes the row: only it knows which slot is ours and how the
       // server classified the item, and only it can name the location. What
@@ -257,7 +288,7 @@ void BridgeClient::HandleMessage(const json& message) {
         segments.emplace_back(entry.at(0).get<std::string>(),
                               entry.at(1).get<std::string>());
       }
-      game_->ShowToast(BuildToastRow(segments));
+      game->ShowToast(BuildToastRow(segments));
     } else if (type == msg::kStatus) {
       ClientStatus status;
       status.checks_done = message.value("checks_done", 0);
@@ -281,21 +312,23 @@ void BridgeClient::HandleMessage(const json& message) {
           rows.push_back(std::move(row));
         }
       }
-      game_->SetClientStatus(status);
+      game->SetClientStatus(status);
     } else if (type == msg::kDeathLink) {
       // The client sends this only while the seed's DeathLink option is on, so
       // there is nothing to gate here: the mod holds no copy of the option, and
       // a save's own state must never be what decides.
-      game_->ApplyDeathLink(message.value("source", std::string()));
+      game->ApplyDeathLink(message.value("source", std::string()));
     } else {
       // A type this build does not know, which is a client newer than this mod:
       // dropped, and said so, because the protocol version deliberately does not
       // move for a new message type and this log line is then the only thing
       // that explains a feature the client believes it has.
-      logger_("ignoring an unknown message type: " + type);
+      logger("ignoring an unknown message type: " + type);
     }
-  } catch (const json::exception& error) {
-    logger_(std::string("ignoring malformed message: ") + error.what());
+    return true;
+  } catch (const std::exception& error) {
+    logger(std::string("ignoring malformed message: ") + error.what());
+    return false;
   }
 }
 

@@ -16,6 +16,7 @@
     <Keyword>Win32Proj</Keyword>
     <RootNamespace>GtaVcAp</RootNamespace>
     <WindowsTargetPlatformVersion>10.0</WindowsTargetPlatformVersion>
+    <VcpkgEnabled>false</VcpkgEnabled>
   </PropertyGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release GTA-VC|Win32'" Label="Configuration">
@@ -40,7 +41,16 @@
   <ImportGroup Label="PropertySheets" Condition="'$(Configuration)|$(Platform)'=='Debug GTA-VC|Win32'">
     <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
   </ImportGroup>
-  <PropertyGroup Label="UserMacros" />
+  <PropertyGroup Label="UserMacros">
+    <APCC_DEPS_DIR Condition="'$(APCC_DEPS_DIR)'==''">$(ProjectDir)..\..\..\.build\apcc-deps\x86-windows-static</APCC_DEPS_DIR>
+    <APCC_LIB_DIR>$(APCC_DEPS_DIR)\lib</APCC_LIB_DIR>
+    <APCC_LIB_DIR Condition="'$(Configuration)'=='Debug GTA-VC'">$(APCC_DEPS_DIR)\debug\lib</APCC_LIB_DIR>
+  </PropertyGroup>
+  <PropertyGroup>
+    <APCC_DEBUG_SUFFIX Condition="'$(Configuration)'=='Debug GTA-VC'">d</APCC_DEBUG_SUFFIX>
+    <APCC_JANSSON_SUFFIX Condition="'$(Configuration)'=='Debug GTA-VC'">_d</APCC_JANSSON_SUFFIX>
+    <APCC_LIBRARIES>glib-2.0.lib;iconv.lib;intl.lib;charset.lib;jansson$(APCC_JANSSON_SUFFIX).lib;pcre2-8$(APCC_DEBUG_SUFFIX).lib;libcrypto.lib;libssl.lib;libuv.lib;websockets.lib;zlib$(APCC_DEBUG_SUFFIX).lib;pthreadVC3$(APCC_DEBUG_SUFFIX).lib</APCC_LIBRARIES>
+  </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release GTA-VC|Win32'">
     <LinkIncremental>false</LinkIncremental>
     <IgnoreImportLibrary>true</IgnoreImportLibrary>
@@ -61,8 +71,8 @@
     <ClCompile>
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
       <WarningLevel>Level3</WarningLevel>
-      <PreprocessorDefinitions>_CRT_NON_CONFORMING_SWPRINTFS;TARGET_NAME=R"($(TargetName))";GTAVC;GTAGAME_NAME="Vice City";GTAGAME_ABBR="VC";GTAGAME_ABBRLOW="vc";GTAGAME_PROTAGONISTNAME="Tommy";GTAGAME_CITYNAME="Vice City";PLUGIN_SGV_10EN;RW;%(PreprocessorDefinitions)</PreprocessorDefinitions>
-      <AdditionalIncludeDirectories>..\third_party;$(PLUGIN_SDK_DIR)\Plugin_VC;$(PLUGIN_SDK_DIR)\Plugin_VC\game_vc;$(PLUGIN_SDK_DIR)\Plugin_VC\game_vc\enums;$(PLUGIN_SDK_DIR)\Plugin_VC\game_vc\rw;$(PLUGIN_SDK_DIR)\shared;$(PLUGIN_SDK_DIR)\shared\game;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>NOMINMAX;GLIB_STATIC_COMPILATION;JANSSON_STATIC;LWS_STATIC;_CRT_NON_CONFORMING_SWPRINTFS;TARGET_NAME=R"($(TargetName))";GTAVC;GTAGAME_NAME="Vice City";GTAGAME_ABBR="VC";GTAGAME_ABBRLOW="vc";GTAGAME_PROTAGONISTNAME="Tommy";GTAGAME_CITYNAME="Vice City";PLUGIN_SGV_10EN;RW;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <AdditionalIncludeDirectories>$(APCC_DEPS_DIR)\include;$(APCC_DEPS_DIR)\include\glib-2.0;$(APCC_DEPS_DIR)\lib\glib-2.0\include;..\third_party;$(PLUGIN_SDK_DIR)\Plugin_VC;$(PLUGIN_SDK_DIR)\Plugin_VC\game_vc;$(PLUGIN_SDK_DIR)\Plugin_VC\game_vc\enums;$(PLUGIN_SDK_DIR)\Plugin_VC\game_vc\rw;$(PLUGIN_SDK_DIR)\shared;$(PLUGIN_SDK_DIR)\shared\game;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <DebugInformationFormat>None</DebugInformationFormat>
       <Optimization>Full</Optimization>
       <FunctionLevelLinking>true</FunctionLevelLinking>
@@ -81,8 +91,8 @@
       <EnableCOMDATFolding>true</EnableCOMDATFolding>
       <OptimizeReferences>true</OptimizeReferences>
       <LinkTimeCodeGeneration>UseLinkTimeCodeGeneration</LinkTimeCodeGeneration>
-      <AdditionalDependencies>plugin_vc.lib;%(AdditionalDependencies)</AdditionalDependencies>
-      <AdditionalLibraryDirectories>$(PLUGIN_SDK_DIR)\output\lib;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <AdditionalDependencies>$(APCC_LIBRARIES);ws2_32.lib;crypt32.lib;bcrypt.lib;iphlpapi.lib;userenv.lib;winmm.lib;shlwapi.lib;advapi32.lib;user32.lib;dbghelp.lib;ole32.lib;shell32.lib;plugin_vc.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalLibraryDirectories>$(APCC_LIB_DIR);$(PLUGIN_SDK_DIR)\output\lib;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
       <ImportLibrary>bin\GTA-VC\Release\GtaVcAp.VC.lib</ImportLibrary>
     </Link>
     <PostBuildEvent>
@@ -100,8 +110,8 @@ if exist "$(GTA_VC_DIR)\scripts\$(TargetFileName)" del /Q "$(GTA_VC_DIR)\scripts
     <ClCompile>
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
       <WarningLevel>Level3</WarningLevel>
-      <PreprocessorDefinitions>DEBUG;_CRT_NON_CONFORMING_SWPRINTFS;TARGET_NAME=R"($(TargetName))";GTAVC;GTAGAME_NAME="Vice City";GTAGAME_ABBR="VC";GTAGAME_ABBRLOW="vc";GTAGAME_PROTAGONISTNAME="Tommy";GTAGAME_CITYNAME="Vice City";PLUGIN_SGV_10EN;RW;%(PreprocessorDefinitions)</PreprocessorDefinitions>
-      <AdditionalIncludeDirectories>..\third_party;$(PLUGIN_SDK_DIR)\Plugin_VC;$(PLUGIN_SDK_DIR)\Plugin_VC\game_vc;$(PLUGIN_SDK_DIR)\Plugin_VC\game_vc\enums;$(PLUGIN_SDK_DIR)\Plugin_VC\game_vc\rw;$(PLUGIN_SDK_DIR)\shared;$(PLUGIN_SDK_DIR)\shared\game;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>NOMINMAX;GLIB_STATIC_COMPILATION;JANSSON_STATIC;LWS_STATIC;DEBUG;_CRT_NON_CONFORMING_SWPRINTFS;TARGET_NAME=R"($(TargetName))";GTAVC;GTAGAME_NAME="Vice City";GTAGAME_ABBR="VC";GTAGAME_ABBRLOW="vc";GTAGAME_PROTAGONISTNAME="Tommy";GTAGAME_CITYNAME="Vice City";PLUGIN_SGV_10EN;RW;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <AdditionalIncludeDirectories>$(APCC_DEPS_DIR)\include;$(APCC_DEPS_DIR)\include\glib-2.0;$(APCC_DEPS_DIR)\lib\glib-2.0\include;..\third_party;$(PLUGIN_SDK_DIR)\Plugin_VC;$(PLUGIN_SDK_DIR)\Plugin_VC\game_vc;$(PLUGIN_SDK_DIR)\Plugin_VC\game_vc\enums;$(PLUGIN_SDK_DIR)\Plugin_VC\game_vc\rw;$(PLUGIN_SDK_DIR)\shared;$(PLUGIN_SDK_DIR)\shared\game;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <DebugInformationFormat>EditAndContinue</DebugInformationFormat>
       <Optimization>Disabled</Optimization>
       <MinimalRebuild>false</MinimalRebuild>
@@ -114,8 +124,8 @@ if exist "$(GTA_VC_DIR)\scripts\$(TargetFileName)" del /Q "$(GTA_VC_DIR)\scripts
     <Link>
       <SubSystem>Windows</SubSystem>
       <GenerateDebugInformation>true</GenerateDebugInformation>
-      <AdditionalDependencies>Plugin_VC_d.lib;%(AdditionalDependencies)</AdditionalDependencies>
-      <AdditionalLibraryDirectories>$(PLUGIN_SDK_DIR)\output\lib;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <AdditionalDependencies>$(APCC_LIBRARIES);ws2_32.lib;crypt32.lib;bcrypt.lib;iphlpapi.lib;userenv.lib;winmm.lib;shlwapi.lib;advapi32.lib;user32.lib;dbghelp.lib;ole32.lib;shell32.lib;Plugin_VC_d.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalLibraryDirectories>$(APCC_LIB_DIR);$(PLUGIN_SDK_DIR)\output\lib;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
       <ImportLibrary>bin\GTA-VC\Debug\GtaVcAp.VC.lib</ImportLibrary>
     </Link>
     <PostBuildEvent>
@@ -131,6 +141,13 @@ if exist "$(GTA_VC_DIR)\scripts\$(TargetFileName)" del /Q "$(GTA_VC_DIR)\scripts
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="..\src\asi_main.cpp" />
+    <ClCompile Include="..\src\native_session.cpp" />
+    <ClCompile Include="..\src\ap_client.cpp" />
+    <ClCompile Include="..\third_party\apcc\APCc.c">
+      <CompileAs>CompileAsC</CompileAs>
+      <AdditionalOptions>/sdl- /std:c17</AdditionalOptions>
+      <LanguageStandard_C>stdc17</LanguageStandard_C>
+    </ClCompile>
     <ClCompile Include="..\src\scm_game_state.cpp" />
     <ClCompile Include="..\src\status_page.cpp" />
     <ClCompile Include="..\src\hud_text.cpp" />
