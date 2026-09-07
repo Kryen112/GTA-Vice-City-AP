@@ -34,6 +34,7 @@ from ..locations import (
     CLASS_TOGGLE,
     LOCATION_NAME_TO_ID,
     LOCATION_REGIONS,
+    LOCATION_TOGGLE,
     MISSION_GIVER,
     ORDERED_LOCATION_NAMES,
     PACKAGE_NAMES,
@@ -5217,6 +5218,27 @@ class TestReservedGlobals(WorldTestBase):
 
 class TestSlotData(WorldTestBase):
     game = "Grand Theft Auto Vice City"
+
+    def test_check_markers_follow_enabled_locations(self) -> None:
+        from ..check_markers import check_markers
+
+        slot_data = self.world.fill_slot_data()
+        self.assertEqual(slot_data["check_markers"], check_markers(slot_data))
+        active = {location.address for location in self.multiworld.get_locations(self.player)}
+        for global_index in slot_data["check_markers"]:
+            self.assertIn(slot_data["completion_watch"][global_index], active)
+        self.assertEqual(check_markers({}), {})
+        for option in CLASS_TOGGLE.values():
+            markers = check_markers({option: True})
+            expected = {
+                str(scm.completion_global(name))
+                for name, toggle in LOCATION_TOGGLE.items() if toggle == option
+                and (option != "enable_properties" or name.endswith(" Purchase"))
+                and option != "enable_emergency_vehicles"
+            }
+            self.assertEqual(set(markers), expected, option)
+            self.assertTrue(all(len(position) == 3 and 1 <= position[2] <= 8 and all(math.isfinite(v) for v in position)
+                                for position in markers.values()))
 
     def test_slot_data_is_json_shaped_and_complete(self) -> None:
         slot_data = self.world.fill_slot_data()

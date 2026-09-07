@@ -3222,6 +3222,31 @@ int main() {
              applied_result[0]["index"] == 41,
          "applied round-trip, carrying the received index");
 
+  Expect(ConfiguredSeedMatches("seed-a", "seed-a"), "matching save can use cached configuration offline");
+  Expect(!ConfiguredSeedMatches("seed-b", "seed-a"), "foreign save cannot use cached configuration");
+  Expect(!ConfiguredSeedMatches("", ""), "frontend is not a configured game");
+  Expect(CheckMarkerColor(1)[1] == 255 && CheckMarkerColor(5)[2] == 255,
+         "packages are green and jumps blue");
+  Expect(CheckMarkerColor(2)[0] > CheckMarkerColor(3)[0], "robberies use lighter red than rampages");
+  Expect(CheckMarkerColor(-1) == CheckMarkerColor(0), "unknown category has a visible fallback");
+  Expect(CheckMarkerFitsScreen(3, 3, 640, 448), "main-map outline fits at the top left edge");
+  Expect(CheckMarkerFitsScreen(636, 444, 640, 448), "main-map outline fits at the bottom right edge");
+  Expect(!CheckMarkerFitsScreen(2, 200, 640, 448), "panned map clips the left edge");
+  Expect(!CheckMarkerFitsScreen(637, 200, 640, 448), "panned map clips the right edge");
+  Expect(!CheckMarkerFitsScreen(300, -10, 640, 448), "panned map clips the top edge");
+  Expect(!CheckMarkerFitsScreen(300, 445, 640, 448), "panned map clips the bottom edge");
+  Expect(CheckMarkerFitsScreen(900, 700, 1920, 1080), "main-map clipping follows screen resolution");
+  Expect(!CheckMarkerFitsScreen(std::numeric_limits<float>::quiet_NaN(), 20, 640, 448),
+         "invalid map projections draw nothing");
+  Expect(CheckMarkerFits(0.0f, 0.0f, 50.0f, 40.0f), "marker fits at radar centre");
+  Expect(CheckMarkerFits(0.9f, 0.0f, 50.0f, 40.0f), "nearby marker fits");
+  Expect(!CheckMarkerFits(1.0f, 0.0f, 50.0f, 40.0f), "outline stays inside radar");
+  Expect(!CheckMarkerFits(0.7f, 0.7f, 50.0f, 40.0f), "diagonal outline stays inside radar");
+  Expect(!CheckMarkerFits(-2.0f, 0.0f, 50.0f, 40.0f), "distant markers stay off the edge");
+  Expect(!CheckMarkerFits(0.0f, 0.0f, 0.0f, 40.0f), "zero size radar draws nothing");
+  Expect(!CheckMarkerFits(std::numeric_limits<float>::quiet_NaN(), 0.0f, 50.0f, 40.0f),
+         "invalid projected coordinates draw nothing");
+
   if (failures == 0) {
     std::cout << "OK: protocol self-test passed\n";
     return 0;

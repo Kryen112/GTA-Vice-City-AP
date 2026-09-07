@@ -1,6 +1,7 @@
 #include "bridge.hpp"
 
 #include <chrono>
+#include <cmath>
 #include <utility>
 #include <cstddef>
 #include <vector>
@@ -232,9 +233,24 @@ void BridgeClient::HandleMessage(const json& message) {
           pickup_districts.push_back(placed);
         }
       }
+      CheckMarkers check_markers;
+      if (message.contains("check_markers") && message.at("check_markers").is_object()) {
+        const json& markers = message.at("check_markers");
+        for (const auto& [global_index, location] : completion_watch) {
+          const auto position = markers.find(std::to_string(global_index));
+          if (position == markers.end() || !position->is_array() ||
+              (position->size() != 2 && position->size() != 3) ||
+              !position->at(0).is_number() || !position->at(1).is_number()) continue;
+          const float x = position->at(0).get<float>();
+          const float y = position->at(1).get<float>();
+          const int category = position->size() == 3 && position->at(2).is_number_integer()
+                                   ? position->at(2).get<int>() : 0;
+          if (std::isfinite(x) && std::isfinite(y)) check_markers[global_index] = {x, y, category};
+        }
+      }
       game_->ApplyConfig(item_globals, completion_watch, item_effects, config_globals,
                          package_locations, pickup_targets, mainland_routes,
-                         content_district_globals, pickup_districts);
+                         content_district_globals, pickup_districts, check_markers);
     } else if (type == msg::kItems) {
       std::vector<std::pair<std::int64_t, std::int64_t>> items;
       for (const json& entry : message.at("items")) {

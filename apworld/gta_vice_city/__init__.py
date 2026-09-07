@@ -33,6 +33,7 @@ from worlds.LauncherComponents import Component, Type, components
 from worlds.LauncherComponents import launch as launch_component
 
 from . import data, regions, rules, scm
+from .check_markers import check_markers
 from .items import (
     DISTRICT_CONTENT_NAMES,
     GENERAL_FILLER_NAMES,
@@ -1007,6 +1008,9 @@ class GTAViceCityWorld(World):
                 str(global_index): location_id
                 for global_index, location_id in scm.completion_watch().items()
             },
+            "check_markers": check_markers({
+                name: bool(getattr(self.options, name).value) for name in CHECK_CLASS_OPTIONS
+            }),
             # Only when the class is enabled: with packages off their locations
             # do not exist, so the ASI must not detect or report them.
             "package_coords": {

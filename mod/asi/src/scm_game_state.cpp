@@ -8,6 +8,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <cmath>
 
 #include "game_addresses.hpp"
 #include "scm_finale_warp.hpp"
@@ -18,6 +19,8 @@
 #include <plugin.h>
 #include <CFont.h>
 #include <CHud.h>
+#include <CCamera.h>
+#include <CRadar.h>
 #include <CMessages.h>
 #include <CModelInfo.h>
 #include <CTheScripts.h>
@@ -38,7 +41,7 @@
 #include <CAutomobile.h>
 #include <CPed.h>
 #include <CWeather.h>
-#include <eModelID.h>
+#include <eVehicleModel.h>
 #include <eObjective.h>
 #include <ePedStates.h>
 #include <eWeather.h>
@@ -662,13 +665,15 @@ void ScmGameState::ApplyConfig(const std::map<std::int64_t, int>& item_globals,
                                const std::vector<MainlandRoute>& routes,
                                const std::map<std::int64_t, std::vector<int>>&
                                    content_district_globals,
-                               const std::vector<PickupDistrict>& pickup_districts) {
+                               const std::vector<PickupDistrict>& pickup_districts,
+                               const CheckMarkers& check_markers) {
   std::lock_guard<std::mutex> lock(mutex_);
   item_globals_ = item_globals;
   item_effects_ = item_effects;
   config_globals_ = config_globals;
   completion_watch_ = completion_watch;
   package_locations_ = package_locations;
+  check_markers_ = check_markers;
   pickup_targets_ = pickup_targets;
   content_district_globals_ = content_district_globals;
   pickup_districts_ = pickup_districts;
@@ -704,6 +709,38 @@ void ScmGameState::ApplyConfig(const std::map<std::int64_t, int>& item_globals,
   if (logger_) logger_("config applied");
 }
 
+void ScmGameState::DrawCheckMarkers() {
+  std::lock_guard<std::mutex> lock(mutex_);
+  const bool main_map = FrontEndMenuManager.m_bDrawRadarOrMap;
+  if (!ConfiguredSeedMatches(cached_seed_hash_, configured_seed_hash_) ||
+      CRadar::m_radarRange <= 0.0f || FindPlayerPed() == nullptr) return;
+  if (!main_map && (CHud::bScriptDontDisplayRadar || TheCamera.m_bWideScreenOn ||
+                   FrontEndMenuManager.m_bMenuActive || FrontEndMenuManager.m_nPrefsRadarMode == 2)) return;
+  if (GetGlobal(kMinimapShuffledGlobal) != 0 && GetGlobal(kMinimapUnlockGlobal) == 0) return;
+
+  CVector2D centre, edge;
+  CRadar::TransformRadarPointToScreenSpace(centre, CVector2D(0.0f, 0.0f));
+  CRadar::TransformRadarPointToScreenSpace(edge, CVector2D(1.0f, 1.0f));
+  const float radius_x = std::abs(edge.x - centre.x);
+  const float radius_y = std::abs(edge.y - centre.y);
+  for (const auto& [global_index, position] : check_markers_) {
+    if (global_index < 0 || global_index >= sizeof(CTheScripts::ScriptSpace) / sizeof(int) ||
+        reported_.count(global_index) || GetGlobal(global_index) != 0) continue;
+    CVector2D radar, screen;
+    CRadar::TransformRealWorldPointToRadarSpace(radar, CVector2D(position.x, position.y));
+    if (!main_map && !CheckMarkerFits(radar.x, radar.y, radius_x, radius_y)) continue;
+    CRadar::TransformRadarPointToScreenSpace(screen, radar);
+    const float x = std::floor(screen.x);
+    const float y = std::floor(screen.y);
+    if (main_map && !CheckMarkerFitsScreen(x, y, static_cast<float>(RsGlobal.screenWidth),
+                                         static_cast<float>(RsGlobal.screenHeight))) continue;
+    const auto color = CheckMarkerColor(position.category);
+    CSprite2d::DrawRect(CRect(x - 3.0f, y - 3.0f, x + 4.0f, y + 4.0f), CRGBA(0, 0, 0, 255));
+    CSprite2d::DrawRect(CRect(x - 2.0f, y - 2.0f, x + 3.0f, y + 3.0f),
+                        CRGBA(color[0], color[1], color[2], 255));
+  }
+}
+
 void ScmGameState::ApplyEffect(const ItemEffect& effect) {
   CPlayerPed* player = FindPlayerPed();
   if (player == nullptr) return;
@@ -730,7 +767,7 @@ void ScmGameState::ApplyEffect(const ItemEffect& effect) {
     if (held.m_eWeaponType != weapon && held.m_eWeaponType != WEAPONTYPE_UNARMED) {
       const CWeaponInfo* held_info = CWeaponInfo::GetWeaponInfo(held.m_eWeaponType);
       if (held_info != nullptr) {
-        held.m_nAmmoTotal += std::max(kMinPickupAmmo, kPickupMagazines * held_info->m_nAmountofAmmunition);
+        held.m_nTotalAmmo += std::max(kMinPickupAmmo, kPickupMagazines * held_info->m_nAmountofAmmunition);
       }
       return;
     }
@@ -1305,6 +1342,7 @@ void ScmGameState::StampSeedHash(const std::string& expected) {
   // under it, so this is held for as long as the session is up: the seed every
   // game that comes up without one of its own is stamped with.
   expected_seed_hash_ = expected;
+  configured_seed_hash_ = expected;
 }
 
 void ScmGameState::ApplyItems(const std::vector<std::pair<std::int64_t, std::int64_t>>& items) {
