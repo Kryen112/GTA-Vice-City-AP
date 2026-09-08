@@ -1,3 +1,10 @@
+// SPDX-License-Identifier: LGPL-2.1-only
+// Based on APCpp by N00byKing and contributors; C port by randomcodegen.
+// Copyright (c) 2024-2026 randomcodegen, for the C port and modifications.
+// Modified 2026-09-07: complete-packet and explicit TLS APIs.
+// Modified 2026-09-08: restore license and attribution notices.
+// See LICENSE and README.md. This library is provided WITHOUT ANY WARRANTY.
+
 #define MAX_PAYLOAD_SIZE 32768
 #define WRITE_BUFFER_SIZE 32768
 

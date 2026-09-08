@@ -144,4 +144,30 @@ pre-commit, CI and manual runs.
 
 ## License
 
-MIT, see `LICENSE`. Third party notices are in `NOTICE`.
+Original project code and contributions by Kryen112 and randomcodegen are MIT
+licensed; see `LICENSE`. The vendored APCc library is LGPL-2.1-only, including
+its C port and local modifications. Dependencies retain their own licenses.
+See `NOTICE` and `THIRD_PARTY_LICENSES` for attribution and full third party terms.
+
+### Distributing the native client
+
+The ASI statically links APCc, GLib and other dependencies. When publishing a
+binary, publish the matching source and relinking materials alongside it:
+
+- This repository at the exact build revision, including the modified APCc
+  sources, generated native data, project files and build scripts.
+- The exact dependency source versions and local patches used by the build,
+  including the vcpkg revision and port changes, and the plugin-sdk revision.
+- The build configuration and instructions, plus any application objects or
+  libraries needed to relink if the supplied source cannot reproduce them.
+- `LICENSE`, `NOTICE` and `THIRD_PARTY_LICENSES`, also bundled in the apworld.
+
+`scripts/build_native_client.ps1` builds the ASI from source. Recipients must
+be able to modify the LGPL libraries and relink the ASI; do not impose terms
+prohibiting that or reverse engineering to debug those modifications. These
+requirements apply to each released binary. License files by themselves do
+not constitute a source or relinking bundle. Never include Rockstar's game
+files in that bundle.
+
+`THIRD_PARTY_LICENSES` records the dependency notices from the installed vcpkg
+packages used here. Refresh those notices when the dependency versions change.

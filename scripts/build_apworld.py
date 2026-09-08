@@ -92,7 +92,7 @@ STAGED_PAYLOAD = WORLD_SOURCE / "data" / "mod"
 # nothing: every copy of the world, the client and the ASI would go out with no
 # notice attached, including the third party notices the ASI's own dependencies
 # require to accompany it.
-LICENCE_FILES = ("LICENSE", "NOTICE")
+LICENCE_FILES = ("LICENSE", "NOTICE", "THIRD_PARTY_LICENSES")
 
 # What the ASI is compiled from, for the staleness check below. The harness is
 # left out because it builds its own binaries and is named by no ClCompile entry,
