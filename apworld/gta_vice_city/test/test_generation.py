@@ -5237,8 +5237,21 @@ class TestSlotData(WorldTestBase):
                 and option != "enable_emergency_vehicles"
             }
             self.assertEqual(set(markers), expected, option)
-            self.assertTrue(all(len(position) == 3 and 1 <= position[2] <= 8 and all(math.isfinite(v) for v in position)
+            self.assertTrue(all(len(position) in (3, 4) and 1 <= position[2] <= 8
+                                and all(math.isfinite(v) for v in position)
                                 for position in markers.values()))
+
+    def test_check_markers_use_content_district_gates(self) -> None:
+        from ..check_markers import check_markers
+
+        markers = check_markers(dict.fromkeys(CLASS_TOGGLE.values(), True))
+        gated = set()
+        for name, content in data.LOCATION_CONTENT_CLASS.items():
+            key = str(scm.completion_global(name))
+            self.assertEqual(markers[key][3], scm.district_unlock_global(content, data.location_district(name)), name)
+            gated.add(key)
+        self.assertEqual({key for key, position in markers.items() if len(position) == 4}, gated)
+        self.assertEqual(len(set(data.LOCATION_CONTENT_CLASS.values())), 5)
 
     def test_slot_data_is_json_shaped_and_complete(self) -> None:
         slot_data = self.world.fill_slot_data()

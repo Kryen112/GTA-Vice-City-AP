@@ -61,8 +61,9 @@ EMITTED_PERCENTAGE = 93
 DEATH_LINK_SOURCE = "PlayerTwo"
 CONFIG = {
     "item_globals": {"542100000": 9010, "542100001": 9011},
-    "completion_watch": {"9035": 542000000, "9036": 542000042},
-    "check_markers": {"9035": [479.5, -1718.5, 1], "9036": [708.5, -498.25, 5]},
+    "completion_watch": {"9035": 542000000, "9036": 542000042,
+                         "9038": 542000044, "9039": 542000045, "9040": 542000046},
+    "check_markers": {"9035": [479.5, -1718.5, 1, 9570], "9036": [708.5, -498.25, 5]},
     "item_effects": {
         "542100050": ["cash", 5000], "542100051": ["weapon"],
         # Traps ride the same channel: one with a duration param, one without,
@@ -183,7 +184,8 @@ class Recorder:
             CONFIG["pickup_layout"], CONFIG["mainland_routes"] + DROPPED_ROUTES,
             CONFIG["content_district_globals"],
             CONFIG["content_districts"] + DROPPED_PICKUP_DISTRICTS,
-            {**CONFIG["check_markers"], "9999": [0, 0, 1]},
+            {**CONFIG["check_markers"], "9999": [0, 0, 1], "9038": [0, 0, 1, -1],
+             "9039": [0, 0, 1, 65128], "9040": [0, 0, 1, "invalid"]},
         )
         await bridge.send_items(RESYNC_ITEMS)
         await bridge.send_checked(RESYNC_CHECKED)

@@ -726,6 +726,7 @@ void ScmGameState::DrawCheckMarkers() {
   for (const auto& [global_index, position] : check_markers_) {
     if (global_index < 0 || global_index >= sizeof(CTheScripts::ScriptSpace) / sizeof(int) ||
         reported_.count(global_index) || GetGlobal(global_index) != 0) continue;
+    if (position.content_unlock_global != 0 && GetGlobal(position.content_unlock_global) < kDistrictReleased) continue;
     CVector2D radar, screen;
     CRadar::TransformRealWorldPointToRadarSpace(radar, CVector2D(position.x, position.y));
     if (!main_map && !CheckMarkerFits(radar.x, radar.y, radius_x, radius_y)) continue;

@@ -73,7 +73,7 @@ Wasted only, so an arrest is not a death.
 Enabled, unfinished non-mission checks appear on the minimap and pause-menu map as colored dots.
 Packages are green, robberies light red, rampages dark red, pickups orange, stunt jumps blue,
 properties yellow, side events cyan, and shop stock purple.
-Dots disappear when checked.
+Dots disappear when checked. Content-locked checks stay hidden until their content is unlocked.
 
 Received items slide in down the left edge of the screen, naming the item, who
 it came from and where it was found. Items apply as they arrive, including in

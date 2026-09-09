@@ -239,13 +239,16 @@ void BridgeClient::HandleMessage(const json& message) {
         for (const auto& [global_index, location] : completion_watch) {
           const auto position = markers.find(std::to_string(global_index));
           if (position == markers.end() || !position->is_array() ||
-              (position->size() != 2 && position->size() != 3) ||
+              position->size() < 2 || position->size() > 4 ||
               !position->at(0).is_number() || !position->at(1).is_number()) continue;
           const float x = position->at(0).get<float>();
           const float y = position->at(1).get<float>();
-          const int category = position->size() == 3 && position->at(2).is_number_integer()
+          const int category = position->size() >= 3 && position->at(2).is_number_integer()
                                    ? position->at(2).get<int>() : 0;
-          if (std::isfinite(x) && std::isfinite(y)) check_markers[global_index] = {x, y, category};
+          if (position->size() == 4 && !position->at(3).is_number_integer()) continue;
+          const int content_global = position->size() == 4 ? position->at(3).get<int>() : 0;
+          if (content_global < 0 || content_global >= 65128) continue; // VC ScriptSpace bounds
+          if (std::isfinite(x) && std::isfinite(y)) check_markers[global_index] = {x, y, category, content_global};
         }
       }
       game_->ApplyConfig(item_globals, completion_watch, item_effects, config_globals,

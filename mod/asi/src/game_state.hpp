@@ -24,6 +24,7 @@ struct CheckMarker {
   float x = 0.0f;
   float y = 0.0f;
   int category = 0;
+  int content_unlock_global = 0; // zero for content that cannot be locked
 };
 using CheckMarkers = std::map<int, CheckMarker>;
 
