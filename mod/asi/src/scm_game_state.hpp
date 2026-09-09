@@ -50,7 +50,8 @@ class ScmGameState : public GameState {
                    const std::vector<MainlandRoute>& routes,
                    const std::map<std::int64_t, std::vector<int>>&
                        content_district_globals,
-                   const std::vector<PickupDistrict>& pickup_districts) override;
+                   const std::vector<PickupDistrict>& pickup_districts,
+                   const CheckMarkers& check_markers = {}) override;
   std::string SeedHash() override;
   void StampSeedHash(const std::string& expected) override;
   void ApplyItems(const std::vector<std::pair<std::int64_t, std::int64_t>>& items) override;
@@ -82,6 +83,7 @@ class ScmGameState : public GameState {
   // the stack rather than draining it unseen, and the backlog is still there
   // afterwards because that is where it belongs.
   void DrawToasts();
+  void DrawCheckMarkers();
 
   // Called from the pre-world-process hook, before the player ped reads the
   // pad this frame. Applies only the ability locks that constrain input.
@@ -244,6 +246,7 @@ class ScmGameState : public GameState {
   std::map<int, int> config_globals_;
   std::map<int, std::int64_t> completion_watch_;
   std::vector<PackageLocation> package_locations_;
+  CheckMarkers check_markers_;
   std::vector<PickupTarget> pickup_targets_;
   std::set<int> package_seen_present_;
   std::map<std::int64_t, int> location_to_global_;
@@ -287,6 +290,7 @@ class ScmGameState : public GameState {
   // client_connected_ as well, so the seed a departed client named can never
   // claim the game after it.
   std::string expected_seed_hash_;
+  std::string configured_seed_hash_;
   std::string cached_seed_hash_;
   bool items_dirty_ = false;
   // Grants leave at a rate the game survives rather than the rate the server

@@ -19,6 +19,15 @@
 
 namespace gtavc {
 
+// Completion global -> world position on the minimap.
+struct CheckMarker {
+  float x = 0.0f;
+  float y = 0.0f;
+  int category = 0;
+  int content_unlock_global = 0; // zero for content that cannot be locked
+};
+using CheckMarkers = std::map<int, CheckMarker>;
+
 // A one-shot effect applied once past the saved applied-index.
 //
 // Consumables: "cash" (amount is the value), "weapon", "health", "armor",
@@ -126,7 +135,8 @@ class GameState {
                            const std::vector<MainlandRoute>& routes,
                            const std::map<std::int64_t, std::vector<int>>&
                                content_district_globals,
-                           const std::vector<PickupDistrict>& pickup_districts) = 0;
+                           const std::vector<PickupDistrict>& pickup_districts,
+                           const CheckMarkers& check_markers = {}) = 0;
 
   // The seed hash to present on hello, read from the reserved SCM global.
   // Empty when no game has been started for this seed.
