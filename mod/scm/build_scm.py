@@ -2521,6 +2521,56 @@ def _level_marks(level_var, base, maxlevel, done_label):
     return [*block, f":{done_label}"]
 
 
+# Emergency progress. The flag says whether this seed remembers where a player
+# left an activity; the four globals above it hold the LEVEL TO START AT, one per
+# activity whose mission restarts its level counter from scratch, and the two
+# above those hold Vigilante's per-level ramps. Mirrors
+# scm.REMEMBER_EMERGENCY_GLOBAL, scm.EMERGENCY_PROGRESS_BASE and the two ramp
+# globals, all pinned by the mirror check. They take the first seven of the
+# spare flags between the district grid and the finale globals, so nothing in
+# the numbering moves and a save written by an earlier build already has room
+# for them, holding zero.
+#
+# Vigilante counts levels COMPLETED where the other three count the level in
+# play, so for it those two readings are the same number and one global serves
+# both ends.
+REMEMBER_EMERGENCY = 10159
+EMERGENCY_PROGRESS_BASE = 10160
+PARAMEDIC_PROGRESS = EMERGENCY_PROGRESS_BASE
+FIREFIGHTER_PROGRESS = EMERGENCY_PROGRESS_BASE + 1
+VIGILANTE_PROGRESS = EMERGENCY_PROGRESS_BASE + 2
+PIZZA_PROGRESS = EMERGENCY_PROGRESS_BASE + 3
+VIGILANTE_TIME_RAMP = 10164
+VIGILANTE_WANTED_RAMP = 10165
+
+
+def _resume_level(stored, level_var, mirrors, floats, label):
+    # Overwrite the level only when the seed remembers progress AND something is
+    # stored, so the vanilla constant this sits after IS the fallback for both a
+    # seed without the option and an activity never played. Nothing recomputes
+    # vanilla's starting level, which is what makes the option off identical to
+    # vanilla by construction rather than by arithmetic.
+    #
+    # The stored value is the level to START at, not levels completed, so the
+    # read needs no addition. That matters more than it reads: `$7994 += 1` is a
+    # vanilla line this script anchors on, and emitting a second copy of one
+    # would leave the built file ambiguous for every later anchor on it.
+    return [
+        "if and",
+        f"  ${REMEMBER_EMERGENCY} == 1",
+        f"  ${stored} > 0",
+        f"goto_if_false @{label}",
+        f"set_var_int_to_var_int {level_var} = ${stored}",
+        *[f"set_var_int_to_var_int {mirror} = {level_var}" for mirror in mirrors],
+        # The float ramps ride the level's own guard, so they are read only once
+        # a level has been stored, which is also the only time they hold
+        # anything. At new game every one of these globals is zero together.
+        *[f"set_var_float_to_var_float {target} = ${source}"
+          for target, source in floats],
+        f":{label}",
+    ]
+
+
 def add_emergency_instrumentation():
     # Paramedic/Firefighter/Vigilante/Pizza level globals live in a shared
     # mission-scratch pool, valid only while that mission runs, so mark each
@@ -2537,6 +2587,84 @@ def add_emergency_instrumentation():
     insert_before("$7994 += 1", _level_marks("$7994", 9319, 9, "APPIZ_DONE"),
                   "emergency pizza levels 1-9")
     insert_after("$389 = 1", ["$9328 = 1"], "emergency pizza level 10")
+
+
+def add_emergency_progress():
+    # Resume each emergency activity at the level the player left it at. Vanilla
+    # writes a constant at every mission init, so any end other than finishing
+    # the chain loses the level: cancelling, stepping out of the vehicle, dying,
+    # being busted and failing a level all restart at 1. Reading the stored
+    # global there instead is the whole feature.
+    #
+    # Taxi has no entry because it needs none: its career fares live in the
+    # vanilla global $369, which the mission never resets, so its ten levels
+    # already survive a save and quit.
+    for anchor, stored, level_var, mirrors, floats, label in [
+        # Paramedic carries its patient requirement in a second global. $6744 is
+        # what the level gate `$6753 == $6744` reads, what divides the onscreen
+        # timer and what drives the patient blip chain, and vanilla moves it in
+        # lockstep with $6756 from the same starting 1, so restoring the level
+        # without it would announce level 9 and then ask for one patient.
+        ("$6756 = 1", PARAMEDIC_PROGRESS, "$6756", ["$6744"], [],
+         "APRESUME_PARAMEDIC"),
+        ("$6848 = 1", FIREFIGHTER_PROGRESS, "$6848", [], [],
+         "APRESUME_FIREFIGHTER"),
+        # Anchored on the LAST of Vigilante's three starting values rather than
+        # on `$6892 = 0`, which the init writes first: the two float ramps are
+        # set nineteen lines below it, so a block placed at the level would have
+        # its ramps overwritten by the vanilla constants it is meant to replace.
+        ("$6981 = 1.0", VIGILANTE_PROGRESS, "$6892", [],
+         [("$6980", VIGILANTE_TIME_RAMP), ("$6981", VIGILANTE_WANTED_RAMP)],
+         "APRESUME_VIGILANTE"),
+        ("$7994 = 1", PIZZA_PROGRESS, "$7994", [], [], "APRESUME_PIZZA"),
+    ]:
+        insert_after(anchor,
+                     _resume_level(stored, level_var, mirrors, floats, label),
+                     f"emergency resume {level_var}")
+    # Store the level to come as each one finishes, which is the counter the
+    # mission has just incremented. Unconditional, unlike the reads: a global
+    # nothing reads changes nothing in game, and gating it would double the flag
+    # checks to no effect.
+    #
+    # Vigilante counts levels COMPLETED where the other three count the level in
+    # play, so for it the two readings are the same number and the same global
+    # serves both ends.
+    for anchor, stored in [
+        ("$6756 += 1", PARAMEDIC_PROGRESS),
+        ("$6848 += 1", FIREFIGHTER_PROGRESS),
+        ("$6892 += 1", VIGILANTE_PROGRESS),
+        ("$7994 += 1", PIZZA_PROGRESS),
+    ]:
+        source = anchor.split(" ")[0]
+        insert_after(anchor, [f"set_var_int_to_var_int ${stored} = {source}"],
+                     f"emergency progress stores {source}")
+    # Vigilante's ramps, each stored where its own decrement leaves it, which is
+    # what makes the restored value the one a continuous run would carry into the
+    # next level. $6980 drops at the START of a level, so storing it beside the
+    # level captures the value the mission's own decrement then advances from.
+    # $6981 drops at the END, so it is stored after its decrement instead.
+    #
+    # One wait separates the level store from this one, so a death in that window
+    # leaves the wanted ramp a single 0.05 step behind the level. It corrects
+    # itself on the next level completed.
+    insert_after("$6892 += 1",
+                 [f"set_var_float_to_var_float ${VIGILANTE_TIME_RAMP} = $6980"],
+                 "emergency progress stores vigilante time ramp")
+    insert_after("set_wanted_multiplier $6981",
+                 [f"set_var_float_to_var_float ${VIGILANTE_WANTED_RAMP} = $6981"],
+                 "emergency progress stores vigilante wanted ramp")
+    # Firefighter and Vigilante loop for as long as the player keeps playing, so
+    # nothing caps them. Paramedic needs a cap: its store writes 13 on finishing
+    # level 12, and re-entering at 13 would hang, because it returns on
+    # `$6756 == 13` and creates only twelve patients, so a thirteenth could never
+    # be delivered. The line this rides is inside that completion branch, which
+    # with this option on is reached on every re-entry, and the write is the same
+    # every time, so it needs no comparison and no label.
+    #
+    # Pizza needs no cap at all: `$7994 += 1` runs only where `$7994 == 10` is
+    # false, so its store can never write above 10 in the first place.
+    insert_after("print_with_number_big 'A_COMP1' number 15000 time 5000 style 5",
+                 [f"${PARAMEDIC_PROGRESS} = 12"], "emergency progress caps paramedic")
 
 
 # Persistent-reward re-gating (Phase 3). When a reward group is shuffled (the
@@ -2891,6 +3019,7 @@ suppress_stunt_jump_rewards()
 suppress_rampage_rewards()
 add_stat_watcher()
 add_emergency_instrumentation()
+add_emergency_progress()
 suppress_package_grants()
 suppress_emergency_grants()
 add_reward_applier()

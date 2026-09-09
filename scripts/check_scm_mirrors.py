@@ -885,6 +885,16 @@ def main() -> int:
         ("build_scm.py", build, "DISTRICT_STRIDE", scm.DISTRICT_CAPACITY),
         ("build_scm.py", build, "CONTENT_ROWS", scm.CONTENT_CAPACITY),
         ("build_scm.py", build, "SPARE_FLAGS", scm.SPARE_FLAG_CAPACITY),
+        # The emergency-progress globals live in those spares, so they are the
+        # first pair whose drift the band rules would not catch: they sit inside
+        # a block that is deliberately unnamed, where a wrong number lands on
+        # another spare rather than on anything that would misbehave loudly. A
+        # level written to the wrong spare is simply a level never resumed.
+        ("build_scm.py", build, "REMEMBER_EMERGENCY", scm.REMEMBER_EMERGENCY_GLOBAL),
+        ("build_scm.py", build, "EMERGENCY_PROGRESS_BASE", scm.EMERGENCY_PROGRESS_BASE),
+        ("build_scm.py", build, "VIGILANTE_TIME_RAMP", scm.VIGILANTE_TIME_RAMP_GLOBAL),
+        ("build_scm.py", build, "VIGILANTE_WANTED_RAMP",
+         scm.VIGILANTE_WANTED_RAMP_GLOBAL),
         ("ASI", asi, "kRadioStationCount", scm.RADIO_STATION_COUNT),
         ("ASI", asi, "kSeedHashBase", scm.SEED_HASH_BASE),
         ("ASI", asi, "kSeedHashGlobalCount", scm.SEED_HASH_GLOBAL_COUNT),

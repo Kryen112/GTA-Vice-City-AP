@@ -86,6 +86,25 @@ class ShuffleEmergencyRewards(Toggle):
     display_name = "Shuffle Emergency Vehicle rewards"
 
 
+class RememberEmergencyProgress(DefaultOnToggle):
+    """If on, an emergency-vehicle activity resumes at the level you left it
+    at, across a save and quit. Vanilla restarts paramedic, firefighter,
+    vigilante and pizza at level 1 every time, however far you got.
+
+    Every finished level counts, so cancelling, stepping out of the vehicle,
+    dying and failing a level all resume at the same place. Taxi already works
+    this way in vanilla and is untouched.
+
+    Firefighter and vigilante keep climbing past level 12, the way the game
+    lets them, and their per-level pay is the level squared times 50, so a high
+    level pays a great deal. Paramedic and pizza resume at their top level once
+    finished, since neither mission can run past it.
+
+    Independent of enable_emergency_vehicles. Off leaves every emergency
+    mission starting exactly where vanilla starts it."""
+    display_name = "Remember Emergency Vehicle progress"
+
+
 class EnableProperties(DefaultOnToggle):
     """If on, the 15 Property purchases and the 25 venue missions are checks.
     This does include the 6 Sunshine Autos races and its 4 import lists."""
@@ -282,6 +301,7 @@ class GTAViceCityOptions(PerGameCommonOptions):
     enable_stunt_jumps: EnableStuntJumps
     enable_emergency_vehicles: EnableEmergencyVehicles
     shuffle_emergency_rewards: ShuffleEmergencyRewards
+    remember_emergency_progress: RememberEmergencyProgress
     enable_properties: EnableProperties
     enable_robbable_stores: EnableRobbableStores
     enable_side_events: EnableSideEvents

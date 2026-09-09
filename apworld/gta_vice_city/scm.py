@@ -250,6 +250,53 @@ DISTRICT_UNLOCK_COUNT = CONTENT_CAPACITY * DISTRICT_CAPACITY
 SPARE_FLAG_BASE = DISTRICT_UNLOCK_BASE + DISTRICT_UNLOCK_COUNT
 SPARE_FLAG_CAPACITY = 16
 
+# The first spare carries the remember_emergency_progress flag, stamped from
+# slot_data, and the four above it carry the LEVEL TO START AT for each emergency
+# activity whose vanilla mission restarts its level counter from scratch. Each
+# mission init overwrites its counter only while the flag is set and its global
+# holds something, so the vanilla constant already there is the fallback for a
+# seed without the option and for an activity never played alike. Nothing
+# recomputes vanilla's starting level, which is what makes the option off
+# identical to vanilla by construction rather than by arithmetic.
+#
+# Taxi is absent deliberately and not by omission: its career fares live in the
+# vanilla global $369, which the mission never resets, so its ten levels already
+# survive a save and quit and there is nothing here for them to remember.
+#
+# Two of the four stop at their top level, because their mission cannot run past
+# it: Paramedic returns on `$6756 == 13` and only ever creates twelve patients,
+# so a thirteenth could never be delivered, and Pizza's win branch stops firing
+# above ten. The other two loop for as long as the player keeps playing, so
+# nothing caps them and the stored level climbs with the player.
+REMEMBER_EMERGENCY_GLOBAL = SPARE_FLAG_BASE
+# Order is frozen here rather than derived from data.EMERGENCY_LEVELS, whose own
+# order would then decide these globals: reordering that table for any reason
+# would silently point a running seed's save at another activity's level. A test
+# pins the membership against it so a sixth activity cannot be missed.
+EMERGENCY_PROGRESS_ACTIVITIES: list[str] = [
+    "Paramedic", "Firefighter", "Vigilante", "Pizza",
+]
+EMERGENCY_PROGRESS_BASE = REMEMBER_EMERGENCY_GLOBAL + 1
+
+# Vigilante alone accumulates state across its levels besides the level itself,
+# so a level is not enough to resume it. Two floats ramp once per level and
+# never reset: $6980 starts at 4.0 and drops 0.1 at each level's START, dividing
+# the distance the time budget comes from, and $6981 starts at 1.0 and drops
+# 0.05 at each level's END, going straight to set_wanted_multiplier. Restoring
+# the level without them puts a resumed level 12 at full police heat where a
+# continuous run reaches 0.4, which is a harder level than the one the player
+# left. Paramedic and Firefighter set their one float at init and only read it,
+# and Pizza's per-level counter resets, so none of the other three needs this.
+VIGILANTE_TIME_RAMP_GLOBAL = (EMERGENCY_PROGRESS_BASE
+                              + len(EMERGENCY_PROGRESS_ACTIVITIES))
+VIGILANTE_WANTED_RAMP_GLOBAL = VIGILANTE_TIME_RAMP_GLOBAL + 1
+
+SPARE_FLAGS_USED = 1 + len(EMERGENCY_PROGRESS_ACTIVITIES) + 2
+
+assert SPARE_FLAGS_USED <= SPARE_FLAG_CAPACITY, (
+    f"{SPARE_FLAGS_USED} spare flags handed out of {SPARE_FLAG_CAPACITY}; "
+    "widening the block moves the two finale globals and the top of it")
+
 FINALE_WARP_GLOBAL = SPARE_FLAG_BASE + SPARE_FLAG_CAPACITY
 
 # The finale raises this while it runs and drops it at its single exit, so the
@@ -294,6 +341,10 @@ def content_lock_flag_global(item_name: str) -> int:
 
 def content_unlock_global(item_name: str) -> int:
     return CONTENT_UNLOCK_BASE + CONTENT_KEYS.index(item_name)
+
+
+def emergency_progress_global(activity: str) -> int:
+    return EMERGENCY_PROGRESS_BASE + EMERGENCY_PROGRESS_ACTIVITIES.index(activity)
 
 
 def district_unlock_global(content_item: str, district: str) -> int:
@@ -453,6 +504,10 @@ def reserved_global_map() -> dict[str, int]:
         "base:CONTENT_LOCK_FLAG_BASE": CONTENT_LOCK_FLAG_BASE,
         "base:CONTENT_UNLOCK_BASE": CONTENT_UNLOCK_BASE,
         "base:DISTRICT_UNLOCK_BASE": DISTRICT_UNLOCK_BASE,
+        "base:REMEMBER_EMERGENCY_GLOBAL": REMEMBER_EMERGENCY_GLOBAL,
+        "base:EMERGENCY_PROGRESS_BASE": EMERGENCY_PROGRESS_BASE,
+        "base:VIGILANTE_TIME_RAMP_GLOBAL": VIGILANTE_TIME_RAMP_GLOBAL,
+        "base:VIGILANTE_WANTED_RAMP_GLOBAL": VIGILANTE_WANTED_RAMP_GLOBAL,
         "base:FINALE_WARP_GLOBAL": FINALE_WARP_GLOBAL,
         "base:FINALE_ACTIVE_GLOBAL": FINALE_ACTIVE_GLOBAL,
     }
@@ -472,6 +527,8 @@ def reserved_global_map() -> dict[str, int]:
     for item_name in ABILITY_KEYS:
         reserved[f"ability lock:{item_name}"] = ability_lock_flag_global(item_name)
         reserved[f"ability unlock:{item_name}"] = ability_unlock_global(item_name)
+    for activity in EMERGENCY_PROGRESS_ACTIVITIES:
+        reserved[f"emergency progress:{activity}"] = emergency_progress_global(activity)
     for item_name in CONTENT_KEYS:
         reserved[f"content lock:{item_name}"] = content_lock_flag_global(item_name)
         reserved[f"content unlock:{item_name}"] = content_unlock_global(item_name)
@@ -633,6 +690,22 @@ def shops_enabled_flag(shops: bool) -> dict[int, int]:
     vanilla, and there is no reward being replaced to reason about.
     """
     return {SHOPS_ENABLED_GLOBAL: int(bool(shops))}
+
+
+def remember_emergency_flag(remember: bool) -> dict[int, int]:
+    """The remember_emergency_progress flag global -> the raw option.
+
+    Its own function for the reason shops_enabled_flag is: config_flags carries
+    effective SHUFFLED states, meaning an AP item exists to replace a vanilla
+    grant, and this replaces nothing. It has no owning check class either. The
+    emergency chains are content the player walks into whether or not their
+    levels are checks, so remembering where they stopped is an in-world
+    modifier and answers only to its own option.
+
+    At zero every emergency mission starts its level counter where vanilla
+    starts it, which is what the toggle invariant demands of a seed that did
+    not ask for this."""
+    return {REMEMBER_EMERGENCY_GLOBAL: int(bool(remember))}
 
 
 def class_cash_flags(side_events: bool, stunt_jumps: bool,

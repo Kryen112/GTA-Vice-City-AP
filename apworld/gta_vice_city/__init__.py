@@ -61,6 +61,7 @@ from .options import (
     HiddenPackagesRequired,
     RandomizePickups,
     RandomizeRadioStations,
+    RememberEmergencyProgress,
     ShuffleEmergencyRewards,
     ShuffleMinimap,
     ShuffleShops,
@@ -196,8 +197,9 @@ class GTAViceCityWeb(WebWorld):
             EnableSideEvents, EnablePickups, ShuffleShops,
         ]),
         OptionGroup("In-World Modifiers", [
-            ShuffleEmergencyRewards, RandomizePickups, RandomizeRadioStations,
-            ShuffleMinimap, SplitMainlandAccess,
+            ShuffleEmergencyRewards, RememberEmergencyProgress,
+            RandomizePickups, RandomizeRadioStations, ShuffleMinimap,
+            SplitMainlandAccess,
         ]),
         OptionGroup("Locks", [
             AbilityLocks, StartingAbilityUnlock, ContentLocks,
@@ -950,6 +952,8 @@ class GTAViceCityWorld(World):
             "final_location_id": LOCATION_NAME_TO_ID[data.FINAL_MISSION],
             "death_link": bool(self.options.death_link.value),
             "shuffle_emergency_rewards": bool(self.options.shuffle_emergency_rewards.value),
+            "remember_emergency_progress": bool(
+                self.options.remember_emergency_progress.value),
             "randomize_radio_stations": bool(self.options.randomize_radio_stations.value),
             # The starting station's index (None when the option is off), so a
             # tracker regeneration precollects the same station.
@@ -1111,6 +1115,11 @@ class GTAViceCityWorld(World):
             bool(self.options.randomize_radio_stations.value),
             bool(self.options.shuffle_minimap.value),
         )
+        # One flag, one question: does an emergency activity resume where the
+        # player left it. It replaces no vanilla grant and has no owning check
+        # class, so it rides beside the shops flag rather than in config_flags.
+        flags.update(scm.remember_emergency_flag(
+            bool(self.options.remember_emergency_progress.value)))
         # The shop threads read this before they hide what a shop sells, so a
         # seed without the class leaves every shop exactly vanilla.
         flags.update(scm.shops_enabled_flag(

@@ -3709,6 +3709,103 @@ class TestEmergencyRewardsWithoutTheVehiclesClass(WorldTestBase):
             self.assertIn(reward, item_names)
 
 
+class TestRememberEmergencyProgress(WorldTestBase):
+    game = "Grand Theft Auto Vice City"
+
+    def test_the_flag_is_set_by_default(self) -> None:
+        # The option defaults on, and the script reads this flag at every
+        # emergency mission init before it overwrites the starting level.
+        flags = self.world.fill_slot_data()["config_globals"]
+        self.assertEqual(flags[str(scm.REMEMBER_EMERGENCY_GLOBAL)], 1)
+
+    def test_the_option_rides_along_for_a_tracker_regeneration(self) -> None:
+        # Every in-world modifier carries its own slot_data key, so a tracker
+        # rebuilding the world from slot_data alone sees the same seed.
+        self.assertIs(
+            self.world.fill_slot_data()["remember_emergency_progress"], True)
+
+    def test_the_stored_activities_are_the_levelled_ones_without_taxi(self) -> None:
+        # Taxi is absent because its career fares live in $369, which the mission
+        # never resets, so its levels already survive a save and quit. Pinned
+        # against the level table so a sixth activity cannot be missed here, and
+        # as a set because the order of these four is frozen by their globals
+        # while the level table's order is not.
+        self.assertEqual(set(scm.EMERGENCY_PROGRESS_ACTIVITIES),
+                         set(data.EMERGENCY_LEVELS) - {"Taxi"})
+
+    def test_it_is_an_in_world_modifier_and_not_a_check_class(self) -> None:
+        # CLAUDE.md makes every check class belong to one of two lists, the ones
+        # the 100% goal demands and the ones its stat never counts, and a test
+        # refuses a class in neither. This option is in neither list because it
+        # is not a class at all: it holds no locations and no items, so the goal
+        # has nothing to demand of it. Belonging to a list by accident would put
+        # it in the goal's precondition and refuse seeds that turn it off.
+        self.assertNotIn("remember_emergency_progress", CHECK_CLASS_OPTIONS)
+        self.assertNotIn("remember_emergency_progress", HUNDRED_PERCENT_CLASS_OPTIONS)
+        self.assertNotIn("remember_emergency_progress", UNCOUNTED_CLASS_OPTIONS)
+
+    def test_it_reaches_the_game_as_one_flag_and_nothing_else(self) -> None:
+        # The whole of the option in game is the flag, so its own key aside, a
+        # seed with it on differs from one with it off in exactly that global.
+        # This is what lets it be installed mid-seed: no id, no item, no
+        # location and no other global moves with it.
+        slot_data = self.world.fill_slot_data()
+        flags = slot_data["config_globals"]
+        self.assertEqual(flags[str(scm.REMEMBER_EMERGENCY_GLOBAL)], 1)
+        for global_index in (scm.EMERGENCY_PROGRESS_BASE,
+                             scm.VIGILANTE_TIME_RAMP_GLOBAL,
+                             scm.VIGILANTE_WANTED_RAMP_GLOBAL):
+            self.assertNotIn(str(global_index), flags,
+                             "the stored levels and ramps are the script's own "
+                             "and must never be stamped from slot_data")
+
+
+class TestRememberEmergencyProgressOff(WorldTestBase):
+    game = "Grand Theft Auto Vice City"
+    options: ClassVar[dict] = {"remember_emergency_progress": False}
+
+    def test_the_flag_is_zero_so_every_activity_starts_where_vanilla_does(self) -> None:
+        # At zero the script never overwrites the level its mission init just
+        # wrote, so all four activities restart at level 1 exactly as vanilla
+        # does. The flag is the whole of the option in game.
+        flags = self.world.fill_slot_data()["config_globals"]
+        self.assertEqual(flags[str(scm.REMEMBER_EMERGENCY_GLOBAL)], 0)
+        self.assertIs(
+            self.world.fill_slot_data()["remember_emergency_progress"], False)
+
+    def test_the_levels_are_still_checks(self) -> None:
+        # The modifier is independent of the check class, so turning it off
+        # leaves all 56 milestones exactly where they were.
+        names = {location.name
+                 for location in self.multiworld.get_locations(self.player)}
+        for name in data.emergency_names():
+            self.assertIn(name, names)
+
+
+class TestRememberEmergencyProgressWithoutTheVehiclesClass(WorldTestBase):
+    game = "Grand Theft Auto Vice City"
+    options: ClassVar[dict] = {
+        "remember_emergency_progress": True, "enable_emergency_vehicles": False,
+    }
+
+    def test_the_flag_follows_the_option_alone(self) -> None:
+        # Independent of the check class, the way the reward shuffle is. The
+        # chains exist in the game whether or not their levels are AP locations,
+        # so remembering where the player stopped is a question about the world
+        # and not about checks. Tying it to the class would make the option
+        # silently do nothing for a seed that turned the class off.
+        flags = self.world.fill_slot_data()["config_globals"]
+        self.assertEqual(flags[str(scm.REMEMBER_EMERGENCY_GLOBAL)], 1)
+
+    def test_the_levels_are_not_locations(self) -> None:
+        # The class is off, so its 56 milestones do not exist, and the modifier
+        # does not bring any of them back.
+        names = {location.name
+                 for location in self.multiworld.get_locations(self.player)}
+        for name in data.emergency_names():
+            self.assertNotIn(name, names)
+
+
 class TestConfigFlagsShuffleWithoutVehicles(WorldTestBase):
     game = "Grand Theft Auto Vice City"
     options: ClassVar[dict] = {
@@ -4598,7 +4695,7 @@ class TestReservedGlobals(WorldTestBase):
             | tail(scm.ABILITY_UNLOCK_BASE, len(scm.ABILITY_KEYS), scm.ABILITY_CAPACITY)
             | tail(scm.CONTENT_LOCK_FLAG_BASE, len(scm.CONTENT_KEYS), scm.CONTENT_CAPACITY)
             | tail(scm.CONTENT_UNLOCK_BASE, len(scm.CONTENT_KEYS), scm.CONTENT_CAPACITY)
-            | tail(scm.SPARE_FLAG_BASE, 0, scm.SPARE_FLAG_CAPACITY)
+            | tail(scm.SPARE_FLAG_BASE, scm.SPARE_FLAGS_USED, scm.SPARE_FLAG_CAPACITY)
             | ({scm.DISTRICT_UNLOCK_BASE + offset
                 for offset in range(scm.DISTRICT_UNLOCK_COUNT)}
                - {scm.district_unlock_global(item, district)
@@ -4739,6 +4836,27 @@ class TestReservedGlobals(WorldTestBase):
             scm.DISTRICT_UNLOCK_BASE + scm.DISTRICT_CAPACITY)
         self.assertEqual(
             scm.district_unlock_global(scm.CONTENT_KEYS[1], scm.DISTRICT_KEYS[0]), 9983)
+        # The emergency-progress block, which build_scm.py mirrors by literal as
+        # REMEMBER_EMERGENCY and EMERGENCY_PROGRESS_BASE. These are the first
+        # globals taken out of the spare flags, so a shift here does not move
+        # anything else and nothing else moves them: they are pinned only by this
+        # and by the mirror check, and a wrong number lands on another spare,
+        # where the only symptom is a level that never resumes.
+        self.assertEqual(scm.REMEMBER_EMERGENCY_GLOBAL, 10159)
+        self.assertEqual(scm.EMERGENCY_PROGRESS_BASE, 10160)
+        self.assertEqual(
+            [scm.emergency_progress_global(activity)
+             for activity in scm.EMERGENCY_PROGRESS_ACTIVITIES],
+            [10160, 10161, 10162, 10163])
+        # Vigilante's two per-level float ramps, which a level alone cannot
+        # resume: without them a resumed level 12 runs at full police heat where
+        # a continuous run reaches 0.4.
+        self.assertEqual(scm.VIGILANTE_TIME_RAMP_GLOBAL, 10164)
+        self.assertEqual(scm.VIGILANTE_WANTED_RAMP_GLOBAL, 10165)
+        # Seven of the sixteen spares are in use, so nine are left for the single
+        # flags this layout keeps gaining. The count is what the spare-tail
+        # exclusion above is built from, so it cannot be wrong in only one place.
+        self.assertEqual(scm.SPARE_FLAGS_USED, 7)
         # The finale warp flag, hard-coded in the ASI (scm_game_state.cpp) and in
         # build_scm.py, which reads it in the APFIN watcher and in the mission
         # branch that jumps to the ending cutscene. It is also the foundation's
