@@ -726,6 +726,7 @@ void ScmGameState::DrawCheckMarkers() {
   for (const auto& [global_index, position] : check_markers_) {
     if (global_index < 0 || global_index >= sizeof(CTheScripts::ScriptSpace) / sizeof(int) ||
         reported_.count(global_index) || GetGlobal(global_index) != 0) continue;
+    if (position.content_unlock_global != 0 && GetGlobal(position.content_unlock_global) < kDistrictReleased) continue;
     CVector2D radar, screen;
     CRadar::TransformRealWorldPointToRadarSpace(radar, CVector2D(position.x, position.y));
     if (!main_map && !CheckMarkerFits(radar.x, radar.y, radius_x, radius_y)) continue;
@@ -1337,6 +1338,11 @@ std::string ScmGameState::SeedHash() {
   return cached_seed_hash_;
 }
 
+bool ScmGameState::CanSaveSeed(const std::string& expected) {
+  std::lock_guard<std::mutex> lock(mutex_);
+  return !expected.empty() && configured_seed_hash_ == expected && ReadSeedHash() == expected;
+}
+
 void ScmGameState::StampSeedHash(const std::string& expected) {
   std::lock_guard<std::mutex> lock(mutex_);
   // The welcome names the seed once and the player can start any number of games
@@ -1360,14 +1366,14 @@ void ScmGameState::MarkChecked(const std::vector<std::int64_t>& locations) {
   }
 }
 
-void ScmGameState::ShowToast(const ToastRow& row) {
+void ScmGameState::ShowToast(const ToastRow& row, bool notify) {
   std::lock_guard<std::mutex> lock(mutex_);
   if (row.empty()) return;
   // The queue is meant to hold everything: a release of a whole multiworld is
   // hundreds of rows and every one of them is the only in-game record that item
   // moved. The bound is a runaway backstop far above any real release, and it
   // drops the newest rather than the oldest, so the record stays in order.
-  if (toasts_.waiting.size() < kToastQueueMax) {
+  if (notify && toasts_.waiting.size() < kToastQueueMax) {
     toasts_.waiting.push_back(QueuedToast(row));
   }
   // The record the pause page reads, newest first, whether or not the row has been
@@ -1840,6 +1846,29 @@ void ScmGameState::ForgetGameScopedState() {
   // what carries into the next game is the rest of one trap's duration and never
   // a write into a world coming up. The retune bookkeeping heals on the first
   // frame with no player vehicle, which every boundary passes through.
+}
+
+void ScmGameState::OnPickupsUpdated() {
+  if (plugin::GetGameVersion() != GAME_10EN) return;
+  std::lock_guard<std::mutex> lock(mutex_);
+  if (!baseline_captured_ || !ConfiguredSeedMatches(ReadSeedHash(), configured_seed_hash_) ||
+      FindPlayerPed() == nullptr) return;
+  // Read without consuming: vanilla's bribe watcher and APPICKUP both need the
+  // original events. Their opcode clears a match, so polling after scripts races.
+  const auto* collected = reinterpret_cast<const std::uint32_t*>(kCollectedPickupsAddress10);
+  for (int slot = 0; slot < 20; ++slot) {
+    const auto handle = collected[slot];
+    const auto index = handle & 0xFFFF;
+    if (handle == 0 || index >= kPickupPoolSize) continue;
+    const auto& pickup = CPickups::aPickUps[index];
+    const int global = CollectedPickupCheck(pickup_targets_, handle, pickup.wUniqueId,
+        {pickup.vecPos.x, pickup.vecPos.y, pickup.vecPos.z, pickup.bPickupType,
+         pickup.nModelId, static_cast<int>(index)});
+    if (global && completion_watch_.count(global) && GetGlobal(global) == 0) {
+      SetGlobal(global, 1);
+      if (logger_) logger_("pickup collected: " + std::to_string(completion_watch_.at(global)));
+    }
+  }
 }
 
 void ScmGameState::OnGameFrame() {

@@ -12,6 +12,7 @@
 #pragma once
 
 #include <cstddef>
+#include <cstdint>
 #include <vector>
 
 #include "game_state.hpp"
@@ -27,6 +28,26 @@ struct PickupPoolEntry {
   int model = 0;
   int pool_index = 0;
 };
+
+inline double PickupDistanceSquared(const PickupTarget& target, const PickupPoolEntry& entry) {
+  const double dx = entry.x - target.x, dy = entry.y - target.y, dz = entry.z - target.z;
+  return dx * dx + dy * dy + dz * dz;
+}
+
+// A collection handle includes the pool slot's generation. An old ring entry
+// must never check a new pickup that has since reused the same pool slot.
+inline int CollectedPickupCheck(const std::vector<PickupTarget>& targets,
+                               std::uint32_t handle, std::uint16_t generation,
+                               const PickupPoolEntry& entry) {
+  if (handle == 0 || handle == 0xFFFFFFFF || (handle & 0xFFFF) != static_cast<std::uint32_t>(entry.pool_index) ||
+      (handle >> 16) != generation) return 0;
+  for (const auto& target : targets) {
+    // A one-shot pickup can already have type zero after its collection.
+    if (target.check_global && (entry.pickup_type == target.pickup_type || entry.pickup_type == 0) &&
+        PickupDistanceSquared(target, entry) <= 0.0625) return target.check_global;
+  }
+  return 0;
+}
 
 // The model an ambient slot shows while its AP check is still to be taken.
 // 376 is `bonus` in the game's own data/maps/generic.ide, one mesh at the same
@@ -180,11 +201,7 @@ inline PickupLayoutPlan PlanPickupLayout(
     double match_distance_squared = 0.0;
     for (const PickupPoolEntry& entry : pool_entries) {
       if (entry.pickup_type != target.pickup_type) continue;
-      const double delta_x = entry.x - target.x;
-      const double delta_y = entry.y - target.y;
-      const double delta_z = entry.z - target.z;
-      const double distance_squared =
-          delta_x * delta_x + delta_y * delta_y + delta_z * delta_z;
+      const double distance_squared = PickupDistanceSquared(target, entry);
       if (distance_squared > kMatchDistanceSquared) continue;
       if (match != nullptr && distance_squared >= match_distance_squared) continue;
       match = &entry;

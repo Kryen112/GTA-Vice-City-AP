@@ -89,7 +89,7 @@ CATEGORY_COLORS = {
 
 
 def check_markers(enabled_options: dict) -> dict[str, list[float]]:
-    """Completion global -> [x, y, category], for enabled classes."""
+    """Completion global -> [x, y, category, optional content gate], for enabled classes."""
     coordinates = {}
     for class_key, positions in (
         ("hidden_packages", data.PACKAGE_COORDS),
@@ -107,6 +107,8 @@ def check_markers(enabled_options: dict) -> dict[str, list[float]]:
                         for item in shop_data.SHOP_ITEMS})
     return {
         str(scm.completion_global(name)): [*position[:2], CATEGORY_COLORS[locations.LOCATION_CLASS[name]]]
+        + ([scm.district_unlock_global(data.LOCATION_CONTENT_CLASS[name], data.location_district(name))]
+           if name in data.LOCATION_CONTENT_CLASS else [])
         for name, position in coordinates.items()
         if enabled_options.get(locations.LOCATION_TOGGLE[name], False)
     }

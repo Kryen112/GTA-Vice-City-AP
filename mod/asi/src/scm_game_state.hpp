@@ -54,9 +54,10 @@ class ScmGameState : public GameState {
                    const CheckMarkers& check_markers = {}) override;
   std::string SeedHash() override;
   void StampSeedHash(const std::string& expected) override;
+  bool CanSaveSeed(const std::string& expected); // game thread, immediately before a save write
   void ApplyItems(const std::vector<std::pair<std::int64_t, std::int64_t>>& items) override;
   void MarkChecked(const std::vector<std::int64_t>& locations) override;
-  void ShowToast(const ToastRow& row) override;
+  void ShowToast(const ToastRow& row, bool notify = true) override;
   void ShowNotice(ToastNotice notice, const std::string& text) override;
   void ClearNotice(ToastNotice notice) override;
   void SetClientConnected(bool connected) override;
@@ -71,6 +72,7 @@ class ScmGameState : public GameState {
 
   // Called from the game frame. All SCM memory access is here.
   void OnGameFrame();
+  void OnPickupsUpdated(); // observe collections before script consumers clear them
 
   // Called from the frame's HUD draw, after the game's own HUD and before the
   // font buffer is flushed, so the rows land in the same frame. Advances the

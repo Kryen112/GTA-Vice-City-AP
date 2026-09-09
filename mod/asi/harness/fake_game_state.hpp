@@ -70,7 +70,8 @@ class FakeGameState : public GameState {
   // line breaks are the console self-test's business, and it drives the row
   // builder directly. The break is kept visible so a row that lost its second
   // line still reads as different from one that never had one.
-  void ShowToast(const ToastRow& row) override {
+  void ShowToast(const ToastRow& row, bool notify = true) override {
+    if (!notify) return;
     std::lock_guard<std::mutex> lock(mutex_);
     std::string text;
     for (const std::vector<ToastSegment>& line : row.lines) {

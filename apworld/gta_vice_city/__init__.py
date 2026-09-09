@@ -109,7 +109,7 @@ components.append(Component(
     "GTA Vice City Setup",
     func=launch_setup,
     component_type=Type.TOOL,
-    description="Install or update the game mod offline, then connect in game using APCc.",
+    description="Install or update the game mod offline, then connect in game using APCpp.",
 ))
 
 

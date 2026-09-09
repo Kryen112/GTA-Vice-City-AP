@@ -24,6 +24,7 @@ struct CheckMarker {
   float x = 0.0f;
   float y = 0.0f;
   int category = 0;
+  int content_unlock_global = 0; // zero for content that cannot be locked
 };
 using CheckMarkers = std::map<int, CheckMarker>;
 
@@ -157,7 +158,8 @@ class GameState {
   // A player-facing row for the in-game toast stack, already built into its
   // coloured segments by the client, since only the client knows which slot is
   // ours and how the server classified an item.
-  virtual void ShowToast(const ToastRow& row) = 0;
+  // notify=false records pause-menu history without drawing a HUD notification.
+  virtual void ShowToast(const ToastRow& row, bool notify = true) = 0;
 
   // A row that holds its place until something clears it, addressed by what it is
   // about so a repeat replaces rather than stacks. The handshake refusal arrives

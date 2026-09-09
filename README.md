@@ -76,15 +76,34 @@ properties yellow, side events cyan, and shop stock purple.
 Dots disappear when checked.
 
 The ASI connects directly to Archipelago using
-[randomcodegen's APCc fork](https://github.com/randomcodegen/APCc). Set `server`,
+[N00byKing's APCpp C++ library](https://github.com/N00byKing/APCpp). Set `server`,
 `slot`, and optional `password` under `[archipelago]` in `GtaVcAp.VC.ini` beside
 the ASI, then launch the game. Archipelago Launcher provides **GTA Vice City Setup**
 for offline installation; the legacy Python client is no longer included. Unacknowledged checks are saved in
-`GtaVcAp.<seed-hash>.json` beside the ASI and replayed after reconnecting.
+`%LOCALAPPDATA%/GtaVcAp/GtaVcAp.<seed-hash>.json` and replayed after reconnecting.
+Existing check files beside the ASI are copied automatically without overwriting newer state.
 
 Use `host:port` for the server (`127.0.0.1:38281` for a local room). Remote hosts
 use TLS; an explicit `ws://host:port` selects an unencrypted server, and
-`wss://host:port` selects TLS. Room credentials stay in your local INI.
+`wss://host:port` selects TLS. Passwords entered with `/password` stay in memory for this run. An optional
+password in the INI is stored as plain text. TLS never falls back to an unencrypted connection.
+
+Press **F8** in the main menu or in game for the built-in console. Set a connection
+with `/server HOST:PORT`, `/slot NAME`, optional `/password PASSWORD`, then `/connect`.
+The server and slot are remembered in `%LOCALAPPDATA%/GtaVcAp/connection.ini`,
+which takes precedence over the beside-ASI INI defaults. Changing server or slot
+clears the in-memory password; enter it afterwards if needed. `/disconnect` stops the connection; `/connect`
+retries. Type normally to chat, use `!help` for server commands, `/hint [item]`
+for hints, and `/deathlink [on|off]` to control DeathLink. The console displays
+other players' chat, hints, countdowns, releases and goal messages. Page Up/Down
+scroll history, Ctrl+V pastes, Enter sends, and F8/Escape closes the console.
+
+Saves automatically use `GTA Vice City User Files/AP_Seeds/<seed-and-slot-hash>`.
+Career saves and `gta_vc.set` remain in place. Connect before loading or saving;
+the ASI blocks save access until the seed is known. The selected folder stays
+active across disconnects. Restart the game to change seed or slot.
+Installation/update/removal remains in the launcher's Python setup; `/play` and
+`/setfolder` are unnecessary inside the running game.
 
 Received items slide in down the left edge of the screen, naming the item, who
 it came from and where it was found. Items apply as they arrive, including in
@@ -120,18 +139,18 @@ says what the randomizer does to the game.
 
 ## For developers
 
-The native client requires the x86 static vcpkg packages `jansson`,
-`libwebsockets`, and `glib`. With Visual Studio C++ Build Tools, `PLUGIN_SDK_DIR`,
+The native client requires the x86 static vcpkg packages `ixwebsocket[mbedtls]`
+and `jsoncpp`. With Visual Studio C++ Build Tools, `PLUGIN_SDK_DIR`,
 and vcpkg in the sibling `vcpkg` directory, run `scripts/build_native_client.ps1`.
 Use `-VcpkgRoot` for another vcpkg location. `-Test` builds and runs the native
 session checks; then run `python scripts/native_interop_check.py
-.build/native_harness.exe` to test the actual APCc transport against a local
+.build/native_harness.exe` to test the actual APCpp transport against a local
 test server. This test never connects to your multiworld.
 
 `python scripts/build_native_data.py` regenerates the compiled location, item,
 and marker tables from the world (requires `AP_ROOT` like the world tests).
-Use `--check` to verify the checked-in tables. APCc's pinned revision and local
-patches are recorded in `mod/asi/third_party/apcc/README.md`.
+Use `--check` to verify the checked-in tables. APCpp's pinned revision and local
+patches are recorded in `mod/asi/third_party/apcpp/README.md`.
 
 Start with `NEXT_APWORLD_PLAYBOOK.md`. It is the build playbook and process
 guardrails distilled from the HP2PC and Viscera Cleanup Detail projects: what to
@@ -145,16 +164,16 @@ pre-commit, CI and manual runs.
 ## License
 
 Original project code and contributions by Kryen112 and randomcodegen are MIT
-licensed; see `LICENSE`. The vendored APCc library is LGPL-2.1-only, including
-its C port and local modifications. Dependencies retain their own licenses.
+licensed; see `LICENSE`. The vendored APCpp library is LGPL-2.1-only, including
+its local modifications. Dependencies retain their own licenses.
 See `NOTICE` and `THIRD_PARTY_LICENSES` for attribution and full third party terms.
 
 ### Distributing the native client
 
-The ASI statically links APCc, GLib and other dependencies. When publishing a
+The ASI statically links APCpp and its dependencies. When publishing a
 binary, publish the matching source and relinking materials alongside it:
 
-- This repository at the exact build revision, including the modified APCc
+- This repository at the exact build revision, including the modified APCpp
   sources, generated native data, project files and build scripts.
 - The exact dependency source versions and local patches used by the build,
   including the vcpkg revision and port changes, and the plugin-sdk revision.
@@ -170,4 +189,5 @@ not constitute a source or relinking bundle. Never include Rockstar's game
 files in that bundle.
 
 `THIRD_PARTY_LICENSES` records the dependency notices from the installed vcpkg
-packages used here. Refresh those notices when the dependency versions change.
+packages used here. Run `python scripts/collect_native_licenses.py` after changing
+dependencies to refresh those notices.

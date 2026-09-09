@@ -35,7 +35,7 @@ def main() -> int:
     failed = _run_helper("check_scm_mirrors.py")
     if failed:
         return failed
-    # Exercise the native APCc transport when its harness has been built.
+    # Exercise the native APCpp transport when its harness has been built.
     return _run_interop_check()
 
 
@@ -55,7 +55,7 @@ def _run_interop_check() -> int:
     """Runs scripts/native_interop_check.py when its harness binary is around."""
     candidates = sorted(REPOSITORY_ROOT.glob("**/native_harness.exe"))
     if not candidates:
-        print("interop check SKIPPED: no native_harness.exe built, so the APCc "
+        print("interop check SKIPPED: no native_harness.exe built, so the APCpp "
               "transport is unexercised this run.")
         return 0
     completed = subprocess.run(

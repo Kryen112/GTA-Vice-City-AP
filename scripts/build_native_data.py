@@ -13,11 +13,12 @@ def main() -> int:
     if link_world(root) is None:
         return 1
     sys.path.insert(0, str(root))
-    from worlds.gta_vice_city import data, items, locations
+    from worlds.gta_vice_city import data, items, locations, scm
     from worlds.gta_vice_city.check_markers import check_markers
 
+    markers = check_markers(dict.fromkeys(locations.CLASS_TOGGLE.values(), True))
     tables = {
-        "markers": check_markers(dict.fromkeys(locations.CLASS_TOGGLE.values(), True)),
+        "markers": markers,
         "items": {str(item_id): [name, int(items.ITEM_CLASSIFICATIONS[name])]
                   for name, item_id in items.ITEM_NAME_TO_ID.items()},
         "locations": {str(location_id): name for name, location_id in locations.LOCATION_NAME_TO_ID.items()},

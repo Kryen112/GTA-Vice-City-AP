@@ -105,6 +105,8 @@ ASI_SOURCE_GLOBS = (
     "mod/asi/src/**/*.cpp",
     "mod/asi/src/**/*.hpp",
     "mod/asi/third_party/**/*.hpp",
+    "mod/asi/third_party/**/*.h",
+    "mod/asi/third_party/**/*.cpp",
     "mod/asi/plugin/GtaVcAp.vcxproj",
 )
 

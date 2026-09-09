@@ -1,6 +1,7 @@
-"""Drive the real APCc transport against an isolated, fragmented AP test server."""
+"""Drive the real APCpp transport against an isolated, fragmented AP test server."""
 
 import asyncio
+import hashlib
 import json
 import shutil
 import sys
@@ -16,6 +17,8 @@ async def main(executable: Path) -> None:
     checks = 0
     goal = asyncio.Event()
     errors = []
+    messages = []
+    percentages = []
 
     async def server(socket):
         nonlocal connections, checks
@@ -43,7 +46,13 @@ async def main(executable: Path) -> None:
                                            "completion_watch": {"9102": 101}, "goal": "final_mission",
                                            "final_location_id": 101}},
                             {"cmd": "ReceivedItems", "index": 0, "items": [item] * min(current, 2)},
+                            {"cmd": "PrintJSON", "type": "Chat", "data": [{"text": "Other player: hello"}]},
+                            {"cmd": "Print", "text": "Server countdown: 3"},
                         ]))
+                    elif command == "Say":
+                        messages.append(packet["text"])
+                    elif command == "Set":
+                        percentages.append(packet["operations"][0]["value"])
                     elif command == "LocationChecks":
                         assert packet["locations"] == [101]
                         checks += 1
@@ -56,7 +65,7 @@ async def main(executable: Path) -> None:
                         assert packet["status"] == 30
                         goal.set()
         except ConnectionClosed as error:
-            # APCc destroys its socket when the harness exits after the goal.
+            # APCpp destroys its socket when the harness exits after the goal.
             if not goal.is_set():
                 errors.append(error)
         except Exception as error:
@@ -66,6 +75,9 @@ async def main(executable: Path) -> None:
         root = Path(folder)
         harness = root / "native_harness.exe"
         shutil.copy2(executable, harness)
+        seed_hash = hashlib.sha256(b"native-interop\x1fnative-test").hexdigest()[:16]
+        old_state = root / f"GtaVcAp.{seed_hash}.json"
+        old_state.write_text(json.dumps({"seed_hash": seed_hash, "checks": [], "percentage": 41}))
         async with serve(server, "127.0.0.1", 0) as listener:
             port = listener.sockets[0].getsockname()[1]
             harness.with_suffix(".ini").write_text(
@@ -83,8 +95,13 @@ async def main(executable: Path) -> None:
             assert not errors, errors
             assert connections >= 2 and checks >= 2, "Reconnect did not replay the unacknowledged check"
             assert goal.is_set(), "Goal status never reached the server"
+            assert "hello from the ASI" in messages and "!hint Package" in messages
+            assert "Other player: hello" in output.decode(errors="replace")
+            assert "Server countdown: 3" in output.decode(errors="replace")
+            assert 41 in percentages, "State from the previous beside-ASI layout was not recovered"
+            assert old_state.exists() and (root / "state" / old_state.name).exists()
             assert "test-password" not in output.decode(errors="replace"), "Password leaked to the log"
-    print("APCc transport, fragmentation, reconnect, check replay and goal reporting passed")
+    print("APCpp transport, fragmentation, reconnect, check replay and goal reporting passed")
 
 
 if __name__ == "__main__":

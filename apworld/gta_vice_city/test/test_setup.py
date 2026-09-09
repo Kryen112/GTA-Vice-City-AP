@@ -13,6 +13,25 @@ from .test_installer import ASI, SCM
 
 
 class TestOfflineSetup(unittest.TestCase):
+    def test_uninstall_from_launcher_preserves_saves_and_blocks_running_game(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            folder = Path(temporary)
+            (folder / "gta-vc.exe").write_bytes(b"packed executable")
+            (folder / "GtaVcAp.VC.asi").write_bytes(b"mod")
+            save = folder / "GTAVCsf1.b"
+            save.write_bytes(b"save")
+            with (mock.patch.object(setup, "choose_action", return_value="uninstall"),
+                  mock.patch.object(installer, "game_process_running", return_value=False) as running,
+                  mock.patch.object(installer, "remove", return_value=[]) as remove,
+                  mock.patch.object(setup.Utils, "messagebox")):
+                setup.launch(str(folder))
+                remove.assert_called_once_with(folder)
+                self.assertEqual(save.read_bytes(), b"save")
+                running.return_value = True
+                with self.assertRaisesRegex(installer.InstallRefused, "Close Vice City"):
+                    setup.uninstall(folder)
+                remove.assert_called_once()
+
     def test_launcher_registers_only_setup(self):
         entries = [component for component in components
                    if component.display_name.startswith("GTA Vice City")]

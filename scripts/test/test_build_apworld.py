@@ -60,7 +60,7 @@ def test_third_party_licences_ship_and_staging_is_cleared(tmp_path, monkeypatch)
     assert set(build_apworld.stage_licence_files()) == expected
     for name in expected:
         assert (tmp_path / name).read_bytes() == (build_apworld.REPOSITORY_ROOT / name).read_bytes()
-    library_licence = build_apworld.REPOSITORY_ROOT / "mod/asi/third_party/apcc/LICENSE"
+    library_licence = build_apworld.REPOSITORY_ROOT / "mod/asi/third_party/apcpp/LICENSE"
     assert library_licence.read_text(encoding="utf-8") in (tmp_path / "THIRD_PARTY_LICENSES").read_text(
         encoding="utf-8")
     build_apworld.clear_licence_files()

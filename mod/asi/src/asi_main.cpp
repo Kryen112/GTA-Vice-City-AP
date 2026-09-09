@@ -1,4 +1,4 @@
-// The ASI entry point. Connects directly to Archipelago through APCc on a
+// The ASI entry point. Connects directly to Archipelago through APCpp on a
 // background thread and drives the game-state on the
 // game frame, so all SCM memory access stays on the game thread, and draws the
 // pause menu's status page from the menu's own draw event. Received item
@@ -16,11 +16,15 @@
 #include <CCamera.h>
 #include <CDraw.h>
 #include <CHud.h>
+#include <CPad.h>
+#include <CMenuManager.h>
 
 #include "ap_client.hpp"
 #include "game_addresses.hpp"
 #include "scm_game_state.hpp"
 #include "status_page.hpp"
+#include "ingame_console.hpp"
+#include "save_isolation.hpp"
 
 using namespace plugin;
 
@@ -38,6 +42,21 @@ CdeclEvent<AddressListMulti<gtavc::kBeforeWorldProcessCallSite10, GAME_10EN, H_C
 
 CdeclEvent<AddressListMulti<gtavc::kMainMapBlipsCallSite10, GAME_10EN, H_CALL>,
            PRIORITY_BEFORE, ArgPickNone, void()> mainMapBlipsEvent;
+
+// Frontend idle processes the menu before beginning the RenderWare camera.
+// Save-directory changes may refresh the menu and must run at this boundary.
+ThiscallEvent<AddressListMulti<gtavc::kFrontendMenuProcessCall10, GAME_10EN, H_CALL>,
+              PRIORITY_BEFORE, ArgPickNone, void(CMenuManager*)> frontendProcessEvent;
+
+CdeclEvent<AddressListMulti<gtavc::kPickupsUpdateCall10, GAME_10EN, H_CALL>,
+           PRIORITY_AFTER, ArgPickNone, void()> afterPickupsEvent;
+
+// CPad::UpdatePads references from plugin-sdk's meta.CPad.h (VC 1.0).
+CdeclEvent<AddressListMulti<0x490476, GAME_10EN, H_CALL, 0x4A4412, GAME_10EN, H_CALL,
+    0x4A5C7E, GAME_10EN, H_CALL, 0x4A669F, GAME_10EN, H_CALL, 0x4AB0A0, GAME_10EN, H_CALL,
+    0x54460C, GAME_10EN, H_CALL, 0x5FFFD9, GAME_10EN, H_CALL, 0x60018F, GAME_10EN, H_CALL,
+    0x61D9F4, GAME_10EN, H_CALL, 0x61DBB6, GAME_10EN, H_CALL, 0x61DD47, GAME_10EN, H_CALL>,
+    PRIORITY_AFTER, ArgPickNone, void()> afterPadsEvent;
 
 std::mutex g_log_mutex;
 
@@ -66,17 +85,27 @@ void LogLine(const std::string& line) {
 struct AsiMain {
   gtavc::ScmGameState game;
   gtavc::StatusPage status_page;
+  gtavc::IngameConsole console;
   gtavc::ArchipelagoClient bridge;
+  bool client_ready = false;
 
   AsiMain()
       : game([](const std::string& line) { LogLine("game: " + line); }),
         status_page([](const std::string& line) { LogLine("page: " + line); }),
+        console([this](std::string text) { bridge.Command(std::move(text)); }),
         bridge(&game,
-               [](const std::string& line) { LogLine("APCc: " + line); }) {
+               [this](const std::string& line) { LogLine("APCpp: " + line); console.Add(line); },
+               &gtavc::PrepareSaveSeed, {}, [this](const gtavc::ConsoleMessage& message) {
+                 std::string text;
+                 for (const auto& span : message) text += span.text;
+                 LogLine("APCpp: " + text);
+                 console.Add(message, true);
+               }) {
     LogLine("loaded");
     // Register the frame handlers before starting the bridge, so the game
     // thread is priming the seed-hash cache by the time the bridge presents it.
     Events::gameProcessEvent += [] { instance.OnGameProcess(); };
+    frontendProcessEvent += [] { instance.OnClientUpdate(); };
     // The world being replaced, which is what tells the world-scoped state it is
     // naming objects that no longer exist. It takes BOTH events, because each
     // covers a path the other does not: starting a game runs the initialise path,
@@ -92,11 +121,8 @@ struct AsiMain {
     Events::initGameEvent += [] { instance.OnGameStarted(); };
     Events::restartGameEvent += [] { instance.OnGameStarted(); };
     beforeWorldProcessEvent += [] { instance.OnBeforeWorldProcess(); };
-    // The panel has its own event, plugin-sdk's menu draw, which fires after the
-    // menu itself has drawn and only while the menu is up. The in-game pause menu
-    // is drawn inside a game frame, later in the same frame as the game process
-    // hook above, which is why the panel cannot ride on that one; the frontend is
-    // the case drawn with no game frame at all.
+    // The status page uses the menu's heading draw hook, which also runs in
+    // the frontend where there is no game frame.
     Events::menuDrawingEvent += [] { instance.OnMenuDraw(); };
     // The toast stack rides plugin-sdk's HUD draw, which hooks the CHud::Draw call
     // in the frame's own 2D pass (VC 10EN 0x4A64D0). It fires after the game's own
@@ -109,19 +135,33 @@ struct AsiMain {
     // which is before any drawing at all.
     Events::drawHudEvent += [] { instance.OnDrawHud(); };
     mainMapBlipsEvent += [] { instance.game.DrawCheckMarkers(); };
-    bridge.Start();
+    // Hook the SDK's complete set of UpdatePads call sites, including frontend
+    // and save menus, before scripts or menus can consume console keystrokes.
+    plugin::Events::shutdownRwEvent += [] { instance.bridge.Stop(); instance.console.ReleaseGraphics(); };
+    afterPadsEvent += [] { instance.console.BlockControls(); };
+    afterPickupsEvent += [] { instance.game.OnPickupsUpdated(); };
+    client_ready = gtavc::InstallSaveIsolation(
+        [this](const std::string& line) { LogLine(line); console.Add(line); },
+        [this](const std::string& hash) { return game.CanSaveSeed(hash); });
   }
 
   ~AsiMain() { bridge.Stop(); }
 
+  void OnClientUpdate() {
+    if (client_ready) bridge.Start();
+    gtavc::TickSaveIsolation();
+  }
+
   void OnGameProcess() {
+    OnClientUpdate();
     game.OnGameFrame();
   }
   void OnGameStarted() { game.OnGameStarted(); }
 
-  void OnBeforeWorldProcess() { game.OnBeforeWorldProcess(); }
+  void OnBeforeWorldProcess() { game.OnBeforeWorldProcess(); console.BlockControls(); }
 
   void OnDrawHud() {
+    console.Draw();
     // The game decides when its HUD is worth drawing and the stack follows that,
     // because the reasons are the same: a cutscene, a fade and a script that hid
     // the HUD are all frames the player is not being asked to read anything on.
@@ -143,8 +183,9 @@ struct AsiMain {
     // Every menu frame, because the row the player stands on is what tells the
     // borrowed page whether the panel's entry opened it. The same answer says
     // whether the panel draws, so the menu is read once.
-    if (!status_page.Follow().draw) return;
-    status_page.Draw(game.BuildStatusPanelState());
+    if (status_page.Follow().draw) status_page.Draw(game.BuildStatusPanelState());
+    console.Draw(FrontEndMenuManager.m_bGameNotLoaded &&
+                 FrontEndMenuManager.m_nCurrentMenuPage == MENUPAGE_START_MENU);
   }
 
   static AsiMain instance;

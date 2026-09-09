@@ -11,7 +11,7 @@ This mod turns GTA: Vice City into an Archipelago game. Your progress unlocks an
 your rewards come from the multiworld, and your checks send items to the other
 players in your session.
 
-Vice City connects directly to Archipelago using APCc. No external Python client
+Vice City connects directly to Archipelago using APCpp. No external Python client
 needs to run while you play.
 
 ## Updating an existing Archipelago installation
@@ -143,6 +143,16 @@ ArchipelagoLauncher.exe "GTA Vice City Setup"
 
 ### Connection settings
 
+You can configure the connection entirely in game: press **F8**, enter
+`/server HOST:PORT`, `/slot NAME`, optional `/password PASSWORD`, then `/connect`.
+The console remembers server and slot in `%LOCALAPPDATA%/GtaVcAp/connection.ini`;
+these take precedence over the defaults below. Entered passwords stay in memory
+for the run, and changing the server or slot clears them.
+Unacknowledged checks are also kept in this user folder and replayed on reconnect.
+Old check files beside the ASI are copied there automatically.
+
+For initial defaults, you can instead use the INI beside the ASI:
+
 1. Open `GtaVcAp.VC.ini` beside `GtaVcAp.VC.asi` in the game folder
    (create it if updating manually). If it already
    contains `[toasts]` settings, keep those and add this section:
@@ -208,10 +218,17 @@ provide the Archipelago mission gating and check detection.
 
 ## Saves and seed changes
 
-The native client checks the seed stored in each save and refuses to apply a
-different room's items to it. Restart Vice City when changing rooms, then load
-the matching save or start a new game. The native client does not move save files,
-keep separate save slots or backups for different seeds.
+Connect from the main menu using **F8**, `/server HOST:PORT`, `/slot NAME`,
+optional `/password PASSWORD`, and `/connect`. Connection settings can also be
+set in the INI. Type `/help` for local commands, `!help` for server commands, or
+chat normally. `/hint [item]` asks for hints; `/deathlink [on|off]` controls DeathLink.
+Other players' messages, hints, countdowns, releases and goals appear in the console.
+
+Saves select themselves automatically under `AP_Seeds/<seed-and-slot-hash>` in
+`GTA Vice City User Files`. Existing career saves and `gta_vc.set` stay in place.
+Save access is blocked until the server identifies the seed; connect before
+loading or saving. After disconnection, this seed's saves remain available.
+Restart Vice City before switching to another seed or slot.
 
 The legacy Python client is no longer included. If it previously moved your
 saves, close the game and back up the entire `GTA Vice City User Files` folder
@@ -243,7 +260,7 @@ folders and `gta_vc.set`; do not overwrite saves you want to keep.
   is the usual cause.
 - **Setup cannot find the game.** Pick the folder that holds `gta-vc.exe`.
 - **The built-in client does not connect.** Check `[archipelago]` in
-  `GtaVcAp.VC.ini` and the room address, then restart the game. The pause menu and
+  `GtaVcAp.VC.ini` and the room address, then use `/connect` in the F8 console. The pause menu and
   `gtavc_ap_asi.log` report connection errors. The room must be running.
 - **Wrong seed save loaded.** Load a save from this room or start a new game.
   Restart Vice City if the server was changed to another seed.

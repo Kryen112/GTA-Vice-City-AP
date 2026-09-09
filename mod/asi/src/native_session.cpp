@@ -12,6 +12,24 @@ namespace gtavc {
 namespace {
 constexpr const char* kGame = "Grand Theft Auto Vice City";
 
+// Archipelago NetUtils.JSONtoTextParser / the Python client's default palette.
+std::uint32_t ConsoleColor(const std::string& names) {
+  static const std::pair<const char*, std::uint32_t> colors[] = {
+    {"black", 0x000000}, {"red", 0xEE0000}, {"green", 0x00FF7F}, {"yellow", 0xFAFAD2},
+    {"blue", 0x6495ED}, {"magenta", 0xEE00EE}, {"cyan", 0x00EEEE}, {"slateblue", 0x6D8BE8},
+    {"plum", 0xAF99EF}, {"salmon", 0xFA8072}, {"white", 0xFFFFFF}, {"orange", 0xFF7700}
+  };
+  // AP permits semicolon-separated color/style names. Ignore unknown styles.
+  for (std::size_t start = 0; start < names.size();) {
+    const auto end = names.find(';', start);
+    const auto name = names.substr(start, end == std::string::npos ? end : end - start);
+    for (const auto& color : colors) if (name == color.first) return color.second;
+    if (end == std::string::npos) break;
+    start = end + 1;
+  }
+  return 0xFFFFFF;
+}
+
 bool Enabled(const json& value) {
   return value == true || value == 1;
 }
@@ -37,8 +55,10 @@ std::string NativeSeedHash(const std::string& seed, const std::string& slot) {
 
 NativeSession::NativeSession(GameState* game, Logger logger, Sender send,
                              std::string slot_name, std::string password,
-                             std::filesystem::path state_directory)
-    : game_(game), logger_(std::move(logger)), send_(std::move(send)),
+                             std::filesystem::path state_directory,
+                             std::function<bool(const std::string&)> prepare_seed, ConsoleOutput console)
+    : game_(game), logger_(std::move(logger)), console_(std::move(console)), send_(std::move(send)),
+      prepare_seed_(std::move(prepare_seed)),
       slot_name_(std::move(slot_name)), password_(std::move(password)),
       state_directory_(std::move(state_directory)), defaults_(json::parse(kNativeData)) {}
 
@@ -59,7 +79,7 @@ void NativeSession::PersistChecks() {
   file << json({{"seed_hash", seed_hash_}, {"checks", pending_}, {"percentage", percentage_}}).dump();
   file.close();
   if (!MoveFileExW(temporary.c_str(), state_file_.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH))
-    throw std::runtime_error("Cannot save pending Archipelago checks beside the game");
+    throw std::runtime_error("Cannot persist pending Archipelago checks");
 }
 
 bool NativeSession::Activate() {
@@ -69,6 +89,7 @@ bool NativeSession::Activate() {
                      "Wrong seed save loaded. Load this seed's save or start a new game.");
     return false;
   }
+  if (prepare_seed_ && !prepare_seed_(seed_hash_)) return false;
   json configuration = config_;
   configuration["type"] = msg::kConfig;
   for (const char* field : {"item_globals", "completion_watch", "config_globals"}) {
@@ -134,8 +155,9 @@ void NativeSession::Handle(const json& packet) {
           {"version", {{"major", 0}, {"minor", 6}, {"build", 7}, {"class", "Version"}}}});
   } else if (command == "ConnectionRefused") {
     online_ = false;
-    game_->ShowNotice(ToastNotice::kHandshakeRefusal,
-                     "Archipelago refused: " + packet.value("errors", json::array()).dump());
+    const auto reason = "Archipelago refused: " + packet.value("errors", json::array()).dump();
+    logger_(reason);
+    game_->ShowNotice(ToastNotice::kHandshakeRefusal, reason);
   } else if (command == "Connected") {
     const int new_slot = packet.at("slot").get<int>();
     const auto canonical = packet.at("slot_info").at(std::to_string(new_slot)).value("name", slot_name_);
@@ -159,6 +181,7 @@ void NativeSession::Handle(const json& packet) {
     percentage_ = -1;
     last_send_ = {};
     death_link_ = Enabled(config_.value("death_link", json(false)));
+    if (death_link_override_ >= 0) death_link_ = death_link_override_ != 0;
     Send({{"cmd", "ConnectUpdate"}, {"tags", death_link_ ? json::array({"AP", "DeathLink"})
                                                                      : json::array({"AP"})}});
     std::set<std::string> games;
@@ -207,8 +230,52 @@ void NativeSession::Handle(const json& packet) {
       }
       data_packages_[game.key()] = std::move(inverted);
     }
-  } else if (command == "PrintJSON" && online_ && active_) {
-    if (packet.value("type", std::string()) == "ItemSend" && packet.contains("item")) {
+  } else if (command == "Print") {
+    const auto text = packet.at("text").get<std::string>().substr(0, 16384);
+    if (console_) console_(ConsoleMessage{{text, 0xFFFFFF}});
+    else logger_(text);
+  } else if (command == "PrintJSON") {
+    std::string text;
+    ConsoleMessage spans;
+    for (const auto& part : packet.at("data")) {
+      if (text.size() >= 16384) break;
+      auto value = part.value("text", std::string());
+      const auto type = part.value("type", std::string());
+      std::string color = type == "color" ? part.value("color", std::string()) : "white";
+      if (type == "player_id" || type == "player_name") color = "yellow";
+      else if (type == "item_id" || type == "item_name") {
+        const int flags = part.value("flags", 0);
+        color = flags & 1 ? "plum" : flags & 2 ? "slateblue" : flags & 4 ? "salmon" : "cyan";
+      } else if (type == "location_id" || type == "location_name") color = "green";
+      else if (type == "entrance_name") color = "blue";
+      else if (type == "hint_status") {
+        switch (part.value("hint_status", -1)) {
+          case 0: color = "white"; break;
+          case 10: color = "slateblue"; break;
+          case 20: color = "salmon"; break;
+          case 30: color = "plum"; break;
+          case 40: color = "green"; break;
+          default: color = "red"; break;
+        }
+      }
+      if (type == "player_id" || type == "item_id" || type == "location_id") {
+        try {
+          std::size_t end = 0;
+          const auto id = std::stoll(value, &end);
+          if (end == value.size()) {
+            if (type == "player_id" && ConcernsSelf(static_cast<int>(id))) color = "magenta";
+            value = type == "player_id" ? PlayerName(static_cast<int>(id)) :
+                Name(id, part.value("player", slot_), type == "item_id");
+          }
+        } catch (const std::invalid_argument&) {} catch (const std::out_of_range&) {}
+      }
+      value = value.substr(0, 16384 - text.size());
+      text += value;
+      if (!value.empty()) spans.push_back({std::move(value), ConsoleColor(color)});
+    }
+    if (console_) console_(spans);
+    else logger_(text);
+    if (online_ && active_ && packet.value("type", std::string()) == "ItemSend" && packet.contains("item")) {
       const int receiving = packet.at("receiving").get<int>();
       if (!ConcernsSelf(receiving) && ConcernsSelf(packet["item"].at("player").get<int>()))
         ItemToast(packet["item"], receiving);
@@ -235,6 +302,7 @@ bool NativeSession::ConcernsSelf(int slot) const {
 }
 
 std::string NativeSession::PlayerName(int slot) const {
+  if (slot == 0) return "Archipelago";
   for (const auto& player : players_)
     if (player.value("slot", -1) == slot && player.value("team", -1) == team_)
       return player.value("alias", player.value("name", std::to_string(slot)));
@@ -279,7 +347,8 @@ void NativeSession::ItemToast(const json& item, int receiving) {
     segments.emplace_back(Name(location, sender, false), "location");
     segments.emplace_back(")", "connective");
   }
-  game_->ShowToast(BuildToastRow(segments));
+  // PrintJSON already supplies the console and popup; retain only pause history.
+  game_->ShowToast(BuildToastRow(segments), false);
 }
 
 bool NativeSession::GoalReached() const {
@@ -301,7 +370,10 @@ bool NativeSession::GoalReached() const {
 
 void NativeSession::PublishStatus() {
   const bool complete = GoalReached();
-  if (complete && !finished_) finished_ = Send({{"cmd", "StatusUpdate"}, {"status", 30}});
+  if (complete && !finished_) {
+    finished_ = Send({{"cmd", "StatusUpdate"}, {"status", 30}});
+    if (finished_) logger_("Goal complete! Your goal has been reported to Archipelago.");
+  }
   ClientStatus status;
   status.checks_done = static_cast<int>(checked_.size());
   status.checks_total = static_cast<int>(all_locations_.size());
@@ -356,8 +428,10 @@ void NativeSession::Tick(bool socket_connected) {
     return;
   }
   const auto checks = game_->TakeNewChecks();
+  bool new_checks = false;
   for (const auto location : checks)
-    if (all_locations_.count(location) && !checked_.count(location)) pending_.insert(location);
+    if (all_locations_.count(location) && !checked_.count(location))
+      new_checks = pending_.insert(location).second || new_checks;
   try {
     if (!checks.empty()) PersistChecks();
   } catch (...) {
@@ -380,11 +454,37 @@ void NativeSession::Tick(bool socket_connected) {
     PublishPercentage();
   }
   const auto now = std::chrono::steady_clock::now();
-  if (online_ && now - last_send_ >= std::chrono::seconds(1)) {
+  // New checks leave on this tick; only unacknowledged retries wait a second.
+  if (online_ && (new_checks || now - last_send_ >= std::chrono::seconds(1))) {
     if (!pending_.empty()) { PersistChecks(); Send({{"cmd", "LocationChecks"}, {"locations", pending_}}); }
     PublishStatus();
     last_send_ = now;
   }
+}
+
+void NativeSession::Command(const std::string& text) {
+  if (text.empty() || text.size() > 4096 || text.find_first_of("\r\n") != std::string::npos) {
+    logger_("Enter one message, up to 4096 bytes.");
+    return;
+  }
+  if (!online_) { logger_("Connect to Archipelago first."); return; }
+  if (text == "/deathlink" || text == "/deathlink on" || text == "/deathlink off") {
+    const bool enabled = text == "/deathlink" ? !death_link_ : text == "/deathlink on";
+    if (!Send({{"cmd", "ConnectUpdate"}, {"tags", enabled ? json::array({"AP", "DeathLink"}) : json::array({"AP"})}})) {
+      logger_("DeathLink was not changed: connection unavailable."); return;
+    }
+    death_link_ = enabled;
+    death_link_override_ = enabled;
+    logger_(enabled ? "DeathLink enabled." : "DeathLink disabled.");
+    return;
+  }
+  std::string message = text;
+  if (text == "/hint" || text.rfind("/hint ", 0) == 0) message.replace(0, 5, "!hint");
+  else if (text == "/commands") message = "!help";
+  else if (text.front() == '/') {
+    logger_("Unknown local command. Use /help; server commands start with !."); return;
+  }
+  if (!Send({{"cmd", "Say"}, {"text", message}})) logger_("Message was not sent: connection unavailable.");
 }
 
 }  // namespace gtavc
