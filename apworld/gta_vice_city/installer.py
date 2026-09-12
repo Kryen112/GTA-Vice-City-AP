@@ -1,4 +1,4 @@
-"""Installs the GTA Vice City mod into a game install, from the client.
+"""Installs the GTA Vice City mod from the offline setup tool.
 
 A packaged apworld may carry the mod under ``data/mod`` (staged by
 build_apworld.py once the mod is complete): the compiled ASI, and a bsdiff4
@@ -42,7 +42,23 @@ import hashlib
 import json
 import shutil
 import struct
+import subprocess
+import sys
 from pathlib import Path
+
+
+def game_process_running() -> bool:
+    """Whether Vice City runs; an unavailable Windows process check fails closed."""
+    if sys.platform != "win32":
+        return False
+    try:
+        result = subprocess.run(
+            ["tasklist", "/FI", "IMAGENAME eq gta-vc.exe", "/NH"],
+            capture_output=True, text=True, timeout=3, check=False,
+            creationflags=subprocess.CREATE_NO_WINDOW)
+    except (OSError, subprocess.TimeoutExpired):
+        return True
+    return result.returncode != 0 or "gta-vc.exe" in result.stdout.lower()
 
 
 class InstallRefused(Exception):

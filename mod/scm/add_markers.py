@@ -539,7 +539,9 @@ cleo += ["goto @AW_LOOP", ""]
 # One pass per frame over every ambient slot and over Phil's four shop stands,
 # asking the game whether each has been collected and latching its completion
 # global when it has. The ASI already polls every completion global, so this is
-# the whole of pickup detection: nothing else has to learn what a pickup is.
+# the script-side pickup detection. The ASI also observes the collection ring
+# immediately after CPickups::Update, before a competing vanilla reader clears
+# it (the police-bribe watcher below is one such reader).
 #
 # wait 0 and not a slower pass, because the answer is CONSUMED by being read.
 # has_pickup_been_collected (CPickups::IsPickUpPickedUp, 0x441880) never looks

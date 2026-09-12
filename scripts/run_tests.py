@@ -1,9 +1,8 @@
-"""Runs the world and client tests against a real Archipelago checkout.
+"""Runs the world and setup tests against a real Archipelago checkout.
 
 The single test entry point for pre-commit, CI, and manual runs. Locates the
 Archipelago checkout (AP_ROOT override, else the nearest one up the tree), links the
-world package into it, and runs pytest over the world tests and the bundled
-client tests (the client is a subpackage of the world).
+world package into it, and runs pytest over the world, setup, and build tests.
 """
 
 import subprocess
@@ -24,7 +23,7 @@ def main() -> int:
     if target is None:
         return 1
     failed = subprocess.call(
-        [sys.executable, "-m", "pytest", str(target / "test"), str(target / "client" / "test"),
+        [sys.executable, "-m", "pytest", str(target / "test"),
          str(REPOSITORY_ROOT / "scripts" / "test"), "-q"],
         cwd=root,
     )
@@ -36,10 +35,7 @@ def main() -> int:
     failed = _run_helper("check_scm_mirrors.py")
     if failed:
         return failed
-    # The interop check is the only thing that exercises the config frame
-    # through the real C++ decode, and it needs a harness binary. Run it when
-    # one has been built and say so when it has not, rather than passing
-    # silently on coverage nobody ran.
+    # Exercise the native APCpp transport when its harness has been built.
     return _run_interop_check()
 
 
@@ -56,24 +52,19 @@ def _run_spec_dumper() -> int:
 
 
 def _run_interop_check() -> int:
-    """Runs scripts/asi_interop_check.py when a harness binary is around.
-
-    The harness is built by hand (see notes/), so this cannot demand one. What it
-    must not do is stay quiet: the config frame's decode is only exercised here,
-    so a run without it says so.
-    """
-    candidates = sorted(REPOSITORY_ROOT.glob("**/harness.exe"))
+    """Runs scripts/native_interop_check.py when its harness binary is around."""
+    candidates = sorted(REPOSITORY_ROOT.glob("**/native_harness.exe"))
     if not candidates:
-        print("interop check SKIPPED: no harness.exe built, so the config frame's "
-              "C++ decode is unexercised this run.")
+        print("interop check SKIPPED: no native_harness.exe built, so the APCpp "
+              "transport is unexercised this run.")
         return 0
     completed = subprocess.run(
-        [sys.executable, str(REPOSITORY_ROOT / "scripts" / "asi_interop_check.py"),
+        [sys.executable, str(REPOSITORY_ROOT / "scripts" / "native_interop_check.py"),
          str(candidates[0])],
         stdin=subprocess.DEVNULL, capture_output=True, text=True, check=False,
     )
     if completed.returncode:
-        print("scripts/asi_interop_check.py failed:")
+        print("scripts/native_interop_check.py failed:")
         print(completed.stdout[-2000:])
         print(completed.stderr[-2000:])
     return completed.returncode

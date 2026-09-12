@@ -29,13 +29,15 @@ class FakeGameState : public GameState {
                    const std::vector<MainlandRoute>& routes,
                    const std::map<std::int64_t, std::vector<int>>&
                        content_district_globals,
-                   const std::vector<PickupDistrict>& pickup_districts) override {
+                   const std::vector<PickupDistrict>& pickup_districts,
+                   const CheckMarkers& check_markers = {}) override {
     std::lock_guard<std::mutex> lock(mutex_);
     item_globals_ = item_globals;
     completion_watch_ = completion_watch;
     item_effects_ = item_effects;
     config_globals_ = config_globals;
     package_locations_ = package_locations;
+    check_markers_ = check_markers;
     pickup_targets_ = pickup_targets;
     mainland_routes_ = routes;
     content_district_globals_ = content_district_globals;
@@ -68,7 +70,8 @@ class FakeGameState : public GameState {
   // line breaks are the console self-test's business, and it drives the row
   // builder directly. The break is kept visible so a row that lost its second
   // line still reads as different from one that never had one.
-  void ShowToast(const ToastRow& row) override {
+  void ShowToast(const ToastRow& row, bool notify = true) override {
+    if (!notify) return;
     std::lock_guard<std::mutex> lock(mutex_);
     std::string text;
     for (const std::vector<ToastSegment>& line : row.lines) {
@@ -216,6 +219,11 @@ class FakeGameState : public GameState {
     return config_globals_;
   }
 
+  CheckMarkers Markers() {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return check_markers_;
+  }
+
   std::vector<PickupTarget> PickupTargets() {
     std::lock_guard<std::mutex> lock(mutex_);
     return pickup_targets_;
@@ -250,6 +258,7 @@ class FakeGameState : public GameState {
   std::map<int, int> config_globals_;
   std::map<int, std::int64_t> completion_watch_;
   std::vector<PackageLocation> package_locations_;
+  CheckMarkers check_markers_;
   std::vector<PickupTarget> pickup_targets_;
   std::vector<MainlandRoute> mainland_routes_;
   std::map<std::int64_t, std::vector<int>> content_district_globals_;

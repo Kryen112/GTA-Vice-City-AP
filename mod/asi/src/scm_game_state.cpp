@@ -8,6 +8,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <cmath>
 
 #include "game_addresses.hpp"
 #include "scm_finale_warp.hpp"
@@ -18,6 +19,8 @@
 #include <plugin.h>
 #include <CFont.h>
 #include <CHud.h>
+#include <CCamera.h>
+#include <CRadar.h>
 #include <CMessages.h>
 #include <CModelInfo.h>
 #include <CTheScripts.h>
@@ -38,7 +41,7 @@
 #include <CAutomobile.h>
 #include <CPed.h>
 #include <CWeather.h>
-#include <eModelID.h>
+#include <eVehicleModel.h>
 #include <eObjective.h>
 #include <ePedStates.h>
 #include <eWeather.h>
@@ -662,13 +665,15 @@ void ScmGameState::ApplyConfig(const std::map<std::int64_t, int>& item_globals,
                                const std::vector<MainlandRoute>& routes,
                                const std::map<std::int64_t, std::vector<int>>&
                                    content_district_globals,
-                               const std::vector<PickupDistrict>& pickup_districts) {
+                               const std::vector<PickupDistrict>& pickup_districts,
+                               const CheckMarkers& check_markers) {
   std::lock_guard<std::mutex> lock(mutex_);
   item_globals_ = item_globals;
   item_effects_ = item_effects;
   config_globals_ = config_globals;
   completion_watch_ = completion_watch;
   package_locations_ = package_locations;
+  check_markers_ = check_markers;
   pickup_targets_ = pickup_targets;
   content_district_globals_ = content_district_globals;
   pickup_districts_ = pickup_districts;
@@ -704,6 +709,39 @@ void ScmGameState::ApplyConfig(const std::map<std::int64_t, int>& item_globals,
   if (logger_) logger_("config applied");
 }
 
+void ScmGameState::DrawCheckMarkers() {
+  std::lock_guard<std::mutex> lock(mutex_);
+  const bool main_map = FrontEndMenuManager.m_bDrawRadarOrMap;
+  if (!ConfiguredSeedMatches(cached_seed_hash_, configured_seed_hash_) ||
+      CRadar::m_radarRange <= 0.0f || FindPlayerPed() == nullptr) return;
+  if (!main_map && (CHud::bScriptDontDisplayRadar || TheCamera.m_bWideScreenOn ||
+                   FrontEndMenuManager.m_bMenuActive || FrontEndMenuManager.m_nPrefsRadarMode == 2)) return;
+  if (GetGlobal(kMinimapShuffledGlobal) != 0 && GetGlobal(kMinimapUnlockGlobal) == 0) return;
+
+  CVector2D centre, edge;
+  CRadar::TransformRadarPointToScreenSpace(centre, CVector2D(0.0f, 0.0f));
+  CRadar::TransformRadarPointToScreenSpace(edge, CVector2D(1.0f, 1.0f));
+  const float radius_x = std::abs(edge.x - centre.x);
+  const float radius_y = std::abs(edge.y - centre.y);
+  for (const auto& [global_index, position] : check_markers_) {
+    if (global_index < 0 || global_index >= sizeof(CTheScripts::ScriptSpace) / sizeof(int) ||
+        reported_.count(global_index) || GetGlobal(global_index) != 0) continue;
+    if (!position.Available([this](int index) { return GetGlobal(index); })) continue;
+    CVector2D radar, screen;
+    CRadar::TransformRealWorldPointToRadarSpace(radar, CVector2D(position.x, position.y));
+    if (!main_map && !CheckMarkerFits(radar.x, radar.y, radius_x, radius_y)) continue;
+    CRadar::TransformRadarPointToScreenSpace(screen, radar);
+    const float x = std::floor(screen.x);
+    const float y = std::floor(screen.y);
+    if (main_map && !CheckMarkerFitsScreen(x, y, static_cast<float>(RsGlobal.screenWidth),
+                                         static_cast<float>(RsGlobal.screenHeight))) continue;
+    const auto color = CheckMarkerColor(position.category);
+    CSprite2d::DrawRect(CRect(x - 3.0f, y - 3.0f, x + 4.0f, y + 4.0f), CRGBA(0, 0, 0, 255));
+    CSprite2d::DrawRect(CRect(x - 2.0f, y - 2.0f, x + 3.0f, y + 3.0f),
+                        CRGBA(color[0], color[1], color[2], 255));
+  }
+}
+
 void ScmGameState::ApplyEffect(const ItemEffect& effect) {
   CPlayerPed* player = FindPlayerPed();
   if (player == nullptr) return;
@@ -730,7 +768,7 @@ void ScmGameState::ApplyEffect(const ItemEffect& effect) {
     if (held.m_eWeaponType != weapon && held.m_eWeaponType != WEAPONTYPE_UNARMED) {
       const CWeaponInfo* held_info = CWeaponInfo::GetWeaponInfo(held.m_eWeaponType);
       if (held_info != nullptr) {
-        held.m_nAmmoTotal += std::max(kMinPickupAmmo, kPickupMagazines * held_info->m_nAmountofAmmunition);
+        held.m_nTotalAmmo += std::max(kMinPickupAmmo, kPickupMagazines * held_info->m_nAmountofAmmunition);
       }
       return;
     }
@@ -1042,7 +1080,8 @@ void ScmGameState::ApplyAbilityInputLocks() {
   std::lock_guard<std::mutex> lock(mutex_);
   // The seed hash marks a stamped game; before that ScriptSpace holds no
   // meaningful state, exactly as OnGameFrame requires.
-  if (ReadSeedHash().empty()) return;
+  const auto seed = ReadSeedHash();
+  if (!ConfiguredSeedMatches(seed, configured_seed_hash_)) return;
   std::array<int, kAbilityCount> lock_flags{};
   const AbilityLocks locked = ReadAbilityLocks(lock_flags);
   bool any_flag_set = false;
@@ -1163,7 +1202,10 @@ void ScmGameState::EnforceLocks() {
   }
 }
 
-void ScmGameState::OnBeforeWorldProcess() { ApplyAbilityInputLocks(); }
+void ScmGameState::OnBeforeWorldProcess() {
+  ApplyAbilityInputLocks();
+  RestoreCheckedPackages();
+}
 
 void ScmGameState::ApplyOneShot(const ItemEffect& effect) {
   if (effect.type.rfind("trap_", 0) == 0) {
@@ -1299,12 +1341,18 @@ std::string ScmGameState::SeedHash() {
   return cached_seed_hash_;
 }
 
+bool ScmGameState::CanSaveSeed(const std::string& expected) {
+  std::lock_guard<std::mutex> lock(mutex_);
+  return !expected.empty() && configured_seed_hash_ == expected && ReadSeedHash() == expected;
+}
+
 void ScmGameState::StampSeedHash(const std::string& expected) {
   std::lock_guard<std::mutex> lock(mutex_);
   // The welcome names the seed once and the player can start any number of games
   // under it, so this is held for as long as the session is up: the seed every
   // game that comes up without one of its own is stamped with.
   expected_seed_hash_ = expected;
+  configured_seed_hash_ = expected;
 }
 
 void ScmGameState::ApplyItems(const std::vector<std::pair<std::int64_t, std::int64_t>>& items) {
@@ -1321,14 +1369,14 @@ void ScmGameState::MarkChecked(const std::vector<std::int64_t>& locations) {
   }
 }
 
-void ScmGameState::ShowToast(const ToastRow& row) {
+void ScmGameState::ShowToast(const ToastRow& row, bool notify) {
   std::lock_guard<std::mutex> lock(mutex_);
   if (row.empty()) return;
   // The queue is meant to hold everything: a release of a whole multiworld is
   // hundreds of rows and every one of them is the only in-game record that item
   // moved. The bound is a runaway backstop far above any real release, and it
   // drops the newest rather than the oldest, so the record stays in order.
-  if (toasts_.waiting.size() < kToastQueueMax) {
+  if (notify && toasts_.waiting.size() < kToastQueueMax) {
     toasts_.waiting.push_back(QueuedToast(row));
   }
   // The record the pause page reads, newest first, whether or not the row has been
@@ -1464,12 +1512,11 @@ StatusPanelState ScmGameState::BuildStatusPanelState() {
   // The stat the game's own menu prints, truncated the way that menu truncates
   // it, so the two lines never disagree by a rounding.
   state.percentage = DisplayedPercentage(CStats::GetPercentageProgress());
-  // What the game counts for itself. The hidden package tally and the emergency
-  // levels are the game's own progress toward the checks those classes carry, and
-  // nothing outside the game knows them: the client sees a location checked, not
-  // how close the next one is.
-  state.packages_collected = CWorld::Players[0].m_nCollectablesCollected;
-  state.packages_total = CWorld::Players[0].m_nCollectablesTotal;
+  // Match the package HUD's seed-wide tally, including checks newer than this
+  // save. Emergency levels still describe the game's local activity progress.
+  const auto packages = PackageProgress();
+  state.packages_collected = packages.first;
+  state.packages_total = packages.second;
   state.paramedic_level = CStats::HighestLevelAmbulanceMission;
   state.vigilante_level = CStats::HighestLevelVigilanteMission;
   state.firefighter_level = CStats::HighestLevelFireMission;
@@ -1575,13 +1622,14 @@ void ScmGameState::EnforcePickupLayout() {
   }
   // A slot whose check is still to be taken wears the AP marker instead of
   // whatever the layout gives it. Re-derived every frame from the completion
-  // global rather than remembered, so taking the check reverts the slot on the
-  // next pass and a reconnect or a load needs no bookkeeping of its own. A row
+  // global and the client's recorded checks, so loading an older save cannot
+  // restore the marker for an already-checked location. A row
   // with no completion global is not a check and is never pending.
   std::vector<bool> check_pending;
   check_pending.reserve(pickup_targets_.size());
   for (const PickupTarget& target : pickup_targets_) {
     check_pending.push_back(target.check_global != 0 &&
+                            !reported_.count(target.check_global) &&
                             GetGlobal(target.check_global) == 0);
   }
   const PickupLayoutPlan plan =
@@ -1630,6 +1678,47 @@ void ScmGameState::EnforcePickupLayout() {
       pickup.pExtraObject = nullptr;
     }
   }
+}
+
+std::pair<int, int> ScmGameState::PackageProgress() const {
+  if (package_locations_.empty() || GetGlobal(kPackagesShuffledGlobal) == 0) {
+    return {CWorld::Players[0].m_nCollectablesCollected, CWorld::Players[0].m_nCollectablesTotal};
+  }
+  return {CheckedPackageCount(package_locations_, reported_, [](int index) { return GetGlobal(index); }),
+          static_cast<int>(package_locations_.size())};
+}
+
+void ScmGameState::RestoreCheckedPackages() {
+  std::lock_guard<std::mutex> lock(mutex_);
+  if (plugin::GetGameVersion() != GAME_10EN || package_locations_.empty() ||
+      !ConfiguredSeedMatches(ReadSeedHash(), configured_seed_hash_) ||
+      GetGlobal(kPackagesShuffledGlobal) == 0 || FindPlayerPed() == nullptr) return;
+
+  // Restore the flags before removing pickups: the disappearance detector must
+  // not interpret reconciliation as a new collection or claw back any cash.
+  for (const auto& package : package_locations_)
+    if (reported_.count(package.completion_global)) SetGlobal(package.completion_global, 1);
+
+  // Runs before CPickups::Update, so an old save loaded on top of a checked
+  // package cannot collect it again. RemovePickUp destroys both visible objects
+  // and the pool entry without playing the pickup's reward/message path.
+  for (int index = 0; index < kPickupPoolSize; ++index) {
+    const auto& pickup = CPickups::aPickUps[index];
+    if (pickup.bPickupType != PICKUP_COLLECTABLE1) continue;
+    const WorldPoint position{pickup.vecPos.x, pickup.vecPos.y, UnsunkHeight(pickup.vecPos.z)};
+    for (const auto& package : package_locations_) {
+      if (GetGlobal(package.completion_global) != 0 && PackageMatchesPosition(package, position)) {
+        const auto handle = (static_cast<std::uint32_t>(pickup.wUniqueId) << 16) |
+                            static_cast<std::uint32_t>(index);
+        CPickups::RemovePickUp(static_cast<int>(handle));
+        break;
+      }
+    }
+  }
+  // Keep saved package progress consistent with the restored pickup state.
+  // This is before real collections; their ordinary cash suppression still
+  // sees the game's actual increment, including the final-package bonus.
+  CWorld::Players[0].m_nCollectablesCollected = PackageProgress().first;
 }
 
 int ScmGameState::DetectCollectedPackages() {
@@ -1803,6 +1892,29 @@ void ScmGameState::ForgetGameScopedState() {
   // frame with no player vehicle, which every boundary passes through.
 }
 
+void ScmGameState::OnPickupsUpdated() {
+  if (plugin::GetGameVersion() != GAME_10EN) return;
+  std::lock_guard<std::mutex> lock(mutex_);
+  if (!baseline_captured_ || !ConfiguredSeedMatches(ReadSeedHash(), configured_seed_hash_) ||
+      FindPlayerPed() == nullptr) return;
+  // Read without consuming: vanilla's bribe watcher and APPICKUP both need the
+  // original events. Their opcode clears a match, so polling after scripts races.
+  const auto* collected = reinterpret_cast<const std::uint32_t*>(kCollectedPickupsAddress10);
+  for (int slot = 0; slot < 20; ++slot) {
+    const auto handle = collected[slot];
+    const auto index = handle & 0xFFFF;
+    if (handle == 0 || index >= kPickupPoolSize) continue;
+    const auto& pickup = CPickups::aPickUps[index];
+    const int global = CollectedPickupCheck(pickup_targets_, handle, pickup.wUniqueId,
+        {pickup.vecPos.x, pickup.vecPos.y, pickup.vecPos.z, pickup.bPickupType,
+         pickup.nModelId, static_cast<int>(index)});
+    if (global && completion_watch_.count(global) && GetGlobal(global) == 0) {
+      SetGlobal(global, 1);
+      if (logger_) logger_("pickup collected: " + std::to_string(completion_watch_.at(global)));
+    }
+  }
+}
+
 void ScmGameState::OnGameFrame() {
   std::lock_guard<std::mutex> lock(mutex_);
 
@@ -1824,7 +1936,7 @@ void ScmGameState::OnGameFrame() {
   // Only touch the game's script memory once a stamped game is actually
   // running. In the frontend menu ScriptSpace holds no meaningful state, and a
   // baseline taken there would be wrong.
-  const bool game_active = !cached_seed_hash_.empty();
+  const bool game_active = ConfiguredSeedMatches(cached_seed_hash_, configured_seed_hash_);
   if (!game_active) {
     ForgetGameScopedState();
     return;
@@ -2115,6 +2227,13 @@ void ScmGameState::OnGameFrame() {
       // The cash the executable paid for the packages the detection just
       // reported goes back in the same frame, so the two run together.
       SuppressPackageCash(DetectCollectedPackages());
+      if (plugin::GetGameVersion() == GAME_10EN && !package_locations_.empty() &&
+          GetGlobal(kPackagesShuffledGlobal) != 0) {
+        const auto packages = PackageProgress();
+        SyncPackageMessage(reinterpret_cast<char*>(kGarageMessageKey10),
+            *reinterpret_cast<int*>(kGarageMessageNumber10),
+            *reinterpret_cast<int*>(kGarageMessageSecondNumber10), packages.first, packages.second);
+      }
   }
 
   std::map<int, int> current;

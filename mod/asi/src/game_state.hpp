@@ -19,6 +19,45 @@
 
 namespace gtavc {
 
+// Completion global -> world position on the minimap.
+struct MarkerTerm {
+  int global = 0;
+  int minimum = 1;
+  int ability_lock_global = 0;
+};
+
+struct MarkerThreshold {
+  int needed = 1;
+  std::vector<std::vector<MarkerTerm>> alternatives;
+};
+
+struct CheckMarker {
+  float x = 0.0f;
+  float y = 0.0f;
+  int category = 0;
+  int content_unlock_global = 0; // zero for content that cannot be locked
+  std::vector<MarkerThreshold> requirements;
+
+  template <typename ReadGlobal>
+  bool Available(ReadGlobal read) const {
+    if (content_unlock_global != 0 && read(content_unlock_global) < kDistrictReleased) return false;
+    for (const auto& threshold : requirements) {
+      int satisfied = 0;
+      for (const auto& route : threshold.alternatives) {
+        bool open = true;
+        for (const auto& term : route) {
+          if (term.ability_lock_global != 0 && read(term.ability_lock_global) == 0) continue;
+          if (read(term.global) < term.minimum) { open = false; break; }
+        }
+        if (open) ++satisfied;
+      }
+      if (satisfied < threshold.needed) return false;
+    }
+    return true;
+  }
+};
+using CheckMarkers = std::map<int, CheckMarker>;
+
 // A one-shot effect applied once past the saved applied-index.
 //
 // Consumables: "cash" (amount is the value), "weapon", "health", "armor",
@@ -126,7 +165,8 @@ class GameState {
                            const std::vector<MainlandRoute>& routes,
                            const std::map<std::int64_t, std::vector<int>>&
                                content_district_globals,
-                           const std::vector<PickupDistrict>& pickup_districts) = 0;
+                           const std::vector<PickupDistrict>& pickup_districts,
+                           const CheckMarkers& check_markers = {}) = 0;
 
   // The seed hash to present on hello, read from the reserved SCM global.
   // Empty when no game has been started for this seed.
@@ -148,7 +188,8 @@ class GameState {
   // A player-facing row for the in-game toast stack, already built into its
   // coloured segments by the client, since only the client knows which slot is
   // ours and how the server classified an item.
-  virtual void ShowToast(const ToastRow& row) = 0;
+  // notify=false records pause-menu history without drawing a HUD notification.
+  virtual void ShowToast(const ToastRow& row, bool notify = true) = 0;
 
   // A row that holds its place until something clears it, addressed by what it is
   // about so a repeat replaces rather than stacks. The handshake refusal arrives

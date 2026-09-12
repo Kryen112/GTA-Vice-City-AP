@@ -1,10 +1,13 @@
 GTA: Vice City for Archipelago
 Copyright (c) 2026 Kryen112, under the MIT License in LICENSE.
+Copyright (c) 2026 randomcodegen, under the MIT License in LICENSE for original
+contributions, including the map markers and native client integration.
 
 WHAT THAT COVERS
 
 This repository's own work: the Archipelago world, the bridge client, the ASI
-plugin, the CLEO scripts, the SCM build tooling, and the documentation.
+plugin, the CLEO scripts, the SCM build tooling, and the documentation. The
+vendored APCpp library and other third party code retain their separate licenses.
 
 WHAT IT DOES NOT COVER
 
@@ -15,8 +18,17 @@ than the script, and the game's own files are never redistributed.
 
 THIRD PARTY COMPONENTS
 
-The compiled ASI plugin embeds and links the following. Their notices travel
-with any copy of it.
+The compiled ASI plugin embeds and links the following. Their license texts
+and notices are collected in THIRD_PARTY_LICENSES and ship inside the apworld.
+Keep LICENSE, NOTICE and THIRD_PARTY_LICENSES with redistributed copies.
+
+APCpp
+  https://github.com/N00byKing/APCpp by N00byKing and contributors.
+  C++ library, with local modifications by randomcodegen.
+  GNU Lesser General Public License version 2.1 (LGPL-2.1-only).
+  Vendored at mod/asi/third_party/apcpp, with its full license in LICENSE there.
+  Its README records the imported revision and the local changes.
+  This library is not licensed under this project's MIT license.
 
 nlohmann/json
   Copyright (c) 2013-2023 Niels Lohmann <https://nlohmann.me>
@@ -28,4 +40,26 @@ plugin-sdk
   zlib License. The software is provided as-is with no warranty; the origin
   must not be misrepresented, altered source versions must be marked as such,
   and this notice may not be removed from a source distribution.
-  Linked at build time; not distributed here.
+  Linked into the ASI at build time; its source is not vendored here.
+
+Native client dependencies
+  IXWebSocket (BSD-3-Clause), JsonCpp (MIT), Mbed TLS (Apache-2.0 option),
+  and zlib (Zlib) are built with vcpkg.
+  Their installed copyright files are reproduced in THIRD_PARTY_LICENSES,
+  including the upstream attributions and any component-specific terms.
+  These dependencies are not relicensed under this project's MIT license.
+
+BINARY DISTRIBUTION
+
+The native ASI statically links APCpp and other libraries. License notices alone
+do not supply the corresponding source and relinking materials. For each
+binary release, provide the exact modified LGPL library sources, their build
+scripts, and the application source and/or object files needed to rebuild and
+relink with modified libraries, as described in LGPL 2.1 section 6. Include the
+matching dependency sources, patches and build configuration where required.
+Offer these materials alongside the binary download. A link to a moving main
+branch does not identify the source of a particular binary.
+
+Recipients may modify the LGPL libraries and relink the application for their
+own use, and reverse engineer it to debug those modifications. No project term
+restricts those permissions. See the native distribution instructions in README.md.

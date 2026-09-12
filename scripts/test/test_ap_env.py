@@ -6,11 +6,8 @@ Archipelago is cloned into; the link removal clears what an old layout left
 behind, since a junction outlives the path it points at and then blocks every
 run with a name that already exists.
 
-The search runs to the drive root, so a test asserting that nothing is found is
-asserting about the real folders above tmp_path as well as the tree it built.
-The marker is what keeps that honest: a candidate has to carry the world API
-file, which no folder merely named Archipelago holds by accident. Every checkout
-here is built through _checkout so it carries one.
+Discovery tests only inspect their fixture tree, even when a real checkout
+exists above it. Every fake checkout carries the world API marker.
 
 The real checkout is never touched. Each test builds its tree under tmp_path and
 points the module's repository root into it.
@@ -109,6 +106,9 @@ def test_a_folder_named_archipelago_is_not_a_checkout(tmp_path, monkeypatch) -> 
     (tmp_path / "Archipelago" / "worlds").mkdir(parents=True)
     _repository_at(monkeypatch, tmp_path / "world")
     monkeypatch.delenv("AP_ROOT", raising=False)
+    is_checkout = ap_env._is_checkout
+    monkeypatch.setattr(ap_env, "_is_checkout", lambda path:
+                        path.resolve().is_relative_to(tmp_path.resolve()) and is_checkout(path))
     assert ap_env.archipelago_root() is None
 
 

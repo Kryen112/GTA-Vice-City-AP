@@ -272,6 +272,46 @@ int main() {
     auto far_result = DetectNewlyCollectedPackages({packages[0]}, far, one_seen, none);
     Expect(far_result.size() == 1 && far_result[0] == 9075,
            "a pickup beyond two units leaves the package collected");
+
+    std::set<int> server_checked = {9075, 9076, 9999};
+    std::map<int, int> save_flags = {{9076, 1}};
+    const auto count = [&] {
+      return CheckedPackageCount(packages, server_checked,
+                                 [&](int index) { return save_flags[index]; });
+    };
+    Expect(count() == 2, "package display includes checks newer than the save, without double counting");
+    save_flags[9077] = 1;
+    Expect(count() == 3, "a fresh package counts immediately, before server acknowledgement");
+    save_flags.clear();
+    Expect(count() == 2, "loading an older save does not erase the seed's package count");
+    server_checked.clear();
+    Expect(count() == 0, "non-package checks never contribute to the package count");
+
+    // Reconciliation removes the already-checked middle package and restores
+    // its flag before detection. It must produce neither a check nor a payout.
+    const auto restored = DetectNewlyCollectedPackages(packages, without_middle, seen, recorded);
+    Expect(restored.empty() && PackageCashClawBack(static_cast<int>(restored.size()), 2, 3, 500) == 0,
+           "removing a restored package does not count as a new paid collection");
+    server_checked = recorded;
+    Expect(DetectCompletedLocations({{9076, 123}}, {{9076, 0}}, {{9076, 1}}, server_checked).empty(),
+           "restoring a checked package flag cannot send another check");
+    Expect(PackageMatchesPosition(packages[1], {100, 100, UnsunkHeight(100 - kPickupLowerOffset)}),
+           "a content-locked restored package matches after its height is normalized");
+    Expect(!PackageMatchesPosition(packages[1], {100, 100, 110}),
+           "reconciliation cannot remove a pickup on a different floor");
+
+    char message[8] = "CO_ONE";
+    int number = 1, total = 100;
+    SyncPackageMessage(message, number, total, 12, 100);
+    Expect(number == 12 && total == 100, "the blue package message uses the seed total");
+    std::memcpy(message, "CO_ALL", 7);
+    SyncPackageMessage(message, number, total, 100, 100);
+    Expect(std::strcmp(message, "CO_ONE") == 0 && number == 100,
+           "the final package also displays the seed counter");
+    std::memcpy(message, "GA_001", 7);
+    SyncPackageMessage(message, number, total, 0, 3);
+    Expect(std::strcmp(message, "GA_001") == 0 && number == 100 && total == 100,
+           "unrelated garage messages keep their text and numbers");
   }
 
   // The hunt goal's ending: the flag rises only while the client asks AND the
@@ -2500,7 +2540,7 @@ int main() {
     const StatusSection own = Section(sections, "THE GAME COUNTS");
     Expect(own.rows.size() == 6 && own.rows[0].label == "Hidden Packages" &&
                own.rows[0].value == "37/100",
-           "the package tally is the game's own count of them");
+           "the package tally displays the supplied HUD progress");
     Expect(own.rows[1].value == "7/12" && own.rows[2].value == "none",
            "and an emergency activity reads its level or says it has none");
     // The taxi and the pizza boy keep no level in the game's stats, and they do
@@ -3221,6 +3261,31 @@ int main() {
   Expect(applied_result.size() == 1 && applied_result[0] == applied &&
              applied_result[0]["index"] == 41,
          "applied round-trip, carrying the received index");
+
+  Expect(ConfiguredSeedMatches("seed-a", "seed-a"), "matching save can use cached configuration offline");
+  Expect(!ConfiguredSeedMatches("seed-b", "seed-a"), "foreign save cannot use cached configuration");
+  Expect(!ConfiguredSeedMatches("", ""), "frontend is not a configured game");
+  Expect(CheckMarkerColor(1)[1] == 255 && CheckMarkerColor(5)[2] == 255,
+         "packages are green and jumps blue");
+  Expect(CheckMarkerColor(2)[0] > CheckMarkerColor(3)[0], "robberies use lighter red than rampages");
+  Expect(CheckMarkerColor(-1) == CheckMarkerColor(0), "unknown category has a visible fallback");
+  Expect(CheckMarkerFitsScreen(3, 3, 640, 448), "main-map outline fits at the top left edge");
+  Expect(CheckMarkerFitsScreen(636, 444, 640, 448), "main-map outline fits at the bottom right edge");
+  Expect(!CheckMarkerFitsScreen(2, 200, 640, 448), "panned map clips the left edge");
+  Expect(!CheckMarkerFitsScreen(637, 200, 640, 448), "panned map clips the right edge");
+  Expect(!CheckMarkerFitsScreen(300, -10, 640, 448), "panned map clips the top edge");
+  Expect(!CheckMarkerFitsScreen(300, 445, 640, 448), "panned map clips the bottom edge");
+  Expect(CheckMarkerFitsScreen(900, 700, 1920, 1080), "main-map clipping follows screen resolution");
+  Expect(!CheckMarkerFitsScreen(std::numeric_limits<float>::quiet_NaN(), 20, 640, 448),
+         "invalid map projections draw nothing");
+  Expect(CheckMarkerFits(0.0f, 0.0f, 50.0f, 40.0f), "marker fits at radar centre");
+  Expect(CheckMarkerFits(0.9f, 0.0f, 50.0f, 40.0f), "nearby marker fits");
+  Expect(!CheckMarkerFits(1.0f, 0.0f, 50.0f, 40.0f), "outline stays inside radar");
+  Expect(!CheckMarkerFits(0.7f, 0.7f, 50.0f, 40.0f), "diagonal outline stays inside radar");
+  Expect(!CheckMarkerFits(-2.0f, 0.0f, 50.0f, 40.0f), "distant markers stay off the edge");
+  Expect(!CheckMarkerFits(0.0f, 0.0f, 0.0f, 40.0f), "zero size radar draws nothing");
+  Expect(!CheckMarkerFits(std::numeric_limits<float>::quiet_NaN(), 0.0f, 50.0f, 40.0f),
+         "invalid projected coordinates draw nothing");
 
   if (failures == 0) {
     std::cout << "OK: protocol self-test passed\n";

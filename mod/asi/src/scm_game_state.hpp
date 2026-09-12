@@ -50,12 +50,14 @@ class ScmGameState : public GameState {
                    const std::vector<MainlandRoute>& routes,
                    const std::map<std::int64_t, std::vector<int>>&
                        content_district_globals,
-                   const std::vector<PickupDistrict>& pickup_districts) override;
+                   const std::vector<PickupDistrict>& pickup_districts,
+                   const CheckMarkers& check_markers = {}) override;
   std::string SeedHash() override;
   void StampSeedHash(const std::string& expected) override;
+  bool CanSaveSeed(const std::string& expected); // game thread, immediately before a save write
   void ApplyItems(const std::vector<std::pair<std::int64_t, std::int64_t>>& items) override;
   void MarkChecked(const std::vector<std::int64_t>& locations) override;
-  void ShowToast(const ToastRow& row) override;
+  void ShowToast(const ToastRow& row, bool notify = true) override;
   void ShowNotice(ToastNotice notice, const std::string& text) override;
   void ClearNotice(ToastNotice notice) override;
   void SetClientConnected(bool connected) override;
@@ -70,6 +72,7 @@ class ScmGameState : public GameState {
 
   // Called from the game frame. All SCM memory access is here.
   void OnGameFrame();
+  void OnPickupsUpdated(); // observe collections before script consumers clear them
 
   // Called from the frame's HUD draw, after the game's own HUD and before the
   // font buffer is flushed, so the rows land in the same frame. Advances the
@@ -82,6 +85,7 @@ class ScmGameState : public GameState {
   // the stack rather than draining it unseen, and the backlog is still there
   // afterwards because that is where it belongs.
   void DrawToasts();
+  void DrawCheckMarkers();
 
   // Called from the pre-world-process hook, before the player ped reads the
   // pad this frame. Applies only the ability locks that constrain input.
@@ -109,6 +113,8 @@ class ScmGameState : public GameState {
   // Returns how many packages it reported this frame, which is what the
   // executable just paid for.
   int DetectCollectedPackages();
+  void RestoreCheckedPackages();
+  std::pair<int, int> PackageProgress() const;
   // Takes back the package cash the executable pays (a hundred per package, a
   // hundred thousand as the count reaches the total) while the hidden-packages
   // class is on, in the frame it lands. With the class off it never fires and
@@ -244,6 +250,7 @@ class ScmGameState : public GameState {
   std::map<int, int> config_globals_;
   std::map<int, std::int64_t> completion_watch_;
   std::vector<PackageLocation> package_locations_;
+  CheckMarkers check_markers_;
   std::vector<PickupTarget> pickup_targets_;
   std::set<int> package_seen_present_;
   std::map<std::int64_t, int> location_to_global_;
@@ -287,6 +294,7 @@ class ScmGameState : public GameState {
   // client_connected_ as well, so the seed a departed client named can never
   // claim the game after it.
   std::string expected_seed_hash_;
+  std::string configured_seed_hash_;
   std::string cached_seed_hash_;
   bool items_dirty_ = false;
   // Grants leave at a rate the game survives rather than the rate the server

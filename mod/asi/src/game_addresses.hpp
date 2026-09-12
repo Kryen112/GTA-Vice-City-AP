@@ -7,6 +7,46 @@
 
 namespace gtavc {
 
+// Frontend idle (0x4A5C60) calls CMenuManager::Process here, after UpdatePads
+// and before its camera setup/begin at 0x4A5D0B. Unlike menuDrawingEvent,
+// this point has no active render frame. Verified against the VC 1.0 image.
+constexpr unsigned int kFrontendMenuProcessCall10 = 0x4A5C88;
+
+// Calls to the complete frontend draw (0x4A212D), after its temporary outgoing
+// page state is restored. The latter two are SwitchToNewScreen's render frames.
+constexpr unsigned int kFrontendMenuDrawCall10 = 0x4A387B;
+constexpr unsigned int kFrontendMenuTransitionDrawFirstCall10 = 0x49841B;
+constexpr unsigned int kFrontendMenuTransitionDrawSecondCall10 = 0x498442;
+
+// CGame::Process calls CPickups::Update (0x441BB0) after script processing.
+// Observe its collection ring before the next script pass consumes entries.
+// IsPickUpPickedUp (0x441880) compares [ecx*4 + 0x94AF48] then clears a match;
+// this is a direct 20-int array, not a pointer. Verified against VC 1.0.
+constexpr unsigned int kPickupsUpdateCall10 = 0x4A45DC;
+constexpr unsigned int kCollectedPickupsAddress10 = 0x94AF48;
+
+// CPickup::Update passes CO_ONE/CO_ALL to the garage-message function at
+// 0x42EDE0 (calls 0x441309 / 0x4412C3). It stores the text key and signed
+// integer substitutions here; changing these does not change pickup rewards.
+constexpr unsigned int kGarageMessageKey10 = 0x944090;
+constexpr unsigned int kGarageMessageNumber10 = 0x974BDC;
+constexpr unsigned int kGarageMessageSecondNumber10 = 0x975358;
+
+// VC 1.0 SetSaveDirectory (0x61D930) formats <userdir>\\GTAVCsf into
+// 0x97509C. Its single sprintf call pushes prefix, directory, format, buffer.
+// Save/load/delete routines subsequently use that prefix. Verified against the
+// executable; the OpenFile/OpenFileForWriting call sites both call its CRT fopen.
+// The replacement keeps the game's CRT ownership and checks all call targets.
+constexpr unsigned int kSavePrefixFormatCall10 = 0x61D944;
+constexpr unsigned int kGameSprintf10 = 0x648C10;
+constexpr unsigned int kFileOpenCall10 = 0x48DF9A;
+constexpr unsigned int kFileWriteOpenCall10 = 0x48DF7A;
+constexpr unsigned int kGameFopen10 = 0x6526B0;
+
+// CMenuManager::PrintMap calls CRadar::DrawBlips after its nine map tiles and
+// before the legend. The map projection is active here (classic VC 1.0).
+constexpr unsigned int kMainMapBlipsCallSite10 = 0x49B34C;
+
 // The music manager's radio retune press count (gNumRetunePresses in the
 // decompilation), classic 1.0 executable only. Pinned from the executable:
 // the single call site of CPad::ChangeStationJustDown (plugin-sdk 1.0 address

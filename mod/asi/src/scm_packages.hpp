@@ -12,6 +12,7 @@
 #pragma once
 
 #include <set>
+#include <cstring>
 #include <vector>
 
 #include "game_state.hpp"
@@ -24,6 +25,35 @@ struct WorldPoint {
   float y = 0.0f;
   float z = 0.0f;
 };
+
+inline bool PackageMatchesPosition(const PackageLocation& package, const WorldPoint& position) {
+  // SCM places packages at their configured coordinates; allow the same
+  // two-unit float tolerance for both detection and save reconciliation.
+  const float x = position.x - package.x;
+  const float y = position.y - package.y;
+  const float z = position.z - package.z;
+  return x * x + y * y + z * z <= 4.0f;
+}
+
+// Server-confirmed checks survive loading an older save. Local flags include
+// a package collected this frame, before its check reaches the server.
+template <typename ReadGlobal>
+int CheckedPackageCount(const std::vector<PackageLocation>& packages,
+                        const std::set<int>& reported, ReadGlobal read) {
+  int count = 0;
+  for (const auto& package : packages)
+    if (reported.count(package.completion_global) || read(package.completion_global) != 0) ++count;
+  return count;
+}
+
+// Only the package message uses the seed tally; garage and mission messages
+// share this buffer. Leave their text, numbers and display timers alone.
+inline void SyncPackageMessage(char* key, int& number, int& total, int checked, int package_total) {
+  if (std::memcmp(key, "CO_ONE", 7) != 0 && std::memcmp(key, "CO_ALL", 7) != 0) return;
+  std::memcpy(key, "CO_ONE", 7);
+  number = checked;
+  total = package_total;
+}
 
 // The game pays for hidden packages in the EXECUTABLE, not the script: the
 // pickup code hands the player $100 for every package and another $100,000 as
@@ -59,20 +89,11 @@ inline std::vector<int> DetectNewlyCollectedPackages(
     const std::vector<WorldPoint>& present_positions,
     std::set<int>& seen_present,
     const std::set<int>& already_collected) {
-  // Within two units (Euclidean) counts as the same package; the SCM places
-  // each collectable at exactly its configured coordinate, so the tolerance
-  // only absorbs float noise.
-  constexpr float kMatchDistanceSquared = 4.0f;
   std::vector<int> newly_collected;
   for (const PackageLocation& package : packages) {
     bool here = false;
     for (const WorldPoint& position : present_positions) {
-      const float delta_x = position.x - package.x;
-      const float delta_y = position.y - package.y;
-      const float delta_z = position.z - package.z;
-      const float distance_squared =
-          delta_x * delta_x + delta_y * delta_y + delta_z * delta_z;
-      if (distance_squared <= kMatchDistanceSquared) {
+      if (PackageMatchesPosition(package, position)) {
         here = true;
         break;
       }
