@@ -113,6 +113,8 @@ class ScmGameState : public GameState {
   // Returns how many packages it reported this frame, which is what the
   // executable just paid for.
   int DetectCollectedPackages();
+  void RestoreCheckedPackages();
+  std::pair<int, int> PackageProgress() const;
   // Takes back the package cash the executable pays (a hundred per package, a
   // hundred thousand as the count reaches the total) while the hidden-packages
   // class is on, in the frame it lands. With the class off it never fires and

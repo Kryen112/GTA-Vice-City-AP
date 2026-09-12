@@ -28,6 +28,83 @@ int main(int argc, char** argv) {
   _set_error_mode(_OUT_TO_STDERR); // keep assertion failures in the test log
   std::cout << std::unitbuf;
   assert(argc == 2);
+  // Test the marker parser and evaluator with both generated route tables.
+  const auto native_tables = json::parse(kNativeData);
+  json marker_config = {{"type", msg::kConfig}, {"item_globals", json::object()},
+      {"completion_watch", json::object()}, {"config_globals", json::object()},
+      {"check_markers", native_tables.at("markers")}};
+  for (auto it = native_tables.at("markers").begin(); it != native_tables.at("markers").end(); ++it)
+    marker_config["completion_watch"][it.key()] = std::stoll(it.key());
+  TestGame marker_game;
+  for (int split = 0; split < 2; ++split) {
+    marker_config["marker_requirements"] = native_tables.at("marker_requirements")[split];
+    assert(ApplyClientMessage(&marker_game, marker_config, [](const std::string&) {}));
+    const auto knife = marker_game.Markers().at(9512);
+    std::map<int, int> memory;
+    const auto read = [&](int index) { return memory[index]; };
+    assert(!knife.Available(read)); // The Job has not spawned the Malibu knife.
+    memory[9376] = 1;
+    assert(knife.Available(read));
+    memory[9376] = 0; // Loading an older save must hide it again.
+    assert(!knife.Available(read));
+    // Every generated marker is satisfiable with all requirements met.
+    for (const auto& [global, marker] : marker_game.Markers()) {
+      memory.clear();
+      for (const auto& threshold : marker.requirements)
+        for (const auto& route : threshold.alternatives)
+          for (const auto& term : route) memory[term.global] = std::max(memory[term.global], term.minimum);
+      memory[marker.content_unlock_global] = kDistrictReleased;
+      assert(marker.Available(read));
+    }
+  }
+  CheckMarker route_marker;
+  route_marker.requirements = {{1, {{{10, 1, 20}, {11, 1, 0}}, {{12, 2, 0}}}}};
+  std::map<int, int> route_memory{{20, 1}};
+  const auto read_route = [&](int index) { return route_memory[index]; };
+  assert(!route_marker.Available(read_route));
+  route_memory[10] = 1; // Vehicle unlock alone is insufficient without its source.
+  assert(!route_marker.Available(read_route));
+  route_memory[11] = 1;
+  assert(route_marker.Available(read_route));
+  route_memory[10] = 0; route_memory[20] = 0; // Disabled ability lock is free.
+  assert(route_marker.Available(read_route));
+  route_memory[11] = 0; route_memory[12] = 1;
+  assert(!route_marker.Available(read_route));
+  route_memory[12] = 2; // Either complete route is enough.
+  assert(route_marker.Available(read_route));
+  route_marker.content_unlock_global = 30;
+  assert(!route_marker.Available(read_route));
+  route_memory[30] = kDistrictReleased;
+  assert(route_marker.Available(read_route));
+  for (const auto& bad_term : {json::array({65128, 1, 0}), json::array({4294976672LL, 1, 0}),
+                              json::array({9376, 4294967297LL, 0}), json::array({9376, 1, -1})}) {
+    marker_config["marker_requirements"]["9512"] = json::array({json::array({1, json::array({json::array({bad_term})})})});
+    assert(!ApplyClientMessage(&marker_game, marker_config, [](const std::string&) {}));
+  }
+  ConsoleCommandCompletion completion;
+  std::wstring command_text = L"/re";
+  std::size_t command_cursor = command_text.size();
+  assert(completion.Complete(command_text, command_cursor) && command_text == L"/ready");
+  assert(completion.Complete(command_text, command_cursor) && command_text == L"/received");
+  assert(completion.Complete(command_text, command_cursor, true) && command_text == L"/ready");
+  assert(completion.Complete(command_text, command_cursor, true) && command_text == L"/received");
+  completion.Reset(); // Editing starts a fresh prefix search.
+  command_text = L"!hint_l Ocean Beach"; command_cursor = 7;
+  assert(completion.Complete(command_text, command_cursor));
+  assert(command_text == L"!hint_location Ocean Beach" && command_cursor == 14);
+  command_cursor = command_text.size();
+  assert(!completion.Complete(command_text, command_cursor)); // No argument completion.
+  for (const auto text : {L"", L"hello", L"/unknown", L"/password secret"}) {
+    completion.Reset(); command_text = text; command_cursor = command_text.size();
+    assert(!completion.Complete(command_text, command_cursor) && command_text == text);
+  }
+  completion.Reset(); command_text = L"/re"; command_cursor = 3;
+  assert(completion.Complete(command_text, command_cursor, true) && command_text == L"/received");
+  completion.Reset(); command_text = L"/receXYZ"; command_cursor = 5;
+  assert(completion.Complete(command_text, command_cursor) && command_text == L"/received");
+  completion.Reset(); command_text = L"/re " + std::wstring(1020, L'x'); command_cursor = 3;
+  const auto full_input = command_text;
+  assert(!completion.Complete(command_text, command_cursor) && command_text == full_input);
   // Ocean Beach plaza bribe. Its vanilla script consumes the collection before
   // APPICKUP can see it; the ASI observes the ring first without clearing it.
   const std::vector<PickupTarget> pickup_targets = {{9399, 116.0, -1313.1, 4.4, 15, 375, 0}};
@@ -50,9 +127,9 @@ int main(int argc, char** argv) {
   assert(CollectedPickupCheck(pickup_targets, (7u << 16) | 9, 7, bribe) == 9399);
   const auto directory = std::filesystem::path(argv[1]);
   std::filesystem::create_directories(directory);
-  for (wchar_t c : std::wstring(L"Vice City 123 /connect C:\\Games [chat] + ! ? &"))
+  for (wchar_t c : std::wstring(L"Vice City 123 connect C:\\Games [chat] + ! ? &"))
     assert(ViceCityConsoleGlyph(c) == c);
-  for (wchar_t c : std::wstring(L"_<>@^{}|~")) assert(ViceCityConsoleGlyph(c) == 0);
+  for (wchar_t c : std::wstring(L"/_<>@^{}|~")) assert(ViceCityConsoleGlyph(c) == 0);
   assert(ViceCityConsoleGlyph(L'\u00e9') == 0x9E); // accented letters keep the native font
   assert(ViceCityConsoleGlyph(L'\u00e4') == 0x9A);
   assert(ViceCityConsoleGlyph(L'\u00f1') == 0xAE);
@@ -210,7 +287,7 @@ int main(int argc, char** argv) {
   TestGame colored_game;
   ConsoleMessage colored;
   NativeSession colored_session(&colored_game, logger, sender, "rando.vc", "", directory / "colors", {},
-                                [&](const ConsoleMessage& message) { colored = message; });
+                                [&](const ConsoleMessage& message, bool notify) { assert(notify); colored = message; });
   auto colored_config = connected;
   colored_config["slot_info"]["2"] = {{"group_members", {1}}};
   login(colored_session, colored_config);
@@ -264,6 +341,11 @@ int main(int argc, char** argv) {
   assert(wrapped[1].colors.front() == 0x00FF7F && wrapped[2].colors.back() == 0x00FF7F);
   const auto hard_wrap = WrapConsoleText({std::wstring(100, L'x'), std::vector<std::uint32_t>(100, 0xAF99EF)});
   assert(hard_wrap.size() == 2 && hard_wrap[0].text.size() == 86 && hard_wrap[1].colors.size() == 14);
+  const ConsoleLine long_message{std::wstring(100, L'i'), std::vector<std::uint32_t>(100, 0xAF99EF)};
+  const auto console_history = WrapConsoleText(long_message, static_cast<float>(long_message.text.size()));
+  assert(console_history.size() == 1 && console_history[0].text == long_message.text);
+  assert(WrapConsoleText(console_history[0], 590, [](std::wstring_view) { return 3.0f; }).size() == 1);
+  assert(WrapConsoleText(console_history[0]).size() == 2); // Popup rows remain shorter.
   // Equal character counts have different widths in Vice City's proportional font.
   const auto glyph_width = [](std::wstring_view glyph) { return glyph == L"W" ? 9.0f : 3.0f; };
   const auto wide_rows = WrapConsoleText({L"WWWW", {1, 2, 3, 4}, 1234, 77}, 18, glyph_width);
@@ -274,12 +356,12 @@ int main(int argc, char** argv) {
   long_popup.Add({L"WWWWWW", {1, 2, 3, 4, 5, 6}});
   const auto& first_part = long_popup.Advance(1000, 9, glyph_width);
   assert(first_part.size() == 4 && first_part.front().colors[0] == 1 && first_part.back().colors[0] == 4);
-  const auto& continuation = long_popup.Advance(4250, 9, glyph_width);
+  const auto& continuation = long_popup.Advance(4750, 9, glyph_width);
   assert(continuation.size() == 2 && continuation.front().colors[0] == 5 && continuation.back().colors[0] == 6);
-  assert(continuation.front().popup_until == 7500); // waiting lines start their clock when shown
+  assert(continuation.front().popup_until == 8500); // waiting lines start their clock when shown
   long_popup.Pause(10000);
-  assert(long_popup.Advance(10001, 9, glyph_width).front().popup_until == 13250);
-  assert(long_popup.Advance(13250, 9, glyph_width).empty() && long_popup.empty());
+  assert(long_popup.Advance(10001, 9, glyph_width).front().popup_until == 13750);
+  assert(long_popup.Advance(13750, 9, glyph_width).empty() && long_popup.empty());
   assert(WrapConsoleText({L"iiii", {1, 1, 1, 1}}, 18, glyph_width).size() == 1);
   const auto words = WrapConsoleText({L"WW iii", {1, 1, 1, 2, 2, 2}}, 27, glyph_width);
   assert(words.size() == 2 && words[0].text == L"WW" && words[1].text == L"iii");
@@ -290,9 +372,9 @@ int main(int argc, char** argv) {
   assert(WrapConsoleText({L"W", {1}}, 1, glyph_width).size() == 1); // always make progress
   const auto popup_until = 1000 + kConsolePopupLifetimeMs;
   assert(ConsolePopupAlpha(popup_until, 1000) == 255);
-  assert(ConsolePopupAlpha(popup_until, 3500) == 255);
-  assert(ConsolePopupAlpha(popup_until, 3875) == 127);
-  assert(ConsolePopupAlpha(popup_until, 4250) == 0);
+  assert(ConsolePopupAlpha(popup_until, 4000) == 255);
+  assert(ConsolePopupAlpha(popup_until, 4375) == 127);
+  assert(ConsolePopupAlpha(popup_until, 4750) == 0);
   assert(ConsolePopupAlpha(0, 1000) == 0);
   ConsolePopupQueue burst;
   for (int i = 0; i < 8; ++i) burst.Add({std::to_wstring(i), {0xAF99EF}});
@@ -300,12 +382,12 @@ int main(int argc, char** argv) {
   assert(first_batch.size() == 4 && first_batch.front().text == L"0" && first_batch.back().text == L"3");
   burst.Add({L"8", {0xAF99EF}});
   assert(burst.Advance(2000, 86).front().text == L"0"); // new arrivals cannot displace visible rows
-  assert(burst.Advance(4249, 86).back().text == L"3");
-  const auto& second_batch = burst.Advance(4250, 86);
+  assert(burst.Advance(4749, 86).back().text == L"3");
+  const auto& second_batch = burst.Advance(4750, 86);
   assert(second_batch.size() == 4 && second_batch.front().text == L"4" && second_batch.back().text == L"7");
-  assert(second_batch.front().popup_until == 7500 && second_batch.front().colors[0] == 0xAF99EF);
-  assert(burst.Advance(7500, 86).front().text == L"8");
-  assert(burst.Advance(10750, 86).empty() && burst.empty());
+  assert(second_batch.front().popup_until == 8500 && second_batch.front().colors[0] == 0xAF99EF);
+  assert(burst.Advance(8500, 86).front().text == L"8");
+  assert(burst.Advance(12250, 86).empty() && burst.empty());
   assert(ConsoleScrollAfterArrival(0, 5, 105) == 0); // follow live chat only when already at the bottom
   assert(ConsoleScrollAfterArrival(12, 5, 105) == 17);
   assert(ConsoleScrollAfterArrival(12, 5, 100) == 17); // works when old history rows were trimmed
@@ -371,5 +453,91 @@ int main(int argc, char** argv) {
   immediate.QueueCheck(102); // a repeated observation must not trigger another send
   immediate_session.Tick(true);
   assert(sent.empty());
+  // Client-only commands: paginated local output, server-backed groups, and
+  // state changes that survive reconnects without overwriting goal completion.
+  TestGame command_game;
+  std::vector<ConsoleMessage> output;
+  std::vector<bool> notifications;
+  const auto command_dir = directory / "commands";
+  std::filesystem::create_directories(command_dir);
+  NativeSession commands(&command_game, logger, sender, "rando.vc", "", command_dir, {},
+      [&](const ConsoleMessage& row, bool notify) { output.push_back(row); notifications.push_back(notify); });
+  login(commands, connected);
+  assert(std::any_of(sent.begin(), sent.end(), [](const json& packet) {
+    return packet.at("cmd") == "Get" && packet.at("keys").size() == 2;
+  }));
+  const std::string item_groups_key = "_read_item_name_groups_Grand Theft Auto Vice City";
+  const std::string location_groups_key = "_read_location_name_groups_Grand Theft Auto Vice City";
+  json groups_packet = {{"cmd", "Retrieved"}, {"keys", json::object()}};
+  groups_packet["keys"][item_groups_key] = {{"Weapons", {"Pistol", "Shotgun"}}};
+  groups_packet["keys"][location_groups_key] = {{"Ocean Beach", {"Docks", "Beach"}}};
+  commands.Handle(groups_packet);
+  const auto run_command = [&](const std::string& command) {
+    output.clear(); notifications.clear();
+    const auto sent_before = sent.size();
+    commands.Command(command);
+    assert(sent.size() == sent_before); // Browsing never chats or purchases a hint.
+    assert(std::none_of(notifications.begin(), notifications.end(), [](bool notify) { return notify; }));
+  };
+  run_command("/item_groups");
+  assert(output.size() == 2 && output[1][0].text == "Weapons");
+  run_command("/item_groups Weapons");
+  assert(output.size() == 3 && output[1][0].text == "Pistol");
+  run_command("/location_groups Ocean Beach");
+  assert(output.size() == 3 && output[1][0].text == "Beach");
+  run_command("/locations 1 cortez");
+  assert(output.size() > 1 && output.size() < 22);
+  run_command("/items");
+  assert(output.size() == 22 && output.back()[0].text == "Next: /items 2");
+  const auto first_item = output[1][0].text;
+  run_command("/items 2");
+  assert(output[1][0].text != first_item);
+  run_command("/items 0");
+  assert(output.empty() && logs.back() == "Page must be a positive number.");
+  run_command("/items 999999999999999999999999");
+  assert(output.empty());
+  run_command("/received 2");
+  assert(output.empty() && logs.back().find("Page out of range") == 0);
+  json history = json::array();
+  for (int index = 0; index < 21; ++index) history.push_back(item);
+  history[20]["location"] = -2;
+  commands.Handle({{"cmd", "ReceivedItems"}, {"index", 0}, {"items", history}});
+  run_command("/received");
+  assert(output.size() == 22 && output[1][1].color == 0xAF99EF);
+  run_command("/received 2");
+  assert(output.size() == 2 && output[1][0].text == "21. " && output[1].back().text == "Starting inventory");
+  commands.Command("/deathlink off");
+  assert(sent.back().at("tags") == json::array({"AP"}));
+  commands.Command("/deathlink seed");
+  assert(sent.back().at("tags") == json::array({"AP", "DeathLink"}));
+  auto no_deathlink = connected;
+  no_deathlink["slot_data"]["death_link"] = false;
+  login(commands, no_deathlink);
+  assert(sent.back().at("cmd") == "ConnectUpdate" && sent.back().at("tags") == json::array({"AP"}));
+  commands.Command("/ready");
+  assert(sent.back() == json({{"cmd", "StatusUpdate"}, {"status", 10}}));
+  login(commands, no_deathlink);
+  assert(sent.back() == json({{"cmd", "StatusUpdate"}, {"status", 10}}));
+  transport = false;
+  commands.Command("/ready");
+  assert(logs.back().find("Ready status was not changed") == 0);
+  commands.Command("/deathlink on");
+  assert(logs.back().find("DeathLink was not changed") == 0);
+  transport = true;
+  commands.Command("/ready");
+  assert(sent.back().at("status") == 5); // Failed send did not change the toggle.
+  commands.Command("/deathlink");
+  assert(sent.back().at("tags") == json::array({"AP", "DeathLink"}));
+  commands.Handle({{"cmd", "RoomUpdate"}, {"checked_locations", {102}}});
+  const auto before_ready = sent.size();
+  commands.Command("/ready");
+  assert(sent.size() == before_ready && sent.back().at("status") == 30);
+  commands.Handle({{"cmd", "Print"}, {"text", "Announcement"}});
+  assert(notifications.back()); // Server popups still work.
+  bool invalid_groups = false;
+  groups_packet["keys"][item_groups_key] = {{"Weapons", {12}}};
+  try { commands.Handle(groups_packet); }
+  catch (const std::runtime_error&) { invalid_groups = true; }
+  assert(invalid_groups);
   std::cout << "Native client checks passed\n";
 }

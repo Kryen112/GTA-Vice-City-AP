@@ -13,7 +13,41 @@ struct ConsoleSpan {
   std::uint32_t color = 0xFFFFFF;
 };
 using ConsoleMessage = std::vector<ConsoleSpan>;
-using ConsoleOutput = std::function<void(const ConsoleMessage&)>;
+using ConsoleOutput = std::function<void(const ConsoleMessage&, bool notify)>;
+
+class ConsoleCommandCompletion {
+  std::wstring prefix_;
+  int selected_ = -1;
+ public:
+  void Reset() { prefix_.clear(); selected_ = -1; }
+  bool Complete(std::wstring& text, std::size_t& cursor, bool reverse = false) {
+    const auto end = std::min(text.find_first_of(L" \t\r\n"), text.size());
+    if (cursor == 0 || cursor > end || (text[0] != L'/' && text[0] != L'!')) {
+      Reset(); return false;
+    }
+    // Complete only command names; arguments and ordinary chat stay untouched.
+    static constexpr std::wstring_view commands[] = {
+        L"/commands", L"/connect", L"/deathlink", L"/disconnect", L"/help", L"/hint",
+        L"/item_groups", L"/items", L"/location_groups", L"/locations", L"/password",
+        L"/ready", L"/received", L"/server", L"/slot",
+        L"!admin", L"!alias", L"!checked", L"!collect", L"!countdown", L"!getitem",
+        L"!help", L"!hint", L"!hint_location", L"!license", L"!missing", L"!options",
+        L"!players", L"!release", L"!remaining", L"!status"};
+    if (prefix_.empty()) prefix_ = text.substr(0, cursor);
+    std::vector<std::wstring_view> matches;
+    for (const auto command : commands)
+      if (command.substr(0, prefix_.size()) == prefix_) matches.push_back(command);
+    if (matches.empty()) { Reset(); return false; }
+    const auto count = static_cast<int>(matches.size());
+    selected_ = selected_ < 0 ? (reverse ? count - 1 : 0) :
+        (selected_ + (reverse ? -1 : 1) + count) % count;
+    const auto match = matches[selected_];
+    if (text.size() - end + match.size() > 1024) { Reset(); return false; }
+    text.replace(0, end, match);
+    cursor = match.size();
+    return true;
+  }
+};
 
 struct ConsoleLine {
   std::wstring text;
@@ -22,7 +56,7 @@ struct ConsoleLine {
   std::uint64_t history_id = 0;
 };
 
-constexpr std::uint64_t kConsolePopupLifetimeMs = 3250; // 2.5 seconds, then a 750ms fade
+constexpr std::uint64_t kConsolePopupLifetimeMs = 3750; // 3 seconds, then a 750ms fade
 inline int ConsolePopupAlpha(std::uint64_t until, std::uint64_t now) {
   if (now >= until) return 0;
   return static_cast<int>(255 * std::min<std::uint64_t>(750, until - now) / 750);

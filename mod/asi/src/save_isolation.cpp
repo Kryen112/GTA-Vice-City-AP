@@ -6,6 +6,7 @@
 #ifndef GTAVC_SAVE_ISOLATION_TEST
 #include <plugin.h>
 #include <CMenuManager.h>
+#include <C_PcSave.h>
 #include <RenderWare.h>
 #endif
 #include "game_addresses.hpp"
@@ -111,9 +112,11 @@ void TickSaveIsolation() {
     state.prefix = (folder / "GTAVCsf").string();
     std::snprintf(state.game_prefix, 256, "%s", state.prefix.c_str());
     state.selected = state.requested;
-    lock.unlock(); // menu transitions can reenter the game's file routines
-    // Leave a cached load/save/delete listing so its filenames are rebuilt when
-    // it is next opened. Never apply a selection from the previous directory.
+    lock.unlock(); // scanning and menu transitions reenter the game's file routines
+    // The frontend caches slot metadata at startup, before a seed is selected.
+    // Changing pages alone does not rescan it; refresh now, even without a game.
+    PcSaveHelper.PopulateSlotInfo();
+    // Never apply a menu selection from the previous directory.
     if (FrontEndMenuManager.m_bMenuActive) {
       FrontEndMenuManager.SwitchToNewScreen(FrontEndMenuManager.m_bGameNotLoaded ?
                                            MENUPAGE_START_MENU : MENUPAGE_PAUSE_MENU);

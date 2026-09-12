@@ -141,7 +141,10 @@ void ArchipelagoClient::Run() {
           else if (text == "/disconnect") { disconnect(); logger_("Disconnected. Saves remain on this seed."); }
           else if (text == "/help") {
             logger_("/server HOST:PORT, /slot NAME, /password PASSWORD, /connect, /disconnect");
-            logger_("/deathlink [on|off], /hint [item], /commands. Chat normally; !help lists server commands.");
+            logger_("/deathlink [on|off|seed], /ready, /received [page]");
+            logger_("/items [page] [filter], /locations [page] [filter]");
+            logger_("/item_groups [page] [group], /location_groups [page] [group]");
+            logger_("!missing [filter], !checked [filter], !hint [item]. !help lists server commands.");
             logger_("Saves select themselves per seed and slot. Installation/removal: AP Launcher's Vice City Setup.");
           } else if (text.rfind("/server ", 0) == 0 || text.rfind("/slot ", 0) == 0 ||
                      text == "/password" || text.rfind("/password ", 0) == 0) {

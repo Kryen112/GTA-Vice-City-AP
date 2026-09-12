@@ -5,7 +5,7 @@ coordinate table: https://github.com/Kryen112/GTAVC_AP_Poptracker/blob/main/data
 The other positions use the world's existing placement tables.
 """
 
-from . import data, district_data, locations, scm, shop_data
+from . import data, district_data, items, locations, rules, scm, shop_data
 
 STORE_COORDS: list[tuple[float, float, float]] = [
     (202.7, -474.1, 10.1),
@@ -86,6 +86,44 @@ CATEGORY_COLORS = {
     "hidden_packages": 1, "robbable_stores": 2, "rampages": 3, "pickups": 4,
     "stunt_jumps": 5, "properties": 6, "side_events": 7, "shops": 8,
 }
+
+
+def marker_requirements(split_mainland_access: bool) -> dict[str, list]:
+    """Map rules for marker requirements.
+
+    Each term is [count global, minimum, optional ability-lock flag].
+    """
+    by_location = rules.build_location_requirements(
+        ability_locks=frozenset(data.ABILITY_LOCK_ITEMS),
+        split_mainland_access=split_mainland_access)
+    item_globals = scm.item_globals()
+    globals_by_item = {name: item_globals[item_id]
+                       for name, item_id in items.ITEM_NAME_TO_ID.items()
+                       if item_id in item_globals}
+    globals_by_item.update({data.mission_passed_item_name(mission): scm.completion_global(mission)
+                            for mission in data.ROUTE_MISSIONS})
+
+    def terms(requirements: list[tuple[str, int]]) -> list[list[int]]:
+        return [[globals_by_item[item], count,
+                 scm.ability_lock_flag_global(item) if item in data.ABILITY_ITEMS else 0]
+                for item, count in requirements]
+
+    markers = check_markers(dict.fromkeys(locations.CLASS_TOGGLE.values(), True))
+    result = {}
+    for name, region in locations.LOCATION_REGIONS.items():
+        key = str(scm.completion_global(name))
+        if key not in markers:
+            continue
+        entry = by_location.get(name, rules.LocationRequirements([], []))
+        thresholds = ([[1, [terms(entry.requirements)]]] if entry.requirements else [])
+        thresholds.extend([needed, [terms(route) for route in routes]]
+                          for routes, needed in entry.thresholds)
+        routes = data.region_access_groups(region, split_mainland_access)
+        if routes:
+            thresholds.append([1, [terms([(item, 1) for item in route]) for route in routes]])
+        if thresholds:
+            result[key] = thresholds
+    return dict(sorted(result.items()))
 
 
 def check_markers(enabled_options: dict) -> dict[str, list[float]]:

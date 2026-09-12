@@ -272,6 +272,46 @@ int main() {
     auto far_result = DetectNewlyCollectedPackages({packages[0]}, far, one_seen, none);
     Expect(far_result.size() == 1 && far_result[0] == 9075,
            "a pickup beyond two units leaves the package collected");
+
+    std::set<int> server_checked = {9075, 9076, 9999};
+    std::map<int, int> save_flags = {{9076, 1}};
+    const auto count = [&] {
+      return CheckedPackageCount(packages, server_checked,
+                                 [&](int index) { return save_flags[index]; });
+    };
+    Expect(count() == 2, "package display includes checks newer than the save, without double counting");
+    save_flags[9077] = 1;
+    Expect(count() == 3, "a fresh package counts immediately, before server acknowledgement");
+    save_flags.clear();
+    Expect(count() == 2, "loading an older save does not erase the seed's package count");
+    server_checked.clear();
+    Expect(count() == 0, "non-package checks never contribute to the package count");
+
+    // Reconciliation removes the already-checked middle package and restores
+    // its flag before detection. It must produce neither a check nor a payout.
+    const auto restored = DetectNewlyCollectedPackages(packages, without_middle, seen, recorded);
+    Expect(restored.empty() && PackageCashClawBack(static_cast<int>(restored.size()), 2, 3, 500) == 0,
+           "removing a restored package does not count as a new paid collection");
+    server_checked = recorded;
+    Expect(DetectCompletedLocations({{9076, 123}}, {{9076, 0}}, {{9076, 1}}, server_checked).empty(),
+           "restoring a checked package flag cannot send another check");
+    Expect(PackageMatchesPosition(packages[1], {100, 100, UnsunkHeight(100 - kPickupLowerOffset)}),
+           "a content-locked restored package matches after its height is normalized");
+    Expect(!PackageMatchesPosition(packages[1], {100, 100, 110}),
+           "reconciliation cannot remove a pickup on a different floor");
+
+    char message[8] = "CO_ONE";
+    int number = 1, total = 100;
+    SyncPackageMessage(message, number, total, 12, 100);
+    Expect(number == 12 && total == 100, "the blue package message uses the seed total");
+    std::memcpy(message, "CO_ALL", 7);
+    SyncPackageMessage(message, number, total, 100, 100);
+    Expect(std::strcmp(message, "CO_ONE") == 0 && number == 100,
+           "the final package also displays the seed counter");
+    std::memcpy(message, "GA_001", 7);
+    SyncPackageMessage(message, number, total, 0, 3);
+    Expect(std::strcmp(message, "GA_001") == 0 && number == 100 && total == 100,
+           "unrelated garage messages keep their text and numbers");
   }
 
   // The hunt goal's ending: the flag rises only while the client asks AND the
@@ -2500,7 +2540,7 @@ int main() {
     const StatusSection own = Section(sections, "THE GAME COUNTS");
     Expect(own.rows.size() == 6 && own.rows[0].label == "Hidden Packages" &&
                own.rows[0].value == "37/100",
-           "the package tally is the game's own count of them");
+           "the package tally displays the supplied HUD progress");
     Expect(own.rows[1].value == "7/12" && own.rows[2].value == "none",
            "and an emergency activity reads its level or says it has none");
     // The taxi and the pizza boy keep no level in the game's stats, and they do

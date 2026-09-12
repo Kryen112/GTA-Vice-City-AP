@@ -2,6 +2,7 @@
 
 #include <chrono>
 #include <cmath>
+#include <limits>
 #include <utility>
 #include <cstddef>
 #include <vector>
@@ -255,6 +256,41 @@ bool ApplyClientMessage(GameState* game, const json& message, const Logger& logg
         // VC ScriptSpace is 260512 bytes. Never trust server-supplied offsets.
         if (index < 0 || index >= 65128) throw std::runtime_error("SCM global outside ScriptSpace");
       };
+      if (message.contains("marker_requirements")) {
+        const auto& requirements = message.at("marker_requirements");
+        if (!requirements.is_object()) throw std::runtime_error("Invalid marker requirements");
+        for (auto& [global_index, marker] : check_markers) {
+          const auto found = requirements.find(std::to_string(global_index));
+          if (found == requirements.end()) continue;
+          if (!found->is_array()) throw std::runtime_error("Invalid marker thresholds");
+          for (const auto& threshold : *found) {
+            if (!threshold.is_array() || threshold.size() != 2 ||
+                !threshold[0].is_number_integer() || !threshold[1].is_array())
+              throw std::runtime_error("Invalid marker threshold");
+            MarkerThreshold parsed;
+            if (threshold[0] < 1 || threshold[0] > threshold[1].size() ||
+                threshold[0] > (std::numeric_limits<int>::max)())
+              throw std::runtime_error("Invalid marker threshold count");
+            parsed.needed = threshold[0].get<int>();
+            for (const auto& route : threshold[1]) {
+              if (!route.is_array()) throw std::runtime_error("Invalid marker route");
+              std::vector<MarkerTerm> terms;
+              for (const auto& term : route) {
+                if (!term.is_array() || term.size() != 3 ||
+                    !term[0].is_number_integer() || !term[1].is_number_integer() ||
+                    !term[2].is_number_integer()) throw std::runtime_error("Invalid marker term");
+                if (term[0] < 1 || term[0] >= 65128 || term[2] < 0 || term[2] >= 65128 ||
+                    term[1] < 1 || term[1] > (std::numeric_limits<int>::max)())
+                  throw std::runtime_error("Invalid marker term count or global");
+                MarkerTerm parsed_term{term[0].get<int>(), term[1].get<int>(), term[2].get<int>()};
+                terms.push_back(parsed_term);
+              }
+              parsed.alternatives.push_back(std::move(terms));
+            }
+            marker.requirements.push_back(std::move(parsed));
+          }
+        }
+      }
       for (const auto& entry : item_globals) validate_global(entry.second);
       for (const auto& entry : completion_watch) validate_global(entry.first);
       for (const auto& entry : config_globals) validate_global(entry.first);

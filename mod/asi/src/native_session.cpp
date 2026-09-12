@@ -1,6 +1,8 @@
 #include "native_session.hpp"
 
 #include <algorithm>
+#include <charconv>
+#include <cctype>
 #include <fstream>
 #include <windows.h>
 #include <bcrypt.h>
@@ -97,6 +99,8 @@ bool NativeSession::Activate() {
       throw std::runtime_error(std::string("Slot data is missing ") + field);
   }
   configuration["check_markers"] = json::object();
+  configuration["marker_requirements"] = defaults_.at("marker_requirements").at(
+      Enabled(config_.value("split_mainland_access", json(false))) ? 1 : 0);
   for (auto entry = defaults_["markers"].begin(); entry != defaults_["markers"].end(); ++entry) {
     const auto watched = configuration["completion_watch"].find(entry.key());
     if (watched == configuration["completion_watch"].end() || !watched->is_number_integer() ||
@@ -133,6 +137,7 @@ bool NativeSession::Activate() {
   logger_("Connected directly to Archipelago; seed " + seed_hash_);
   PublishPercentage();
   PublishStatus();
+  if (ready_ && !finished_) Send({{"cmd", "StatusUpdate"}, {"status", 10}});
   return true;
 }
 
@@ -173,6 +178,10 @@ void NativeSession::Handle(const json& packet) {
     online_ = true;
     active_ = items_ready_ = finished_ = false;
     checked_ = packet.at("checked_locations").get<std::set<std::int64_t>>();
+    name_groups_.clear();
+    Send({{"cmd", "Get"}, {"keys", {
+        std::string("_read_item_name_groups_") + kGame,
+        std::string("_read_location_name_groups_") + kGame}}});
     all_locations_ = packet.at("missing_locations").get<std::set<std::int64_t>>();
     all_locations_.insert(checked_.begin(), checked_.end());
     pending_.clear();
@@ -219,6 +228,20 @@ void NativeSession::Handle(const json& packet) {
     }
     if (packet.contains("players")) players_ = packet["players"];
     if (active_) { PersistChecks(); PublishStatus(); }
+  } else if (command == "Retrieved" && online_) {
+    for (const char* kind : {"item", "location"}) {
+      const std::string key = std::string("_read_") + kind + "_name_groups_" + kGame;
+      const auto& keys = packet.at("keys");
+      if (!keys.contains(key)) continue;
+      const auto& groups = keys.at(key);
+      if (!groups.is_object()) throw std::runtime_error("Invalid name groups from server");
+      for (const auto& members : groups) {
+        if (!members.is_array() || std::any_of(members.begin(), members.end(),
+            [](const json& name) { return !name.is_string(); }))
+          throw std::runtime_error("Invalid name group members from server");
+      }
+      name_groups_[kind] = groups;
+    }
   } else if (command == "DataPackage") {
     const json& games = packet.at("data").at("games");
     for (auto game = games.begin(); game != games.end(); ++game) {
@@ -232,8 +255,7 @@ void NativeSession::Handle(const json& packet) {
     }
   } else if (command == "Print") {
     const auto text = packet.at("text").get<std::string>().substr(0, 16384);
-    if (console_) console_(ConsoleMessage{{text, 0xFFFFFF}});
-    else logger_(text);
+    OutputConsole(ConsoleMessage{{text, 0xFFFFFF}}, true);
   } else if (command == "PrintJSON") {
     std::string text;
     ConsoleMessage spans;
@@ -273,8 +295,7 @@ void NativeSession::Handle(const json& packet) {
       text += value;
       if (!value.empty()) spans.push_back({std::move(value), ConsoleColor(color)});
     }
-    if (console_) console_(spans);
-    else logger_(text);
+    OutputConsole(spans, true);
     if (online_ && active_ && packet.value("type", std::string()) == "ItemSend" && packet.contains("item")) {
       const int receiving = packet.at("receiving").get<int>();
       if (!ConcernsSelf(receiving) && ConcernsSelf(packet["item"].at("player").get<int>()))
@@ -462,20 +483,116 @@ void NativeSession::Tick(bool socket_connected) {
   }
 }
 
+void NativeSession::OutputConsole(const ConsoleMessage& message, bool notify) {
+  if (console_) console_(message, notify);
+  else {
+    std::string text;
+    for (const auto& span : message) text += span.text;
+    logger_(text);
+  }
+}
+
 void NativeSession::Command(const std::string& text) {
   if (text.empty() || text.size() > 4096 || text.find_first_of("\r\n") != std::string::npos) {
     logger_("Enter one message, up to 4096 bytes.");
     return;
   }
+  const auto space = text.find(' ');
+  const auto command = text.substr(0, space);
+  auto argument = space == std::string::npos ? std::string() : text.substr(space + 1);
+  argument.erase(0, argument.find_first_not_of(' '));
+  argument.erase(argument.find_last_not_of(' ') + 1);
+  if (command == "/received" || command == "/items" || command == "/locations" ||
+      command == "/item_groups" || command == "/location_groups") {
+    std::size_t page = 1;
+    const auto token = argument.substr(0, argument.find(' '));
+    if (!token.empty() && token.find_first_not_of("0123456789") == std::string::npos) {
+      const auto parsed = std::from_chars(token.data(), token.data() + token.size(), page);
+      if (parsed.ec != std::errc() || page == 0) { logger_("Page must be a positive number."); return; }
+      argument.erase(0, token.size());
+      argument.erase(0, argument.find_first_not_of(' '));
+    }
+    std::vector<ConsoleMessage> rows;
+    if (command == "/received") {
+      if (!argument.empty()) { logger_("Usage: /received [page]"); return; }
+      if (!items_ready_) { logger_("Received items have not synchronized yet."); return; }
+      for (std::size_t index = 0; index < received_.size(); ++index) {
+        const auto& item = received_[index];
+        const int sender = item.at("player").get<int>();
+        const auto location = item.at("location").get<std::int64_t>();
+        const int flags = item.value("flags", 0);
+        const auto color = ConsoleColor(flags & 1 ? "plum" : flags & 2 ? "slateblue" : flags & 4 ? "salmon" : "cyan");
+        rows.push_back({{std::to_string(index + 1) + ". ", 0xFFFFFF},
+            {Name(item.at("item").get<std::int64_t>(), slot_, true), color},
+            {" from ", 0xFFFFFF}, {PlayerName(sender), ConcernsSelf(sender) ? 0xEE00EEu : 0xFAFAD2u},
+            {" at ", 0xFFFFFF}, {location == -2 ? "Starting inventory" : location == -1 ? "Server" :
+                Name(location, sender, false), 0x00FF7F}});
+      }
+    } else {
+      const bool item = command == "/items" || command == "/item_groups";
+      std::vector<std::string> names;
+      if (command == "/item_groups" || command == "/location_groups") {
+        const char* kind = item ? "item" : "location";
+        if (!name_groups_.contains(kind)) { logger_("Name groups have not synchronized yet. Connect and try again."); return; }
+        const auto& groups = name_groups_.at(kind);
+        if (argument.empty()) for (auto group = groups.begin(); group != groups.end(); ++group) names.push_back(group.key());
+        else {
+          const auto group = groups.find(argument);
+          if (group == groups.end()) { logger_("Unknown group. Use " + command + " to list group names."); return; }
+          names = group->get<std::vector<std::string>>();
+        }
+      } else {
+        const auto lower = [](std::string value) {
+          for (auto& c : value) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+          return value;
+        };
+        const auto filter = lower(argument);
+        for (const auto& entry : defaults_[item ? "items" : "locations"]) {
+          const auto name = item ? entry.at(0).get<std::string>() : entry.get<std::string>();
+          if (lower(name).find(filter) != std::string::npos) names.push_back(name);
+        }
+      }
+      std::sort(names.begin(), names.end());
+      for (const auto& name : names) rows.push_back({{name, item ? 0x00EEEEu : 0x00FF7Fu}});
+    }
+    // Keep each command response readable within the console's bounded history.
+    constexpr std::size_t page_size = 20;
+    const auto pages = std::max<std::size_t>(1, (rows.size() + page_size - 1) / page_size);
+    if (page > pages) { logger_("Page out of range; available pages: 1-" + std::to_string(pages)); return; }
+    OutputConsole({{command + ": " + std::to_string(rows.size()) + " results, page " +
+        std::to_string(page) + "/" + std::to_string(pages), 0xFFFFFF}});
+    for (std::size_t index = (page - 1) * page_size; index < std::min(rows.size(), page * page_size); ++index)
+      OutputConsole(rows[index]);
+    if (page < pages) OutputConsole({{"Next: " + command + " " + std::to_string(page + 1) +
+        (argument.empty() ? "" : " " + argument), 0xFFFFFF}});
+    return;
+  }
   if (!online_) { logger_("Connect to Archipelago first."); return; }
-  if (text == "/deathlink" || text == "/deathlink on" || text == "/deathlink off") {
-    const bool enabled = text == "/deathlink" ? !death_link_ : text == "/deathlink on";
+  if (command == "/ready") {
+    if (!argument.empty()) { logger_("Usage: /ready"); return; }
+    if (finished_ || GoalReached()) { logger_("Goal already completed; ready status is unchanged."); return; }
+    if (!Send({{"cmd", "StatusUpdate"}, {"status", ready_ ? 5 : 10}})) {
+      logger_("Ready status was not changed: connection unavailable."); return;
+    }
+    ready_ = !ready_;
+    logger_(ready_ ? "Readied up." : "Unreadied.");
+    return;
+  }
+  if (command == "/deathlink") {
+    int override = death_link_override_;
+    if (argument.empty()) override = !death_link_;
+    else if (argument == "on" || argument == "true" || argument == "1") override = 1;
+    else if (argument == "off" || argument == "false" || argument == "0") override = 0;
+    else if (argument == "seed") override = -1;
+    else { logger_("Usage: /deathlink [on|off|seed]"); return; }
+    const bool enabled = override < 0 ? Enabled(config_.value("death_link", json(false))) : override != 0;
     if (!Send({{"cmd", "ConnectUpdate"}, {"tags", enabled ? json::array({"AP", "DeathLink"}) : json::array({"AP"})}})) {
       logger_("DeathLink was not changed: connection unavailable."); return;
     }
     death_link_ = enabled;
-    death_link_override_ = enabled;
-    logger_(enabled ? "DeathLink enabled." : "DeathLink disabled.");
+    death_link_override_ = override;
+    logger_(std::string(enabled ? "DeathLink enabled." : "DeathLink disabled.") +
+            (override < 0 ? " Following the seed setting." : ""));
     return;
   }
   std::string message = text;

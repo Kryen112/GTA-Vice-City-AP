@@ -19,6 +19,7 @@ async def main(executable: Path) -> None:
     errors = []
     messages = []
     percentages = []
+    group_requests = []
 
     async def server(socket):
         nonlocal connections, checks
@@ -49,6 +50,13 @@ async def main(executable: Path) -> None:
                             {"cmd": "PrintJSON", "type": "Chat", "data": [{"text": "Other player: hello"}]},
                             {"cmd": "Print", "text": "Server countdown: 3"},
                         ]))
+                    elif command == "Get":
+                        expected = {f"_read_{kind}_name_groups_Grand Theft Auto Vice City"
+                                    for kind in ("item", "location")}
+                        assert set(packet["keys"]) == expected
+                        group_requests.append(current)
+                        await socket.send(json.dumps([{"cmd": "Retrieved", "keys": {
+                            key: {"Example group": ["Example member"]} for key in expected}}]))
                     elif command == "Say":
                         messages.append(packet["text"])
                     elif command == "Set":
@@ -94,6 +102,7 @@ async def main(executable: Path) -> None:
             assert process.returncode == 0, "Native harness failed"
             assert not errors, errors
             assert connections >= 2 and checks >= 2, "Reconnect did not replay the unacknowledged check"
+            assert {1, 2}.issubset(group_requests), "Name groups were not refreshed on reconnect"
             assert goal.is_set(), "Goal status never reached the server"
             assert "hello from the ASI" in messages and "!hint Package" in messages
             assert "Other player: hello" in output.decode(errors="replace")

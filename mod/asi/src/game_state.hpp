@@ -20,11 +20,41 @@
 namespace gtavc {
 
 // Completion global -> world position on the minimap.
+struct MarkerTerm {
+  int global = 0;
+  int minimum = 1;
+  int ability_lock_global = 0;
+};
+
+struct MarkerThreshold {
+  int needed = 1;
+  std::vector<std::vector<MarkerTerm>> alternatives;
+};
+
 struct CheckMarker {
   float x = 0.0f;
   float y = 0.0f;
   int category = 0;
   int content_unlock_global = 0; // zero for content that cannot be locked
+  std::vector<MarkerThreshold> requirements;
+
+  template <typename ReadGlobal>
+  bool Available(ReadGlobal read) const {
+    if (content_unlock_global != 0 && read(content_unlock_global) < kDistrictReleased) return false;
+    for (const auto& threshold : requirements) {
+      int satisfied = 0;
+      for (const auto& route : threshold.alternatives) {
+        bool open = true;
+        for (const auto& term : route) {
+          if (term.ability_lock_global != 0 && read(term.ability_lock_global) == 0) continue;
+          if (read(term.global) < term.minimum) { open = false; break; }
+        }
+        if (open) ++satisfied;
+      }
+      if (satisfied < threshold.needed) return false;
+    }
+    return true;
+  }
 };
 using CheckMarkers = std::map<int, CheckMarker>;
 

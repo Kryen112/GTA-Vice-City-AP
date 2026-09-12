@@ -91,7 +91,7 @@
       <OptimizeReferences>true</OptimizeReferences>
       <LinkTimeCodeGeneration>UseLinkTimeCodeGeneration</LinkTimeCodeGeneration>
       <AdditionalDependencies>$(APCPP_LIBRARIES);ws2_32.lib;crypt32.lib;bcrypt.lib;iphlpapi.lib;userenv.lib;winmm.lib;shlwapi.lib;advapi32.lib;user32.lib;dbghelp.lib;ole32.lib;shell32.lib;plugin_vc.lib;%(AdditionalDependencies)</AdditionalDependencies>
-      <AdditionalLibraryDirectories>$(APCPP_LIB_DIR);$(PLUGIN_SDK_DIR)\output\lib;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <AdditionalLibraryDirectories>$(APCPP_LIB_DIR);$(ProjectDir)..\..\..\.build\sdk\lib;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
       <ImportLibrary>bin\GTA-VC\Release\GtaVcAp.VC.lib</ImportLibrary>
     </Link>
     <PostBuildEvent>

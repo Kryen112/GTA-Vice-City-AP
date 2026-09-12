@@ -74,6 +74,7 @@ Enabled, unfinished non-mission checks appear on the minimap and pause-menu map 
 Packages are green, robberies light red, rampages dark red, pickups orange, stunt jumps blue,
 properties yellow, side events cyan, and shop stock purple.
 Dots disappear when checked. Content-locked checks stay hidden until their content is unlocked.
+Markers also follow the world's mission, ability and region requirements, including alternative vehicle routes and their sources.
 
 The ASI connects directly to Archipelago using
 [N00byKing's APCpp C++ library](https://github.com/N00byKing/APCpp). Set `server`,
@@ -94,9 +95,18 @@ The server and slot are remembered in `%LOCALAPPDATA%/GtaVcAp/connection.ini`,
 which takes precedence over the beside-ASI INI defaults. Changing server or slot
 clears the in-memory password; enter it afterwards if needed. `/disconnect` stops the connection; `/connect`
 retries. Type normally to chat, use `!help` for server commands, `/hint [item]`
-for hints, and `/deathlink [on|off]` to control DeathLink. The console displays
-other players' chat, hints, countdowns, releases and goal messages. Page Up/Down
-scroll history, Ctrl+V pastes, Enter sends, and F8/Escape closes the console.
+for hints, and `/deathlink [on|off|seed]` to control DeathLink or restore the seed's setting.
+The console displays other players' chat, hints, countdowns, releases and goal messages. Page Up/Down scroll the view, Ctrl+V pastes, Enter sends, and F8/Escape closes the console.
+Tab completes `/` and  `!` command names, Shift+Tab cycles backwards.
+
+Client commands also include `/ready` to toggle ready status and `/received [page]`
+to review received items with their sender and source. `/items [page] [filter]`
+and `/locations [page] [filter]` search the game's full name catalogs,
+`/item_groups [page] [group]` and `/location_groups [page] [group]` list the server's group names or the members of an exact group name.
+Lists show 20 results per page in the console without generating popups.
+For example, use `/locations 1 Ocean Beach` or
+`/item_groups Weapons`.
+Use `!missing [filter]`, `!checked [filter]`, and `!hint` for the server's check lists and existing hints.
 
 Saves automatically use `GTA Vice City User Files/AP_Seeds/<seed-and-slot-hash>`.
 Career saves and `gta_vc.set` remain in place. Connect before loading or saving;
@@ -105,9 +115,9 @@ active across disconnects. Restart the game to change seed or slot.
 Installation/update/removal remains in the launcher's Python setup; `/play` and
 `/setfolder` are unnecessary inside the running game.
 
-Received items slide in down the left edge of the screen, naming the item, who
-it came from and where it was found. Items apply as they arrive, including in
-the middle of a mission.
+Server messages appear in a popup queue with up to four lines visible.
+Opening the console pauses the queue.
+Items apply when the game is playable, including during missions.
 
 The pause menu carries an ARCHIPELAGO page above Quit Game: client connection,
 checks sent, items received, the game's own completion percentage, which
@@ -139,13 +149,23 @@ says what the randomizer does to the game.
 
 ## For developers
 
-The native client requires the x86 static vcpkg packages `ixwebsocket[mbedtls]`
-and `jsoncpp`. With Visual Studio C++ Build Tools, `PLUGIN_SDK_DIR`,
-and vcpkg in the sibling `vcpkg` directory, run `scripts/build_native_client.ps1`.
-Use `-VcpkgRoot` for another vcpkg location. `-Test` builds and runs the native
-session checks; then run `python scripts/native_interop_check.py
-.build/native_harness.exe` to test the actual APCpp transport against a local
-test server. This test never connects to your multiworld.
+The native client builds on Windows with Visual Studio 2022 C++ Build Tools (x86 compiler and Windows SDK), Git, and these pinned source checkouts:
+
+- plugin-sdk: `12487f6be7846946802497d7471f8c58473b3cd6` from
+  <https://github.com/DK22Pac/plugin-sdk>. Set `PLUGIN_SDK_DIR` to its folder.
+- vcpkg: `d7112d1a4fb50410d3639f5f586972591d848beb` from
+  <https://github.com/microsoft/vcpkg>. Run `bootstrap-vcpkg.bat`; place it in
+  the sibling `vcpkg` folder or pass `-VcpkgRoot` to the build script.
+
+Run `scripts/build_native_client.ps1 -Test`. It builds the x86 static packages
+`ixwebsocket[mbedtls]` and `jsoncpp`, builds plugin-sdk from source, builds the
+Release ASI, and runs the SDK binding, game logic, save isolation and native session checks.
+The script corrects three pickup-array bindings in a generated SDK source copy.
+SDK outputs live in `.build/sdk`, and the ASI is `mod/asi/plugin/bin/GTA-VC/Release/GtaVcAp.VC.asi`.
+Leave `GTA_VC_DIR` unset for a build to stop the asi file from being installing into the game folder.
+
+Install Python's `websockets` package and run
+`python scripts/native_interop_check.py .build/native_harness.exe` to test the actual APCpp transport against a local server. This test never connects to your multiworld.
 
 `python scripts/build_native_data.py` regenerates the compiled location, item,
 and marker tables from the world (requires `AP_ROOT` like the world tests).

@@ -78,7 +78,8 @@ float PrintMixed(ConsoleFont& fallback, float x, float y, std::wstring text, con
       // Vice City trims trailing spaces while printing, so measure first.
       const float advance = CFont::GetStringWidth(run.c_str(), true);
       CFont::SetColor(color);
-      CFont::PrintString(x, y, run.c_str());
+      // Space-only runs become empty font-buffer entries, which VC misrenders.
+      if (run.find_first_not_of(L' ') != std::wstring::npos) CFont::PrintString(x, y, run.c_str());
       x += advance;
     } else {
       x += fallback.Draw(x, y, run, color);
@@ -125,14 +126,22 @@ void IngameConsole::Add(const ConsoleMessage& message, bool notify) {
   }
   std::lock_guard<std::mutex> lock(mutex_);
   wrap_dirty_ = true;
-  for (auto& line : WrapConsoleText(wide)) {
+  // Preserve complete message lines for the console's measured screen width.
+  // The shorter HUD popup rows must not become permanent history line breaks.
+  for (auto& line : WrapConsoleText(wide, static_cast<float>(wide.text.size()))) {
     line.history_id = ++next_line_id_;
-    if (notify) popups_.Add(line);
+    if (notify)
+      for (const auto& popup : WrapConsoleText(line)) popups_.Add(popup);
     lines_.push_back(std::move(line));
     if (lines_.size() > 300) lines_.pop_front();
   }
 }
 void IngameConsole::Key(WPARAM key) {
+  if (key == VK_TAB) {
+    completion_.Complete(input_, cursor_, (GetKeyState(VK_SHIFT) & 0x8000) != 0);
+    return;
+  }
+  if (key != VK_SHIFT && key != VK_LSHIFT && key != VK_RSHIFT) completion_.Reset();
   if (key == VK_ESCAPE) { active_ = false; return; }
   if (key == VK_RETURN) {
     if (!input_.empty()) {
@@ -164,8 +173,9 @@ void IngameConsole::Key(WPARAM key) {
 }
 LRESULT CALLBACK IngameConsole::WindowProc(HWND window, UINT message, WPARAM w, LPARAM l) {
   auto& self = *instance_;
-  if (message == WM_KILLFOCUS) self.active_ = false;
+  if (message == WM_KILLFOCUS) { self.active_ = false; self.completion_.Reset(); }
   if (message == WM_KEYDOWN && w == VK_F8) {
+    self.completion_.Reset();
     if (!(l & (1L << 30))) self.active_ = !self.active_;
     self.BlockControls();
     return 0;
@@ -173,8 +183,10 @@ LRESULT CALLBACK IngameConsole::WindowProc(HWND window, UINT message, WPARAM w, 
   if (self.active_) {
     if (message == WM_KEYDOWN) { self.Key(w); self.BlockControls(); return 0; }
     if (message == WM_CHAR) {
-      if (w >= 32 && w != 127 && self.input_.size() < 1024)
+      if (w >= 32 && w != 127 && self.input_.size() < 1024) {
+        self.completion_.Reset();
         self.input_.insert(self.cursor_++, 1, static_cast<wchar_t>(w));
+      }
       return 0;
     }
     if (message == WM_KEYUP || message == WM_MOUSEWHEEL ||
@@ -263,7 +275,7 @@ void IngameConsole::Draw(bool show_hint) {
     popups_.Pause(now);
     BlockControls();
     CSprite2d::DrawRect(CRect(StretchX(14), StretchY(28), StretchX(626), StretchY(414)), CRGBA(10, 12, 30, 235));
-    Print(*font_, 40, L"ARCHIPELAGO | F8/Esc close | PgUp / PgDn Scroll | type /help for more.");
+    Print(*font_, 40, L"ARCHIPELAGO | F8/Esc close | PgUp/PgDn Scroll | type /help for more.");
     scroll_ = std::min(scroll_, wrapped_lines_.size() > 18 ? wrapped_lines_.size() - 18 : 0);
     const auto end = wrapped_lines_.size() - scroll_;
     const auto start = end > 18 ? end - 18 : 0;

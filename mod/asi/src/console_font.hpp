@@ -8,12 +8,13 @@
 #pragma comment(lib, "gdi32.lib")
 
 namespace gtavc {
-// FONT_STANDARD's atlas repurposes these ASCII cells for game icons, and '~'
-// is a formatting delimiter. Everything else in printable ASCII stays native.
+// FONT_STANDARD's atlas repurposes ASCII cells for game icons, '~' is a
+// formatting delimiter, and '/' has an oversized advance. Use the fallback
+// for those characters; the remaining printable ASCII stays native.
 // Accents use Vice City's internal encoding, not their Unicode code points.
 inline wchar_t ViceCityConsoleGlyph(wchar_t c) {
   if (c >= 32 && c < 127)
-    return std::wstring_view(L"<>@^_{|}~").find(c) == std::wstring_view::npos ? c : 0;
+    return std::wstring_view(L"/<>@^_{|}~").find(c) == std::wstring_view::npos ? c : 0;
   if (c == L'\u00ba') return 0x5F;
   constexpr std::wstring_view accents =
       L"\u00c0\u00c1\u00c2\u00c4\u00c6\u00c7\u00c8\u00c9\u00ca\u00cb\u00cc\u00cd\u00ce\u00cf\u00d2\u00d3"

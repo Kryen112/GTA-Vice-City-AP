@@ -726,7 +726,7 @@ void ScmGameState::DrawCheckMarkers() {
   for (const auto& [global_index, position] : check_markers_) {
     if (global_index < 0 || global_index >= sizeof(CTheScripts::ScriptSpace) / sizeof(int) ||
         reported_.count(global_index) || GetGlobal(global_index) != 0) continue;
-    if (position.content_unlock_global != 0 && GetGlobal(position.content_unlock_global) < kDistrictReleased) continue;
+    if (!position.Available([this](int index) { return GetGlobal(index); })) continue;
     CVector2D radar, screen;
     CRadar::TransformRealWorldPointToRadarSpace(radar, CVector2D(position.x, position.y));
     if (!main_map && !CheckMarkerFits(radar.x, radar.y, radius_x, radius_y)) continue;
@@ -1202,7 +1202,10 @@ void ScmGameState::EnforceLocks() {
   }
 }
 
-void ScmGameState::OnBeforeWorldProcess() { ApplyAbilityInputLocks(); }
+void ScmGameState::OnBeforeWorldProcess() {
+  ApplyAbilityInputLocks();
+  RestoreCheckedPackages();
+}
 
 void ScmGameState::ApplyOneShot(const ItemEffect& effect) {
   if (effect.type.rfind("trap_", 0) == 0) {
@@ -1509,12 +1512,11 @@ StatusPanelState ScmGameState::BuildStatusPanelState() {
   // The stat the game's own menu prints, truncated the way that menu truncates
   // it, so the two lines never disagree by a rounding.
   state.percentage = DisplayedPercentage(CStats::GetPercentageProgress());
-  // What the game counts for itself. The hidden package tally and the emergency
-  // levels are the game's own progress toward the checks those classes carry, and
-  // nothing outside the game knows them: the client sees a location checked, not
-  // how close the next one is.
-  state.packages_collected = CWorld::Players[0].m_nCollectablesCollected;
-  state.packages_total = CWorld::Players[0].m_nCollectablesTotal;
+  // Match the package HUD's seed-wide tally, including checks newer than this
+  // save. Emergency levels still describe the game's local activity progress.
+  const auto packages = PackageProgress();
+  state.packages_collected = packages.first;
+  state.packages_total = packages.second;
   state.paramedic_level = CStats::HighestLevelAmbulanceMission;
   state.vigilante_level = CStats::HighestLevelVigilanteMission;
   state.firefighter_level = CStats::HighestLevelFireMission;
@@ -1620,13 +1622,14 @@ void ScmGameState::EnforcePickupLayout() {
   }
   // A slot whose check is still to be taken wears the AP marker instead of
   // whatever the layout gives it. Re-derived every frame from the completion
-  // global rather than remembered, so taking the check reverts the slot on the
-  // next pass and a reconnect or a load needs no bookkeeping of its own. A row
+  // global and the client's recorded checks, so loading an older save cannot
+  // restore the marker for an already-checked location. A row
   // with no completion global is not a check and is never pending.
   std::vector<bool> check_pending;
   check_pending.reserve(pickup_targets_.size());
   for (const PickupTarget& target : pickup_targets_) {
     check_pending.push_back(target.check_global != 0 &&
+                            !reported_.count(target.check_global) &&
                             GetGlobal(target.check_global) == 0);
   }
   const PickupLayoutPlan plan =
@@ -1675,6 +1678,47 @@ void ScmGameState::EnforcePickupLayout() {
       pickup.pExtraObject = nullptr;
     }
   }
+}
+
+std::pair<int, int> ScmGameState::PackageProgress() const {
+  if (package_locations_.empty() || GetGlobal(kPackagesShuffledGlobal) == 0) {
+    return {CWorld::Players[0].m_nCollectablesCollected, CWorld::Players[0].m_nCollectablesTotal};
+  }
+  return {CheckedPackageCount(package_locations_, reported_, [](int index) { return GetGlobal(index); }),
+          static_cast<int>(package_locations_.size())};
+}
+
+void ScmGameState::RestoreCheckedPackages() {
+  std::lock_guard<std::mutex> lock(mutex_);
+  if (plugin::GetGameVersion() != GAME_10EN || package_locations_.empty() ||
+      !ConfiguredSeedMatches(ReadSeedHash(), configured_seed_hash_) ||
+      GetGlobal(kPackagesShuffledGlobal) == 0 || FindPlayerPed() == nullptr) return;
+
+  // Restore the flags before removing pickups: the disappearance detector must
+  // not interpret reconciliation as a new collection or claw back any cash.
+  for (const auto& package : package_locations_)
+    if (reported_.count(package.completion_global)) SetGlobal(package.completion_global, 1);
+
+  // Runs before CPickups::Update, so an old save loaded on top of a checked
+  // package cannot collect it again. RemovePickUp destroys both visible objects
+  // and the pool entry without playing the pickup's reward/message path.
+  for (int index = 0; index < kPickupPoolSize; ++index) {
+    const auto& pickup = CPickups::aPickUps[index];
+    if (pickup.bPickupType != PICKUP_COLLECTABLE1) continue;
+    const WorldPoint position{pickup.vecPos.x, pickup.vecPos.y, UnsunkHeight(pickup.vecPos.z)};
+    for (const auto& package : package_locations_) {
+      if (GetGlobal(package.completion_global) != 0 && PackageMatchesPosition(package, position)) {
+        const auto handle = (static_cast<std::uint32_t>(pickup.wUniqueId) << 16) |
+                            static_cast<std::uint32_t>(index);
+        CPickups::RemovePickUp(static_cast<int>(handle));
+        break;
+      }
+    }
+  }
+  // Keep saved package progress consistent with the restored pickup state.
+  // This is before real collections; their ordinary cash suppression still
+  // sees the game's actual increment, including the final-package bonus.
+  CWorld::Players[0].m_nCollectablesCollected = PackageProgress().first;
 }
 
 int ScmGameState::DetectCollectedPackages() {
@@ -2183,6 +2227,13 @@ void ScmGameState::OnGameFrame() {
       // The cash the executable paid for the packages the detection just
       // reported goes back in the same frame, so the two run together.
       SuppressPackageCash(DetectCollectedPackages());
+      if (plugin::GetGameVersion() == GAME_10EN && !package_locations_.empty() &&
+          GetGlobal(kPackagesShuffledGlobal) != 0) {
+        const auto packages = PackageProgress();
+        SyncPackageMessage(reinterpret_cast<char*>(kGarageMessageKey10),
+            *reinterpret_cast<int*>(kGarageMessageNumber10),
+            *reinterpret_cast<int*>(kGarageMessageSecondNumber10), packages.first, packages.second);
+      }
   }
 
   std::map<int, int> current;

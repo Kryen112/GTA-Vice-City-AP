@@ -15,6 +15,7 @@
 #include <plugin.h>
 #include <CCamera.h>
 #include <CDraw.h>
+#include <CFont.h>
 #include <CHud.h>
 #include <CPad.h>
 #include <CMenuManager.h>
@@ -47,6 +48,14 @@ CdeclEvent<AddressListMulti<gtavc::kMainMapBlipsCallSite10, GAME_10EN, H_CALL>,
 // Save-directory changes may refresh the menu and must run at this boundary.
 ThiscallEvent<AddressListMulti<gtavc::kFrontendMenuProcessCall10, GAME_10EN, H_CALL>,
               PRIORITY_BEFORE, ArgPickNone, void(CMenuManager*)> frontendProcessEvent;
+
+// Follow navigation only after both pages of a transition have drawn and the
+// current page has been restored. The heading hook also sees the outgoing page
+// with the incoming page's selection, which incorrectly disarms the stats page.
+ThiscallEvent<AddressListMulti<gtavc::kFrontendMenuDrawCall10, GAME_10EN, H_CALL,
+    gtavc::kFrontendMenuTransitionDrawFirstCall10, GAME_10EN, H_CALL,
+    gtavc::kFrontendMenuTransitionDrawSecondCall10, GAME_10EN, H_CALL>,
+    PRIORITY_AFTER, ArgPickNone, void(CMenuManager*, int)> frontendDrawEvent;
 
 CdeclEvent<AddressListMulti<gtavc::kPickupsUpdateCall10, GAME_10EN, H_CALL>,
            PRIORITY_AFTER, ArgPickNone, void()> afterPickupsEvent;
@@ -95,11 +104,11 @@ struct AsiMain {
         console([this](std::string text) { bridge.Command(std::move(text)); }),
         bridge(&game,
                [this](const std::string& line) { LogLine("APCpp: " + line); console.Add(line); },
-               &gtavc::PrepareSaveSeed, {}, [this](const gtavc::ConsoleMessage& message) {
+               &gtavc::PrepareSaveSeed, {}, [this](const gtavc::ConsoleMessage& message, bool notify) {
                  std::string text;
                  for (const auto& span : message) text += span.text;
                  LogLine("APCpp: " + text);
-                 console.Add(message, true);
+                 console.Add(message, notify);
                }) {
     LogLine("loaded");
     // Register the frame handlers before starting the bridge, so the game
@@ -121,9 +130,8 @@ struct AsiMain {
     Events::initGameEvent += [] { instance.OnGameStarted(); };
     Events::restartGameEvent += [] { instance.OnGameStarted(); };
     beforeWorldProcessEvent += [] { instance.OnBeforeWorldProcess(); };
-    // The status page uses the menu's heading draw hook, which also runs in
-    // the frontend where there is no game frame.
-    Events::menuDrawingEvent += [] { instance.OnMenuDraw(); };
+    // Draw over the complete menu, including in the frontend without a game.
+    frontendDrawEvent += [] { instance.OnMenuDraw(); };
     // The toast stack rides plugin-sdk's HUD draw, which hooks the CHud::Draw call
     // in the frame's own 2D pass (VC 10EN 0x4A64D0). It fires after the game's own
     // HUD and before the font buffer is flushed at 0x4A64F8, so rows printed from
@@ -176,6 +184,7 @@ struct AsiMain {
   }
 
   void OnMenuDraw() {
+    if (!FrontEndMenuManager.m_bSpritesLoaded) return;
     // The claim runs here rather than in the constructor: the menu table is the
     // game's, and the text table it checks is not loaded when an ASI is loaded.
     // It acts once and returns immediately afterwards.
@@ -186,6 +195,8 @@ struct AsiMain {
     if (status_page.Follow().draw) status_page.Draw(game.BuildStatusPanelState());
     console.Draw(FrontEndMenuManager.m_bGameNotLoaded &&
                  FrontEndMenuManager.m_nCurrentMenuPage == MENUPAGE_START_MENU);
+    // The menu already flushed its text before this callback.
+    CFont::DrawFonts();
   }
 
   static AsiMain instance;
