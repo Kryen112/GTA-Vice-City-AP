@@ -7,8 +7,9 @@ region graph in regions.py. There is no code-generation step.
 Check classes: story missions (always on), hidden packages, rampages, stunt
 jumps, emergency vehicle milestones, side events, robbable stores, and
 properties (purchases plus venue mission strands), each optional behind a
-toggle. The bridge client that talks to the game mod is the client subpackage,
-registered as a launcher component below.
+toggle.
+The offline setup tool is registered as a launcher component below,
+the in-game mod connects directly to Archipelago.
 """
 
 from __future__ import annotations
@@ -17,7 +18,6 @@ import typing
 from collections import Counter
 from collections.abc import Callable
 
-import settings
 from BaseClasses import (
     CollectionState,
     Item,
@@ -33,6 +33,7 @@ from worlds.LauncherComponents import Component, Type, components
 from worlds.LauncherComponents import launch as launch_component
 
 from . import data, regions, rules, scm
+from .check_markers import check_markers, marker_requirements
 from .items import (
     DISTRICT_CONTENT_NAMES,
     GENERAL_FILLER_NAMES,
@@ -100,55 +101,17 @@ _UNCOUNTED_LOCATION_NAMES: frozenset[str] = frozenset(
 MINIMUM_DIRECTED_SPHERE_ZERO = 4
 
 
-def launch_client(*args: str) -> None:
-    # Lazy import so registering the component does not pull CommonClient and
-    # its dependencies into every generation run.
-    from .client.context import launch
-    launch_component(launch, name="GTA Vice City Client", args=args)
+def launch_setup(*args: str) -> None:
+    from .setup import launch
+    launch_component(launch, name="GTA Vice City Setup", args=args)
 
 
 components.append(Component(
-    "GTA Vice City Client",
-    func=launch_client,
-    component_type=Type.CLIENT,
-    game_name="Grand Theft Auto Vice City",
-    supports_uri=True,
-    description="Connect to a multiworld and bridge to the GTA Vice City mod.",
+    "GTA Vice City Setup",
+    func=launch_setup,
+    component_type=Type.TOOL,
+    description="Install or update the game mod offline, then connect in game using APCpp.",
 ))
-
-
-class GTAViceCitySettings(settings.Group):
-    class InstallFolder(settings.UserFolderPath):
-        """The GTA Vice City install folder, the one holding gta-vc.exe. The
-        client launches the game from here on connect and on /play. Blank by
-        default; the client offers a folder picker on first connect and saves
-        the choice here. Use forward slashes."""
-        description = "GTA Vice City install folder"
-        required = False
-
-    class AutoLaunchGame(settings.Bool):
-        """Launch gta-vc.exe automatically each time you connect (the Connect
-        button or /connect), unless the game is already running. A reconnect the
-        client makes by itself after a dropped connection never launches. On by
-        default; set false to launch it yourself or with the /play command. The
-        client's /autoplay command overrides this for one client session."""
-
-    class IsolateSaves(settings.Bool):
-        """Keep each Archipelago seed's GTA Vice City saves in their own set,
-        apart from your normal saves, swapped in when the client connects. On by
-        default. Bring your normal saves back with the client's /restore
-        command. Only the save files move; controls and display settings stay."""
-
-    class AutoInstallMod(settings.Bool):
-        """Compare the mod bundled in this apworld against the install when the
-        client connects, and copy it in if it differs, before the game launches.
-        On by default. Set false to manage the mod yourself with the /installmod
-        command. You still supply Ultimate ASI Loader and CLEO."""
-
-    install_folder: InstallFolder = InstallFolder("")
-    auto_launch_game: AutoLaunchGame | bool = True
-    isolate_saves: IsolateSaves | bool = True
-    auto_install_mod: AutoInstallMod | bool = True
 
 
 class GTAViceCityItem(Item):
@@ -220,7 +183,6 @@ class GTAViceCityWorld(World):
     web = GTAViceCityWeb()
     options_dataclass = GTAViceCityOptions
     options: GTAViceCityOptions
-    settings: typing.ClassVar[GTAViceCitySettings]
 
     # The Universal Tracker regenerates this world from slot_data alone (see
     # interpret_slot_data), so it needs no yaml on hand.
@@ -1013,6 +975,10 @@ class GTAViceCityWorld(World):
                 str(global_index): location_id
                 for global_index, location_id in scm.completion_watch().items()
             },
+            "check_markers": check_markers({
+                name: bool(getattr(self.options, name).value) for name in CHECK_CLASS_OPTIONS
+            }),
+            "marker_requirements": marker_requirements(bool(self.options.split_mainland_access.value)),
             # Only when the class is enabled: with packages off their locations
             # do not exist, so the ASI must not detect or report them.
             "package_coords": {

@@ -54,6 +54,19 @@ def test_absent_artifact_is_not_stale(tmp_path: pathlib.Path) -> None:
     assert stale_sources(tmp_path / "nothing.asi", tmp_path, GLOBS) == []
 
 
+def test_third_party_licences_ship_and_staging_is_cleared(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(build_apworld, "WORLD_SOURCE", tmp_path)
+    expected = {"LICENSE", "NOTICE", "THIRD_PARTY_LICENSES"}
+    assert set(build_apworld.stage_licence_files()) == expected
+    for name in expected:
+        assert (tmp_path / name).read_bytes() == (build_apworld.REPOSITORY_ROOT / name).read_bytes()
+    library_licence = build_apworld.REPOSITORY_ROOT / "mod/asi/third_party/apcpp/LICENSE"
+    assert library_licence.read_text(encoding="utf-8") in (tmp_path / "THIRD_PARTY_LICENSES").read_text(
+        encoding="utf-8")
+    build_apworld.clear_licence_files()
+    assert not any(tmp_path.iterdir())
+
+
 def test_a_newer_source_is_reported(tmp_path: pathlib.Path) -> None:
     artifact = _write(tmp_path / "out.asi", 1000)
     _write(tmp_path / "src" / "newer.cpp", 2000)

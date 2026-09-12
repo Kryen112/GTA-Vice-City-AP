@@ -395,11 +395,9 @@ inline StatusSection ComposeStrandSection(const StatusPanelState& state) {
   return section;
 }
 
-// The progress the game itself counts toward the checks those classes carry: the
-// hidden package tally the HUD shows, the level each emergency vehicle has
-// reached, and the taxi and pizza levels, which the game keeps as fares and
-// deliveries rather than as levels. Nothing outside the game knows any of it,
-// since the client only ever sees a location checked or not.
+// The package tally matches the HUD (seed-wide when shuffled). Emergency
+// activities show local progress; taxi and pizza keep fares and deliveries
+// rather than levels, so those are converted below.
 inline StatusSection ComposeRewardSection(const StatusPanelState& state) {
   StatusSection section;
   section.heading = "THE GAME COUNTS";

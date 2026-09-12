@@ -259,8 +259,7 @@ class TrapPercentage(NamedRange):
 # on and are not listed. This is the list a seed publishes into slot_data and a
 # Universal Tracker regeneration replays, so a class missing from it is a class
 # whose setting the played seed does not record and a tracker silently defaults.
-# Which of these the client then hands the ASI is a separate choice, made by the
-# fixed key list in client/context.py.
+# The native client reads the settings it needs from slot_data.
 CHECK_CLASS_OPTIONS: list[str] = [
     "enable_hidden_packages", "enable_rampages", "enable_stunt_jumps",
     "enable_emergency_vehicles", "enable_properties",
