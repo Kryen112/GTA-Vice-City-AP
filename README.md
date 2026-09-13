@@ -34,7 +34,7 @@ rewards and holding no checks.
 | Properties and venue missions | 40 |
 | Robbable stores | 15 |
 | Side events | 14 |
-| Ambient pickups | 116 |
+| World pickups | 116 |
 | Shop items | 36 |
 
 The emergency milestones are per level. The side events are the stadium events,
@@ -61,7 +61,7 @@ robbable stores can be held inert until their item arrives. Split them
 city-wide, per district, or per district per class.
 
 **Shuffles.** The 9 radio stations become items, and you start with one. The
-minimap can start hidden. The ambient pickups can trade places among themselves.
+minimap can start hidden. The world pickups can trade places among themselves.
 The five emergency vehicle finish rewards can go into the pool.
 
 **Traps** take a configurable share of the filler, default 15 percent, spread

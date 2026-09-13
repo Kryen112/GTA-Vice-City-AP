@@ -331,7 +331,7 @@ def _cleo_problems(cleo_dir: pathlib.Path, scm: types.ModuleType,
         "appickup.cs": (((scm.completion_global(data.PICKUP_NAMES[0]),
                           scm.completion_global(data.PICKUP_NAMES[-1])),
                          (min(stand_globals), max(stand_globals))),
-                        f"the ambient pickup completion globals and Phil's "
+                        f"the world pickup completion globals and Phil's "
                         f"stands (${min(stand_globals)}..${max(stand_globals)})"),
         # The area thread reads unlock globals and bookkeeping, both of which sit
         # below the completion block, so it may reach nothing from there up. Named
@@ -885,6 +885,12 @@ def main() -> int:
         ("build_scm.py", build, "DISTRICT_STRIDE", scm.DISTRICT_CAPACITY),
         ("build_scm.py", build, "CONTENT_ROWS", scm.CONTENT_CAPACITY),
         ("build_scm.py", build, "SPARE_FLAGS", scm.SPARE_FLAG_CAPACITY),
+        # Check that emergency progress global numbers match scm.py.
+        ("build_scm.py", build, "REMEMBER_EMERGENCY", scm.REMEMBER_EMERGENCY_GLOBAL),
+        ("build_scm.py", build, "EMERGENCY_PROGRESS_BASE", scm.EMERGENCY_PROGRESS_BASE),
+        ("build_scm.py", build, "VIGILANTE_TIME_RAMP", scm.VIGILANTE_TIME_RAMP_GLOBAL),
+        ("build_scm.py", build, "VIGILANTE_WANTED_RAMP",
+         scm.VIGILANTE_WANTED_RAMP_GLOBAL),
         ("ASI", asi, "kRadioStationCount", scm.RADIO_STATION_COUNT),
         ("ASI", asi, "kSeedHashBase", scm.SEED_HASH_BASE),
         ("ASI", asi, "kSeedHashGlobalCount", scm.SEED_HASH_GLOBAL_COUNT),

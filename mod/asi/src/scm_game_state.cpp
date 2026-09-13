@@ -220,7 +220,7 @@ constexpr const char* kAbilityBlockedText[kAbilityCount] = {
 };
 
 // The reserved global the finale holds up while it runs, mirrored from apworld
-// scm.py FINALE_ACTIVE_GLOBAL. Keep the ambient layout off the pool while the
+// scm.py FINALE_ACTIVE_GLOBAL. Keep the world layout off the pool while the
 // mansion siege is on: the mission places its own pickups to be survived with,
 // and a shuffle that turned one of them into a melee weapon would be deciding
 // the ending.
@@ -234,7 +234,8 @@ constexpr int kOnMissionGlobal = 313;
 // The kill-frenzy skull's model name in the game's object definitions.
 constexpr const char* kKillFrenzyModelName = "killfrenzy";
 // Diagnostic names for the held pickup classes, HeldPickupClass order.
-constexpr const char* kHeldClassNames[] = {"none", "package", "rampage", "property"};
+constexpr const char* kHeldClassNames[] = {
+    "none", "package", "rampage", "property", "world"};
 static_assert(std::size(kHeldClassNames) == kHeldPickupClassCount,
               "one diagnostic name per held pickup class");
 
@@ -982,9 +983,17 @@ void ScmGameState::EnforceHeldPickups(const AbilityLocks& locked,
   for (int index = 0; index < kPickupPoolSize; ++index) {
     CPickup& pickup = CPickups::aPickUps[index];
     if (pickup.bPickupType == 0) continue;
-    const HeldPickupClass held_class = ClassifyHeldPickup(
+    HeldPickupClass held_class = ClassifyHeldPickup(
         static_cast<int>(pickup.bPickupType), static_cast<int>(pickup.nModelId),
         kill_frenzy_model_);
+    if (held_class == HeldPickupClass::kNone &&
+        IsWorldPickup(pickup_targets_,
+                        {pickup.vecPos.x, pickup.vecPos.y,
+                         UnsunkHeight(pickup.vecPos.z),
+                         static_cast<int>(pickup.bPickupType),
+                         static_cast<int>(pickup.nModelId), index})) {
+      held_class = HeldPickupClass::kPickup;
+    }
     if (held_class == HeldPickupClass::kNone) continue;
     const int district = DistrictForPickup(pickup_districts_, held_class,
                                           pickup.vecPos.x, pickup.vecPos.y);
@@ -1204,7 +1213,7 @@ void ScmGameState::EnforceLocks() {
 
 void ScmGameState::OnBeforeWorldProcess() {
   ApplyAbilityInputLocks();
-  RestoreCheckedPackages();
+  RestoreCheckedPickups();
 }
 
 void ScmGameState::ApplyOneShot(const ItemEffect& effect) {
@@ -1590,7 +1599,7 @@ void ScmGameState::EnforcePickupLayout() {
     return;
   }
   // Nothing is rewritten while the finale runs. The mansion siege places its
-  // own pickups to be survived with, and one of the ambient slots stands in the
+  // own pickups to be survived with, and one of the world slots stands in the
   // same grounds, so a shuffle reaching into that fight would be deciding the
   // ending. The layout resumes on the frame the flag drops, and a slot whose
   // check is still to be taken picks its marker back up then.
@@ -1616,7 +1625,7 @@ void ScmGameState::EnforcePickupLayout() {
     // Type zero is a dead slot (never created, or script-removed); it stays
     // dead, so a mission's remove_pickup is never resurrected.
     if (pickup.bPickupType == 0) continue;
-    entries.push_back({pickup.vecPos.x, pickup.vecPos.y, pickup.vecPos.z,
+    entries.push_back({pickup.vecPos.x, pickup.vecPos.y, UnsunkHeight(pickup.vecPos.z),
                        static_cast<int>(pickup.bPickupType),
                        static_cast<int>(pickup.nModelId), index});
   }
@@ -1637,7 +1646,7 @@ void ScmGameState::EnforcePickupLayout() {
   // A layout slot the pool never offered stays vanilla by design; one
   // diagnostic per config delivery records how many (a reconnect re-arms
   // it), on a frame late enough that the init mission has finished placing
-  // the ambient pickups. A report landing inside a mission's brief
+  // the world pickups. A report landing inside a mission's brief
   // remove-and-recreate window may count that slot once; log noise only.
   ++pickup_enforce_frames_;
   if (pickup_enforce_frames_ == kPickupUnmatchedLogFrame &&
@@ -1688,37 +1697,55 @@ std::pair<int, int> ScmGameState::PackageProgress() const {
           static_cast<int>(package_locations_.size())};
 }
 
-void ScmGameState::RestoreCheckedPackages() {
+void ScmGameState::RestoreCheckedPickups() {
   std::lock_guard<std::mutex> lock(mutex_);
-  if (plugin::GetGameVersion() != GAME_10EN || package_locations_.empty() ||
+  if (plugin::GetGameVersion() != GAME_10EN ||
       !ConfiguredSeedMatches(ReadSeedHash(), configured_seed_hash_) ||
-      GetGlobal(kPackagesShuffledGlobal) == 0 || FindPlayerPed() == nullptr) return;
+      FindPlayerPed() == nullptr) return;
+  const bool packages_shuffled = !package_locations_.empty() && GetGlobal(kPackagesShuffledGlobal) != 0;
+  if (kill_frenzy_model_ < 0) {
+    int model = -1;
+    if (CModelInfo::GetModelInfo(kKillFrenzyModelName, &model) != nullptr) kill_frenzy_model_ = model;
+  }
 
   // Restore the flags before removing pickups: the disappearance detector must
   // not interpret reconciliation as a new collection or claw back any cash.
-  for (const auto& package : package_locations_)
+  if (packages_shuffled) for (const auto& package : package_locations_)
     if (reported_.count(package.completion_global)) SetGlobal(package.completion_global, 1);
+  if (RestoreRampageProgress(check_markers_, reported_,
+        [](int index) { return GetGlobal(index); },
+        [](int index, int value) { SetGlobal(index, value); })) {
+    CStats::NumberKillFrenziesPassed = std::max(CStats::NumberKillFrenziesPassed,
+                                             GetGlobal(kRampagesCompletedGlobal));
+  }
 
   // Runs before CPickups::Update, so an old save loaded on top of a checked
-  // package cannot collect it again. RemovePickUp destroys both visible objects
+  // pickup cannot be collected again. RemovePickUp destroys both visible objects
   // and the pool entry without playing the pickup's reward/message path.
   for (int index = 0; index < kPickupPoolSize; ++index) {
     const auto& pickup = CPickups::aPickUps[index];
-    if (pickup.bPickupType != PICKUP_COLLECTABLE1) continue;
+    if (pickup.bPickupType == 0) continue;
+    bool remove = kill_frenzy_model_ >= 0 && pickup.nModelId == kill_frenzy_model_ &&
+        CheckedRampageAt(check_markers_, reported_, pickup.vecPos.x, pickup.vecPos.y) != 0;
     const WorldPoint position{pickup.vecPos.x, pickup.vecPos.y, UnsunkHeight(pickup.vecPos.z)};
-    for (const auto& package : package_locations_) {
-      if (GetGlobal(package.completion_global) != 0 && PackageMatchesPosition(package, position)) {
-        const auto handle = (static_cast<std::uint32_t>(pickup.wUniqueId) << 16) |
-                            static_cast<std::uint32_t>(index);
-        CPickups::RemovePickUp(static_cast<int>(handle));
-        break;
+    if (packages_shuffled && pickup.bPickupType == PICKUP_COLLECTABLE1) {
+      for (const auto& package : package_locations_) {
+        if (GetGlobal(package.completion_global) != 0 && PackageMatchesPosition(package, position)) {
+          remove = true;
+          break;
+        }
       }
+    }
+    if (remove) {
+      const auto handle = (static_cast<std::uint32_t>(pickup.wUniqueId) << 16) |
+                          static_cast<std::uint32_t>(index);
+      CPickups::RemovePickUp(static_cast<int>(handle));
     }
   }
   // Keep saved package progress consistent with the restored pickup state.
   // This is before real collections; their ordinary cash suppression still
   // sees the game's actual increment, including the final-package bonus.
-  CWorld::Players[0].m_nCollectablesCollected = PackageProgress().first;
+  if (packages_shuffled) CWorld::Players[0].m_nCollectablesCollected = PackageProgress().first;
 }
 
 int ScmGameState::DetectCollectedPackages() {
@@ -2213,7 +2240,7 @@ void ScmGameState::OnGameFrame() {
   // the locks working offline too.
   EnforceLocks();
 
-  // Keep the ambient pickup pool on the configured layout. Only when the
+  // Keep the world pickup pool on the configured layout. Only when the
   // world is loaded, so the pool holds the placed pickups; runs before the
   // package detection, though the two never touch the same pickup types.
   if (FindPlayerPed() != nullptr) {

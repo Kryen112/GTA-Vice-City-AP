@@ -62,6 +62,7 @@ from .options import (
     HiddenPackagesRequired,
     RandomizePickups,
     RandomizeRadioStations,
+    RememberEmergencyProgress,
     ShuffleEmergencyRewards,
     ShuffleMinimap,
     ShuffleShops,
@@ -159,8 +160,9 @@ class GTAViceCityWeb(WebWorld):
             EnableSideEvents, EnablePickups, ShuffleShops,
         ]),
         OptionGroup("In-World Modifiers", [
-            ShuffleEmergencyRewards, RandomizePickups, RandomizeRadioStations,
-            ShuffleMinimap, SplitMainlandAccess,
+            ShuffleEmergencyRewards, RememberEmergencyProgress,
+            RandomizePickups, RandomizeRadioStations, ShuffleMinimap,
+            SplitMainlandAccess,
         ]),
         OptionGroup("Locks", [
             AbilityLocks, StartingAbilityUnlock, ContentLocks,
@@ -204,7 +206,7 @@ class GTAViceCityWorld(World):
     # start island to be worth directing, which is the case the refusal covers.
     directed_opening_item: str | None = None
 
-    # The ambient pickup layout as a permutation of data.PICKUP_SLOTS indices:
+    # The world pickup layout as a permutation of data.PICKUP_SLOTS indices:
     # slot i shows the model and ammo of vanilla slot pickup_permutation[i].
     # Rolled in generate_early when randomize_pickups is on; None when off.
     pickup_permutation: list[int] | None = None
@@ -383,7 +385,7 @@ class GTAViceCityWorld(World):
         return self.random.choice(rollable)
 
     def _choose_pickup_permutation(self, passthrough: dict | None) -> None:
-        # The ambient pickup layout. Fixed here, before the pool builds, and
+        # The world pickup layout. Fixed here, before the pool builds, and
         # carried in slot_data so a tracker regeneration replays the seed's
         # layout instead of rerolling. An in-shop bribe would cost nothing, since
         # a bribe is a simple model whose weapon-type field is zero and the cost
@@ -763,7 +765,7 @@ class GTAViceCityWorld(World):
         """Whether the game's own completion stat counts this location.
 
         False for everything the stat counts, and True for the classes it never
-        did: the ambient pickups and the shop items. Read by the
+        did: the world pickups and the shop items. Read by the
         100 percent goal, which is the game's percentage rather than a count of
         this world's checks.
         """
@@ -772,7 +774,7 @@ class GTAViceCityWorld(World):
     def _location_excluded(self, name: str) -> bool:
         """Whether the fill is told to keep progression and useful items out.
 
-        Nothing today. The ambient pickups were excluded while they claimed to
+        Nothing today. The world pickups were excluded while they claimed to
         sit in the start region, because a seed must not need an item behind a
         claim; they sit on their real island now, which is verified, so they
         hold anything.
@@ -912,6 +914,8 @@ class GTAViceCityWorld(World):
             "final_location_id": LOCATION_NAME_TO_ID[data.FINAL_MISSION],
             "death_link": bool(self.options.death_link.value),
             "shuffle_emergency_rewards": bool(self.options.shuffle_emergency_rewards.value),
+            "remember_emergency_progress": bool(
+                self.options.remember_emergency_progress.value),
             "randomize_radio_stations": bool(self.options.randomize_radio_stations.value),
             # The starting station's index (None when the option is off), so a
             # tracker regeneration precollects the same station.
@@ -938,7 +942,7 @@ class GTAViceCityWorld(World):
             # replays the seed's pickup layout instead of rerolling it.
             "pickup_permutation": self.pickup_permutation,
             # The target layout the ASI enforces: per stand its position and
-            # pickup type plus the model and ammo it ends up with, the ambient
+            # pickup type plus the model and ammo it ends up with, the world
             # slots first and Phil's four shop stands after them. Empty when
             # nothing wants it, so the ASI leaves every pickup vanilla.
             "pickup_layout": self._pickup_layout(),
@@ -1001,7 +1005,7 @@ class GTAViceCityWorld(World):
         # completion global reads zero.
         #
         # Two classes own rows here, which is why the two halves are built apart.
-        # The ambient slots are the pickup class's, and the shuffle moves models
+        # The world slots are the pickup class's, and the shuffle moves models
         # between them. Phil's four stands are the SHOP class's: they are in-shop
         # pickups rather than the objects the other six shops sell, so nothing in
         # the script can put a marker on them or withhold what they hand over,
@@ -1009,13 +1013,15 @@ class GTAViceCityWorld(World):
         # moves, since shuffle_shops turns stock into checks and does not trade it
         # about, and the price stays the stand's own either way.
         #
-        # Sent when ANY of the three options wants it. The shuffle needs it to
+        # Sent when any option needs it. The shuffle requires it to
         # move models about; each check class needs it to know where its stands
         # are and which are still to be taken. With none on it stays empty, which
         # is what keeps a vanilla seed vanilla.
         checks_on = bool(self.options.enable_pickups.value)
         shops_on = bool(self.options.shuffle_shops.value)
-        if self.pickup_permutation is None and not checks_on and not shops_on:
+        pickups_locked = "pickups" in self.options.content_locks.value
+        if (self.pickup_permutation is None and not checks_on and not shops_on
+                and not pickups_locked):
             return []
         layout: list[list[float | int]] = []
         for slot_index in range(data.PICKUP_COUNT):
@@ -1027,7 +1033,7 @@ class GTAViceCityWorld(World):
                 model, ammo = data.PICKUP_SLOTS[source_index][4:6]
             check_global = (scm.completion_global(data.pickup_name(slot_index))
                             if checks_on else 0)
-            # No price term: an ambient stand that charges is priced by the
+            # No price term: a world stand that charges is priced by the
             # marker like every other, which is the ASI's own figure and not a
             # promise about any shop.
             layout.append([x, y, z, pickup_type, model, ammo, check_global, 0])
@@ -1051,7 +1057,7 @@ class GTAViceCityWorld(World):
         if self.pickup_permutation is None:
             return
         spoiler_handle.write(
-            f"\nAmbient pickups ({self.multiworld.player_name[self.player]}):\n")
+            f"\nWorld pickups ({self.multiworld.player_name[self.player]}):\n")
         for slot_index, source_index in enumerate(self.pickup_permutation):
             x, y, z, _pickup_type, vanilla_model, _ammo = data.PICKUP_SLOTS[slot_index]
             model = data.PICKUP_SLOTS[source_index][4]
@@ -1077,6 +1083,9 @@ class GTAViceCityWorld(World):
             bool(self.options.randomize_radio_stations.value),
             bool(self.options.shuffle_minimap.value),
         )
+        # Restore emergency activity progress when enabled.
+        flags.update(scm.remember_emergency_flag(
+            bool(self.options.remember_emergency_progress.value)))
         # The shop threads read this before they hide what a shop sells, so a
         # seed without the class leaves every shop exactly vanilla.
         flags.update(scm.shops_enabled_flag(
@@ -1118,7 +1127,7 @@ class GTAViceCityWorld(World):
             # when the seed has it on, because a goal that demanded more than
             # the game does would not be the game's 100 percent any more.
             #
-            # The ambient pickups are that case: no progress point in the script
+            # The world pickups are that case: no progress point in the script
             # touches one. Shop items are the same, which is
             # why the exclusion is by class key rather than by name.
             enabled = [

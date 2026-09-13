@@ -50,8 +50,10 @@ somebody's filler, yours or another player's.
 Options can go further: abilities can be locked away (sprint, jump, crouch,
 vehicles, weapons, and the ability to hold money at all), whole content classes
 can be held inert until their item arrives, the radar can start hidden, the
-radio can start with one station, and the ambient pickups scattered around the
-city can be shuffled among themselves.
+radio can start with one station, and the world pickups scattered around the
+city can be shuffled among themselves. Emergency vehicle activities can also
+remember how far you got, so leaving one and coming back resumes at the level
+you stopped at instead of restarting at level 1.
 
 ## What is a check?
 
@@ -73,14 +75,17 @@ checks, so with the class off the chains still play and simply stop paying.
 | Properties and venue missions | 40 |
 | Robbable stores | 15 |
 | Side events | 14 |
-| Ambient pickups | 116 |
+| World pickups | 116 |
 | Shop items | 36 |
 
 With every class enabled that is 492 checks. The emergency milestones are per
 level rather than per fare or per kill: paramedic, vigilante and firefighter
-levels 1 to 12, taxi every tenth fare, and pizza deliveries 1 to 10. The side
-events are the stadium events, the chopper checkpoints, the RC missions, Cone
-Crazy, PCJ Playground, Trial by Dirt and Test Track.
+levels 1 to 12, taxi every tenth fare, and pizza deliveries 1 to 10. Vanilla
+restarts all of those but taxi at level 1 every time you re-enter one, however
+far you got; `remember_emergency_progress` resumes at the level you stopped at
+instead, across a save and quit, and is on by default. The side events are the
+stadium events, the chopper checkpoints, the RC missions, Cone Crazy, PCJ
+Playground, Trial by Dirt and Test Track.
 
 ## What items can appear in other players' worlds?
 
@@ -105,7 +110,7 @@ Crazy, PCJ Playground, Trial by Dirt and Test Track.
 
 Mostly it does not look like anything: a check is an activity you complete, so
 the world is the vanilla city with vanilla scenery. The two exceptions are the
-optional classes that put a check on an object. An ambient pickup that still
+optional classes that put a check on an object. A world pickup that still
 holds its check spins as a GTA III logo instead of the weapon or the health it
 normally is, which is the one sprite the game itself never uses, and a shop
 stand holding its check sells "AP Item" in place of its stock.

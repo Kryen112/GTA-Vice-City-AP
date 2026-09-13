@@ -225,13 +225,13 @@ version control.
 - Finale active: `$10176`, the top of the reserved block and so the foundation's
   sizing line, with the marker scratch starting one above it. The finale raises
   it on its own first line and drops it at its single exit, and the ASI keeps the
-  ambient pickup layout off the pool while it is raised: the mansion siege places
-  its own pickups to be survived with, and one ambient slot stands in the same
+  world pickup layout off the pool while it is raised: the mansion siege places
+  its own pickups to be survived with, and one world slot stands in the same
   grounds. The foundation's write is also its initialization, so a new game
   starts with the layout live, and it sits above the boot thread's loop label so
   it runs once. The ASI drops it itself if it ever sees it raised with
   `$onmission` at zero, which is what a thread killed from outside would leave.
-- Ambient pickup checks: `appickup.cs` polls every slot handle from a `wait 0`
+- World pickup checks: `appickup.cs` polls every slot handle from a `wait 0`
   loop and latches that slot's completion global, and it polls Phil's four
   in-shop stands the same way, into the last four globals of the SHOP block,
   because those stands are pickups the engine sells rather than objects a shop

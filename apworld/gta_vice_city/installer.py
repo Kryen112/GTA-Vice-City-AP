@@ -134,7 +134,7 @@ SHIPPED_PAYLOAD_PATHS = (
     # destination twice, and deploy would write it and then clear it as stale on
     # every run; a test refuses that overlap.
 
-    # Pickup detection: one pass per frame over all 110 ambient slots, asking
+    # Pickup detection: one pass per frame over all 110 world slots, asking
     # the game whether each has been collected and latching its completion
     # global. Its own file because a CLEO script runs from its own entry point.
     "cleo/appickup.cs",

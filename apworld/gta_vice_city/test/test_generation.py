@@ -56,7 +56,7 @@ _ALL_ABILITY_LOCKS: list[str] = [
 
 _ALL_CONTENT_LOCKS: list[str] = [
     "hidden_packages", "rampages", "stunt_jumps", "properties",
-    "robbable_stores",
+    "robbable_stores", "pickups",
 ]
 
 
@@ -145,7 +145,7 @@ class TestHundredPercentAllClasses(WorldTestBase):
     def test_the_goal_does_not_demand_the_pickup_class(self) -> None:
         # This world constructs with enable_pickups off, which is the one
         # deliberate hole in "the goal requires every check class": the game's
-        # completion stat never counted an ambient pickup, so demanding the class
+        # completion stat never counted a world pickup, so demanding the class
         # would make the goal mean something the game itself does not. Pickups
         # stay a check class in every other respect, so the two lists differ by
         # exactly this one name and nothing else may drift out of the first.
@@ -511,7 +511,7 @@ class TestPickupRandomizerOn(WorldTestBase):
         self.assertTrue(slot_data["randomize_pickups"])
         self.assertEqual(slot_data["pickup_permutation"], self.world.pickup_permutation)
         layout = slot_data["pickup_layout"]
-        # The ambient slots, then Phil's four stands, which ride the same layout
+        # The world slots, then Phil's four stands, which ride the same layout
         # because they are pickups even though the shop class owns them.
         self.assertEqual(len(layout),
                          len(data.PICKUP_SLOTS) + len(data.SHOP_STAND_SLOTS))
@@ -522,7 +522,7 @@ class TestPickupRandomizerOn(WorldTestBase):
             # The seventh element is the completion global of the check on this
             # slot, and zero here because the class is off in this seed: the
             # shuffle alone makes no slot a check. The eighth is the price index
-            # a stand charges from while it wears the marker, and no ambient slot
+            # a stand charges from while it wears the marker, and no world slot
             # carries one: that term belongs to the shop class alone.
             self.assertEqual(row,
                              [x, y, z, pickup_type, source[4], source[5], 0, 0])
@@ -644,7 +644,7 @@ class TestHundredPercentWithPickups(WorldTestBase):
 
     def test_the_goal_ignores_the_pickups_even_with_the_class_on(self) -> None:
         # This goal is the GAME's 100 percent, so it asks for what the game's
-        # own stat counts and nothing more. The stat never counted an ambient
+        # own stat counts and nothing more. The stat never counted a world
         # pickup, so the class is out of the goal on both counts: not required to
         # be on, and not counted when it is. Turning it on just adds extra checks.
         self.assertEqual(self.world.options.goal.current_key, "hundred_percent")
@@ -717,7 +717,7 @@ class TestShops(WorldTestBase):
             item = data.SHOP_STAND_ITEMS[stand[6]]
             self.assertNotEqual(row[6], 0, item.display_name)
             self.assertEqual(row[7], item.weapon_type, item.display_name)
-        # Every ambient row carries none, so the term is the stands' alone.
+        # Every world row carries none, so the term is the stands' alone.
         for row in layout[:len(data.PICKUP_SLOTS)]:
             self.assertEqual(row[7], 0)
         # The prices themselves are the game's, read out of CostOfWeapon rather
@@ -894,7 +894,7 @@ class TestPickupChecksOn(WorldTestBase):
     game = "Grand Theft Auto Vice City"
     options: ClassVar[dict] = {"enable_pickups": True}
 
-    def test_every_ambient_slot_is_a_location(self) -> None:
+    def test_every_world_pickup_slot_is_a_location(self) -> None:
         # One check per slot, so the count is the slot table's count and not a
         # number written twice.
         self.assertEqual(len(data.PICKUP_NAMES), len(data.PICKUP_SLOTS))
@@ -1042,7 +1042,7 @@ class TestPickupReach(WorldTestBase):
             self.assertTrue(self.can_reach_location(name), name)
 
     def test_the_leaf_links_pickups_take_the_same_five_ways_in(self) -> None:
-        # The three ambient slots inside the golf course carry the package
+        # The three world slots inside the golf course carry the package
         # table's routes, so the wall is one fact and not two.
         inside = [data.pickup_name(index) for index in (33, 59, 85)]
         for name in inside:
@@ -1278,7 +1278,7 @@ class TestPickupChecksOff(WorldTestBase):
         self.assertEqual(EnableSideEvents.visibility, Visibility.all)
 
     def test_no_slot_is_a_location(self) -> None:
-        # A disabled class contributes no locations, so the slots stay ambient
+        # A disabled class contributes no locations, so the slots remain ordinary world pickups
         # pickups and nothing else.
         placed = {location.name
                   for location in self.multiworld.get_locations(self.player)}
@@ -1298,7 +1298,7 @@ class TestPickupChecksComposeWithTheRandomizer(WorldTestBase):
         slot_data = self.world.fill_slot_data()
         self.assertTrue(slot_data["enable_pickups"])
         self.assertTrue(slot_data["randomize_pickups"])
-        # One row per ambient slot, then one per Phil's Place stand. The stands
+        # One row per world slot, then one per Phil's Place stand. The stands
         # are in the layout whatever the pickup options say, because the marker
         # on them belongs to the shop class.
         self.assertEqual(len(slot_data["pickup_layout"]),
@@ -2229,6 +2229,60 @@ class TestAbilityLocksHundredPercent(WorldTestBase):
     }
 
 
+class TestPickupContentLocks(WorldTestBase):
+    game = "Grand Theft Auto Vice City"
+    options: ClassVar[dict] = {"content_locks": ["pickups"], "enable_pickups": True}
+
+    def test_pickups_wait_for_their_unlock(self) -> None:
+        names = [data.pickup_name(index) for index in range(data.PICKUP_COUNT)
+                 if data.location_district(data.pickup_name(index)) == "Ocean Beach"]
+        for name in names:
+            self.assertFalse(self.can_reach_location(name), name)
+        self.assertTrue(self.can_reach_location(data.hidden_package_name(1)))
+        unlock = data.content_item_for(names[0], self.world.options.split_content_locks.value)
+        self.collect_by_name([unlock])
+        for name in names:
+            self.assertTrue(self.can_reach_location(name), name)
+        washington = next(name for name in data.PICKUP_NAMES
+                          if data.location_district(name) == "Washington Beach")
+        self.assertEqual(self.can_reach_location(washington),
+                         self.world.options.split_content_locks.value == 0)
+
+
+class TestPickupContentLocksPerDistrict(TestPickupContentLocks):
+    options: ClassVar[dict] = {
+        **TestPickupContentLocks.options, "split_content_locks": "per_district",
+    }
+
+
+class TestPickupContentLocksPerClass(TestPickupContentLocks):
+    options: ClassVar[dict] = {
+        **TestPickupContentLocks.options, "split_content_locks": "per_class",
+    }
+
+
+class TestPickupContentLocksWithoutChecks(WorldTestBase):
+    game = "Grand Theft Auto Vice City"
+    options: ClassVar[dict] = {
+        "content_locks": ["pickups"], "enable_pickups": False,
+        "randomize_pickups": False, "shuffle_shops": False,
+    }
+
+    def test_lock_only_seed_sends_fixed_pickups_without_checks(self) -> None:
+        slot = self.world.fill_slot_data()
+        self.assertIn(data.PICKUPS_ITEM, {item.name for item in self.multiworld.itempool})
+        self.assertFalse(set(data.PICKUP_NAMES) &
+                         {location.name for location in self.multiworld.get_locations()})
+        self.assertEqual(len(slot["pickup_layout"]),
+                         data.PICKUP_COUNT + len(data.SHOP_STAND_SLOTS))
+        self.assertTrue(all(row[6] == 0 for row in slot["pickup_layout"]))
+        flag = str(scm.content_lock_flag_global(data.PICKUPS_ITEM))
+        self.assertEqual(slot["config_globals"][flag], 1)
+        for district in data.CONTENT_CLASS_DISTRICTS[data.PICKUPS_ITEM]:
+            global_index = scm.district_unlock_global(data.PICKUPS_ITEM, district)
+            self.assertNotIn(global_index, scm.unlocked_district_globals(frozenset({"pickups"})))
+
+
 class TestContentLocksAllKeys(WorldTestBase):
     # Every class held. The inherited default tests prove the seed fills and
     # stays reachable with a term on every collectible and activity check.
@@ -2300,7 +2354,7 @@ class TestContentLocksAllKeys(WorldTestBase):
 class TestContentLocksPerClass(WorldTestBase):
     # Every class held, split into one item per class per district. The
     # inherited default tests prove the seed still fills and stays reachable
-    # with 42 progression items where there were 5.
+    # with district-scoped progression items.
     game = "Grand Theft Auto Vice City"
     options: ClassVar[dict] = {
         "content_locks": _ALL_CONTENT_LOCKS,
@@ -2313,7 +2367,7 @@ class TestContentLocksPerClass(WorldTestBase):
             self.assertNotIn(name, pool_names, name)
         expected = data.content_items(frozenset(_ALL_CONTENT_LOCKS),
                                      data.CONTENT_SPLIT_PER_CLASS)
-        self.assertEqual(len(expected), 42)
+        self.assertEqual(len(expected), 54)
         for name in expected:
             self.assertIn(name, pool_names, name)
             self.assertEqual(
@@ -2365,15 +2419,15 @@ class TestContentLocksPerClass(WorldTestBase):
         self.collect_by_name(["Vice Point Property Purchases"])
         self.assertTrue(self.can_reach_location("Malibu Club Purchase"))
 
-    def test_the_42_items_fit_the_pool(self) -> None:
-        # 42 progression items where the whole locks put 5, so filler is what
+    def test_the_district_items_fit_the_pool(self) -> None:
+        # District items replace whole-class items, so filler is what
         # gives way. create_items refuses a pool with more progression and useful
         # items than checks, so generating at all is the assertion; the counts
         # are here so a later class or item change says which side moved.
         pool_names = [item.name for item in self.multiworld.itempool]
         district_items = [name for name in pool_names
                           if name in DISTRICT_CONTENT_NAMES]
-        self.assertEqual(len(district_items), 42)
+        self.assertEqual(len(district_items), 54)
         self.assertEqual(len(pool_names),
                          len(self.multiworld.get_unfilled_locations(self.player)))
 
@@ -2396,7 +2450,7 @@ class TestContentLocksPerClass(WorldTestBase):
         # Every held pickup is placed, and no entry names a district or class
         # outside the block.
         entries = slot_data["content_districts"]
-        self.assertEqual(len(entries), 150)
+        self.assertEqual(len(entries), 150 + data.PICKUP_COUNT)
         for entry in entries:
             self.assertIn(entry["class"], range(len(scm.CONTENT_KEYS)))
             self.assertIn(entry["district"], range(len(scm.DISTRICT_KEYS)))
@@ -2414,7 +2468,7 @@ class TestContentLocksPerDistrict(WorldTestBase):
         pool_names = {item.name for item in self.multiworld.itempool}
         expected = data.content_items(frozenset(_ALL_CONTENT_LOCKS),
                                       data.CONTENT_SPLIT_PER_DISTRICT)
-        self.assertEqual(len(expected), 11)
+        self.assertEqual(len(expected), 12)
         for name in expected:
             self.assertIn(name, pool_names, name)
         for name in data.CONTENT_ITEMS:
@@ -3709,6 +3763,103 @@ class TestEmergencyRewardsWithoutTheVehiclesClass(WorldTestBase):
             self.assertIn(reward, item_names)
 
 
+class TestRememberEmergencyProgress(WorldTestBase):
+    game = "Grand Theft Auto Vice City"
+
+    def test_the_flag_is_set_by_default(self) -> None:
+        # The option defaults on, and the script reads this flag at every
+        # emergency mission init before it overwrites the starting level.
+        flags = self.world.fill_slot_data()["config_globals"]
+        self.assertEqual(flags[str(scm.REMEMBER_EMERGENCY_GLOBAL)], 1)
+
+    def test_the_option_rides_along_for_a_tracker_regeneration(self) -> None:
+        # Every in-world modifier carries its own slot_data key, so a tracker
+        # rebuilding the world from slot_data alone sees the same seed.
+        self.assertIs(
+            self.world.fill_slot_data()["remember_emergency_progress"], True)
+
+    def test_the_stored_activities_are_the_levelled_ones_without_taxi(self) -> None:
+        # Taxi is absent because its career fares live in $369, which the mission
+        # never resets, so its levels already survive a save and quit. Pinned
+        # against the level table so a sixth activity cannot be missed here, and
+        # as a set because the order of these four is frozen by their globals
+        # while the level table's order is not.
+        self.assertEqual(set(scm.EMERGENCY_PROGRESS_ACTIVITIES),
+                         set(data.EMERGENCY_LEVELS) - {"Taxi"})
+
+    def test_it_is_an_in_world_modifier_and_not_a_check_class(self) -> None:
+        # CLAUDE.md makes every check class belong to one of two lists, the ones
+        # the 100% goal demands and the ones its stat never counts, and a test
+        # refuses a class in neither. This option is in neither list because it
+        # is not a class at all: it holds no locations and no items, so the goal
+        # has nothing to demand of it. Belonging to a list by accident would put
+        # it in the goal's precondition and refuse seeds that turn it off.
+        self.assertNotIn("remember_emergency_progress", CHECK_CLASS_OPTIONS)
+        self.assertNotIn("remember_emergency_progress", HUNDRED_PERCENT_CLASS_OPTIONS)
+        self.assertNotIn("remember_emergency_progress", UNCOUNTED_CLASS_OPTIONS)
+
+    def test_it_reaches_the_game_as_one_flag_and_nothing_else(self) -> None:
+        # The whole of the option in game is the flag, so its own key aside, a
+        # seed with it on differs from one with it off in exactly that global.
+        # This is what lets it be installed mid-seed: no id, no item, no
+        # location and no other global moves with it.
+        slot_data = self.world.fill_slot_data()
+        flags = slot_data["config_globals"]
+        self.assertEqual(flags[str(scm.REMEMBER_EMERGENCY_GLOBAL)], 1)
+        for global_index in (scm.EMERGENCY_PROGRESS_BASE,
+                             scm.VIGILANTE_TIME_RAMP_GLOBAL,
+                             scm.VIGILANTE_WANTED_RAMP_GLOBAL):
+            self.assertNotIn(str(global_index), flags,
+                             "the stored levels and ramps are the script's own "
+                             "and must never be stamped from slot_data")
+
+
+class TestRememberEmergencyProgressOff(WorldTestBase):
+    game = "Grand Theft Auto Vice City"
+    options: ClassVar[dict] = {"remember_emergency_progress": False}
+
+    def test_the_flag_is_zero_so_every_activity_starts_where_vanilla_does(self) -> None:
+        # At zero the script never overwrites the level its mission init just
+        # wrote, so all four activities restart at level 1 exactly as vanilla
+        # does. The flag is the whole of the option in game.
+        flags = self.world.fill_slot_data()["config_globals"]
+        self.assertEqual(flags[str(scm.REMEMBER_EMERGENCY_GLOBAL)], 0)
+        self.assertIs(
+            self.world.fill_slot_data()["remember_emergency_progress"], False)
+
+    def test_the_levels_are_still_checks(self) -> None:
+        # The modifier is independent of the check class, so turning it off
+        # leaves all 56 milestones exactly where they were.
+        names = {location.name
+                 for location in self.multiworld.get_locations(self.player)}
+        for name in data.emergency_names():
+            self.assertIn(name, names)
+
+
+class TestRememberEmergencyProgressWithoutTheVehiclesClass(WorldTestBase):
+    game = "Grand Theft Auto Vice City"
+    options: ClassVar[dict] = {
+        "remember_emergency_progress": True, "enable_emergency_vehicles": False,
+    }
+
+    def test_the_flag_follows_the_option_alone(self) -> None:
+        # Independent of the check class, the way the reward shuffle is. The
+        # chains exist in the game whether or not their levels are AP locations,
+        # so remembering where the player stopped is a question about the world
+        # and not about checks. Tying it to the class would make the option
+        # silently do nothing for a seed that turned the class off.
+        flags = self.world.fill_slot_data()["config_globals"]
+        self.assertEqual(flags[str(scm.REMEMBER_EMERGENCY_GLOBAL)], 1)
+
+    def test_the_levels_are_not_locations(self) -> None:
+        # The class is off, so its 56 milestones do not exist, and the modifier
+        # does not bring any of them back.
+        names = {location.name
+                 for location in self.multiworld.get_locations(self.player)}
+        for name in data.emergency_names():
+            self.assertNotIn(name, names)
+
+
 class TestConfigFlagsShuffleWithoutVehicles(WorldTestBase):
     game = "Grand Theft Auto Vice City"
     options: ClassVar[dict] = {
@@ -4505,7 +4656,7 @@ class TestReservedGlobals(WorldTestBase):
 
     def test_the_finale_flag_tops_the_block_and_collides_with_nothing(self) -> None:
         # The finale raises this while the mansion siege runs so the ASI keeps the
-        # ambient pickup layout off the pool for it. It tops the reserved block and
+        # world pickup layout off the pool for it. It tops the reserved block and
         # is what sizes it, so the marker scratch above starts one higher.
         #
         # NOT taken from the unused space lower down, which looks free and is not:
@@ -4598,7 +4749,7 @@ class TestReservedGlobals(WorldTestBase):
             | tail(scm.ABILITY_UNLOCK_BASE, len(scm.ABILITY_KEYS), scm.ABILITY_CAPACITY)
             | tail(scm.CONTENT_LOCK_FLAG_BASE, len(scm.CONTENT_KEYS), scm.CONTENT_CAPACITY)
             | tail(scm.CONTENT_UNLOCK_BASE, len(scm.CONTENT_KEYS), scm.CONTENT_CAPACITY)
-            | tail(scm.SPARE_FLAG_BASE, 0, scm.SPARE_FLAG_CAPACITY)
+            | tail(scm.SPARE_FLAG_BASE, scm.SPARE_FLAGS_USED, scm.SPARE_FLAG_CAPACITY)
             | ({scm.DISTRICT_UNLOCK_BASE + offset
                 for offset in range(scm.DISTRICT_UNLOCK_COUNT)}
                - {scm.district_unlock_global(item, district)
@@ -4725,9 +4876,9 @@ class TestReservedGlobals(WorldTestBase):
         # class-major stride by literal, so a shift here has to move with it.
         self.assertEqual(scm.DISTRICT_UNLOCK_BASE, 9967)
         # The grid reserves 12 rows of 16 so a class or a district added later
-        # moves nothing; 5 by 11 of it is in use.
+        # moves nothing; 6 by 12 of it is in use.
         self.assertEqual(scm.DISTRICT_UNLOCK_COUNT, 192)
-        self.assertEqual(len(scm.CONTENT_KEYS) * len(scm.DISTRICT_KEYS), 55)
+        self.assertEqual(len(scm.CONTENT_KEYS) * len(scm.DISTRICT_KEYS), 72)
         # The STRIDE, pinned through a cell in a row above the first. The base
         # and the product are the same under either stride, so they say nothing
         # about it: the ASI mirrored the district COUNT as its stride and read
@@ -4739,6 +4890,27 @@ class TestReservedGlobals(WorldTestBase):
             scm.DISTRICT_UNLOCK_BASE + scm.DISTRICT_CAPACITY)
         self.assertEqual(
             scm.district_unlock_global(scm.CONTENT_KEYS[1], scm.DISTRICT_KEYS[0]), 9983)
+        # The emergency-progress block, which build_scm.py mirrors by literal as
+        # REMEMBER_EMERGENCY and EMERGENCY_PROGRESS_BASE. These are the first
+        # globals taken out of the spare flags, so a shift here does not move
+        # anything else and nothing else moves them: they are pinned only by this
+        # and by the mirror check, and a wrong number lands on another spare,
+        # where the only symptom is a level that never resumes.
+        self.assertEqual(scm.REMEMBER_EMERGENCY_GLOBAL, 10159)
+        self.assertEqual(scm.EMERGENCY_PROGRESS_BASE, 10160)
+        self.assertEqual(
+            [scm.emergency_progress_global(activity)
+             for activity in scm.EMERGENCY_PROGRESS_ACTIVITIES],
+            [10160, 10161, 10162, 10163])
+        # Vigilante's two per-level float ramps, which a level alone cannot
+        # resume: without them a resumed level 12 runs at full police heat where
+        # a continuous run reaches 0.4.
+        self.assertEqual(scm.VIGILANTE_TIME_RAMP_GLOBAL, 10164)
+        self.assertEqual(scm.VIGILANTE_WANTED_RAMP_GLOBAL, 10165)
+        # Seven of the sixteen spares are in use, so nine are left for the single
+        # flags this layout keeps gaining. The count is what the spare-tail
+        # exclusion above is built from, so it cannot be wrong in only one place.
+        self.assertEqual(scm.SPARE_FLAGS_USED, 7)
         # The finale warp flag, hard-coded in the ASI (scm_game_state.cpp) and in
         # build_scm.py, which reads it in the APFIN watcher and in the mission
         # branch that jumps to the ending cutscene. It is also the foundation's
@@ -4840,7 +5012,8 @@ class TestReservedGlobals(WorldTestBase):
         # to match the same entry.
         entries = scm.content_districts()
         self.assertEqual(len(entries), data.HIDDEN_PACKAGE_COUNT
-                         + data.RAMPAGE_COUNT + len(data.PROPERTY_PURCHASES))
+                         + data.RAMPAGE_COUNT + len(data.PROPERTY_PURCHASES)
+                         + data.PICKUP_COUNT)
         by_class: dict[int, list[tuple[float, float]]] = {}
         for entry in entries:
             by_class.setdefault(entry["class"], []).append((entry["x"], entry["y"]))
@@ -4885,7 +5058,7 @@ class TestReservedGlobals(WorldTestBase):
     def test_every_district_global_is_reachable_at_every_granularity(self) -> None:
         # The same accounting for whole classes and for district-wide items. A
         # class-district pair holding no content is covered by the stamp in every
-        # mode, since no item names it: 13 of the 55, which the ASI would
+        # mode, since no item names it: 18 of the 72, which the ASI would
         # otherwise read as a class held forever on the status page.
         # The cells in use, not the whole grid: the padding leaves spare rows
         # and columns that no class or district names, and nothing stamps them.
@@ -4893,7 +5066,7 @@ class TestReservedGlobals(WorldTestBase):
                  for item in scm.CONTENT_KEYS for district in scm.DISTRICT_KEYS}
         every = frozenset(data.CONTENT_LOCK_ITEMS)
         stamped = set(scm.unlocked_district_globals(every))
-        self.assertEqual(len(stamped), 13)
+        self.assertEqual(len(stamped), 18)
         for split in (data.CONTENT_SPLIT_OFF, data.CONTENT_SPLIT_PER_DISTRICT,
                       data.CONTENT_SPLIT_PER_CLASS):
             with self.subTest(split=split):
@@ -4917,7 +5090,7 @@ class TestReservedGlobals(WorldTestBase):
             for district in scm.DISTRICT_KEYS
             if district not in data.CONTENT_CLASS_DISTRICTS[content_item]
         }
-        self.assertEqual(len(absent_pairs), 13)
+        self.assertEqual(len(absent_pairs), 18)
         one_key = frozenset({sorted(data.CONTENT_LOCK_ITEMS)[0]})
         for selected in (frozenset(), frozenset(data.CONTENT_LOCK_ITEMS), one_key):
             with self.subTest(selected=sorted(selected)):
@@ -4970,21 +5143,18 @@ class TestReservedGlobals(WorldTestBase):
         self.assertEqual(district_data.PACKAGE_DISTRICTS[40], "Prawn Island")
         self.assertEqual(district_data.PACKAGE_DISTRICTS[41], "Prawn Island")
 
-    def test_the_junk_yard_holds_nothing_a_content_key_covers(self) -> None:
-        # It is a district because a pickup name says so, and pickups are no
-        # content class, so it holds nothing lockable. That is what keeps it out
-        # of the district unlock grid, and out of the item pool at every
-        # granularity: a district item covering nothing would be an item the
-        # player receives for no reason and a global no gate reads.
+    def test_the_junk_yard_holds_only_pickups(self) -> None:
         self.assertIn("Junk Yard", district_data.DISTRICTS)
         self.assertIn("Junk Yard", data.MAINLAND_DISTRICTS)
-        for table in data.CONTENT_DISTRICT_TABLES.values():
-            self.assertNotIn("Junk Yard", table)
-        self.assertNotIn("Junk Yard", data.CONTENT_DISTRICTS)
-        self.assertNotIn("Junk Yard", scm.DISTRICT_KEYS)
-        self.assertNotIn(data.district_content_item_name("Junk Yard"),
-                         data.all_district_content_items())
-        # Two ambient slots are what it does hold, and both are on the mainland
+        for item, table in data.CONTENT_DISTRICT_TABLES.items():
+            self.assertEqual("Junk Yard" in table, item == data.PICKUPS_ITEM)
+        self.assertEqual(scm.DISTRICT_KEYS[-1], "Junk Yard")
+        self.assertIn(data.district_content_item_name("Junk Yard"),
+                      data.all_district_content_items())
+        for split in (data.CONTENT_SPLIT_PER_DISTRICT, data.CONTENT_SPLIT_PER_CLASS):
+            self.assertFalse(any(name.startswith("Junk Yard ") for name in
+                                 data.content_items(frozenset({"hidden_packages"}), split)))
+        # Two world slots are what it does hold, and both are on the mainland
         # like the district itself.
         slots = [index for index, district
                  in enumerate(district_data.PICKUP_DISTRICTS)
@@ -5070,9 +5240,8 @@ class TestReservedGlobals(WorldTestBase):
         # it.
         #
         # The mirrored list is scm.DISTRICT_KEYS, the districts that hold
-        # something a content key covers. The Junk Yard is on the map and in
-        # district_data.DISTRICTS but holds only ambient pickups, so it has no
-        # column in the grid and is not here.
+        # something a content key covers. Junk Yard follows the released prefix
+        # so existing district globals keep their indices.
         districts = [
             "Ocean Beach", "Washington Beach",
             "Vice Point", "Starfish Island",
@@ -5081,7 +5250,7 @@ class TestReservedGlobals(WorldTestBase):
             "Little Havana", "Viceport",
             "Escobar International",
         ]
-        self.assertEqual(scm.DISTRICT_KEYS, districts)
+        self.assertEqual(scm.DISTRICT_KEYS, [*districts, "Junk Yard"])
         self.assertEqual(district_data.DISTRICTS,
                          [*districts[:8], "Junk Yard", *districts[8:]])
         jumps = [
@@ -5110,7 +5279,7 @@ class TestReservedGlobals(WorldTestBase):
         # The block those tables index into. build_scm.py mirrors the base and
         # derives the stride from the class count, so both are pinned.
         self.assertEqual(scm.DISTRICT_UNLOCK_BASE, 9967)
-        self.assertEqual(len(scm.DISTRICT_KEYS), len(districts))
+        self.assertEqual(len(scm.DISTRICT_KEYS), len(districts) + 1)
         self.assertEqual(scm.CONTENT_KEYS.index(data.STUNT_JUMPS_ITEM), 2)
         self.assertEqual(scm.CONTENT_KEYS.index(data.ROBBABLE_STORES_ITEM), 4)
 
@@ -5250,7 +5419,7 @@ class TestSlotData(WorldTestBase):
             self.assertEqual(markers[key][3], scm.district_unlock_global(content, data.location_district(name)), name)
             gated.add(key)
         self.assertEqual({key for key, position in markers.items() if len(position) == 4}, gated)
-        self.assertEqual(len(set(data.LOCATION_CONTENT_CLASS.values())), 5)
+        self.assertEqual(len(set(data.LOCATION_CONTENT_CLASS.values())), 6)
 
     def test_slot_data_is_json_shaped_and_complete(self) -> None:
         slot_data = self.world.fill_slot_data()

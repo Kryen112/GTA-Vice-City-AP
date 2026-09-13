@@ -84,7 +84,7 @@ struct PackageLocation {
   float z = 0.0f;
 };
 
-// One ambient pickup slot of the randomize_pickups layout: the slot's world
+// One world pickup slot of the randomize_pickups layout: the slot's world
 // position and pickup type identify it in the pool; model and quantity are
 // what the permutation assigns to stand there. An empty layout means the
 // option is off and the pool is never touched. The position is kept at the
@@ -152,7 +152,7 @@ class GameState {
   // or persistent reward). item_effects: AP item id -> a one-shot consumable
   // effect. config_globals: config-flag global index -> value to stamp.
   // completion_watch: completion global index -> AP location id to poll.
-  // pickup_targets: the ambient pickup layout to enforce, empty when vanilla.
+  // pickup_targets: the world pickup layout to enforce, empty when vanilla.
   // routes carries every crossing off the start island: the mainland ways, one
   // entry when Mainland Access opens them all and one per crossing when the seed
   // split them, and then Starfish Island, which is always its own row.

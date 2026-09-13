@@ -39,7 +39,7 @@ from . import data, district_data, items, locations, package_data
 
 # The reserved block starts here, clear of the vanilla maximum global ($8583).
 RESERVED_BASE = 9000
-# Every ambient pickup slot's handle lives in a vanilla global. The generated
+# Every world pickup slot's handle lives in a vanilla global. The generated
 # APPICK watcher polls all 110 of them, and one at or above the reserved base
 # would be a global the mod also writes, so the check would fire on whatever the
 # mod put there. Asserted here because this is where the base is defined.
@@ -89,7 +89,7 @@ _ORDERED_LOCATION_NAMES: list[str] = list(locations.LOCATION_NAME_TO_ID.keys())
 # locations that exist, so a slot nothing names is a zero nobody reads, and the
 # only price is script space: 276 spare globals are 1,104 bytes of a MAIN
 # section with 24,256 bytes to spare. Room for two more classes the size of the
-# ambient pickups.
+# world pickups.
 #
 # It can only be widened BEFORE the numbering is released. Afterwards this is
 # the number that lets a location be added at all.
@@ -215,7 +215,7 @@ CONTENT_UNLOCK_BASE = CONTENT_LOCK_FLAG_BASE + CONTENT_CAPACITY
 #
 # The districts here are the ones holding something a content key covers, not
 # every district on the map. The Junk Yard is the difference: it holds two
-# ambient pickups and nothing of the five classes, so no gate could ever read
+# world pickups and nothing of the five classes, so no gate could ever read
 # its column and reserving one would push the block into the marker scratch for
 # a district with nothing to hold. Every district that HAS content of a class
 # still gets its cell, empty pairs included, so the formula stands.
@@ -250,12 +250,34 @@ DISTRICT_UNLOCK_COUNT = CONTENT_CAPACITY * DISTRICT_CAPACITY
 SPARE_FLAG_BASE = DISTRICT_UNLOCK_BASE + DISTRICT_UNLOCK_COUNT
 SPARE_FLAG_CAPACITY = 16
 
+# Store the option flag and each activity's resume level.
+# Disabled or unset progress uses vanilla starting levels. Taxi already persists.
+# Paramedic caps at level 12 and Pizza at 10; the others remain uncapped.
+REMEMBER_EMERGENCY_GLOBAL = SPARE_FLAG_BASE
+# Keep this order stable: it determines the globals stored in saves.
+EMERGENCY_PROGRESS_ACTIVITIES: list[str] = [
+    "Paramedic", "Firefighter", "Vigilante", "Pizza",
+]
+EMERGENCY_PROGRESS_BASE = REMEMBER_EMERGENCY_GLOBAL + 1
+
+# Also restore Vigilante's time-budget and wanted multipliers ($6980/$6981)
+# to preserve difficulty across restarts.
+VIGILANTE_TIME_RAMP_GLOBAL = (EMERGENCY_PROGRESS_BASE
+                              + len(EMERGENCY_PROGRESS_ACTIVITIES))
+VIGILANTE_WANTED_RAMP_GLOBAL = VIGILANTE_TIME_RAMP_GLOBAL + 1
+
+SPARE_FLAGS_USED = 1 + len(EMERGENCY_PROGRESS_ACTIVITIES) + 2
+
+assert SPARE_FLAGS_USED <= SPARE_FLAG_CAPACITY, (
+    f"{SPARE_FLAGS_USED} spare flags handed out of {SPARE_FLAG_CAPACITY}; "
+    "widening the block moves the two finale globals and the top of it")
+
 FINALE_WARP_GLOBAL = SPARE_FLAG_BASE + SPARE_FLAG_CAPACITY
 
 # The finale raises this while it runs and drops it at its single exit, so the
-# ASI can keep the ambient pickup layout off the pool for the length of the
+# ASI can keep the world pickup layout off the pool for the length of the
 # mansion siege: that fight places its own pickups to be survived with, and one
-# ambient slot stands in the same grounds.
+# world slot stands in the same grounds.
 #
 # On top of the block and derived like every other base. The unused space lower
 # down looks free and is not: build_scm.py takes every one of those for scratch,
@@ -294,6 +316,10 @@ def content_lock_flag_global(item_name: str) -> int:
 
 def content_unlock_global(item_name: str) -> int:
     return CONTENT_UNLOCK_BASE + CONTENT_KEYS.index(item_name)
+
+
+def emergency_progress_global(activity: str) -> int:
+    return EMERGENCY_PROGRESS_BASE + EMERGENCY_PROGRESS_ACTIVITIES.index(activity)
 
 
 def district_unlock_global(content_item: str, district: str) -> int:
@@ -384,7 +410,7 @@ def unlocked_district_globals(selected_keys: frozenset[str]) -> dict[int, int]:
 def content_districts() -> list[dict]:
     """Where every holdable pickup is and which district it belongs to.
 
-    The three classes the ASI holds are found in the pickup pool by type or
+    The classes the ASI holds are found in the pickup pool by position, type or
     model, which says what a pickup is but not where, and the district table is
     keyed by index rather than by position. This joins the two, so the ASI can
     put a pool entry in a district without carrying the audit itself. Coordinates
@@ -400,6 +426,8 @@ def content_districts() -> list[dict]:
           for purchase in data.PROPERTY_PURCHASES],
          [district_data.PROPERTY_COORDS[purchase.removesuffix(" Purchase")]
           for purchase in data.PROPERTY_PURCHASES]),
+        (data.PICKUPS_ITEM, district_data.PICKUP_DISTRICTS,
+         [slot[:3] for slot in data.PICKUP_SLOTS]),
     ]
     entries: list[dict] = []
     for content_item, districts, coordinates in positions:
@@ -453,6 +481,10 @@ def reserved_global_map() -> dict[str, int]:
         "base:CONTENT_LOCK_FLAG_BASE": CONTENT_LOCK_FLAG_BASE,
         "base:CONTENT_UNLOCK_BASE": CONTENT_UNLOCK_BASE,
         "base:DISTRICT_UNLOCK_BASE": DISTRICT_UNLOCK_BASE,
+        "base:REMEMBER_EMERGENCY_GLOBAL": REMEMBER_EMERGENCY_GLOBAL,
+        "base:EMERGENCY_PROGRESS_BASE": EMERGENCY_PROGRESS_BASE,
+        "base:VIGILANTE_TIME_RAMP_GLOBAL": VIGILANTE_TIME_RAMP_GLOBAL,
+        "base:VIGILANTE_WANTED_RAMP_GLOBAL": VIGILANTE_WANTED_RAMP_GLOBAL,
         "base:FINALE_WARP_GLOBAL": FINALE_WARP_GLOBAL,
         "base:FINALE_ACTIVE_GLOBAL": FINALE_ACTIVE_GLOBAL,
     }
@@ -472,6 +504,8 @@ def reserved_global_map() -> dict[str, int]:
     for item_name in ABILITY_KEYS:
         reserved[f"ability lock:{item_name}"] = ability_lock_flag_global(item_name)
         reserved[f"ability unlock:{item_name}"] = ability_unlock_global(item_name)
+    for activity in EMERGENCY_PROGRESS_ACTIVITIES:
+        reserved[f"emergency progress:{activity}"] = emergency_progress_global(activity)
     for item_name in CONTENT_KEYS:
         reserved[f"content lock:{item_name}"] = content_lock_flag_global(item_name)
         reserved[f"content unlock:{item_name}"] = content_unlock_global(item_name)
@@ -581,7 +615,7 @@ def pickups_randomized_globals() -> dict[int, int]:
     already-shown flag, so stamping that flag retires the text for the seed.
 
     Only this one text is model-specific: the other first-collection texts key
-    on the four INFO tutorial icons, which are not ambient pickups and which the
+    on the four INFO tutorial icons, which are not world pickups and which the
     shuffle never touches.
 
     The stamp reaches one step further, which is accepted rather than unnoticed.
@@ -633,6 +667,11 @@ def shops_enabled_flag(shops: bool) -> dict[int, int]:
     vanilla, and there is no reward being replaced to reason about.
     """
     return {SHOPS_ENABLED_GLOBAL: int(bool(shops))}
+
+
+def remember_emergency_flag(remember: bool) -> dict[int, int]:
+    """Map the progress toggle to its SCM global, independent of check settings."""
+    return {REMEMBER_EMERGENCY_GLOBAL: int(bool(remember))}
 
 
 def class_cash_flags(side_events: bool, stunt_jumps: bool,

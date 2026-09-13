@@ -2521,22 +2521,90 @@ def _level_marks(level_var, base, maxlevel, done_label):
     return [*block, f":{done_label}"]
 
 
+# Emergency progress globals; keep aligned with scm.py (checked by the mirror test).
+# Store the option flag, four resume counters and two Vigilante multipliers.
+REMEMBER_EMERGENCY = 10159
+EMERGENCY_PROGRESS_BASE = 10160
+PARAMEDIC_PROGRESS = EMERGENCY_PROGRESS_BASE
+FIREFIGHTER_PROGRESS = EMERGENCY_PROGRESS_BASE + 1
+VIGILANTE_PROGRESS = EMERGENCY_PROGRESS_BASE + 2
+PIZZA_PROGRESS = EMERGENCY_PROGRESS_BASE + 3
+VIGILANTE_TIME_RAMP = 10164
+VIGILANTE_WANTED_RAMP = 10165
+
+
+def _resume_level(stored, level_var, mirrors, floats, label):
+    # Restore a saved counter when enabled; otherwise keep vanilla defaults.
+    # Copy directly: extra increments would also duplicate script anchors.
+    return [
+        "if and",
+        f"  ${REMEMBER_EMERGENCY} == 1",
+        f"  ${stored} > 0",
+        f"goto_if_false @{label}",
+        f"set_var_int_to_var_int {level_var} = ${stored}",
+        *[f"set_var_int_to_var_int {mirror} = {level_var}" for mirror in mirrors],
+        # Restore multipliers under the same saved-progress guard.
+        *[f"set_var_float_to_var_float {target} = ${source}"
+          for target, source in floats],
+        f":{label}",
+    ]
+
+
 def add_emergency_instrumentation():
-    # Paramedic/Firefighter/Vigilante/Pizza level globals live in a shared
-    # mission-scratch pool, valid only while that mission runs, so mark each
-    # level at its in-mission completion point rather than from a watcher. At
-    # register_*_level the level global holds the just-completed level (1..N).
+    # Record completed levels inside each mission; scratch globals are reused.
     for anchor, level_var, base, maxlevel, done in [
         ("register_ambulance_level $6756", "$6756", 9273, 12, "APAMB_DONE"),
         ("register_fire_level $6848", "$6848", 9297, 12, "APFIR_DONE"),
         ("register_vigilante_level $6938", "$6938", 9285, 12, "APVIG_DONE"),
     ]:
         insert_after(anchor, _level_marks(level_var, base, maxlevel, done), f"emergency {level_var}")
-    # Pizza levels 1..9 complete just before $7994 advances (pre-increment value
-    # is the completed level); level 10 completes at the win flag $389 = 1.
+    # Pizza completes levels 1-9 before incrementing; level 10 sets the win flag.
     insert_before("$7994 += 1", _level_marks("$7994", 9319, 9, "APPIZ_DONE"),
                   "emergency pizza levels 1-9")
     insert_after("$389 = 1", ["$9328 = 1"], "emergency pizza level 10")
+
+
+def add_emergency_progress():
+    # Restore progress after mission initialization. Taxi already persists.
+    for anchor, stored, level_var, mirrors, floats, label in [
+        # Restore the patient requirement alongside the Paramedic level.
+        ("$6756 = 1", PARAMEDIC_PROGRESS, "$6756", ["$6744"], [],
+         "APRESUME_PARAMEDIC"),
+        ("$6848 = 1", FIREFIGHTER_PROGRESS, "$6848", [], [],
+         "APRESUME_FIREFIGHTER"),
+        # Restore after the final initializer so vanilla cannot overwrite the multipliers.
+        ("$6981 = 1.0", VIGILANTE_PROGRESS, "$6892", [],
+         [("$6980", VIGILANTE_TIME_RAMP), ("$6981", VIGILANTE_WANTED_RAMP)],
+         "APRESUME_VIGILANTE"),
+        ("$7994 = 1", PIZZA_PROGRESS, "$7994", [], [], "APRESUME_PIZZA"),
+    ]:
+        insert_after(anchor,
+                     _resume_level(stored, level_var, mirrors, floats, label),
+                     f"emergency resume {level_var}")
+    # Always store the next resume counter; reads are gated by the option.
+    # Vigilante counts completed levels; the others count the current level.
+    for anchor, stored in [
+        ("$6756 += 1", PARAMEDIC_PROGRESS),
+        ("$6848 += 1", FIREFIGHTER_PROGRESS),
+        ("$6892 += 1", VIGILANTE_PROGRESS),
+        ("$7994 += 1", PIZZA_PROGRESS),
+    ]:
+        source = anchor.split(" ")[0]
+        insert_after(anchor, [f"set_var_int_to_var_int ${stored} = {source}"],
+                     f"emergency progress stores {source}")
+    # Save time scaling before the next level starts, and wanted scaling after it drops.
+    # A death between these writes can leave wanted scaling one 0.05 step behind
+    # until the next completed level.
+    insert_after("$6892 += 1",
+                 [f"set_var_float_to_var_float ${VIGILANTE_TIME_RAMP} = $6980"],
+                 "emergency progress stores vigilante time ramp")
+    insert_after("set_wanted_multiplier $6981",
+                 [f"set_var_float_to_var_float ${VIGILANTE_WANTED_RAMP} = $6981"],
+                 "emergency progress stores vigilante wanted ramp")
+    # Cap Paramedic at 12; resuming at 13 would hang. Pizza naturally stops at 10.
+    # Firefighter and Vigilante remain uncapped.
+    insert_after("print_with_number_big 'A_COMP1' number 15000 time 5000 style 5",
+                 [f"${PARAMEDIC_PROGRESS} = 12"], "emergency progress caps paramedic")
 
 
 # Persistent-reward re-gating (Phase 3). When a reward group is shuffled (the
@@ -2617,7 +2685,7 @@ DISTRICTS = [
     "Prawn Island", "Leaf Links",
     "Downtown", "Little Haiti",
     "Little Havana", "Viceport",
-    "Escobar International",
+    "Escobar International", "Junk Yard",
 ]
 
 # scm.CONTENT_KEYS order, which fixes the class-major stride into the block.
@@ -2625,7 +2693,7 @@ DISTRICTS = [
 # class.
 CONTENT_KEYS_ORDER = [
     "hidden packages", "rampages", "stunt jumps", "property purchases",
-    "robbable stores",
+    "robbable stores", "pickups",
 ]
 STUNT_JUMPS_CLASS = 2
 ROBBABLE_STORES_CLASS = 4
@@ -2844,7 +2912,7 @@ def add_reward_applier():
 # the ten below that are the seed hash and the bookkeeping scratch).
 #
 # That last line does double duty for the active flag, which is the top: it is
-# also the flag's initialization, so a new game starts with the ambient pickup
+# also the flag's initialization, so a new game starts with the world pickup
 # layout live. It sits above the boot thread's own loop label, so it runs once
 # when the thread starts and cannot clear a flag a running finale has raised.
 # add_markers.py anchors on that line.
@@ -2891,6 +2959,7 @@ suppress_stunt_jump_rewards()
 suppress_rampage_rewards()
 add_stat_watcher()
 add_emergency_instrumentation()
+add_emergency_progress()
 suppress_package_grants()
 suppress_emergency_grants()
 add_reward_applier()

@@ -126,7 +126,7 @@ STRANDS = {
 # against it. One handle, one started-flag, one shown-flag per managed mission.
 SIZING_GLOBAL = 10176
 
-# The ambient pickup checks. Their completion globals are contiguous from
+# The world pickup checks. Their completion globals are contiguous from
 # here, one per slot in pickup_data order, because the pickup class is the
 # last one in the world's registry and completion globals follow location id
 # order. The handles come from pickup_data itself rather than from a copy.
@@ -536,7 +536,7 @@ for idx, (flag, comp) in enumerate(activity_flags):
 cleo += ["goto @AW_LOOP", ""]
 
 # --- Build the APPICK watcher -------------------------------------------------
-# One pass per frame over every ambient slot and over Phil's four shop stands,
+# One pass per frame over every world slot and over Phil's four shop stands,
 # asking the game whether each has been collected and latching its completion
 # global when it has. The ASI already polls every completion global, so this is
 # the script-side pickup detection. The ASI also observes the collection ring

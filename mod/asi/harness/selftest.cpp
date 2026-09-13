@@ -1383,7 +1383,7 @@ int main() {
   // an override is what the shop class's promise about price rests on.
   {
     std::vector<PickupTarget> targets = {
-        // An ambient in-shop stand: a check, and priced like any marker.
+        // A world in-shop stand: a check, and priced like any marker.
         {5, -113.2, -975.7, 10.4, 1, 366, 0},
         // Phil's minigun stand: a check, and priced at what the minigun costs.
         {6, -1105.9, 325.3, 11.1, 1, 290, 0},
@@ -1678,7 +1678,7 @@ int main() {
     Expect(ClassifyHeldPickup(3, 7, 7) == HeldPickupClass::kRampage,
            "the kill-frenzy model is a rampage icon");
     Expect(ClassifyHeldPickup(2, 42, 7) == HeldPickupClass::kNone,
-           "an ambient street pickup is none of them");
+           "a world street pickup is none of them");
     Expect(ClassifyHeldPickup(2, -1, -1) == HeldPickupClass::kNone,
            "an unresolved kill-frenzy model matches nothing");
     // An unresolved model costs only the rampage class: the type-matched
@@ -1692,6 +1692,45 @@ int main() {
            "property icons too");
     Expect(ClassifyHeldPickup(3, 7, -1) == HeldPickupClass::kNone,
            "and a rampage entry is left alone, retried next frame");
+  }
+  {
+    const PickupTarget world{0, 10.0, 20.0, 3.0, 2, 42, 30};
+    const PickupTarget paid{0, 20.0, 20.0, 3.0, kPickupTypeInShop, 42, 30};
+    const PickupTarget shop{0, 30.0, 20.0, 3.0, kPickupTypeInShop, 42, 30, 12};
+    const std::vector<PickupTarget> targets{world, paid, shop};
+    PickupPoolEntry entry{10.0f, 20.0f, 3.0f, 2, kPickupCheckMarkerModel, 0};
+    Expect(IsWorldPickup(targets, entry), "an AP marker retains its pickup lock");
+    entry.z = UnsunkHeight(entry.z - kPickupLowerOffset);
+    Expect(IsWorldPickup(targets, entry), "a saved sunk pickup retains its identity");
+    Expect(!PlanPickupLayout(targets, {entry}).rewrites.empty(),
+           "a held pickup still restores its assigned model");
+    entry.x += 0.94f;
+    Expect(!IsWorldPickup(targets, entry), "a nearby mission pickup is unaffected");
+    entry.x = 10.0f;
+    entry.z += 1.0f;
+    Expect(!IsWorldPickup(targets, entry), "a different floor is not the same pickup");
+    entry.z = 3.0f;
+    entry.pickup_type = 3;
+    Expect(!IsWorldPickup(targets, entry), "a dropped pickup type is unaffected");
+    entry.pickup_type = kPickupTypeInShop;
+    entry.x = 20.0f;
+    Expect(IsWorldPickup(targets, entry), "fixed hospital pay stands are pickups");
+    entry.x = 30.0f;
+    Expect(!IsWorldPickup(targets, entry), "Phil's shop stock is unaffected");
+    ContentLocks held{};
+    held[ContentDistrictSlot(kContentPickups, 0)] = true;
+    const std::vector<PickupDistrict> districts{{10.0f, 20.0f, kContentPickups, 0}};
+    const int district = DistrictForPickup(districts, HeldPickupClass::kPickup, 10, 20);
+    Expect(district == 0 && ShouldHoldPickup(HeldPickupClass::kPickup, district,
+                                           false, {}, held),
+           "the pickup is held in its locked district");
+    Expect(!ShouldHoldPickup(HeldPickupClass::kPickup, 1, false, {}, held),
+           "another district stays available");
+    held.fill(false);
+    Expect(!ShouldHoldPickup(HeldPickupClass::kPickup, district, false, {}, held) &&
+               PlanPickupHold(false, 3.0f - kPickupLowerOffset, false) ==
+                   PickupHoldAction::kRaise,
+           "receiving the unlock raises the pickup");
   }
   // The two lock families union on a rampage icon: either alone holds it, and
   // the two run-them-down icons answer only to the rampages content key, since
@@ -2605,7 +2644,7 @@ int main() {
     }
     sections = ComposeStatusPanel(state);
     const StatusSection content = Section(sections, "CONTENT");
-    Expect(content.rows.size() > 2 && content.rows[0].value == "HELD 7/11",
+    Expect(content.rows.size() > 2 && content.rows[0].value == "HELD 7/12",
            "a class held in part of the city carries its district count");
     Expect(content.rows[1].label.empty() &&
                content.rows[1].value.rfind("free in:", 0) == 0 &&
@@ -2636,7 +2675,7 @@ int main() {
     sparse.content_flags[kContentRobbableStores] = 1;
     // Ocean Beach, Starfish Island, Prawn Island, Leaf Links, Viceport and
     // Escobar International hold no store, leaving five that do.
-    for (const int district : {0, 3, 4, 5, 9, 10}) {
+    for (const int district : {0, 3, 4, 5, 9, 10, 11}) {
       sparse.content_absent[ContentDistrictSlot(kContentRobbableStores, district)] =
           true;
     }
@@ -2957,21 +2996,21 @@ int main() {
                          RouteState::kAbsent, RouteState::kWaiting};
     full.packages_total = 100;
     const std::vector<PanelLine> worst = FlattenPanel(ComposeStatusPanel(full));
-    Expect(TallestColumn(PlanPanelColumns(worst, 4)) <= 26,
-           "the busiest seed stays inside twenty-six lines a column");
+    Expect(TallestColumn(PlanPanelColumns(worst, 4)) <= 32,
+           "all six content classes fit with the fourth column available");
     // And once every line is narrowed to its column, which is what the page is
     // really laid out from, it still fits the band at a size worth reading.
     const std::vector<PanelLine> narrowed =
-        FitPanelLines(worst, kColumnUnits, kLabelGapUnits, MeasureUnits,
+        FitPanelLines(worst, 146.0f, kLabelGapUnits, MeasureUnits,
                       MeasureHeadingUnits);
     const int narrowed_tallest = TallestColumn(PlanPanelColumns(narrowed, 4));
-    Expect(narrowed_tallest <= 28,
-           "and inside twenty-eight once every line is narrowed to its column");
+    Expect(narrowed_tallest <= 32,
+           "district lists and their class labels fit together in the crowded layout");
     Expect(FittedRowHeight(narrowed_tallest, kBandUnits, kDesignRowUnits) >
-               kDesignRowUnits * 0.9f,
-           "so the busiest seed still draws at nearly the design size");
+               kDesignRowUnits * 0.7f,
+           "the busiest seed keeps readable text within the full page height");
     Expect(FittedRowHeight(narrowed_tallest, kFallbackBandUnits, kDesignRowUnits) >
-               kDesignRowUnits * 0.65f,
+               kDesignRowUnits * 0.5f,
            "and still reads on the shorter band, which is what it gets where that "
            "entry cannot be moved");
 

@@ -44,6 +44,8 @@ int main(int argc, char** argv) {
     const auto read = [&](int index) { return memory[index]; };
     assert(!knife.Available(read)); // The Job has not spawned the Malibu knife.
     memory[9376] = 1;
+    assert(!knife.Available(read)); // The pickup district still holds the knife.
+    memory[knife.content_unlock_global] = kDistrictReleased;
     assert(knife.Available(read));
     memory[9376] = 0; // Loading an older save must hide it again.
     assert(!knife.Available(read));
@@ -58,6 +60,38 @@ int main(int argc, char** argv) {
     }
   }
   CheckMarker route_marker;
+  // All 35 rampage skulls restore from AP checks after New Game or an older save is loaded.
+  int rampage_count = 0;
+  const auto rampage_markers = marker_game.Markers();
+  for (const auto& [global, marker] : rampage_markers) {
+    if (marker.category != 3) continue;
+    ++rampage_count;
+    assert(CheckedRampageAt(rampage_markers, {global}, marker.x, marker.y) == global);
+    assert(CheckedRampageAt(rampage_markers, {}, marker.x, marker.y) == 0);
+    assert(CheckedRampageAt({}, {global}, marker.x, marker.y) == 0); // Class disabled.
+    assert(CheckedRampageAt(rampage_markers, {global}, marker.x + 2.0f, marker.y) == 0);
+    auto different_category = marker;
+    different_category.category = 4;
+    assert(CheckedRampageAt({{global, different_category}}, {global}, marker.x, marker.y) == 0);
+  }
+  assert(rampage_count == 35);
+  std::map<int, int> rampage_globals;
+  const auto read_rampage = [&](int global) { return rampage_globals[global]; };
+  const auto write_rampage = [&](int global, int value) { rampage_globals[global] = value; };
+  std::set<int> checked_rampages;
+  for (int index = 0; index < kRampageCount; ++index) checked_rampages.insert(kRampageCheckBase + index);
+  assert(!RestoreRampageProgress({}, checked_rampages, read_rampage, write_rampage));
+  assert(read_rampage(kRampagesCompletedGlobal) == 0); // Disabled class stays vanilla.
+  rampage_globals[kRampagePassedBase + 1] = 1; // A rampage already in the loaded save.
+  rampage_globals[kRampagesCompletedGlobal] = 1;
+  assert(RestoreRampageProgress(rampage_markers, {kRampageCheckBase}, read_rampage, write_rampage));
+  assert(read_rampage(kRampagesCompletedGlobal) == 2 && read_rampage(kRampageCheckBase) == 1);
+  assert(!RestoreRampageProgress(rampage_markers, {kRampageCheckBase}, read_rampage, write_rampage));
+  assert(read_rampage(kRampagesCompletedGlobal) == 2); // Repeated frames do not count twice.
+  rampage_globals.clear(); // New Game resets GTA globals, but AP checks survive.
+  assert(RestoreRampageProgress(rampage_markers, checked_rampages, read_rampage, write_rampage));
+  assert(read_rampage(kRampagesCompletedGlobal) == 35);
+  assert(!RestoreRampageProgress(rampage_markers, checked_rampages, read_rampage, write_rampage));
   route_marker.requirements = {{1, {{{10, 1, 20}, {11, 1, 0}}, {{12, 2, 0}}}}};
   std::map<int, int> route_memory{{20, 1}};
   const auto read_route = [&](int index) { return route_memory[index]; };
@@ -186,22 +220,26 @@ int main(int argc, char** argv) {
     assert(sent.back().at("cmd") == "Connect");
     assert(sent.back().at("name") == "rando.vc");
     assert(sent.back().at("items_handling") == 7);
+
     session.Handle(config);
     session.Handle({{"cmd", "ReceivedItems"}, {"index", 0}, {"items", json::array({item})}});
   };
   NativeSession session(&game, logger, sender, "rando.vc", "", directory);
+  assert(!game.ClientConnected());
   login(session, connected);
+  assert(game.ClientConnected());
   assert(game.AppliedItems().size() == 1);
   assert(game.Markers().size() == 2);
   assert(game.Markers().at(9102).category == 1);
   assert(game.Markers().at(9102).content_unlock_global == DistrictUnlockGlobal(kContentHiddenPackages, 0));
   assert(game.Markers().at(9103).content_unlock_global == DistrictUnlockGlobal(kContentHiddenPackages, 1));
-  // All five lockable marker classes use their class/district cell; ambient
-  // pickups, side events and shops remain independent of content locks.
+  // Lockable marker classes use their class/district cell.
+  // Side events and shops remain independent of content locks.
   const auto marker_data = json::parse(kNativeData).at("markers");
   std::set<int> gated_classes;
   const std::map<int, int> marker_content = {{1, kContentHiddenPackages}, {2, kContentRobbableStores},
-      {3, kContentRampages}, {5, kContentStuntJumps}, {6, kContentPropertyPurchases}};
+      {3, kContentRampages}, {5, kContentStuntJumps}, {6, kContentPropertyPurchases},
+      {4, kContentPickups}};
   for (const auto& marker : marker_data) {
     const int category = marker.at(2).get<int>();
     const auto content = marker_content.find(category);
@@ -226,6 +264,7 @@ int main(int argc, char** argv) {
   game.QueueCheck(101);
   game.QueuePercentage(42);
   session.Tick(false);
+  assert(!game.ClientConnected());
   const auto state = directory / ("GtaVcAp." + NativeSeedHash("test-seed", "rando.vc") + ".json");
   auto saved = json::parse(std::ifstream(state));
   assert(saved.at("checks") == json::array({101}));

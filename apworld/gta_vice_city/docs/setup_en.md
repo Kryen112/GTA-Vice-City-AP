@@ -171,15 +171,15 @@ For initial defaults, you can instead use the INI beside the ASI:
    automatically. Start a **New Game** for a new seed, or load your existing
    save for this seed. The Python client does not need to run while playing.
 
-Enabled, unfinished checks have colored dots on the minimap and pause-menu map: 
-packages green, robberies light red, rampages dark red, pickups orange, 
-stunt jumps blue, properties yellow, side events cyan, and shop stock purple. 
-Each dot has a 5x5 pixel center and a one-pixel black outline. 
+Enabled, unfinished checks have colored dots on the minimap and pause-menu map:
+packages green, robberies light red, rampages dark red, pickups orange,
+stunt jumps blue, properties yellow, side events cyan, and shop stock purple.
+Each dot has a 5x5 pixel center and a one-pixel black outline.
 Missions retain their existing markers. Current seeds work without regeneration.
 
-Items, goals, and DeathLink use the room's slot data. Pending checks are saved
-beside the ASI in `GtaVcAp.<seed-hash>.json` until the server acknowledges them.
-Keep these files when moving the mod to another folder.
+Items, goals, and DeathLink use the room's slot data. Pending checks remain in
+`%LOCALAPPDATA%/GtaVcAp/GtaVcAp.<seed-hash>.json` until the server acknowledges
+them, so moving the mod to another folder preserves them.
 
 If your goal is the hidden-package hunt, the last Package Fragment you receive
 ends the game for you: whatever you are doing at the time, Tommy goes straight

@@ -42,7 +42,7 @@ TABLE_ROW_CLASSES: dict[str, str] = {
     "Properties and venue missions": "properties",
     "Robbable stores": "robbable_stores",
     "Side events": "side_events",
-    "Ambient pickups": "pickups",
+    "World pickups": "pickups",
     "Shop items": "shops",
 }
 

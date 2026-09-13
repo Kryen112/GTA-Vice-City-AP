@@ -113,7 +113,7 @@ class ScmGameState : public GameState {
   // Returns how many packages it reported this frame, which is what the
   // executable just paid for.
   int DetectCollectedPackages();
-  void RestoreCheckedPackages();
+  void RestoreCheckedPickups();
   std::pair<int, int> PackageProgress() const;
   // Takes back the package cash the executable pays (a hundred per package, a
   // hundred thousand as the count reaches the total) while the hidden-packages
@@ -230,7 +230,7 @@ class ScmGameState : public GameState {
   // press the player just made rather than reporting a multiworld event, and it is
   // the only thing that explains why the button did nothing.
   void ToastAbilityBlocked(int ability);
-  // Keeps the ambient pickup pool on the configured layout: matches each
+  // Keeps the world pickup pool on the configured layout: matches each
   // layout slot to a pool entry by position and type and rewrites the model
   // and quantity where they differ, dropping the stale visible objects so the
   // game recreates them from the new model. Runs every frame, so a script
