@@ -127,6 +127,7 @@ bool NativeSession::Activate() {
   }
   if (!ApplyClientMessage(game_, configuration, logger_))
     throw std::runtime_error("Invalid Archipelago slot configuration");
+  game_->SetTrapConsumer([history = traps_](std::int64_t index) { return history->Consume(index); });
   game_->StampSeedHash(seed_hash_);
   PublishItems();
   game_->MarkChecked({checked_.begin(), checked_.end()});
@@ -175,13 +176,22 @@ void NativeSession::Handle(const json& packet) {
     slot_info_ = packet.at("slot_info");
     players_ = packet.at("players");
     seed_hash_ = new_hash;
+    trap_key_ = "gta_vice_city_consumed_traps_" + std::to_string(team_) + "_" +
+                std::to_string(slot_) + "_" + seed_hash_;
+    // Stop the game callback before replacing its cache so an offline trap
+    // cannot be written by the old history after the new history reads it.
+    game_->SetTrapConsumer({});
+    traps_ = std::make_shared<TrapHistory>(state_directory_ /
+        ("GtaVcAp." + seed_hash_ + "." + std::to_string(team_) + ".traps.json"));
+    last_trap_send_ = {};
     online_ = true;
     active_ = items_ready_ = finished_ = false;
     checked_ = packet.at("checked_locations").get<std::set<std::int64_t>>();
     name_groups_.clear();
+    Send({{"cmd", "SetNotify"}, {"keys", {trap_key_}}});
     Send({{"cmd", "Get"}, {"keys", {
         std::string("_read_item_name_groups_") + kGame,
-        std::string("_read_location_name_groups_") + kGame}}});
+        std::string("_read_location_name_groups_") + kGame, trap_key_}}});
     all_locations_ = packet.at("missing_locations").get<std::set<std::int64_t>>();
     all_locations_.insert(checked_.begin(), checked_.end());
     pending_.clear();
@@ -229,6 +239,7 @@ void NativeSession::Handle(const json& packet) {
     if (packet.contains("players")) players_ = packet["players"];
     if (active_) { PersistChecks(); PublishStatus(); }
   } else if (command == "Retrieved" && online_) {
+    if (traps_ && packet.at("keys").contains(trap_key_)) traps_->Merge(packet.at("keys").at(trap_key_));
     for (const char* kind : {"item", "location"}) {
       const std::string key = std::string("_read_") + kind + "_name_groups_" + kGame;
       const auto& keys = packet.at("keys");
@@ -242,6 +253,8 @@ void NativeSession::Handle(const json& packet) {
       }
       name_groups_[kind] = groups;
     }
+  } else if (command == "SetReply" && online_ && packet.value("key", std::string()) == trap_key_) {
+    traps_->Merge(packet.at("value"));
   } else if (command == "DataPackage") {
     const json& games = packet.at("data").at("games");
     for (auto game = games.begin(); game != games.end(); ++game) {
@@ -475,6 +488,13 @@ void NativeSession::Tick(bool socket_connected) {
     PublishPercentage();
   }
   const auto now = std::chrono::steady_clock::now();
+  if (online_ && traps_ && now - last_trap_send_ >= std::chrono::seconds(1)) {
+    const auto pending = traps_->Pending();
+    if (!pending.empty()) Send({{"cmd", "Set"}, {"key", trap_key_},
+        {"default", json::object()}, {"want_reply", true},
+        {"operations", json::array({{{"operation", "update"}, {"value", pending}}})}});
+    last_trap_send_ = now;
+  }
   // New checks leave on this tick; only unacknowledged retries wait a second.
   if (online_ && (new_checks || now - last_send_ >= std::chrono::seconds(1))) {
     if (!pending_.empty()) { PersistChecks(); Send({{"cmd", "LocationChecks"}, {"locations", pending_}}); }

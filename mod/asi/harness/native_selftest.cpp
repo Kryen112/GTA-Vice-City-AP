@@ -9,6 +9,7 @@
 #include "../src/scm_pickup_layout.hpp"
 #include "../src/native_data.hpp"
 #include "../src/console_font.hpp"
+#include "../src/scm_effects.hpp"
 
 using namespace gtavc;
 
@@ -503,7 +504,7 @@ int main(int argc, char** argv) {
       [&](const ConsoleMessage& row, bool notify) { output.push_back(row); notifications.push_back(notify); });
   login(commands, connected);
   assert(std::any_of(sent.begin(), sent.end(), [](const json& packet) {
-    return packet.at("cmd") == "Get" && packet.at("keys").size() == 2;
+    return packet.at("cmd") == "Get" && packet.at("keys").size() == 3;
   }));
   const std::string item_groups_key = "_read_item_name_groups_Grand Theft Auto Vice City";
   const std::string location_groups_key = "_read_location_name_groups_Grand Theft Auto Vice City";
@@ -578,5 +579,71 @@ int main(int argc, char** argv) {
   try { commands.Handle(groups_packet); }
   catch (const std::runtime_error&) { invalid_groups = true; }
   assert(invalid_groups);
+  // Consumed receipts survive New Game, disconnects, and process restarts.
+  const auto trap_directory = directory / "traps";
+  std::filesystem::create_directories(trap_directory);
+  TestGame trap_game;
+  NativeSession trap_session(&trap_game, logger, sender, "rando.vc", "", trap_directory);
+  const std::string trap_key = "gta_vice_city_consumed_traps_0_1_bd99f23ba1178029";
+  const auto retrieved_traps = [&](const json& value) {
+    return json{{"cmd", "Retrieved"}, {"keys", {{trap_key, value}}}};
+  };
+  login(trap_session, connected);
+  assert(trap_game.ConsumeTrap(7) == TrapAction::kWait);
+  trap_session.Handle(retrieved_traps(nullptr));
+  assert(trap_game.ConsumeTrap(7) == TrapAction::kApply);
+  assert(trap_game.ConsumeTrap(7) == TrapAction::kSkip);
+  transport = false;
+  trap_session.Tick(false); // Local consumption survives an unconfirmed server write.
+  assert(trap_game.ConsumeTrap(6) == TrapAction::kApply); // Already queued during the outage.
+  transport = true;
+  login(trap_session, connected);
+  assert(trap_game.ConsumeTrap(7) == TrapAction::kWait);
+  trap_session.Handle(retrieved_traps(nullptr));
+  assert(trap_game.ConsumeTrap(7) == TrapAction::kSkip);
+  sent.clear();
+  trap_session.Tick(true);
+  assert(std::any_of(sent.begin(), sent.end(), [&](const json& packet) {
+    return packet.at("cmd") == "Set" && packet.at("key") == trap_key &&
+        packet.at("want_reply") == true && packet.at("operations") ==
+        json::array({{{"operation", "update"}, {"value", {{"6", true}, {"7", true}}}}});
+  }));
+  trap_session.Handle({{"cmd", "SetReply"}, {"key", trap_key}, {"value", {{"6", true}, {"7", true}, {"9", true}}}});
+  assert(trap_game.ConsumeTrap(9) == TrapAction::kSkip); // Another client's consumed receipt.
+  assert(trap_game.ConsumeTrap(10) == TrapAction::kApply); // Another copy still triggers.
+  TrapHistory restarted(trap_directory / "GtaVcAp.bd99f23ba1178029.0.traps.json");
+  restarted.Merge({{"6", true}, {"7", true}, {"9", true}});
+  assert(restarted.Pending() == json({{"10", true}}));
+  restarted.Merge({{"6", true}, {"7", true}, {"9", true}, {"10", true}});
+  assert(restarted.Pending().empty());
+  const std::map<std::int64_t, ItemEffect> trap_effects = {
+      {1, {"trap_wanted", 1}}, {2, {"money", 100}}};
+  const std::vector<std::pair<std::int64_t, std::int64_t>> trap_items = {
+      {0, 99}, {7, 1}, {8, 2}, {10, 1}, {11, 1}};
+  const auto fresh_game = PlanEffects(trap_items, trap_effects, 0, true, 10);
+  assert((fresh_game.received_indices == std::vector<std::int64_t>{7, 8, 10, 11}));
+  assert(fresh_game.new_applied_index == 4 && fresh_game.to_apply[1].type == "money");
+  assert(restarted.Consume(fresh_game.received_indices[0]) == TrapAction::kSkip);
+  assert(restarted.Consume(fresh_game.received_indices[2]) == TrapAction::kSkip);
+  assert(restarted.Consume(fresh_game.received_indices[3]) == TrapAction::kApply);
+  TrapHistory other_seed(trap_directory / "other-seed.json");
+  other_seed.Merge(nullptr);
+  assert(other_seed.Consume(7) == TrapAction::kApply);
+  for (const auto& invalid : {json::array(), json({{"-1", true}}),
+                             json({{"07", true}}), json({{"12", false}})}) {
+    bool rejected = false;
+    try { restarted.Merge(invalid); } catch (const std::runtime_error&) { rejected = true; }
+    assert(rejected && restarted.Consume(7) == TrapAction::kSkip);
+  }
+  // A failed cache write must defer the trap without marking it consumed.
+  const auto blocked_temporary = trap_directory / "blocked.json.tmp";
+  std::filesystem::create_directory(blocked_temporary);
+  TrapHistory blocked(trap_directory / "blocked.json");
+  blocked.Merge(nullptr);
+  bool write_failed = false;
+  try { blocked.Consume(7); } catch (const std::exception&) { write_failed = true; }
+  assert(write_failed && blocked.Pending().empty());
+  std::filesystem::remove(blocked_temporary);
+  assert(blocked.Consume(7) == TrapAction::kApply);
   std::cout << "Native client checks passed\n";
 }

@@ -6,6 +6,7 @@
 #pragma once
 
 #include <cstdint>
+#include <functional>
 #include <map>
 #include <string>
 #include <utility>
@@ -18,6 +19,9 @@
 #include "scm_toasts.hpp"
 
 namespace gtavc {
+
+enum class TrapAction { kWait, kSkip, kApply };
+using TrapConsumer = std::function<TrapAction(std::int64_t)>;
 
 // Completion global -> world position on the minimap.
 struct MarkerTerm {
@@ -202,6 +206,7 @@ class GameState {
   // page is drawn while the game frame does not run, so it cannot infer this
   // from anything the frame does.
   virtual void SetClientConnected(bool connected) = 0;
+  virtual void SetTrapConsumer(TrapConsumer consume) = 0;
 
   // What only the client knows, for that same page: how many of this seed's
   // locations are checked, how many it has, how many items have arrived, whether

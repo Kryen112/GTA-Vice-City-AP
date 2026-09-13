@@ -1415,6 +1415,12 @@ void ScmGameState::ClearNotice(ToastNotice notice) {
   toasts_.notices_fitted[ToastNoticeSlot(notice)] = false;
 }
 
+void ScmGameState::SetTrapConsumer(TrapConsumer consume) {
+  std::lock_guard<std::mutex> lock(mutex_);
+  consume_trap_ = std::move(consume);
+  trap_baseline_pending_ = true;
+}
+
 void ScmGameState::SetClientConnected(bool connected) {
   std::lock_guard<std::mutex> lock(mutex_);
   client_connected_ = connected;
@@ -1813,6 +1819,7 @@ void ScmGameState::OnGameStarted() {
 // hash the frame would otherwise have read as empty. Every write is idempotent,
 // so the paths overlapping costs nothing.
 void ScmGameState::ForgetGameScopedState() {
+  trap_baseline_pending_ = true;
   baseline_captured_ = false;
   // Forget which packages were seen present so a fresh game re-derives from
   // its own pool. Tied to the game boundary, not to config: a bridge
@@ -2164,14 +2171,37 @@ void ScmGameState::OnGameFrame() {
   // that stalls hardest.
   if (FindPlayerPed() != nullptr && playable && !granted_this_frame) {
     const int applied = GetGlobal(kAppliedIndexGlobal);
-    const EffectPlan plan = PlanEffects(items_, item_effects_, applied,
-                                        controllable, kEffectsPerFrame);
-    if (!plan.to_apply.empty() &&
-        TakeGrantSlot(grants_.pacer, RealTimeMs(), kGrantIntervalMs,
-                      kGrantWindowMs, kGrantsPerWindow)) {
-      for (const ItemEffect& effect : plan.to_apply) ApplyOneShot(effect);
-      SetGlobal(kAppliedIndexGlobal, plan.new_applied_index);
-      if (logger_) logger_("applied one-shot effects");
+    try {
+      // A loaded save can prove that traps already fired before this cache existed.
+      if (trap_baseline_pending_ && consume_trap_) {
+        const auto baseline = PlanEffects(items_, item_effects_, 0, true, applied);
+        bool ready = true;
+        for (std::size_t index = 0; index < baseline.to_apply.size(); ++index) {
+          if (baseline.to_apply[index].type.rfind("trap_", 0) == 0 &&
+              consume_trap_(baseline.received_indices[index]) == TrapAction::kWait) ready = false;
+        }
+        trap_baseline_pending_ = !ready;
+      }
+      const EffectPlan plan = PlanEffects(items_, item_effects_, applied,
+                                          controllable, kEffectsPerFrame);
+      if (!plan.to_apply.empty() &&
+          TakeGrantSlot(grants_.pacer, RealTimeMs(), kGrantIntervalMs,
+                        kGrantWindowMs, kGrantsPerWindow)) {
+        static_assert(kEffectsPerFrame == 1, "one effect is committed at a time");
+        const auto& effect = plan.to_apply.front();
+        const bool trap = effect.type.rfind("trap_", 0) == 0;
+        const auto action = !trap ? TrapAction::kApply : consume_trap_
+            ? consume_trap_(plan.received_indices.front()) : TrapAction::kWait;
+        if (action != TrapAction::kWait) {
+          if (action == TrapAction::kApply) ApplyOneShot(effect);
+          SetGlobal(kAppliedIndexGlobal, plan.new_applied_index);
+          if (logger_) logger_(action == TrapAction::kSkip ? "skipped consumed trap" : "applied one-shot effect");
+        }
+      }
+      trap_error_.clear();
+    } catch (const std::exception& error) {
+      if (trap_error_ != error.what() && logger_) logger_("trap delivery deferred: " + std::string(error.what()));
+      trap_error_ = error.what();
     }
   }
 

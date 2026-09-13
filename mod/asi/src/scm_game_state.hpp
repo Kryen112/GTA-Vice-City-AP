@@ -61,6 +61,7 @@ class ScmGameState : public GameState {
   void ShowNotice(ToastNotice notice, const std::string& text) override;
   void ClearNotice(ToastNotice notice) override;
   void SetClientConnected(bool connected) override;
+  void SetTrapConsumer(TrapConsumer consume) override;
   void SetClientStatus(const ClientStatus& status) override;
   std::vector<std::int64_t> TakeNewChecks() override;
   void RequeueChecks(const std::vector<std::int64_t>& undelivered) override;
@@ -247,6 +248,9 @@ class ScmGameState : public GameState {
   std::mutex mutex_;
   std::map<std::int64_t, int> item_globals_;
   std::map<std::int64_t, ItemEffect> item_effects_;
+  TrapConsumer consume_trap_;
+  bool trap_baseline_pending_ = true;
+  std::string trap_error_;
   std::map<int, int> config_globals_;
   std::map<int, std::int64_t> completion_watch_;
   std::vector<PackageLocation> package_locations_;

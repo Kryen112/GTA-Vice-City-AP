@@ -239,6 +239,16 @@ class FakeGameState : public GameState {
     return client_connected_;
   }
 
+  void SetTrapConsumer(TrapConsumer consume) override {
+    std::lock_guard<std::mutex> lock(mutex_);
+    consume_trap_ = std::move(consume);
+  }
+
+  TrapAction ConsumeTrap(std::int64_t index) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return consume_trap_ ? consume_trap_(index) : TrapAction::kWait;
+  }
+
   bool ClientWasConnected() {
     std::lock_guard<std::mutex> lock(mutex_);
     return client_was_connected_;
@@ -273,6 +283,7 @@ class FakeGameState : public GameState {
   bool goal_pending_ = false;
   int pending_percentage_ = -1;
   bool client_connected_ = false;
+  TrapConsumer consume_trap_;
   bool client_was_connected_ = false;
   ClientStatus client_status_;
 };

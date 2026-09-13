@@ -3,6 +3,8 @@
 #include <filesystem>
 #include <chrono>
 #include <set>
+#include <memory>
+#include "trap_history.hpp"
 #include "bridge.hpp"
 #include "game_state.hpp"
 #include "console_text.hpp"
@@ -47,6 +49,9 @@ class NativeSession {
   json data_packages_ = json::object();
   json name_groups_ = json::object();
   std::set<std::int64_t> all_locations_, checked_, pending_;
+  std::shared_ptr<TrapHistory> traps_;
+  std::string trap_key_;
+  std::chrono::steady_clock::time_point last_trap_send_{};
   int slot_ = 0, team_ = 0, percentage_ = -1;
   bool online_ = false, active_ = false, items_ready_ = false, finished_ = false;
   bool death_link_ = false;
