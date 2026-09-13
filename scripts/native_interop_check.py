@@ -12,7 +12,7 @@ from websockets.asyncio.server import serve
 from websockets.exceptions import ConnectionClosed
 
 
-async def main(executable: Path) -> None:
+async def main(executable: Path, *, legacy: bool = False) -> None:
     connections = 0
     checks = 0
     goal = asyncio.Event()
@@ -53,16 +53,18 @@ async def main(executable: Path) -> None:
                     elif command == "Get":
                         expected = {f"_read_{kind}_name_groups_Grand Theft Auto Vice City"
                                     for kind in ("item", "location")}
-                        assert set(packet["keys"]) == expected
+                        trap_key = f"gta_vice_city_consumed_traps_0_1_{seed_hash}"
+                        assert set(packet["keys"]) == expected | {trap_key}, f"Unexpected Get keys: {packet['keys']}"
                         group_requests.append(current)
                         await socket.send(json.dumps([{"cmd": "Retrieved", "keys": {
-                            key: {"Example group": ["Example member"]} for key in expected}}]))
+                            **{key: {"Example group": ["Example member"]} for key in expected},
+                            trap_key: None}}]))
                     elif command == "Say":
                         messages.append(packet["text"])
                     elif command == "Set":
                         percentages.append(packet["operations"][0]["value"])
                     elif command == "LocationChecks":
-                        assert packet["locations"] == [101]
+                        assert packet["locations"] == [101], f"Unexpected checks: {packet['locations']}"
                         checks += 1
                         if current == 1:
                             # Drop the acknowledgement. The next connection must replay the check.
@@ -70,8 +72,9 @@ async def main(executable: Path) -> None:
                             return
                         await socket.send(json.dumps([{"cmd": "RoomUpdate", "checked_locations": [101]}]))
                     elif command == "StatusUpdate":
-                        assert packet["status"] == 30
-                        goal.set()
+                        assert packet["status"] in (10, 30), f"Unexpected status: {packet['status']}"
+                        if packet["status"] == 30:
+                            goal.set()
         except ConnectionClosed as error:
             # APCpp destroys its socket when the harness exits after the goal.
             if not goal.is_set():
@@ -88,8 +91,15 @@ async def main(executable: Path) -> None:
         old_state.write_text(json.dumps({"seed_hash": seed_hash, "checks": [], "percentage": 41}))
         async with serve(server, "127.0.0.1", 0) as listener:
             port = listener.sockets[0].getsockname()[1]
-            harness.with_suffix(".ini").write_text(
-                f"[archipelago]\nserver=127.0.0.1:{port}\nslot=native-test\npassword=test-password\n")
+            settings_text = f"[archipelago]\nserver=127.0.0.1:{port}\nslot=native-test\npassword=test-password\n"
+            settings = root / "state/connection.ini"
+            if legacy:
+                harness.with_suffix(".ini").write_text(settings_text)
+            else:
+                settings.parent.mkdir()
+                settings.write_text(settings_text)
+                harness.with_suffix(".ini").write_text(
+                    "[archipelago]\nserver=127.0.0.1:1\nslot=stale-slot\npassword=stale-password\n")
             process = await asyncio.create_subprocess_exec(str(harness), stdout=asyncio.subprocess.PIPE,
                                                            stderr=asyncio.subprocess.STDOUT)
             try:
@@ -99,8 +109,8 @@ async def main(executable: Path) -> None:
                 await process.wait()
                 raise
             print(output.decode(errors="replace"))
-            assert process.returncode == 0, "Native harness failed"
             assert not errors, errors
+            assert process.returncode == 0, "Native harness failed"
             assert connections >= 2 and checks >= 2, "Reconnect did not replay the unacknowledged check"
             assert {1, 2}.issubset(group_requests), "Name groups were not refreshed on reconnect"
             assert goal.is_set(), "Goal status never reached the server"
@@ -109,9 +119,11 @@ async def main(executable: Path) -> None:
             assert "Server countdown: 3" in output.decode(errors="replace")
             assert 41 in percentages, "State from the previous beside-ASI layout was not recovered"
             assert old_state.exists() and (root / "state" / old_state.name).exists()
+            assert settings.read_text().strip() == settings_text.strip(), "Connection settings were not preserved"
             assert "test-password" not in output.decode(errors="replace"), "Password leaked to the log"
     print("APCpp transport, fragmentation, reconnect, check replay and goal reporting passed")
 
 
 if __name__ == "__main__":
     asyncio.run(main(Path(sys.argv[1]).resolve()))
+    asyncio.run(main(Path(sys.argv[1]).resolve(), legacy=True))

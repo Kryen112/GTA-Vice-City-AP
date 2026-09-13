@@ -82,6 +82,7 @@ def build_executable(build: str = installer.GAME_BUILD_SUPPORTED) -> bytes:
     struct.pack_into("<IHH", header, 0x80, 0x4550, 0x14C, 1)
     optional_size = 224
     struct.pack_into("<H", header, 0x80 + 20, optional_size)
+    struct.pack_into("<H", header, 0x80 + 24, 0x10B)
     struct.pack_into("<I", header, 0x80 + 24 + 28, image_base)
     table = 0x80 + 24 + optional_size
     struct.pack_into("<8sIIII", header, table, b".text".ljust(8),
@@ -392,7 +393,7 @@ class TestTextTablePatch(unittest.TestCase):
         patched = installer.add_gxt_key(VANILLA_TABLE, "APSTAT", "ARCHIPELAGO")
         # Reading a later table's own key proves its TABL offset followed the
         # text that was inserted above it.
-        record, key_body, key_size, data_body, data_size = \
+        _, _, _, _, data_size = \
             installer._gxt_main_table(patched)
         self.assertGreater(data_size,
                            installer._gxt_main_table(VANILLA_TABLE)[4])
@@ -628,32 +629,35 @@ class TestGameBuild(unittest.TestCase):
                     installer.require_supported_game_build(self.install)
                 self.assertIn(build, str(refused.exception))
 
-    def test_a_build_nothing_can_read_installs_anyway_and_says_so(self) -> None:
-        # Deliberately not a refusal. plugin-sdk reads the game in memory, where
-        # a compressed executable has unpacked itself, so a packed 1.0 reads as
-        # nothing here and as 1.0 there: the mod would attach to it perfectly,
-        # and refusing would turn a working install away over a file this side
-        # cannot see into.
+    def test_an_unrecognized_build_is_refused(self) -> None:
         executable = self.install / installer.GAME_EXECUTABLE
         for content in (b"not an executable at all", build_executable()[:200], b""):
             with self.subTest(len(content)):
                 executable.write_bytes(content)
                 self.assertIsNone(installer.detect_game_build(self.install))
-                warning = installer.require_supported_game_build(self.install)
-                self.assertIn("Could not tell which build", warning)
+                with self.assertRaisesRegex(installer.GameBuildRefused, "Could not confirm"):
+                    installer.require_supported_game_build(self.install)
 
-    def test_no_executable_at_all_is_not_refused_either(self) -> None:
-        # The folder picker already refuses a folder with no gta-vc.exe, so this
-        # is only reachable on one deleted afterwards, and it is the same
-        # unreadable case.
+    def test_a_missing_executable_is_refused(self) -> None:
         self.assertIsNone(installer.detect_game_build(self.install))
-        self.assertIsNotNone(installer.require_supported_game_build(self.install))
+        with self.assertRaises(installer.GameBuildRefused):
+            installer.require_supported_game_build(self.install)
 
-    def test_an_unreadable_build_is_still_installed_and_reported(self) -> None:
+    def test_an_unreadable_build_is_refused_without_writing(self) -> None:
         (self.install / installer.GAME_EXECUTABLE).write_bytes(b"packed, for all we know")
-        log = installer.deploy(self.install, payload=PAYLOAD)
-        self.assertTrue((self.install / "GtaVcAp.VC.asi").is_file())
-        self.assertTrue([line for line in log if "Could not tell which build" in line])
+        with self.assertRaises(installer.GameBuildRefused):
+            installer.deploy(self.install, payload=PAYLOAD)
+        self.assertEqual([path.name for path in self.install.iterdir()], [installer.GAME_EXECUTABLE])
+        self.assertFalse(installer.mod_is_current(self.install, payload=PAYLOAD))
+
+    def test_wrong_pe_headers_are_refused_even_with_a_matching_prologue(self) -> None:
+        for offset, value in ((0, b"XX"), (0x84, b"\x64\x86"), (0x98, b"\x0b\x02")):
+            with self.subTest(offset=offset):
+                image = bytearray(build_executable())
+                image[offset:offset + len(value)] = value
+                (self.install / installer.GAME_EXECUTABLE).write_bytes(image)
+                with self.assertRaises(installer.GameBuildRefused):
+                    installer.require_supported_game_build(self.install)
 
     def test_an_apworld_with_no_payload_ignores_the_build(self) -> None:
         # The no-op contract: an apworld shipped before the mod touches nothing,

@@ -82,16 +82,23 @@ void ArchipelagoClient::Run() {
     wchar_t module_path[32768]{};
     if (!GetModuleFileNameW(module, module_path, 32768)) throw std::runtime_error("Cannot locate ASI settings.");
     auto ini = std::filesystem::path(module_path).replace_extension(L".ini");
-    auto settings = ini;
     auto data_directory = state_directory_;
     if (data_directory.empty()) {
       wchar_t local[MAX_PATH]{};
       if (FAILED(SHGetFolderPathW(nullptr, CSIDL_LOCAL_APPDATA | CSIDL_FLAG_CREATE, nullptr, 0, local)))
         throw std::runtime_error("Cannot locate the current user's Archipelago settings directory.");
       data_directory = std::filesystem::path(local) / "GtaVcAp";
-      settings = data_directory / "connection.ini";
     }
     std::filesystem::create_directories(data_directory);
+    const auto settings = data_directory / "connection.ini";
+    if (!std::filesystem::exists(settings)) {
+      const auto server = Setting(ini, "server", "127.0.0.1:38281");
+      const auto slot = Setting(ini, "slot", "");
+      const auto password = Setting(ini, "password", "");
+      const auto section = "server=" + server + '\0' + "slot=" + slot + '\0' + "password=" + password + '\0';
+      if (!WritePrivateProfileSectionA("archipelago", section.c_str(), settings.string().c_str()))
+        throw std::runtime_error("Cannot migrate connection settings.");
+    }
     // Preserve unacknowledged checks from the previous beside-ASI layout.
     // Copy only recognized state filenames; never overwrite the user's new state.
     if (data_directory != ini.parent_path()) for (const auto& file : std::filesystem::directory_iterator(ini.parent_path())) {
@@ -100,10 +107,9 @@ void ArchipelagoClient::Run() {
           name.substr(8, 16).find_first_not_of("0123456789abcdef") == std::string::npos && file.is_regular_file())
         std::filesystem::copy_file(file.path(), data_directory / name, std::filesystem::copy_options::skip_existing);
     }
-    auto server = Setting(settings, "server", Setting(ini, "server", "127.0.0.1:38281").c_str());
-    auto slot = Setting(settings, "slot", Setting(ini, "slot", "").c_str());
-    auto password = server == Setting(ini, "server", "127.0.0.1:38281") && slot == Setting(ini, "slot", "") ?
-                    Setting(ini, "password", "") : std::string();
+    auto server = Setting(settings, "server", "127.0.0.1:38281");
+    auto slot = Setting(settings, "slot", "");
+    auto password = Setting(settings, "password", "");
     const auto connect = [&] {
       const auto url = ServerUrl(server);
       if (slot.empty()) throw std::runtime_error("Set your slot with /slot NAME, then /connect.");
@@ -155,6 +161,9 @@ void ArchipelagoClient::Run() {
               throw std::runtime_error("Invalid setting.");
             if (key == "server") ServerUrl(value);
             disconnect(); native.reset();
+            if (((key == "server" && server != value) || (key == "slot" && slot != value)) &&
+                !WritePrivateProfileStringA("archipelago", "password", "", settings.string().c_str()))
+              throw std::runtime_error("Cannot clear the previous connection password.");
             if (key == "server") { if (server != value) password.clear(); server = value; }
             else if (key == "slot") { if (slot != value) password.clear(); slot = value; }
             else password = value;

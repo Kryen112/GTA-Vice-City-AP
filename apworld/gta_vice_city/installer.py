@@ -519,8 +519,12 @@ def _read_virtual_uint32(image: bytes, virtual_address: int) -> int | None:
     when the file is not a PE image, is truncated, or maps nothing there.
     """
     try:
+        if image[:2] != b"MZ":
+            return None
         headers = struct.unpack_from("<I", image, 0x3C)[0]
-        if image[headers:headers + 4] != b"PE\0\0":
+        if (image[headers:headers + 4] != b"PE\0\0"
+                or struct.unpack_from("<H", image, headers + 4)[0] != 0x14C
+                or struct.unpack_from("<H", image, headers + 24)[0] != 0x10B):
             return None
         sections, = struct.unpack_from("<H", image, headers + 6)
         optional_size, = struct.unpack_from("<H", image, headers + 20)
@@ -551,7 +555,7 @@ def _read_virtual_uint32(image: bytes, virtual_address: int) -> int | None:
 # The same table the ASI attaches by, deliberately: plugin-sdk installs hooks
 # only for the build it detects, so the mod runs on GAME_BUILD_SUPPORTED and
 # nowhere else. Reading it here says ahead of time what the ASI will do, with one
-# gap this side cannot close, which is why an unreadable build is not refused:
+# gap this side cannot close, which is why an unreadable build is refused:
 # plugin-sdk reads the game in memory, where a compressed executable has already
 # unpacked itself, and this reads the file.
 GAME_EXECUTABLE = "gta-vc.exe"
@@ -583,26 +587,16 @@ def detect_game_build(install_dir: Path) -> str | None:
     return None
 
 
-def require_supported_game_build(install_dir: Path) -> str | None:
-    """Refuses a build the mod cannot attach to. Hands back a line to log for one
-    it cannot read, and None when the build is the one the mod runs on.
-
-    A build it cannot read is NOT refused, and the difference is the whole
-    reason detection reads a prologue rather than the file. plugin-sdk reads the
-    game in memory, after Windows has mapped it and anything compressed has
-    unpacked itself, so a packed 1.0 reads as nothing on disk and as 1.0 in the
-    game: the ASI would attach to it perfectly. Refusing that install would turn
-    a working setup away over a file this side cannot see into, which is worse
-    than the silence the check exists to end.
-    """
+def require_supported_game_build(install_dir: Path) -> None:
+    """Refuse installation unless the executable is a recognized supported build."""
     build = detect_game_build(install_dir)
     if build == GAME_BUILD_SUPPORTED:
-        return None
+        return
     if build is None:
-        return (f"Could not tell which build {GAME_EXECUTABLE} is, so the mod is "
-                f"being installed anyway. It runs on the classic "
-                f"{GAME_BUILD_SUPPORTED} executable only. If nothing Archipelago "
-                "happens in game, that is the first thing to check.")
+        raise GameBuildRefused(
+            f"Could not confirm {GAME_EXECUTABLE} as classic {GAME_BUILD_SUPPORTED}. "
+            "Installation stopped. The file may be compressed, modified, damaged, or unsupported. "
+            "Choose a game folder with a recognizable classic 1.0 English executable.")
     raise GameBuildRefused(
         f"The mod could not be installed: {GAME_EXECUTABLE} is the {build} build, "
         f"and the mod runs on the classic {GAME_BUILD_SUPPORTED} executable only. "
@@ -770,7 +764,7 @@ def mod_is_current(install_dir: Path, payload: list[tuple[str, bytes]] | None = 
                 else sorted(payload_target_sha256().items()))
     if not expected:
         return True
-    if detect_game_build(install_dir) not in (GAME_BUILD_SUPPORTED, None):
+    if detect_game_build(install_dir) != GAME_BUILD_SUPPORTED:
         return False
     return _install_matches(install_dir, expected)
 
@@ -819,11 +813,9 @@ def deploy(install_dir: Path, payload: list[tuple[str, bytes]] | None = None) ->
     if not files:
         raise FileNotFoundError(
             "no mod payload in the apworld; it was packaged without data/mod")
-    unreadable_build = require_supported_game_build(install_dir)
+    require_supported_game_build(install_dir)
     install_dir = Path(install_dir)
     log: list[str] = []
-    if unreadable_build:
-        log.append(unreadable_build)
     log.extend(_clear_stale_paths(install_dir))
     # Counted rather than listed. The payload is one mod in a dozen files, and a
     # player reading this wants to know it is in place, not which files carry it.

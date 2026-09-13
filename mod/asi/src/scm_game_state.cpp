@@ -451,12 +451,6 @@ bool CallSiteStillCallsPriceGetter(unsigned int site) {
 }  // namespace
 
 ScmGameState::ScmGameState(Logger logger) : logger_(std::move(logger)) {
-  // Where the toast stack draws, from the optional file beside the module. Read
-  // once here rather than per frame: a player tuning it restarts the game, which
-  // is what every other file the mod reads asks of them too. An absent file is
-  // the normal case and says nothing.
-  toast_geometry_ = LoadToastGeometry();
-
   // The counter's print is redirected once, at load, and the flag decides what
   // it prints from then on, so no seed and no lock state changes the code. A
   // seed that locks nothing keeps a vanilla counter because the replacement

@@ -1909,12 +1909,6 @@ int main() {
     // same one-point guarantee the whole change was made to replace.
     Expect(geometry.floor_y + ToastLineAdvance(geometry) <= kRadarTopY,
            "and no line it admits can reach the radar, from any top");
-    // A hand-edited file may tune the leading but not make the rows overlap.
-    const ToastGeometry crushed = ParseToastGeometry(
-        {"[toasts]", "line_height = 6", "scale_y = 1.0"});
-    Expect(crushed.line_height >= ToastLineAdvance(crushed),
-           "and a file asking for less leading than the glyphs need is floored at "
-           "them");
     // The leading clears the font's own advance, which the scale does NOT carry
     // with it: 16 * scale_y + 2, where the 2 is constant, so a proportional step
     // down overlaps the rows.
@@ -1924,7 +1918,7 @@ int main() {
     narrow.floor_y = narrow.anchor_y;
     Expect(ToastLineCapacity(narrow) == 1,
            "a band with no height still holds one line, so a notice is never lost");
-    // Not reachable through the file, which orders the two, but a hand-built one
+    // An inverted geometry
     // must still answer a count rather than a negative or an enormous cast.
     ToastGeometry inverted;
     inverted.floor_y = inverted.anchor_y - 100.0f;
@@ -2311,101 +2305,7 @@ int main() {
            "and a continuation line to its own narrower width, not the first's");
   }
 
-  // The settings file a module reads is derived from its own name, so the two
-  // cannot drift if the build renames its output.
-  {
-    Expect(SettingsPathForModule("C:\\Games\\GtaVcAp.VC.asi") ==
-               "C:\\Games\\GtaVcAp.VC.ini",
-           "the module's extension is replaced, not its dotted name");
-    Expect(SettingsPathForModule("C:\\Games\\plugin") ==
-               "C:\\Games\\plugin.ini",
-           "a module with no extension gets one rather than nothing");
-    Expect(SettingsPathForModule("C:\\Games.v2\\plugin") ==
-               "C:\\Games.v2\\plugin.ini",
-           "a dot in a directory name is not the module's extension");
-    Expect(SettingsPathForModule("").empty(),
-           "an unnamed module reads no file at all");
-  }
-
-  // The optional file that tunes the stack. Absent is the normal case, so every
-  // way a hand edit can go wrong has to leave a geometry that still draws.
-  {
-    const ToastGeometry defaults;
-    Expect(ParseToastGeometry({}).anchor_y == defaults.anchor_y,
-           "an empty file is the compiled-in defaults");
-    Expect(ParseToastGeometry({"anchor_y = 200"}).anchor_y == defaults.anchor_y,
-           "a setting outside the section is ignored");
-
-    ToastGeometry read = ParseToastGeometry({
-        "; a comment",
-        "[other]",
-        "anchor_y = 999",
-        "[toasts]",
-        "  anchor_y  =  200  ",
-        "width = 300 # trailing comment",
-        "line_height = 20",
-        "lifetime_ms = 6000",
-        "nonsense = 4",
-        "scale_x = not a number",
-    });
-    Expect(read.anchor_y == 200.0f, "whitespace either side of a value is dropped");
-    Expect(read.width == 300.0f, "a trailing comment is not part of the value");
-    Expect(read.line_height == 20.0f && read.lifetime_ms == 6000,
-           "every key the file names is applied");
-    Expect(read.scale_x == defaults.scale_x,
-           "a value that is not a whole number leaves its setting alone");
-
-    Expect(ParseToastGeometry({"[toasts]", "width = 3 4"}).width == defaults.width,
-           "a value with a trailing token is not taken as its prefix");
-    Expect(ParseToastGeometry({"[toasts]", "lifetime_ms = -5"}).lifetime_ms ==
-               defaults.lifetime_ms,
-           "a negative duration leaves its setting alone rather than wrapping");
-
-    // NaN is the one value every bound below would pass unchanged, because every
-    // comparison against it is false. A NaN band then makes the line count a cast
-    // from a NaN, which admits the whole queue onto a stack whose floor test can
-    // never be true.
-    for (const char* spelling : {"nan", "-nan", "NAN", "inf", "-inf"}) {
-      const ToastGeometry hostile =
-          ParseToastGeometry({"[toasts]", std::string("anchor_y = ") + spelling});
-      Expect(hostile.anchor_y == defaults.anchor_y,
-             "a value that is not a finite number leaves its setting alone");
-      Expect(ToastLineCapacity(hostile) >= 1 &&
-                 ToastLineCapacity(hostile) <= 128,
-             "the band a hostile file produces is still a band");
-    }
-
-    // The bounds. A file may move the stack but never lose it off the screen.
-    const ToastGeometry far_out = ParseToastGeometry({
-        "[toasts]", "anchor_x = 5000", "anchor_y = 5000", "width = 5000",
-        "scale_x = 50", "scale_y = 0", "line_height = 0",
-        "lifetime_ms = 100000000",
-    });
-    Expect(far_out.anchor_x >= 0.0f && far_out.anchor_x < kVirtualScreenWidth,
-           "the anchor stays on the screen");
-    Expect(far_out.anchor_x + far_out.width <= kVirtualScreenWidth,
-           "and the stack ends on the screen");
-    Expect(far_out.anchor_y < kVirtualScreenHeight, "so does the anchor's row");
-    Expect(far_out.scale_x <= kToastMaxScale && far_out.scale_y >= kToastMinScale,
-           "the text stays a size that can be read");
-    Expect(far_out.line_height >= kToastMinLineHeight,
-           "a line keeps a height, so the band is a count and not a division by "
-           "nothing");
-    Expect(far_out.lifetime_ms <= kToastMaxLifetimeMs,
-           "a row cannot be made to hold the screen forever");
-
-    // An inverted band is ordered rather than left negative, so the floor is never
-    // above the anchor.
-    const ToastGeometry swapped =
-        ParseToastGeometry({"[toasts]", "anchor_y = 400", "floor_y = 100"});
-    Expect(swapped.floor_y >= swapped.anchor_y,
-           "the floor is never above the top it is measured from");
-    Expect(ToastLineCapacity(swapped) >= 1, "and the band still holds a line");
-  }
-
-  // A band too small for what is in it. Neither of these is reachable with the
-  // measured geometry, and both are reachable through the file, so both are the
-  // model's problem rather than the bounds'.
+  // The stack still handles a band too small for its current contents.
   {
     const auto row = [](std::size_t lines) {
       ToastRow built;

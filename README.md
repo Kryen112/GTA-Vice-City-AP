@@ -78,9 +78,14 @@ Markers also follow the world's mission, ability and region requirements, includ
 
 The ASI connects directly to Archipelago using
 [N00byKing's APCpp C++ library](https://github.com/N00byKing/APCpp). Set `server`,
-`slot`, and optional `password` under `[archipelago]` in `GtaVcAp.VC.ini` beside
-the ASI, then launch the game. Archipelago Launcher provides **GTA Vice City Setup**
-for offline installation; the legacy Python client is no longer included. Unacknowledged checks are saved in
+`slot`, and optional `password` under `[archipelago]` in
+`%LOCALAPPDATA%\GtaVcAp\connection.ini`, then launch the game.
+Setup creates this file and adds **Archipelago Connection Settings.lnk** in the
+Vice City folder so you can open it directly. **GTA-Vice-City-AP-Setup.exe** installs the mod without
+Python or Archipelago Launcher. It downloads ASI Loader and CLEO if missing.
+Setup checks `gta-vc.exe` for the supported classic **1.0 English** build before
+installing. Other versions and executables it cannot identify are refused.
+Unacknowledged checks are saved in
 `%LOCALAPPDATA%/GtaVcAp/GtaVcAp.<seed-hash>.json` and replayed after reconnecting.
 Existing check files beside the ASI are copied automatically without overwriting newer state.
 
@@ -91,11 +96,11 @@ password in the INI is stored as plain text. TLS never falls back to an unencryp
 
 Press **F8** in the main menu or in game for the built-in console. Set a connection
 with `/server HOST:PORT`, `/slot NAME`, optional `/password PASSWORD`, then `/connect`.
-The server and slot are remembered in `%LOCALAPPDATA%/GtaVcAp/connection.ini`,
-which takes precedence over the beside-ASI INI defaults. Changing server or slot
-clears the in-memory password; enter it afterwards if needed. `/disconnect` stops the connection; `/connect`
-retries. Type normally to chat, use `!help` for server commands, `/hint [item]`
-for hints, and `/deathlink [on|off|seed]` to control DeathLink or restore the seed's setting.
+The server and slot are remembered in the same `connection.ini`. Close the game
+before editing the file manually. Changing the server or slot through F8 clears the previous password from memory and the file. Enter it afterwards if needed. 
+`/disconnect` stops the connection; `/connect` retries. 
+Type normally to chat, use `!help` for server commands, `/hint [item]` for hints, 
+and `/deathlink [on|off|seed]` to control DeathLink or restore the seed's setting.
 The console displays other players' chat, hints, countdowns, releases and goal messages. Page Up/Down scroll the view, Ctrl+V pastes, Enter sends, and F8/Escape closes the console.
 Tab completes `/` and  `!` command names, Shift+Tab cycles backwards.
 
@@ -112,7 +117,7 @@ Saves automatically use `GTA Vice City User Files/AP_Seeds/<seed-and-slot-hash>`
 Career saves and `gta_vc.set` remain in place. Connect before loading or saving;
 the ASI blocks save access until the seed is known. The selected folder stays
 active across disconnects. Restart the game to change seed or slot.
-Installation/update/removal remains in the launcher's Python setup; `/play` and
+Installation/update/removal is handled by setup; `/play` and
 `/setfolder` are unnecessary inside the running game.
 
 Server messages appear in a popup queue with up to four lines visible.
@@ -176,6 +181,24 @@ Start with `NEXT_APWORLD_PLAYBOOK.md`. It is the build playbook and process
 guardrails distilled from the HP2PC and Viscera Cleanup Detail projects: what to
 stand up before writing game logic, which architecture calls to get right early,
 and the mod-side patterns worth reusing.
+
+Build the standalone Windows installer after compiling the ASI and scripts:
+
+```powershell
+python -m venv .build/setup-venv
+.build/setup-venv/Scripts/python -m pip install pyinstaller==6.22.3 bsdiff4==1.2.6
+.build/setup-venv/Scripts/python scripts/build_setup.py
+```
+
+Use 64-bit Python 3.12 with Tkinter. The output is `dist/GTA-Vice-City-AP-Setup.exe`, 
+for 64-bit Windows running the 32-bit game.
+Setup downloads [Ultimate ASI Loader's Win32 dinput8 archive](https://github.com/ThirteenAG/Ultimate-ASI-Loader/releases/download/Win32-latest/dinput8-Win32.zip)
+when `dinput8.dll` is missing, checking its SHA-256 against GitHub's release metadata.
+CLEO 2.1.1 is downloaded when missing and checked against its pinned SHA-256.
+The installer includes the ASI Loader license. A fresh install needs internet access.
+Existing loader/CLEO files are kept, and mod uninstall leaves these shared runtimes installed. 
+Game scripts ship as patches, not stock game files.
+The executable is unsigned; Windows may show an unknown-publisher warning.
 
 Build the apworld with `python scripts/build_apworld.py`. Run the world tests
 with `python scripts/run_tests.py`, which is the single entry point for

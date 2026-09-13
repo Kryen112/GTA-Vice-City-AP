@@ -2,7 +2,6 @@
 
 #include <algorithm>
 #include <cstddef>
-#include <fstream>
 #include <limits>
 #include <string>
 #include <vector>
@@ -11,8 +10,6 @@
 
 #include <CHud.h>
 #include <CRect.h>
-
-#include <windows.h>
 
 namespace gtavc {
 namespace {
@@ -101,39 +98,6 @@ float ToastTopThisFrame(const ToastGeometry& geometry) {
 }
 
 }  // namespace
-
-std::string ModuleSettingsPath() {
-  // The module this code is in, found from an address inside it rather than from
-  // the process, so it is the .asi's own file and not whatever launched the game.
-  // An unnamed module means no file, which the caller reads as defaults.
-  HMODULE module = nullptr;
-  if (GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS |
-                             GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
-                         reinterpret_cast<LPCSTR>(&ModuleSettingsPath),
-                         &module) == 0) {
-    return std::string();
-  }
-  char path[MAX_PATH] = {};
-  const DWORD written = GetModuleFileNameA(module, path, MAX_PATH);
-  if (written == 0 || written >= MAX_PATH) return std::string();
-  return SettingsPathForModule(std::string(path, written));
-}
-
-ToastGeometry LoadToastGeometry() {
-  const std::string path = ModuleSettingsPath();
-  if (path.empty()) return ToastGeometry();
-  std::ifstream file(path);
-  if (!file) return ToastGeometry();
-  std::vector<std::string> lines;
-  std::string line;
-  // Bounded, so a file that is not one cannot be read into memory whole. Far more
-  // lines than the handful of settings this section has.
-  constexpr std::size_t kMaxSettingLines = 512;
-  while (lines.size() < kMaxSettingLines && std::getline(file, line)) {
-    lines.push_back(line);
-  }
-  return ParseToastGeometry(lines);
-}
 
 void DrawToastStack(ToastStackState& state, const ToastGeometry& geometry,
                     int alpha, const ToastAdvance& advance) {

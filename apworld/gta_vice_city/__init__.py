@@ -131,7 +131,7 @@ class GTAViceCityWeb(WebWorld):
     """
     # Purple, hot pink and lime, which is the city's own palette.
     theme = "partyTime"
-    bug_report_page = "https://github.com/Kryen112/GTA-Vice-City-AP/issues"
+    bug_report_page = "https://github.com/randomcodegen/GTA-Vice-City-AP/issues"
 
     tutorials: typing.ClassVar[list[Tutorial]] = [Tutorial(
         "Multiworld Setup Guide",
