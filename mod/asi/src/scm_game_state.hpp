@@ -61,6 +61,7 @@ class ScmGameState : public GameState {
   void ShowNotice(ToastNotice notice, const std::string& text) override;
   void ClearNotice(ToastNotice notice) override;
   void SetClientConnected(bool connected) override;
+  bool ClientConnected();
   void SetTrapConsumer(TrapConsumer consume) override;
   void SetClientStatus(const ClientStatus& status) override;
   std::vector<std::int64_t> TakeNewChecks() override;
@@ -288,10 +289,6 @@ class ScmGameState : public GameState {
   // the module, so a player tuning it restarts the game rather than the mod
   // re-reading a file every frame.
   ToastGeometry toast_geometry_;
-  // The rows the stack has shown, newest first, for the pause page. The stack is a
-  // marquee, so this is the only place in game a row can be read again. Kept
-  // across a game boundary: it is a record of the multiworld and not of a game.
-  std::vector<ToastRow> recent_toasts_;
   // The seed hash the client welcomed with, which is the one every game that
   // comes up without one is stamped with while that client is still there. Empty
   // until a welcome names it, cleared when that session ends, and read beside

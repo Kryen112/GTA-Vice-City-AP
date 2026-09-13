@@ -115,11 +115,6 @@ constexpr unsigned int kToastLifetimeMs = 4000;
 // means something is generating rows that are not item movements.
 constexpr std::size_t kToastQueueMax = 4096;
 
-// How many rows the pause page's RECENT block keeps. A page column holds some
-// twenty lines and a row is usually two of them, so this fills about one column
-// and leaves the rest of the page to the seed's own state.
-constexpr std::size_t kRecentToastMax = 12;
-
 // The whole stack between frames. The caller owns one and hands it to Advance
 // every frame.
 struct ToastStackState {

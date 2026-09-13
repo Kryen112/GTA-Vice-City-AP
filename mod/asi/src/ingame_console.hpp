@@ -15,7 +15,7 @@ class IngameConsole {
   ~IngameConsole();
   void Add(const std::string& text); // safe from the network thread
   void Add(const ConsoleMessage& message, bool notify = false);
-  void Draw(bool show_hint = false); // game/menu drawing thread
+  void Draw(bool show_hint = false, bool connected = false); // game/menu drawing thread
   void BlockControls();
   void ReleaseGraphics(); // before RenderWare shuts down
  private:

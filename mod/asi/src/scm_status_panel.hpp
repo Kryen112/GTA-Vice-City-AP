@@ -78,16 +78,7 @@ struct StatusRow {
   std::string label;
   std::string value;
   StatusTone tone = StatusTone::kPlain;
-  // A row the RECENT block composed, carrying its own colours instead of a tone.
-  // A row with segments has no label and no value: the segments ARE its text, and
-  // the drawing prints them one after another rather than as a label-value pair.
-  // Every other row leaves this empty and draws exactly as it always did, which
-  // is what keeps the flattening, the fitting and the column dealing untouched.
-  // A row the recent block composed, carrying its own colours instead of a tone.
-  // A row with segments has no label and no value: the segments ARE its text. Only
-  // the recent block makes these, and it is drawn under the columns rather than
-  // dealt into them, so no line of the page's own layout ever carries any.
-  std::vector<ToastSegment> segments;
+  bool joined_above = false;
 };
 
 // A titled block of rows. The first block carries no heading: it is the seed's
@@ -177,23 +168,11 @@ struct StatusPanelState {
   std::vector<StatusRow> goal_rows;
   std::vector<StatusRow> strand_rows;
 
-  // The item movements the in-game stack has shown, newest first. The stack is a
-  // marquee, so a row seen while driving is gone by the time the player can look
-  // at it; this is where it went. Held by the mod rather than asked of the client,
-  // since the mod already has every row it drew.
-  std::vector<ToastRow> recent_rows;
 };
 
-// How many characters a wrapped line may carry. A column is 146 of the
-// frontend's own units, and measured off the drawn page a character averages
-// about 5.4 of them at the page's design text size, a space no narrower than
-// that, so twenty-five characters is about 135 units: a column's width with room
-// to spare. It is a count standing in for a width, and nothing depends on it
-// being exactly right, because FitPanelLines re-breaks whatever overruns a column
-// before the page is laid out. What the budget decides is where a break READS
-// best, since a line broken here carries the list's own indent and a line broken
-// there starts at the column edge.
-constexpr std::size_t kWrappedLineChars = 25;
+// A soft character budget for the wider columns. FitPanelLines measures the
+// actual font and breaks any remaining overflow before laying out the page.
+constexpr std::size_t kWrappedLineChars = 31;
 
 // A prefixed list of names, wrapped into as many lines as it takes. Every line
 // is label-less, so every line is drawn from the column's own left edge: the
@@ -349,10 +328,11 @@ inline StatusSection ComposeContentSection(const StatusPanelState& state) {
                                  state.content_held[slot];
       if (district_held == name_the_held) districts.push_back(kDistrictNames[district]);
     }
-    for (const StatusRow& row :
+    for (StatusRow row :
          WrapNameList(name_the_held ? "held in" : "free in", districts,
                       name_the_held ? StatusTone::kHeld : StatusTone::kOpen,
                       kWrappedLineChars)) {
+      row.joined_above = true;
       section.rows.push_back(row);
     }
   }
@@ -504,53 +484,6 @@ inline StatusSection ComposeMinimapSection(const StatusPanelState& state) {
   return section;
 }
 
-// How many spaces a recent row's continuation lines are set in by, matching the
-// indent the in-game stack gives them so a row reads the same way in both places.
-// A count of spaces rather than a width, because the panel composes text and the
-// fitting measures it afterwards.
-constexpr std::size_t kRecentContinuationSpaces = 2;
-
-// The most lines the recent block may draw. It is laid out UNDER the columns
-// across the whole page rather than dealt into one of them, which is what lets a
-// whole message show without being cut, and it takes only the band the columns
-// leave, so it costs the rest of the page nothing at all. The ring behind it keeps
-// more rows than this: the budget decides how many are shown, not how many are
-// remembered.
-constexpr std::size_t kRecentMaxLines = 14;
-
-// The item movements the stack has shown, newest first, in the same colours it
-// drew them in.
-//
-// One panel line per line of a row, which is one row for a movement and more only
-// for a notice broken across lines. Later lines are set in beneath the first, so a
-// broken one reads as a block.
-inline StatusSection ComposeRecentSection(const StatusPanelState& state) {
-  StatusSection section;
-  if (state.recent_rows.empty()) return section;
-  section.heading = "RECENT MESSAGES";
-  for (const ToastRow& row : state.recent_rows) {
-    // Whole rows only. Half a row is a sentence with no location or a location
-    // with no sentence, and the second is worse than leaving the row out.
-    if (section.rows.size() + row.lines.size() > kRecentMaxLines) break;
-    for (std::size_t index = 0; index < row.lines.size(); ++index) {
-      StatusRow panel_row;
-      if (index > 0) {
-        panel_row.segments.push_back(
-            {std::string(kRecentContinuationSpaces, ' '), ToastRole::kConnective});
-      }
-      for (const ToastSegment& segment : row.lines[index]) {
-        panel_row.segments.push_back(segment);
-      }
-      // A line with nothing on it at all. BuildToastRow drops empty lines, so a row
-      // reaching here has none, and this is a guard against a row built some other
-      // way rather than a case the stack produces.
-      if (panel_row.segments.empty()) continue;
-      section.rows.push_back(panel_row);
-    }
-  }
-  return section;
-}
-
 // The whole panel, in reading order. A block with no rows is dropped rather than
 // drawn as a heading over nothing: a seed that locks no abilities has no ABILITIES
 // block at all, rather than one saying so.
@@ -624,32 +557,6 @@ inline PanelFrame PlanPanelFrame(const PanelMenuState& state, bool armed_was) {
   return frame;
 }
 
-// Where the recent block starts: under the tallest column, plus a blank row so the
-// two read as separate blocks. Pure arithmetic, here rather than beside the drawing
-// so the console self-test can drive it: what it decides is whether the block
-// overlaps the columns above it or the pause page's own back button below.
-inline float RecentFooterTop(float columns_top, float row_height, int tallest) {
-  const int rows = tallest > 0 ? tallest : 0;
-  return columns_top + row_height * static_cast<float>(rows + 1);
-}
-
-// Whether the band left is worth a block at all: a heading with nothing under it
-// says less than nothing, so it takes a heading AND a row or it takes none. A page
-// whose columns filled the band draws no recent block, which is the right way for a
-// history to lose out against the seed's own state.
-inline bool RecentFooterFits(float top, float bottom, float row_height) {
-  return top + row_height * 2.0f <= bottom;
-}
-
-// How many of a fitted block's rows the band actually holds, past its heading.
-inline std::size_t RecentFooterRows(float top, float bottom, float row_height,
-                                    std::size_t available) {
-  if (!RecentFooterFits(top, bottom, row_height) || row_height <= 0.0f) return 0;
-  const float band = bottom - (top + row_height);
-  const std::size_t held = static_cast<std::size_t>(band / row_height);
-  return held < available ? held : available;
-}
-
 // One drawn line of the panel. The blocks are flattened into lines before they
 // are laid out, so a block taller than a column continues in the next one instead
 // of setting the row height for the whole page: twenty mission strands are a
@@ -691,6 +598,7 @@ inline std::vector<PanelLine> FlattenPanel(const std::vector<StatusSection>& sec
       line.label = row.label;
       line.value = row.value;
       line.tone = row.tone;
+      line.joined_above = row.joined_above;
       lines.push_back(line);
     }
   }
@@ -720,10 +628,8 @@ inline std::vector<PanelLine> FitPanelLines(const std::vector<PanelLine>& lines,
   fitted.reserve(lines.size());
   // Every piece a line breaks into after the first belongs with the one before it,
   // so the dealing keeps them in one column.
-  // Every piece a line breaks into after the first belongs with the one before it,
-  // so the dealing keeps them in one column.
   const auto push = [&fitted](PanelLine line, std::size_t piece) {
-    line.joined_above = piece > 0;
+    line.joined_above = line.joined_above || piece > 0;
     fitted.push_back(std::move(line));
   };
   for (const PanelLine& line : lines) {
@@ -813,6 +719,18 @@ inline std::vector<std::vector<PanelLine>> PlanPanelColumns(
            (column + 1 == column_count || static_cast<int>(target.size()) < share)) {
       target.push_back(lines[next]);
       ++next;
+    }
+    // Finish a joined group here if that is closer to the target height than
+    // moving it whole to the next column. This also balances district lists.
+    if (next < lines.size() && lines[next].joined_above && !target.empty()) {
+      std::size_t end = next;
+      while (end < lines.size() && lines[end].joined_above) ++end;
+      std::size_t beginning = target.size() - 1;
+      while (beginning > 0 && target[beginning].joined_above) --beginning;
+      if (static_cast<int>(target.size() + end - next) - share <=
+          share - static_cast<int>(beginning)) {
+        while (next < end) target.push_back(lines[next++]);
+      }
     }
     // The fitting can turn one row into several, a label too wide for its column
     // and the value it no longer shares a row with. A column must not open on one

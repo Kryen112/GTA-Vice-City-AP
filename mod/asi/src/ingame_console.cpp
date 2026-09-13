@@ -204,7 +204,7 @@ void IngameConsole::BlockControls() {
   CPad::NewKeyState = {}; CPad::OldKeyState = {}; CPad::TempKeyState = {};
   CPad::NewMouseControllerState = {}; CPad::OldMouseControllerState = {};
 }
-void IngameConsole::Draw(bool show_hint) {
+void IngameConsole::Draw(bool show_hint, bool connected) {
   if (!window_) {
     HWND window = GetActiveWindow();
     DWORD process = 0;
@@ -262,7 +262,14 @@ void IngameConsole::Draw(bool show_hint) {
     wrap_dirty_ = false;
   }
   if (!active_) {
-    if (show_hint) Print(*font_, 414, L"F8  Archipelago chat / connection");
+    if (show_hint) {
+      const float x = StretchX(24), y = StretchY(414);
+      const float width = PrintMixed(*font_, x, y,
+          L"F8  Archipelago chat / connection  |  ", CRGBA(235, 225, 245, 255));
+      PrintMixed(*font_, x + width, y,
+          connected ? L"AP: Connected" : L"AP: Disconnected",
+          connected ? CRGBA(100, 235, 130, 255) : CRGBA(245, 120, 120, 255));
+    }
     float y = 20;
     for (const auto& line : popups_.Advance(now, StretchX(590), measure)) {
       const int alpha = ConsolePopupAlpha(line.popup_until, now);

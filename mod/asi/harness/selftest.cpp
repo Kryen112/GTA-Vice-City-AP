@@ -60,15 +60,15 @@ int failures = 0;
 // and in the band the game actually uses.
 //
 // The real page measures with CFont, which no console build has. A character
-// averages 5.4 units on the drawn page, spaces included, so the numbers here are
+// averages 5.4 units at the design scale, spaces included, so the numbers here are
 // the ones the game works in.
-constexpr float kColumnUnits = 146.0f;
+constexpr float kColumnUnits = 198.0f;
 constexpr float kLabelGapUnits = 5.0f;
 constexpr float kBandUnits = 337.0f;
 // The band the panel keeps where the borrowed page's back entry cannot be moved,
 // which is the one every seed gets if another mod owns that entry.
 constexpr float kFallbackBandUnits = 251.0f;
-constexpr float kDesignRowUnits = 13.0f;
+constexpr float kDesignRowUnits = 15.0f;
 constexpr float kUnitsPerCharacter = 5.4f;
 
 float MeasureUnits(const std::string& text) {
@@ -2788,99 +2788,6 @@ int main() {
                Section(sections, "MINIMAP").rows[0].value == "HIDDEN",
            "and the radar says whether the item has arrived");
 
-    // The pause page's recent messages. Laid out UNDER the columns across the whole
-    // page rather than dealt into one of them, so it is composed on its own and is
-    // deliberately NOT a section of the page the columns are flowed from.
-    {
-      const auto movement = [](const std::string& item, const std::string& location) {
-        ToastRow row;
-        std::vector<ToastSegment> line = {{"You", ToastRole::kOwnSlot},
-                                          {" found your ", ToastRole::kConnective},
-                                          {item, ToastRole::kProgression}};
-        if (!location.empty()) {
-          line.push_back({" (", ToastRole::kConnective});
-          line.push_back({location, ToastRole::kLocation});
-          line.push_back({")", ToastRole::kConnective});
-        }
-        row.lines.push_back(line);
-        return row;
-      };
-
-      StatusPanelState state;
-      Expect(ComposeRecentSection(state).rows.empty(),
-             "a seed that has moved no item has no recent block at all");
-      // And it is never dealt into the columns, whatever it holds: a message is a
-      // sentence and a location, and in a 146 unit column every one of them was cut.
-      state.recent_rows = {movement("Body Armour", "Cherry Popper Fourth Delivery")};
-      // Read directly rather than through HasSection, whose own guard requires
-      // every heading it is asked for to appear on some page. This one deliberately
-      // appears on none: it is drawn under the columns, not dealt into them.
-      bool dealt_into_a_column = false;
-      for (const StatusSection& section : ComposeStatusPanel(state)) {
-        if (section.heading == "RECENT MESSAGES") dealt_into_a_column = true;
-      }
-      Expect(!dealt_into_a_column, "the recent block is not a column section");
-
-      const StatusSection recent = ComposeRecentSection(state);
-      Expect(recent.heading == "RECENT MESSAGES", "and it names itself in full");
-      Expect(recent.rows.size() == 1,
-             "a movement is ONE row, the sentence and its location together");
-      Expect(recent.rows[0].label.empty() && recent.rows[0].value.empty(),
-             "a segmented row carries no label and no value, so nothing about the "
-             "page's own rows is changed by its presence");
-      Expect(recent.rows[0].segments[0].role == ToastRole::kOwnSlot,
-             "and it keeps the colours the stack drew it in");
-      Expect(ToastLineText(state.recent_rows[0].lines[0]) ==
-                 "You found your Body Armour (Cherry Popper Fourth Delivery)",
-             "the whole message is one line");
-
-      // Bounded, so a long history cannot run off the band the columns left it.
-      state.recent_rows.clear();
-      for (int index = 0; index < 40; ++index) {
-        state.recent_rows.push_back(movement("Item", "Somewhere"));
-      }
-      Expect(ComposeRecentSection(state).rows.size() == kRecentMaxLines,
-             "one-line rows fill the budget to the line and no further");
-
-      // A two-line row can still reach here, since a notice is broken rather than
-      // cut, and it is taken whole or not at all.
-      state.recent_rows.clear();
-      for (int index = 0; index < 40; ++index) {
-        ToastRow two = movement("Item", "");
-        two.lines.push_back({{"second", ToastRole::kConnective}});
-        state.recent_rows.push_back(two);
-      }
-      // Where the block lands, and whether it lands at all. This is what keeps it
-      // off the columns above it and off the pause page's own back button below.
-      {
-        constexpr float kTop = 60.0f;
-        constexpr float kRow = 13.0f;
-        Expect(RecentFooterTop(kTop, kRow, 10) == kTop + kRow * 11.0f,
-               "the block starts a blank row under the tallest column");
-        Expect(RecentFooterTop(kTop, kRow, 0) == kTop + kRow,
-               "and a page with no rows at all still leaves that blank row");
-        const float footer_top = RecentFooterTop(kTop, kRow, 10);
-        Expect(!RecentFooterFits(footer_top, footer_top + kRow, kRow),
-               "a band with room for a heading alone draws no block, since a "
-               "heading over nothing says less than nothing");
-        Expect(RecentFooterFits(footer_top, footer_top + kRow * 2.0f, kRow),
-               "a heading and one message is enough to be worth the band");
-        Expect(RecentFooterRows(footer_top, footer_top + kRow * 2.0f, kRow, 9) == 1,
-               "and that band holds exactly the one message");
-        Expect(RecentFooterRows(footer_top, footer_top + kRow * 5.0f, kRow, 2) == 2,
-               "a band with room to spare holds only what there is to show");
-        Expect(RecentFooterRows(footer_top, footer_top, kRow, 9) == 0,
-               "and a band of nothing holds nothing");
-      }
-
-      const StatusSection pairs = ComposeRecentSection(state);
-      Expect(pairs.rows.size() % 2 == 0 && pairs.rows.size() <= kRecentMaxLines,
-             "a multi-line row is taken whole, never half");
-      // Nothing marks them as belonging together, and nothing needs to: the block
-      // is drawn as one run under the columns, so its lines are always adjacent.
-      // The column dealing, which is what joined_above exists for, never sees them.
-    }
-
     // The comparison the two sets above exist for.
     for (const std::string& heading : asked_headings) {
       if (page_headings.count(heading) != 0) continue;
@@ -3065,6 +2972,35 @@ int main() {
            "and no column opens on a line broken out of the one before it, short "
            "of a run longer than a column");
 
+    // The pickup class and both free districts stay together wherever the
+    // preceding stats put the column boundary.
+    StatusPanelState pickup_state;
+    pickup_state.content_flags[kContentPickups] = 1;
+    pickup_state.content_districts_held[kContentPickups] = kDistrictCount - 2;
+    for (int district = 2; district < kDistrictCount; ++district)
+      pickup_state.content_held[ContentDistrictSlot(kContentPickups, district)] = true;
+    for (int padding = 0; padding < 20; ++padding) {
+      StatusSection preceding;
+      preceding.rows.resize(padding, {"Other stat", "1/2"});
+      const auto fitted = FitPanelLines(
+          FlattenPanel({preceding, ComposeContentSection(pickup_state)}),
+          kColumnUnits, kLabelGapUnits, MeasureUnits, MeasureHeadingUnits);
+      for (int column_count : {3, 4}) {
+        const auto grouped = PlanPanelColumns(fitted, column_count);
+        int pickup_column = -1;
+        for (std::size_t column = 0; column < grouped.size(); ++column) {
+          for (const auto& line : grouped[column]) {
+            if (line.label == "Pickups") pickup_column = static_cast<int>(column);
+            if (line.value.find("Ocean Beach") != std::string::npos ||
+                line.value.find("Washington") != std::string::npos)
+              Expect(pickup_column == static_cast<int>(column),
+                     "pickup districts stay in the column containing their class label");
+          }
+        }
+        Expect(pickup_column >= 0, "pickup content remains present in the fitted page");
+      }
+    }
+
     // A list of one needs no wrapping, a list of none produces no line at all,
     // and a name wider than the column still gets drawn rather than truncated.
     Expect(WrapNameList("Locked", {}, StatusTone::kHeld, kWrappedLineChars).empty(),
@@ -3094,6 +3030,8 @@ int main() {
   // the column's edge by folding its tail onto the row below, where it prints over
   // whatever is there.
   {
+    // Narrow columns deliberately exercise the overflow paths.
+    constexpr float kColumnUnits = 146.0f;
     // A pair that fits keeps its row, however little room is left over.
     const std::vector<PanelLine> fits =
         FitPanelLines({{"Taxi", "none", StatusTone::kPlain, false, false}},

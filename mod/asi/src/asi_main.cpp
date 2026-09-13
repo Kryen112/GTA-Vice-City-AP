@@ -194,7 +194,8 @@ struct AsiMain {
     // whether the panel draws, so the menu is read once.
     if (status_page.Follow().draw) status_page.Draw(game.BuildStatusPanelState());
     console.Draw(FrontEndMenuManager.m_bGameNotLoaded &&
-                 FrontEndMenuManager.m_nCurrentMenuPage == MENUPAGE_START_MENU);
+                 FrontEndMenuManager.m_nCurrentMenuPage == MENUPAGE_START_MENU,
+                 game.ClientConnected());
     // The menu already flushed its text before this callback.
     CFont::DrawFonts();
   }

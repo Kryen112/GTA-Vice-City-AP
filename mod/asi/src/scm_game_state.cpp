@@ -1388,13 +1388,6 @@ void ScmGameState::ShowToast(const ToastRow& row, bool notify) {
   if (notify && toasts_.waiting.size() < kToastQueueMax) {
     toasts_.waiting.push_back(QueuedToast(row));
   }
-  // The record the pause page reads, newest first, whether or not the row has been
-  // drawn yet, so a player who paused mid-marquee can still read what went past.
-  // A log of what has happened rather than a look ahead at what has not: a row for
-  // a received item exists only once the game has acted on that item, and one for
-  // an item sent onward describes something already done.
-  recent_toasts_.insert(recent_toasts_.begin(), row);
-  if (recent_toasts_.size() > kRecentToastMax) recent_toasts_.resize(kRecentToastMax);
 }
 
 void ScmGameState::ShowNotice(ToastNotice notice, const std::string& text) {
@@ -1413,6 +1406,11 @@ void ScmGameState::ClearNotice(ToastNotice notice) {
   std::lock_guard<std::mutex> lock(mutex_);
   toasts_.notices[ToastNoticeSlot(notice)] = ToastRow{};
   toasts_.notices_fitted[ToastNoticeSlot(notice)] = false;
+}
+
+bool ScmGameState::ClientConnected() {
+  std::lock_guard<std::mutex> lock(mutex_);
+  return client_connected_;
 }
 
 void ScmGameState::SetTrapConsumer(TrapConsumer consume) {
@@ -1484,10 +1482,6 @@ StatusPanelState ScmGameState::BuildStatusPanelState() {
                                  row.done ? StatusTone::kOpen : StatusTone::kPlain});
   }
   state.seed_hash = cached_seed_hash_;
-  // What the stack has shown, newest first. Above the no-game return with the
-  // other lines that come from outside the game: it is a record of the multiworld
-  // rather than of a game, so it reads the same in the frontend as in play.
-  state.recent_rows = recent_toasts_;
   // Only touch the game's script memory once a stamped game is actually
   // running, the same rule the frame and the input hook follow: in the frontend
   // ScriptSpace holds no meaningful state, and a page listing locks read from it
@@ -1842,10 +1836,8 @@ void ScmGameState::ForgetGameScopedState() {
   // bridge queued seconds ago while a game was still up as well as rows it
   // queued with no game to draw them in at all, and for the same reason: the
   // stack only advances on a game frame, so the whole backlog would otherwise
-  // land as a burst on the first frame of the next game. Nothing is lost for
-  // good, since the pause page reads the recent list, which is a record rather
-  // than a queue and is kept. The notices are exempt too, since they exist
-  // precisely to wait for a game to be readable in.
+  // land as a burst on the first frame of the next game. Notices remain queued
+  // until a game is ready to display them.
   toasts_.visible.clear();
   toasts_.waiting.clear();
   // The frame handler keeps this true to the seed while it runs, so this is
