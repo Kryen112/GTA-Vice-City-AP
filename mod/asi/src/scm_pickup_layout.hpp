@@ -131,35 +131,52 @@ struct PickupLayoutPlan {
   std::vector<PickupPriceOverride> price_overrides;
 };
 
+// Within a quarter unit (Euclidean) counts as the same slot, mirrored from
+// data.PICKUP_MATCH_TOLERANCE, which the mirror checker compares against this.
+//
+// Two measured bounds hold it there, both taken over the decompile by
+// dump_pickups.py rather than written down: the closest pair of slots is 3.67
+// units apart, and the closest same-type pickup that NO table of ours owns is
+// 0.94 units from a slot. The second is the tight one and it used to be 1.91,
+// which is why the tolerance used to be 1.0: the four pickups Rub Out leaves
+// in the estate courtyard brought it down, because the body armour among them
+// has the finale's Tec-9 less than a unit away and both are the street type.
+// The finale holds the whole layout off the pool while it runs, so that pair
+// never actually meets; the tolerance stays under it anyway, so the matcher
+// does not depend on that.
+//
+// A quarter unit is far more than the positions need. They round-trip from the
+// decompile through JSON as decimals and land on the same float the script
+// literal compiled to, so what is being absorbed is the last bits of a float
+// and nothing else.
+constexpr double kMatchDistanceSquared = 0.0625;
+
+inline double PickupDistanceSquared(const PickupPoolEntry& entry,
+                                    const PickupTarget& target) {
+  const double delta_x = entry.x - target.x;
+  const double delta_y = entry.y - target.y;
+  const double delta_z = entry.z - target.z;
+  return delta_x * delta_x + delta_y * delta_y + delta_z * delta_z;
+}
+
+// Fixed pickups only; shop stock and dropped pickups keep their own rules.
+// Only Phil's shop stands carry a price override; hospital pay stands do not.
+inline bool IsAmbientPickup(const std::vector<PickupTarget>& targets,
+                            const PickupPoolEntry& entry) {
+  for (const PickupTarget& target : targets) {
+    if (target.price_weapon_type == 0 &&
+        target.pickup_type == entry.pickup_type &&
+        PickupDistanceSquared(entry, target) <= kMatchDistanceSquared) return true;
+  }
+  return false;
+}
+
 // check_pending carries one flag per target, true while that slot's AP check is
-// still to be taken. Empty means no slot is a check, which is every seed with
-// the class off and the whole of vanilla, so the default keeps the shuffle-only
-// callers unchanged. A slot whose check is pending shows the marker instead of
-// whatever the layout would give it, and reverts to the layout the frame after
-// the check is taken, since the flag is what the caller re-derives per frame.
+// still to be taken. Empty means no slot is a check. 
 inline PickupLayoutPlan PlanPickupLayout(
     const std::vector<PickupTarget>& targets,
     const std::vector<PickupPoolEntry>& pool_entries,
     const std::vector<bool>& check_pending = {}) {
-  // Within a quarter unit (Euclidean) counts as the same slot, mirrored from
-  // data.PICKUP_MATCH_TOLERANCE, which the mirror checker compares against this.
-  //
-  // Two measured bounds hold it there, both taken over the decompile by
-  // dump_pickups.py rather than written down: the closest pair of slots is 3.67
-  // units apart, and the closest same-type pickup that NO table of ours owns is
-  // 0.94 units from a slot. The second is the tight one and it used to be 1.91,
-  // which is why the tolerance used to be 1.0: the four pickups Rub Out leaves
-  // in the estate courtyard brought it down, because the body armour among them
-  // has the finale's Tec-9 less than a unit away and both are the street type.
-  // The finale holds the whole layout off the pool while it runs, so that pair
-  // never actually meets; the tolerance stays under it anyway, so the matcher
-  // does not depend on that.
-  //
-  // A quarter unit is far more than the positions need. They round-trip from the
-  // decompile through JSON as decimals and land on the same float the script
-  // literal compiled to, so what is being absorbed is the last bits of a float
-  // and nothing else.
-  constexpr double kMatchDistanceSquared = 0.0625;
   PickupLayoutPlan plan;
   for (std::size_t index = 0; index < targets.size(); ++index) {
     const PickupTarget& target = targets[index];
@@ -180,11 +197,7 @@ inline PickupLayoutPlan PlanPickupLayout(
     double match_distance_squared = 0.0;
     for (const PickupPoolEntry& entry : pool_entries) {
       if (entry.pickup_type != target.pickup_type) continue;
-      const double delta_x = entry.x - target.x;
-      const double delta_y = entry.y - target.y;
-      const double delta_z = entry.z - target.z;
-      const double distance_squared =
-          delta_x * delta_x + delta_y * delta_y + delta_z * delta_z;
+      const double distance_squared = PickupDistanceSquared(entry, target);
       if (distance_squared > kMatchDistanceSquared) continue;
       if (match != nullptr && distance_squared >= match_distance_squared) continue;
       match = &entry;

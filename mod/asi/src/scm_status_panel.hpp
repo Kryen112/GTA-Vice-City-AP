@@ -37,15 +37,15 @@ constexpr const char* kAbilityNames[kAbilityCount] = {
 // the release toast reads as a sentence: "Hidden Packages are now available."
 constexpr const char* kContentNames[kContentCount] = {
     "Hidden Packages", "Rampages", "Stunt Jumps", "Property Purchases",
-    "Robbable Stores",
+    "Robbable Stores", "Pickups",
 };
-// Player-facing district names, in the apworld district_data.DISTRICTS order the
+// Player-facing district names, in the apworld scm.DISTRICT_KEYS order the
 // unlock block indexes by. The page lists the districts a class is still held in,
 // so a wrong name here misnames a place rather than holding the wrong content.
 constexpr const char* kDistrictNames[kDistrictCount] = {
     "Ocean Beach", "Washington Beach", "Vice Point", "Starfish Island",
     "Prawn Island", "Leaf Links", "Downtown", "Little Haiti", "Little Havana",
-    "Viceport", "Escobar International",
+    "Viceport", "Escobar International", "Junk Yard",
 };
 // The emergency and side-job activities the seed turns into checks, with how many
 // levels each one has, matching data.EMERGENCY_LEVELS: the three emergency

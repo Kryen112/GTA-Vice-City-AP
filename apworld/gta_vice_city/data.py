@@ -306,8 +306,8 @@ ABILITY_USEFUL_ITEMS: list[str] = [CROUCH_ITEM]
 # off, so a seed can lock world content without making it checks; that is the
 # one place a disabled class does not behave vanilla, and CLAUDE.md's toggle
 # invariant names the exception. Enforcement splits by whether the content has
-# an icon: holding the pickups belongs to the ASI (packages, rampage icons, and
-# all 15 property icons), while the main.scm gates the two classes with nothing to
+# an icon: holding pickups belongs to the ASI (packages, rampage icons,
+# property icons and pickups), while the main.scm gates classes with nothing to
 # hold, so a locked stunt jump registers nothing on landing and a locked store
 # never starts its robbery.
 HIDDEN_PACKAGES_ITEM = "Hidden Packages"
@@ -315,6 +315,7 @@ RAMPAGES_ITEM = "Rampages"
 STUNT_JUMPS_ITEM = "Stunt Jumps"
 PROPERTY_PURCHASES_ITEM = "Property Purchases"
 ROBBABLE_STORES_ITEM = "Robbable Stores"
+PICKUPS_ITEM = "Pickups"
 
 CONTENT_LOCK_ITEMS: dict[str, str] = {
     "hidden_packages": HIDDEN_PACKAGES_ITEM,
@@ -322,9 +323,10 @@ CONTENT_LOCK_ITEMS: dict[str, str] = {
     "stunt_jumps": STUNT_JUMPS_ITEM,
     "properties": PROPERTY_PURCHASES_ITEM,
     "robbable_stores": ROBBABLE_STORES_ITEM,
+    "pickups": PICKUPS_ITEM,
 }
 
-# The five content items in a stable order; the reserved lock-flag and unlock
+# The content items in a stable order; the reserved lock-flag and unlock
 # globals follow this order, so it never reorders.
 CONTENT_ITEMS: list[str] = list(CONTENT_LOCK_ITEMS.values())
 
@@ -365,26 +367,20 @@ CONTENT_DISTRICT_TABLES: dict[str, list[str]] = {
         for purchase in PROPERTY_PURCHASES
     ],
     ROBBABLE_STORES_ITEM: district_data.STORE_DISTRICTS,
+    PICKUPS_ITEM: district_data.PICKUP_DISTRICTS,
 }
 
-# Which districts hold each class, in DISTRICTS order. A class-district pair
-# with nothing in it gets no item, which is why the PER_CLASS pool is 42 and not
-# five times twelve. Eighteen pairs are empty: packages reach eleven of the
-# twelve districts, rampages and stunt jumps nine each, properties eight and
-# stores five. Leaf Links holds packages alone and the Junk Yard holds none of
-# the five, only ambient pickups, which no content key covers.
+# Which districts hold each class, in DISTRICTS order. Empty pairs get no item.
 CONTENT_CLASS_DISTRICTS: dict[str, list[str]] = {
     item: [district for district in district_data.DISTRICTS if district in set(table)]
     for item, table in CONTENT_DISTRICT_TABLES.items()
 }
 
-# Every district that holds anything lockable, in DISTRICTS order. Eleven of the
-# twelve do, the Junk Yard being the exception, so PER_DISTRICT is eleven items,
-# but this is derived rather than assumed.
+# Junk Yard occupies the next reserved district slot, preserving released globals.
 CONTENT_DISTRICTS: list[str] = [
     district for district in district_data.DISTRICTS
-    if any(district in districts for districts in CONTENT_CLASS_DISTRICTS.values())
-]
+    if district != "Junk Yard"
+] + ["Junk Yard"]
 
 
 def content_item_district(name: str) -> str | None:
@@ -435,21 +431,26 @@ def content_items(selected_keys: frozenset[str], split: int) -> list[str]:
 def all_district_content_items() -> list[str]:
     """Every district content item any seed can produce, in id order.
 
-    The item table is one table for all seeds, so it holds both granularities
-    at once: the PER_DISTRICT items first, then the PER_CLASS items grouped by
-    class. A seed uses one group or the other, never both.
+    The item table holds both granularities for all seeds. The released district
+    and class-district items come first, followed by pickup-related additions.
+    A seed uses one granularity or the other, never both.
     """
-    names = [district_content_item_name(district) for district in CONTENT_DISTRICTS]
+    # Released district items retain their prefix in the item ID table.
+    names = [district_content_item_name(district) for district in CONTENT_DISTRICTS
+             if district != "Junk Yard"]
     names.extend(district_class_item_name(district, item)
-                 for item in CONTENT_ITEMS
+                 for item in CONTENT_ITEMS if item != PICKUPS_ITEM
                  for district in CONTENT_CLASS_DISTRICTS[item])
+    names.append(district_content_item_name("Junk Yard"))
+    names.extend(district_class_item_name(district, PICKUPS_ITEM)
+                 for district in CONTENT_CLASS_DISTRICTS[PICKUPS_ITEM])
     return names
 
 
 def location_district(location_name: str) -> str | None:
     """The district a lockable location sits in, or None if it has no district.
 
-    Only the five content classes have one. A business purchase is listed like
+    Only the content classes have one. A business purchase is listed like
     any other purchase, though its rule is built from the sale requirements plus
     its own property term rather than from a lookup here.
     """
@@ -1858,6 +1859,7 @@ def _content_class_locations() -> dict[str, list[str]]:
         PROPERTY_PURCHASES_ITEM: list(PROPERTY_PURCHASES),
         ROBBABLE_STORES_ITEM: [robbable_store_name(index)
                                for index in range(1, ROBBABLE_STORE_COUNT + 1)],
+        PICKUPS_ITEM: [pickup_name(index) for index in range(PICKUP_COUNT)],
     }
 
 

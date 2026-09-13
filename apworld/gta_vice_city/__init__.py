@@ -1047,13 +1047,15 @@ class GTAViceCityWorld(World):
         # moves, since shuffle_shops turns stock into checks and does not trade it
         # about, and the price stays the stand's own either way.
         #
-        # Sent when ANY of the three options wants it. The shuffle needs it to
+        # Sent when any option needs it. The shuffle requires it to
         # move models about; each check class needs it to know where its stands
         # are and which are still to be taken. With none on it stays empty, which
         # is what keeps a vanilla seed vanilla.
         checks_on = bool(self.options.enable_pickups.value)
         shops_on = bool(self.options.shuffle_shops.value)
-        if self.pickup_permutation is None and not checks_on and not shops_on:
+        pickups_locked = "pickups" in self.options.content_locks.value
+        if (self.pickup_permutation is None and not checks_on and not shops_on
+                and not pickups_locked):
             return []
         layout: list[list[float | int]] = []
         for slot_index in range(data.PICKUP_COUNT):

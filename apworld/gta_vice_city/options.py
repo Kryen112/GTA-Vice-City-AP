@@ -193,11 +193,13 @@ class StartingAbilityUnlock(Toggle):
 class ContentLocks(OptionSet):
     """Lock content and add them as items to the pool. Each selected key
     locks its class and puts its item in the pool.
-    Valid keys: [hidden_packages, rampages, stunt_jumps, properties, robbable_stores]
+    Valid keys: [hidden_packages, rampages, stunt_jumps, properties, robbable_stores, pickups]
 
     Packages, rampage icons and property icons are absent from the world until
     their item arrives. A locked stunt jump still flies and stays re-doable but
     registers nothing, and aiming at a shopkeeper starts no robbery.
+    Pickups locks pickup locations, even with Enable pickups off.
+    Dropped weapons and shop stock are unaffected.
 
     If a seed is too restricted to have anywhere to go from the first mission,
     the held item that opens the most of the start island becomes the reward for
@@ -205,7 +207,7 @@ class ContentLocks(OptionSet):
     display_name = "Content locks"
     valid_keys = frozenset({
         "hidden_packages", "rampages", "stunt_jumps", "properties",
-        "robbable_stores",
+        "robbable_stores", "pickups",
     })
     default = frozenset()
 
@@ -218,14 +220,12 @@ class SplitContentLocks(Choice):
     "Ocean Beach Content" releases the Hidden Packages, Rampages, Stunt Jumps
     and Properties in Ocean Beach.
     per_class: one item per class per district. "Ocean Beach Hidden Packages"
-    releases only the packages in Ocean Beach. The finest and the most items:
-    42 with every key selected against 5 with the locks whole.
+    releases only the packages in Ocean Beach. This produces the most available locations.
 
     The districts are Ocean Beach, Washington Beach, Vice Point, Leaf Links,
     Prawn Island, Starfish Island, Downtown, Little Haiti, Little Havana,
-    Viceport and Escobar International.
-    A class-district pair holding nothing gets no item, so Leaf Links only
-    holds Hidden Packages, as there is nothing else on that island."""
+    Viceport, Escobar International and Junk Yard.
+    A class-district pair holding nothing gets no item."""
     display_name = "Split content locks"
     option_off = 0
     option_per_district = 1

@@ -2745,7 +2745,7 @@ DISTRICTS = [
     "Prawn Island", "Leaf Links",
     "Downtown", "Little Haiti",
     "Little Havana", "Viceport",
-    "Escobar International",
+    "Escobar International", "Junk Yard",
 ]
 
 # scm.CONTENT_KEYS order, which fixes the class-major stride into the block.
@@ -2753,7 +2753,7 @@ DISTRICTS = [
 # class.
 CONTENT_KEYS_ORDER = [
     "hidden packages", "rampages", "stunt jumps", "property purchases",
-    "robbable stores",
+    "robbable stores", "pickups",
 ]
 STUNT_JUMPS_CLASS = 2
 ROBBABLE_STORES_CLASS = 4

@@ -231,7 +231,8 @@ constexpr int kOnMissionGlobal = 313;
 // The kill-frenzy skull's model name in the game's object definitions.
 constexpr const char* kKillFrenzyModelName = "killfrenzy";
 // Diagnostic names for the held pickup classes, HeldPickupClass order.
-constexpr const char* kHeldClassNames[] = {"none", "package", "rampage", "property"};
+constexpr const char* kHeldClassNames[] = {
+    "none", "package", "rampage", "property", "ambient"};
 static_assert(std::size(kHeldClassNames) == kHeldPickupClassCount,
               "one diagnostic name per held pickup class");
 
@@ -944,9 +945,17 @@ void ScmGameState::EnforceHeldPickups(const AbilityLocks& locked,
   for (int index = 0; index < kPickupPoolSize; ++index) {
     CPickup& pickup = CPickups::aPickUps[index];
     if (pickup.bPickupType == 0) continue;
-    const HeldPickupClass held_class = ClassifyHeldPickup(
+    HeldPickupClass held_class = ClassifyHeldPickup(
         static_cast<int>(pickup.bPickupType), static_cast<int>(pickup.nModelId),
         kill_frenzy_model_);
+    if (held_class == HeldPickupClass::kNone &&
+        IsAmbientPickup(pickup_targets_,
+                        {pickup.vecPos.x, pickup.vecPos.y,
+                         UnsunkHeight(pickup.vecPos.z),
+                         static_cast<int>(pickup.bPickupType),
+                         static_cast<int>(pickup.nModelId), index})) {
+      held_class = HeldPickupClass::kPickup;
+    }
     if (held_class == HeldPickupClass::kNone) continue;
     const int district = DistrictForPickup(pickup_districts_, held_class,
                                           pickup.vecPos.x, pickup.vecPos.y);
@@ -1569,7 +1578,7 @@ void ScmGameState::EnforcePickupLayout() {
     // Type zero is a dead slot (never created, or script-removed); it stays
     // dead, so a mission's remove_pickup is never resurrected.
     if (pickup.bPickupType == 0) continue;
-    entries.push_back({pickup.vecPos.x, pickup.vecPos.y, pickup.vecPos.z,
+    entries.push_back({pickup.vecPos.x, pickup.vecPos.y, UnsunkHeight(pickup.vecPos.z),
                        static_cast<int>(pickup.bPickupType),
                        static_cast<int>(pickup.nModelId), index});
   }

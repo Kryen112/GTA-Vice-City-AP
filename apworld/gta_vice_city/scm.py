@@ -435,7 +435,7 @@ def unlocked_district_globals(selected_keys: frozenset[str]) -> dict[int, int]:
 def content_districts() -> list[dict]:
     """Where every holdable pickup is and which district it belongs to.
 
-    The three classes the ASI holds are found in the pickup pool by type or
+    The classes the ASI holds are found in the pickup pool by position, type or
     model, which says what a pickup is but not where, and the district table is
     keyed by index rather than by position. This joins the two, so the ASI can
     put a pool entry in a district without carrying the audit itself. Coordinates
@@ -451,6 +451,8 @@ def content_districts() -> list[dict]:
           for purchase in data.PROPERTY_PURCHASES],
          [district_data.PROPERTY_COORDS[purchase.removesuffix(" Purchase")]
           for purchase in data.PROPERTY_PURCHASES]),
+        (data.PICKUPS_ITEM, district_data.PICKUP_DISTRICTS,
+         [slot[:3] for slot in data.PICKUP_SLOTS]),
     ]
     entries: list[dict] = []
     for content_item, districts, coordinates in positions:

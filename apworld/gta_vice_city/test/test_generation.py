@@ -55,7 +55,7 @@ _ALL_ABILITY_LOCKS: list[str] = [
 
 _ALL_CONTENT_LOCKS: list[str] = [
     "hidden_packages", "rampages", "stunt_jumps", "properties",
-    "robbable_stores",
+    "robbable_stores", "pickups",
 ]
 
 
@@ -2229,6 +2229,60 @@ class TestAbilityLocksHundredPercent(WorldTestBase):
     }
 
 
+class TestPickupContentLocks(WorldTestBase):
+    game = "Grand Theft Auto Vice City"
+    options: ClassVar[dict] = {"content_locks": ["pickups"], "enable_pickups": True}
+
+    def test_pickups_wait_for_their_unlock(self) -> None:
+        names = [data.pickup_name(index) for index in range(data.PICKUP_COUNT)
+                 if data.location_district(data.pickup_name(index)) == "Ocean Beach"]
+        for name in names:
+            self.assertFalse(self.can_reach_location(name), name)
+        self.assertTrue(self.can_reach_location(data.hidden_package_name(1)))
+        unlock = data.content_item_for(names[0], self.world.options.split_content_locks.value)
+        self.collect_by_name([unlock])
+        for name in names:
+            self.assertTrue(self.can_reach_location(name), name)
+        washington = next(name for name in data.PICKUP_NAMES
+                          if data.location_district(name) == "Washington Beach")
+        self.assertEqual(self.can_reach_location(washington),
+                         self.world.options.split_content_locks.value == 0)
+
+
+class TestPickupContentLocksPerDistrict(TestPickupContentLocks):
+    options: ClassVar[dict] = {
+        **TestPickupContentLocks.options, "split_content_locks": "per_district",
+    }
+
+
+class TestPickupContentLocksPerClass(TestPickupContentLocks):
+    options: ClassVar[dict] = {
+        **TestPickupContentLocks.options, "split_content_locks": "per_class",
+    }
+
+
+class TestPickupContentLocksWithoutChecks(WorldTestBase):
+    game = "Grand Theft Auto Vice City"
+    options: ClassVar[dict] = {
+        "content_locks": ["pickups"], "enable_pickups": False,
+        "randomize_pickups": False, "shuffle_shops": False,
+    }
+
+    def test_lock_only_seed_sends_fixed_pickups_without_checks(self) -> None:
+        slot = self.world.fill_slot_data()
+        self.assertIn(data.PICKUPS_ITEM, {item.name for item in self.multiworld.itempool})
+        self.assertFalse(set(data.PICKUP_NAMES) &
+                         {location.name for location in self.multiworld.get_locations()})
+        self.assertEqual(len(slot["pickup_layout"]),
+                         data.PICKUP_COUNT + len(data.SHOP_STAND_SLOTS))
+        self.assertTrue(all(row[6] == 0 for row in slot["pickup_layout"]))
+        flag = str(scm.content_lock_flag_global(data.PICKUPS_ITEM))
+        self.assertEqual(slot["config_globals"][flag], 1)
+        for district in data.CONTENT_CLASS_DISTRICTS[data.PICKUPS_ITEM]:
+            global_index = scm.district_unlock_global(data.PICKUPS_ITEM, district)
+            self.assertNotIn(global_index, scm.unlocked_district_globals(frozenset({"pickups"})))
+
+
 class TestContentLocksAllKeys(WorldTestBase):
     # Every class held. The inherited default tests prove the seed fills and
     # stays reachable with a term on every collectible and activity check.
@@ -2300,7 +2354,7 @@ class TestContentLocksAllKeys(WorldTestBase):
 class TestContentLocksPerClass(WorldTestBase):
     # Every class held, split into one item per class per district. The
     # inherited default tests prove the seed still fills and stays reachable
-    # with 42 progression items where there were 5.
+    # with district-scoped progression items.
     game = "Grand Theft Auto Vice City"
     options: ClassVar[dict] = {
         "content_locks": _ALL_CONTENT_LOCKS,
@@ -2313,7 +2367,7 @@ class TestContentLocksPerClass(WorldTestBase):
             self.assertNotIn(name, pool_names, name)
         expected = data.content_items(frozenset(_ALL_CONTENT_LOCKS),
                                      data.CONTENT_SPLIT_PER_CLASS)
-        self.assertEqual(len(expected), 42)
+        self.assertEqual(len(expected), 54)
         for name in expected:
             self.assertIn(name, pool_names, name)
             self.assertEqual(
@@ -2365,15 +2419,15 @@ class TestContentLocksPerClass(WorldTestBase):
         self.collect_by_name(["Vice Point Property Purchases"])
         self.assertTrue(self.can_reach_location("Malibu Club Purchase"))
 
-    def test_the_42_items_fit_the_pool(self) -> None:
-        # 42 progression items where the whole locks put 5, so filler is what
+    def test_the_district_items_fit_the_pool(self) -> None:
+        # District items replace whole-class items, so filler is what
         # gives way. create_items refuses a pool with more progression and useful
         # items than checks, so generating at all is the assertion; the counts
         # are here so a later class or item change says which side moved.
         pool_names = [item.name for item in self.multiworld.itempool]
         district_items = [name for name in pool_names
                           if name in DISTRICT_CONTENT_NAMES]
-        self.assertEqual(len(district_items), 42)
+        self.assertEqual(len(district_items), 54)
         self.assertEqual(len(pool_names),
                          len(self.multiworld.get_unfilled_locations(self.player)))
 
@@ -2396,7 +2450,7 @@ class TestContentLocksPerClass(WorldTestBase):
         # Every held pickup is placed, and no entry names a district or class
         # outside the block.
         entries = slot_data["content_districts"]
-        self.assertEqual(len(entries), 150)
+        self.assertEqual(len(entries), 150 + data.PICKUP_COUNT)
         for entry in entries:
             self.assertIn(entry["class"], range(len(scm.CONTENT_KEYS)))
             self.assertIn(entry["district"], range(len(scm.DISTRICT_KEYS)))
@@ -2414,7 +2468,7 @@ class TestContentLocksPerDistrict(WorldTestBase):
         pool_names = {item.name for item in self.multiworld.itempool}
         expected = data.content_items(frozenset(_ALL_CONTENT_LOCKS),
                                       data.CONTENT_SPLIT_PER_DISTRICT)
-        self.assertEqual(len(expected), 11)
+        self.assertEqual(len(expected), 12)
         for name in expected:
             self.assertIn(name, pool_names, name)
         for name in data.CONTENT_ITEMS:
@@ -4822,9 +4876,9 @@ class TestReservedGlobals(WorldTestBase):
         # class-major stride by literal, so a shift here has to move with it.
         self.assertEqual(scm.DISTRICT_UNLOCK_BASE, 9967)
         # The grid reserves 12 rows of 16 so a class or a district added later
-        # moves nothing; 5 by 11 of it is in use.
+        # moves nothing; 6 by 12 of it is in use.
         self.assertEqual(scm.DISTRICT_UNLOCK_COUNT, 192)
-        self.assertEqual(len(scm.CONTENT_KEYS) * len(scm.DISTRICT_KEYS), 55)
+        self.assertEqual(len(scm.CONTENT_KEYS) * len(scm.DISTRICT_KEYS), 72)
         # The STRIDE, pinned through a cell in a row above the first. The base
         # and the product are the same under either stride, so they say nothing
         # about it: the ASI mirrored the district COUNT as its stride and read
@@ -4958,7 +5012,8 @@ class TestReservedGlobals(WorldTestBase):
         # to match the same entry.
         entries = scm.content_districts()
         self.assertEqual(len(entries), data.HIDDEN_PACKAGE_COUNT
-                         + data.RAMPAGE_COUNT + len(data.PROPERTY_PURCHASES))
+                         + data.RAMPAGE_COUNT + len(data.PROPERTY_PURCHASES)
+                         + data.PICKUP_COUNT)
         by_class: dict[int, list[tuple[float, float]]] = {}
         for entry in entries:
             by_class.setdefault(entry["class"], []).append((entry["x"], entry["y"]))
@@ -5003,7 +5058,7 @@ class TestReservedGlobals(WorldTestBase):
     def test_every_district_global_is_reachable_at_every_granularity(self) -> None:
         # The same accounting for whole classes and for district-wide items. A
         # class-district pair holding no content is covered by the stamp in every
-        # mode, since no item names it: 13 of the 55, which the ASI would
+        # mode, since no item names it: 18 of the 72, which the ASI would
         # otherwise read as a class held forever on the status page.
         # The cells in use, not the whole grid: the padding leaves spare rows
         # and columns that no class or district names, and nothing stamps them.
@@ -5011,7 +5066,7 @@ class TestReservedGlobals(WorldTestBase):
                  for item in scm.CONTENT_KEYS for district in scm.DISTRICT_KEYS}
         every = frozenset(data.CONTENT_LOCK_ITEMS)
         stamped = set(scm.unlocked_district_globals(every))
-        self.assertEqual(len(stamped), 13)
+        self.assertEqual(len(stamped), 18)
         for split in (data.CONTENT_SPLIT_OFF, data.CONTENT_SPLIT_PER_DISTRICT,
                       data.CONTENT_SPLIT_PER_CLASS):
             with self.subTest(split=split):
@@ -5035,7 +5090,7 @@ class TestReservedGlobals(WorldTestBase):
             for district in scm.DISTRICT_KEYS
             if district not in data.CONTENT_CLASS_DISTRICTS[content_item]
         }
-        self.assertEqual(len(absent_pairs), 13)
+        self.assertEqual(len(absent_pairs), 18)
         one_key = frozenset({sorted(data.CONTENT_LOCK_ITEMS)[0]})
         for selected in (frozenset(), frozenset(data.CONTENT_LOCK_ITEMS), one_key):
             with self.subTest(selected=sorted(selected)):
@@ -5088,20 +5143,17 @@ class TestReservedGlobals(WorldTestBase):
         self.assertEqual(district_data.PACKAGE_DISTRICTS[40], "Prawn Island")
         self.assertEqual(district_data.PACKAGE_DISTRICTS[41], "Prawn Island")
 
-    def test_the_junk_yard_holds_nothing_a_content_key_covers(self) -> None:
-        # It is a district because a pickup name says so, and pickups are no
-        # content class, so it holds nothing lockable. That is what keeps it out
-        # of the district unlock grid, and out of the item pool at every
-        # granularity: a district item covering nothing would be an item the
-        # player receives for no reason and a global no gate reads.
+    def test_the_junk_yard_holds_only_pickups(self) -> None:
         self.assertIn("Junk Yard", district_data.DISTRICTS)
         self.assertIn("Junk Yard", data.MAINLAND_DISTRICTS)
-        for table in data.CONTENT_DISTRICT_TABLES.values():
-            self.assertNotIn("Junk Yard", table)
-        self.assertNotIn("Junk Yard", data.CONTENT_DISTRICTS)
-        self.assertNotIn("Junk Yard", scm.DISTRICT_KEYS)
-        self.assertNotIn(data.district_content_item_name("Junk Yard"),
-                         data.all_district_content_items())
+        for item, table in data.CONTENT_DISTRICT_TABLES.items():
+            self.assertEqual("Junk Yard" in table, item == data.PICKUPS_ITEM)
+        self.assertEqual(scm.DISTRICT_KEYS[-1], "Junk Yard")
+        self.assertIn(data.district_content_item_name("Junk Yard"),
+                      data.all_district_content_items())
+        for split in (data.CONTENT_SPLIT_PER_DISTRICT, data.CONTENT_SPLIT_PER_CLASS):
+            self.assertFalse(any(name.startswith("Junk Yard ") for name in
+                                 data.content_items(frozenset({"hidden_packages"}), split)))
         # Two ambient slots are what it does hold, and both are on the mainland
         # like the district itself.
         slots = [index for index, district
@@ -5188,9 +5240,8 @@ class TestReservedGlobals(WorldTestBase):
         # it.
         #
         # The mirrored list is scm.DISTRICT_KEYS, the districts that hold
-        # something a content key covers. The Junk Yard is on the map and in
-        # district_data.DISTRICTS but holds only ambient pickups, so it has no
-        # column in the grid and is not here.
+        # something a content key covers. Junk Yard follows the released prefix
+        # so existing district globals keep their indices.
         districts = [
             "Ocean Beach", "Washington Beach",
             "Vice Point", "Starfish Island",
@@ -5199,7 +5250,7 @@ class TestReservedGlobals(WorldTestBase):
             "Little Havana", "Viceport",
             "Escobar International",
         ]
-        self.assertEqual(scm.DISTRICT_KEYS, districts)
+        self.assertEqual(scm.DISTRICT_KEYS, [*districts, "Junk Yard"])
         self.assertEqual(district_data.DISTRICTS,
                          [*districts[:8], "Junk Yard", *districts[8:]])
         jumps = [
@@ -5228,7 +5279,7 @@ class TestReservedGlobals(WorldTestBase):
         # The block those tables index into. build_scm.py mirrors the base and
         # derives the stride from the class count, so both are pinned.
         self.assertEqual(scm.DISTRICT_UNLOCK_BASE, 9967)
-        self.assertEqual(len(scm.DISTRICT_KEYS), len(districts))
+        self.assertEqual(len(scm.DISTRICT_KEYS), len(districts) + 1)
         self.assertEqual(scm.CONTENT_KEYS.index(data.STUNT_JUMPS_ITEM), 2)
         self.assertEqual(scm.CONTENT_KEYS.index(data.ROBBABLE_STORES_ITEM), 4)
 
