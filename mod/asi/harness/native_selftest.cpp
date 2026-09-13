@@ -240,6 +240,19 @@ int main(int argc, char** argv) {
     session.Handle(config);
     session.Handle({{"cmd", "ReceivedItems"}, {"index", 0}, {"items", json::array({item})}});
   };
+  {
+    TestGame jump_game;
+    const auto jump_directory = directory / "jump-markers";
+    std::filesystem::create_directories(jump_directory);
+    NativeSession jump_session(&jump_game, logger, sender, "rando.vc", "", jump_directory);
+    auto config = connected;
+    config["slot_data"]["completion_watch"] = {{"9268", 101}, {"9269", 102}};
+    config["slot_data"]["check_markers"] = {
+        {"9268", {453.1, -511.7, 5}}, {"9269", {464.8, -527.3, 5}}};
+    login(jump_session, config);
+    assert(std::abs(jump_game.Markers().at(9268).x - 464.8) < 0.01);
+    assert(std::abs(jump_game.Markers().at(9269).x - 453.1) < 0.01);
+  }
   NativeSession session(&game, logger, sender, "rando.vc", "", directory);
   assert(!game.ClientConnected());
   login(session, connected);

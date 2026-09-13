@@ -106,7 +106,8 @@ bool NativeSession::Activate() {
     if (watched == configuration["completion_watch"].end() || !watched->is_number_integer() ||
         !all_locations_.count(watched->get<std::int64_t>())) continue;
     json marker = entry.value();
-    if (config_.contains("check_markers") && config_["check_markers"].is_object()) {
+    // Stunt jump positions are fixed; use the corrected local table.
+    if (marker[2] != 5 && config_.contains("check_markers") && config_["check_markers"].is_object()) {
       const auto supplied = config_["check_markers"].find(entry.key());
       if (supplied != config_["check_markers"].end() && supplied->is_array() && supplied->size() >= 2) {
         marker[0] = (*supplied)[0];

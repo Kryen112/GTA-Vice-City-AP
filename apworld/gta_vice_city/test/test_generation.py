@@ -5387,6 +5387,17 @@ class TestReservedGlobals(WorldTestBase):
 class TestSlotData(WorldTestBase):
     game = "Grand Theft Auto Vice City"
 
+    def test_stunt_markers_match_their_takeoffs(self) -> None:
+        from ..check_markers import check_markers
+
+        # These nearby pairs were reversed in the tracker coordinate table.
+        takeoffs = {13: (-839.022, 1153.526), 14: (-312.447, 1109.196),
+                    32: (461.589, -522.23), 33: (454.105, -504.736)}
+        markers = check_markers({"enable_stunt_jumps": True})
+        for identifier, takeoff in takeoffs.items():
+            with self.subTest(jump=identifier):
+                self.assertLess(math.dist(markers[str(9236 + identifier)][:2], takeoff), 15)
+
     def test_check_markers_follow_enabled_locations(self) -> None:
         from ..check_markers import check_markers
 
