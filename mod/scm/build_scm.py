@@ -982,18 +982,8 @@ def _hold_condition(class_index, district):
 
 
 def gate_stunt_jumps():
-    # Each jump is detected at its own takeoff, a locate_player_in_car_3d over
-    # the ramp followed by `$792 = <id>`, and gating there is what makes the hold
-    # per district: the id is the index into STUNT_JUMP_DISTRICTS. A held jump
-    # never enters the sequence at all, so no per-jump flag ($795..$830) sets and
-    # the APSTAT watcher sees nothing, the 36-counter $791 does not advance,
-    # player_made_progress and register_unique_jump_found do not run so neither
-    # the completion percentage nor the jump stat moves, and no pass text or cash
-    # prints. The jump still flies, since only the detection is skipped, and it
-    # stays re-doable forever.
-    #
-    # Ids 25 and 26 each have two takeoff definitions, so there are more sites
-    # than jumps; every site gates on its own id's district.
+    # Skip locked or completed jumps before the slow-motion camera starts.
+    # Jumps 25 and 26 each have two takeoffs; both use the same completion flags.
     sites = []
     for index, line in enumerate(lines):
         match = re.fullmatch(r"\$792 = (\d+)", line)
@@ -1021,8 +1011,12 @@ def gate_stunt_jumps():
     for index, identifier in sorted(sites, reverse=True):
         district = STUNT_JUMP_DISTRICTS[identifier - 1]
         lines[index - 3] = "if and"
-        lines[index - 2:index - 2] = [_hold_condition(STUNT_JUMPS_CLASS, district)]
-    edits.append(f"stunt jumps: {len(sites)} takeoffs gated by district")
+        lines[index - 2:index - 2] = [
+            _hold_condition(STUNT_JUMPS_CLASS, district),
+            f"  ${794 + identifier} == 0",
+            f"  ${9236 + identifier} == 0",
+        ]
+    edits.append(f"stunt jumps: {len(sites)} takeoffs gated by district and completion")
 
 
 STORE_GUARD_NUMBER = r"(-?[\d.]+|\$\d+)"

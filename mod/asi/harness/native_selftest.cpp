@@ -76,6 +76,21 @@ int main(int argc, char** argv) {
     assert(CheckedRampageAt({{global, different_category}}, {global}, marker.x, marker.y) == 0);
   }
   assert(rampage_count == 35);
+  std::map<int, int> restored_jumps;
+  std::set<int> checked_jumps;
+  for (const auto& [global, marker] : rampage_markers)
+    if (marker.category == 5) checked_jumps.insert(global);
+  assert(checked_jumps.size() == 36);
+  const auto write_jump = [&](int global, int value) { restored_jumps[global] = value; };
+  RestoreStuntJumpChecks(rampage_markers, {}, write_jump);
+  assert(restored_jumps.empty()); // Failed or unfinished jumps remain available.
+  RestoreStuntJumpChecks({}, checked_jumps, write_jump);
+  assert(restored_jumps.empty()); // Disabled class.
+  RestoreStuntJumpChecks(rampage_markers, checked_jumps, write_jump);
+  assert(restored_jumps.size() == 36 && restored_jumps.at(9237) == 1 && restored_jumps.at(9272) == 1);
+  restored_jumps.clear(); // Starting a new game must retain AP completion.
+  RestoreStuntJumpChecks(rampage_markers, checked_jumps, write_jump);
+  assert(restored_jumps.size() == 36);
   std::map<int, int> rampage_globals;
   const auto read_rampage = [&](int global) { return rampage_globals[global]; };
   const auto write_rampage = [&](int global, int value) { rampage_globals[global] = value; };

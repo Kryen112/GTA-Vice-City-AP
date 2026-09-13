@@ -1712,6 +1712,8 @@ void ScmGameState::RestoreCheckedPickups() {
   // not interpret reconciliation as a new collection or claw back any cash.
   if (packages_shuffled) for (const auto& package : package_locations_)
     if (reported_.count(package.completion_global)) SetGlobal(package.completion_global, 1);
+  RestoreStuntJumpChecks(check_markers_, reported_,
+      [](int index, int value) { SetGlobal(index, value); });
   if (RestoreRampageProgress(check_markers_, reported_,
         [](int index) { return GetGlobal(index); },
         [](int index, int value) { SetGlobal(index, value); })) {

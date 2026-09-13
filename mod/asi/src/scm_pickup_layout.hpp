@@ -43,6 +43,13 @@ inline int CheckedRampageAt(const CheckMarkers& markers, const std::set<int>& re
   return 0;
 }
 
+template <typename WriteGlobal>
+void RestoreStuntJumpChecks(const CheckMarkers& markers, const std::set<int>& reported,
+                           WriteGlobal write) {
+  for (const auto& [global, marker] : markers)
+    if (marker.category == 5 && reported.count(global)) write(global, 1);
+}
+
 // RAMPAGE's 35 passed flags mirror APSTAT's completion block. Its completed
 // count lets the script award the single all-rampages progress point itself.
 constexpr int kRampagePassedBase = 1439;
