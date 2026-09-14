@@ -763,22 +763,27 @@ def strand_block(strand, missions):
     out = [f":APMARK_{strand}"]
     done = f"APMARK_{strand}_DONE"
     out += [f"${mission_order.COMPLETED_GLOBAL} = 1"]
-    out += [f"${mission_order.COMPLETED_GLOBAL} += {mission['passed']}" for mission in missions]
+    out += [f"add_int_var_to_int_var ${mission_order.COMPLETED_GLOBAL} += {mission['passed']}"
+            for mission in missions]
+    # Clear completed markers before a locked mission can end the strand pass.
+    for m in missions:
+        after = f"APMARK_{m['launcher']}_CLEANED"
+        out += ["if ", f"  {m['passed']} == 1", f"goto_if_false @{after}",
+                "if ", f"  ${m['shown']} == 1", f"goto_if_false @{after}",
+                f"remove_blip ${m['handle']}", f"${m['shown']} = 0", f":{after}"]
     for m in sorted(missions, key=lambda x: x["ordinal"]):
         launcher = m["launcher"]
         active = f"APMARK_{launcher}_ACTIVE"
         after = f"APMARK_{launcher}_AFTER"
-        # Passed: hide this mission's marker if it is still shown, then fall
-        # through to the next mission's test. Unpassed: it is the active mission.
+        # Skip completed missions.
         out += ["if ", f"  {m['passed']} == 1", f"goto_if_false @{active}",
-                "if ", f"  ${m['shown']} == 1", f"goto_if_false @{after}",
-                f"remove_blip ${m['handle']}", f"${m['shown']} = 0", f"goto @{after}",
-                f":{active}"]
+                f"goto @{after}", f":{active}"]
         unlock, count = m["gate"][0]
         ordered = f"APMARK_{launcher}_ORDERED"
         out += ["if ", f"  ${mission_order.order_global(unlock)} > 0", f"goto_if_false @{ordered}"]
         out += mission_order.rank_lines(unlock, count, f"APMARK_{launcher}_RANK")
-        out += ["if ", f"  ${mission_order.RANK_GLOBAL} == ${mission_order.COMPLETED_GLOBAL}",
+        out += ["if ", f"  is_int_var_equal_to_int_var ${mission_order.RANK_GLOBAL} "
+                f"== ${mission_order.COMPLETED_GLOBAL}",
                 f"goto_if_false @{after}", f":{ordered}"]
         # First unpassed mission: decide show/hide on its gate.
         gate_true = f"APMARK_{launcher}_SHOW"

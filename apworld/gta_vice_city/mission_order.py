@@ -22,11 +22,12 @@ def rank_lines(unlock: int, count: int, label: str) -> list[str]:
     order = order_global(unlock)
     return [f"${RANK_GLOBAL} = {count}",
             "if ", f"  ${order} > 0", f"goto_if_false @{label}",
-            f"${RANK_GLOBAL} = ${order}", f"${RANK_GLOBAL} /= {10 ** (count - 1)}",
-            f"${DIGIT_GLOBAL} = ${RANK_GLOBAL}", f"${DIGIT_GLOBAL} /= 10",
-            f"${DIGIT_GLOBAL} *= 10", f"${RANK_GLOBAL} -= ${DIGIT_GLOBAL}", f":{label}"]
+            f"set_var_int_to_var_int ${RANK_GLOBAL} = ${order}", f"${RANK_GLOBAL} /= {10 ** (count - 1)}",
+            f"set_var_int_to_var_int ${DIGIT_GLOBAL} = ${RANK_GLOBAL}", f"${DIGIT_GLOBAL} /= 10",
+            f"${DIGIT_GLOBAL} *= 10", f"sub_int_var_from_int_var ${RANK_GLOBAL} -= ${DIGIT_GLOBAL}", f":{label}"]
 
 
 def gate_lines(unlock: int, count: int, loopback: str, label: str) -> list[str]:
     return [*rank_lines(unlock, count, label),
-            "if ", f"  ${unlock} >= ${RANK_GLOBAL}", f"goto_if_false @{loopback}"]
+            "if ", f"  is_int_var_greater_or_equal_to_int_var ${unlock} >= ${RANK_GLOBAL}",
+            f"goto_if_false @{loopback}"]

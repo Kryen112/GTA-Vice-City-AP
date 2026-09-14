@@ -35,12 +35,22 @@ def run_lines(lines, values):
             values[tokens[1]] = value(tokens[3])
         elif line.startswith("div_int_var_by_int_var "):
             values[tokens[1]] //= value(tokens[3])
+        elif line.startswith("add_int_var_to_int_var "):
+            values[tokens[1]] += value(tokens[3])
+        elif line.startswith("sub_int_var_from_int_var "):
+            values[tokens[1]] -= value(tokens[3])
+        elif line.startswith("  is_int_var_"):
+            opcode, left, operator, right = tokens
+            assert opcode in {"is_int_var_equal_to_int_var", "is_int_var_greater_or_equal_to_int_var"}
+            condition = value(left) == value(right) if operator == "==" else value(left) >= value(right)
         elif line.startswith("  $"):
             left, operator, right = tokens
+            assert not right.startswith("$"), "Variable comparisons need an explicit integer opcode."
             condition = {">": value(left) > value(right), ">=": value(left) >= value(right),
                          "==": value(left) == value(right)}[operator]
         elif line.startswith("$"):
             left, operator, right = tokens
+            assert not right.startswith("$"), "Variable arithmetic needs an explicit integer opcode."
             operand = value(right)
             if operator == "=":
                 values[left] = operand
@@ -116,8 +126,10 @@ def test_every_five_mission_order_selects_only_the_next_received_mission():
             for received in (completed, completed + 1, 5):
                 values = defaultdict(int, {"$9037": encoded, "$9011": received})
                 values.update({f"$passed{index}": 1 for index in order[:completed]})
+                values.update({f"${11000 + index}": 1 for index in order[:completed]})
                 expected = [f"GEN{order[completed] + 1}"] if received > completed else []
                 assert run_lines(lines, values) == expected
+                assert all(values[f"${11000 + index}"] == 0 for index in order[:completed])
     for completed in range(5):
         values = defaultdict(int, {"$9011": 5})
         values.update({f"$passed{index}": 1 for index in range(completed)})
