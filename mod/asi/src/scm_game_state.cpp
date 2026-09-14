@@ -711,7 +711,7 @@ void ScmGameState::DrawCheckMarkers() {
     if (!position.Available([this](int index) { return GetGlobal(index); })) continue;
     CVector2D radar, screen;
     CRadar::TransformRealWorldPointToRadarSpace(radar, CVector2D(position.x, position.y));
-    if (!main_map && !CheckMarkerFits(radar.x, radar.y, radius_x, radius_y)) continue;
+    if (!main_map && !ProjectCheckMarker(radar.x, radar.y, radius_x, radius_y)) continue;
     CRadar::TransformRadarPointToScreenSpace(screen, radar);
     const float x = std::floor(screen.x);
     const float y = std::floor(screen.y);

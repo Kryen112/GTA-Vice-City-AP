@@ -3253,14 +3253,24 @@ int main() {
   Expect(CheckMarkerFitsScreen(900, 700, 1920, 1080), "main-map clipping follows screen resolution");
   Expect(!CheckMarkerFitsScreen(std::numeric_limits<float>::quiet_NaN(), 20, 640, 448),
          "invalid map projections draw nothing");
-  Expect(CheckMarkerFits(0.0f, 0.0f, 50.0f, 40.0f), "marker fits at radar centre");
-  Expect(CheckMarkerFits(0.9f, 0.0f, 50.0f, 40.0f), "nearby marker fits");
-  Expect(!CheckMarkerFits(1.0f, 0.0f, 50.0f, 40.0f), "outline stays inside radar");
-  Expect(!CheckMarkerFits(0.7f, 0.7f, 50.0f, 40.0f), "diagonal outline stays inside radar");
-  Expect(!CheckMarkerFits(-2.0f, 0.0f, 50.0f, 40.0f), "distant markers stay off the edge");
-  Expect(!CheckMarkerFits(0.0f, 0.0f, 0.0f, 40.0f), "zero size radar draws nothing");
-  Expect(!CheckMarkerFits(std::numeric_limits<float>::quiet_NaN(), 0.0f, 50.0f, 40.0f),
-         "invalid projected coordinates draw nothing");
+  float radar_x = 0.3f, radar_y = 0.4f;
+  Expect(ProjectCheckMarker(radar_x, radar_y, 50, 40) && radar_x == 0.3f && radar_y == 0.4f,
+         "nearby markers keep their position");
+  for (const auto point : {std::pair<float, float>{3, 0}, {-3, 0}, {2.0f, 2.0f}}) {
+    radar_x = point.first; radar_y = point.second;
+    Expect(ProjectCheckMarker(radar_x, radar_y, 50, 40), "markers within three times the range stay visible");
+    const float outer_x = std::abs(radar_x) + 4.0f / 50;
+    const float outer_y = std::abs(radar_y) + 4.0f / 40;
+    Expect(outer_x * outer_x + outer_y * outer_y <= 1.0f, "rim marker outline fits");
+    Expect(std::abs(radar_x * point.second - radar_y * point.first) < 0.0001f,
+           "rim markers retain their direction");
+  }
+  radar_x = 3.01f; radar_y = 0;
+  Expect(!ProjectCheckMarker(radar_x, radar_y, 50, 40), "markers beyond three times the range disappear");
+  radar_x = 0;
+  Expect(!ProjectCheckMarker(radar_x, radar_y, 0, 40), "zero size radar draws nothing");
+  radar_x = std::numeric_limits<float>::quiet_NaN();
+  Expect(!ProjectCheckMarker(radar_x, radar_y, 50, 40), "invalid projections draw nothing");
 
   if (failures == 0) {
     std::cout << "OK: protocol self-test passed\n";
