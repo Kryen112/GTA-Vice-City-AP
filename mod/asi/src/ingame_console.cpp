@@ -82,10 +82,12 @@ void IngameConsole::Key(WPARAM key) {
   if (key == VK_RETURN) {
     if (!input_.empty()) {
       send_(Utf8(input_));
+      input_history_.Add(input_);
       std::fill(input_.begin(), input_.end(), 0);
       input_.clear(); cursor_ = 0; scroll_ = 0;
     }
-  } else if (key == VK_BACK && cursor_) input_.erase(--cursor_, 1);
+  } else if (key == VK_UP || key == VK_DOWN) input_history_.Recall(key == VK_UP, input_, cursor_);
+  else if (key == VK_BACK && cursor_) input_.erase(--cursor_, 1);
   else if (key == VK_DELETE && cursor_ < input_.size()) input_.erase(cursor_, 1);
   else if (key == VK_LEFT && cursor_) --cursor_;
   else if (key == VK_RIGHT && cursor_ < input_.size()) ++cursor_;

@@ -49,6 +49,33 @@ class ConsoleCommandCompletion {
   }
 };
 
+class ConsoleInputHistory {
+  std::deque<std::wstring> entries_;
+  std::size_t position_ = 0;
+  std::wstring draft_;
+ public:
+  void Add(const std::wstring& text) {
+    if (!text.empty()) {
+      entries_.push_back(text);
+      if (entries_.size() > 100) entries_.pop_front();
+    }
+    position_ = entries_.size();
+    draft_.clear();
+  }
+  void Recall(bool older, std::wstring& text, std::size_t& cursor) {
+    if (older) {
+      if (!position_) return;
+      if (position_ == entries_.size()) draft_ = text;
+      --position_;
+    } else {
+      if (position_ == entries_.size()) return;
+      ++position_;
+    }
+    text = position_ == entries_.size() ? draft_ : entries_[position_];
+    cursor = text.size();
+  }
+};
+
 struct ConsoleLine {
   std::wstring text;
   std::vector<std::uint32_t> colors; // one color per UTF-16 code unit

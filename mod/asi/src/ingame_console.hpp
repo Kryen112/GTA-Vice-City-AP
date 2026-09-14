@@ -27,6 +27,7 @@ class IngameConsole {
   bool active_ = false;
   std::wstring input_;
   ConsoleCommandCompletion completion_;
+  ConsoleInputHistory input_history_;
   std::size_t cursor_ = 0, scroll_ = 0;
   std::mutex mutex_;
   std::deque<ConsoleLine> lines_;
