@@ -11,6 +11,10 @@ loudly. Reads SRC, writes DST; line endings preserved.
 import math
 import re
 import sys
+from pathlib import Path
+
+sys.path.append(str(Path(__file__).resolve().parents[2] / "apworld" / "gta_vice_city"))
+import mission_order
 
 SRC, DST = sys.argv[1], sys.argv[2]
 
@@ -282,6 +286,9 @@ def gate_term(term, loopback):
         return ["if ", f"  {PASSED_FLAGS[term[1]]} == 1",
                 f"goto_if_false @{loopback}"]
     global_index, count = term
+    if UNLOCK_FIRST <= global_index <= UNLOCK_LAST:
+        return mission_order.gate_lines(
+            global_index, count, loopback, f"APORDER_{loopback}_{global_index}_{count}")
     return ["if ", f"  ${global_index} >= {count}", f"goto_if_false @{loopback}"]
 
 
@@ -2483,6 +2490,22 @@ def audit_pass_banners():
     edits.append(f"pass banner audit: {sum(found.values())} moneyless banners")
 
 
+TAXI_MILESTONE_SPACING = 10169
+TAXI_MILESTONE_COUNT = 10170
+TAXI_EXTRA_COMPLETION_BASE = 9550
+
+
+def taxi_milestone_lines():
+    # Unconfigured games keep the vanilla cadence of ten fares per milestone.
+    return [
+        f"set_var_int_to_var_int ${TAXI_MILESTONE_COUNT} = $369",
+        "if", f"  ${TAXI_MILESTONE_SPACING} > 0", "goto_if_false @APSTAT_TAXI_DEFAULT_SPACING",
+        f"div_int_var_by_int_var ${TAXI_MILESTONE_COUNT} /= ${TAXI_MILESTONE_SPACING}",
+        "goto @APSTAT_TAXI_COUNT_READY", ":APSTAT_TAXI_DEFAULT_SPACING",
+        f"${TAXI_MILESTONE_COUNT} /= 10", ":APSTAT_TAXI_COUNT_READY",
+    ]
+
+
 def add_stat_watcher():
     # Rampages and unique stunt jumps each set a dedicated per-instance flag
     # (0->1 on genuine completion, never reset, never reused), so a boot-started
@@ -2491,11 +2514,14 @@ def add_stat_watcher():
     # compiles to nothing (only array WRITE round-trips), so a loop cannot read
     # the flags. Rampages $1439..$1473 -> $9202..$9236 (35); stunts $795..$830 ->
     # $9237..$9272 (36); Taxi $369 (persistent career fares) -> $9309..$9318 at
-    # every tenth fare.
-    body = ["", ":APSTAT", "script_name 'APSTAT'", "", ":APSTAT_LOOP", "wait 1000"]
+    # the configured fare spacing.
+    body = ["", ":APSTAT", "script_name 'APSTAT'", "", ":APSTAT_LOOP", "wait 1000",
+            *taxi_milestone_lines()]
     checks = ([(f"${1439 + n} == 1", 9202 + n) for n in range(35)]
               + [(f"${795 + n} == 1", 9237 + n) for n in range(36)]
-              + [(f"$369 >= {10 * n}", 9308 + n) for n in range(1, 11)])
+              + [(f"${TAXI_MILESTONE_COUNT} >= {n}", 9308 + n) for n in range(1, 11)]
+              + [(f"${TAXI_MILESTONE_COUNT} >= {n}", TAXI_EXTRA_COMPLETION_BASE + n - 11)
+                 for n in range(11, 101)])
     for index, (condition, completion) in enumerate(checks):
         label = f"@APSTAT_C{index}"
         body += ["if ", f"  {condition}", f"goto_if_false {label}", f"${completion} = 1", f":APSTAT_C{index}"]

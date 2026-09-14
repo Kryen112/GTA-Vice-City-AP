@@ -1,4 +1,4 @@
-# What the player installs is the world and the mod payload, not the suite that
-# proves them. The tests live in the source checkout and run from there.
+# The standalone installer carries the mod. The APWorld carries generation and docs.
 test/
 .pytest_cache/
+data/mod/

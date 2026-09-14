@@ -18,6 +18,7 @@ class ArchipelagoClient {
   void Start();
   void Stop();
   void Command(std::string text);
+  bool Connected() const { return connected_; }
 
  private:
   void Run();
@@ -29,6 +30,7 @@ class ArchipelagoClient {
   std::mutex mutex_;
   std::deque<std::string> commands_;
   std::atomic<bool> stop_{false};
+  std::atomic<bool> connected_{false};
   std::thread thread_;
 };
 

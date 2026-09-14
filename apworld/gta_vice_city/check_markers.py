@@ -88,14 +88,15 @@ CATEGORY_COLORS = {
 }
 
 
-def marker_requirements(split_mainland_access: bool) -> dict[str, list]:
+def marker_requirements(split_mainland_access: bool,
+                        mission_order: dict[str, list[str]] | None = None) -> dict[str, list]:
     """Map rules for marker requirements.
 
     Each term is [count global, minimum, optional ability-lock flag].
     """
     by_location = rules.build_location_requirements(
         ability_locks=frozenset(data.ABILITY_LOCK_ITEMS),
-        split_mainland_access=split_mainland_access)
+        split_mainland_access=split_mainland_access, mission_order=mission_order)
     item_globals = scm.item_globals()
     globals_by_item = {name: item_globals[item_id]
                        for name, item_id in items.ITEM_NAME_TO_ID.items()

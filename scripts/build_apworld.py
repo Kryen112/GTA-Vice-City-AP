@@ -1,8 +1,7 @@
 """Builds gta_vice_city.apworld with Archipelago's own packaging and installs it.
 
 Links the world into the Archipelago checkout's worlds folder so the core can
-discover it, stages the mod payload inside the world package, hands the
-packaging itself to Archipelago's "Build APWorlds" launcher component, copies
+discover it, hands packaging to Archipelago's "Build APWorlds" launcher component, copies
 what the component wrote to dist, and copies that into the frozen install's
 custom_worlds folder.
 
@@ -18,9 +17,10 @@ produces, which is what every Archipelago an outside player runs will accept.
 The install target defaults to %ProgramData%/Archipelago/custom_worlds and is
 overridable with the AP_CUSTOM_WORLDS environment variable.
 
-The payload it stages carries no copy of the game's script, only the differences
-from it: main.scm and every CLEO script go in as bsdiff4 deltas against the
-player's own stock main.scm, and only the ASI ships whole. The stock script this build reads defaults to
+The payload helpers are used by build_setup.py for the standalone installer.
+They carry no copy of the game's script, only the differences from it:
+main.scm and every CLEO script go in as bsdiff4 deltas against the
+player's own stock main.scm, and only the ASI ships whole. The stock script defaults to
 mod/scm/stock.scm and is overridable with the GTA_VC_STOCK_SCM environment
 variable; it is never committed and never packaged.
 """
@@ -51,10 +51,8 @@ WORLD_MANIFEST = WORLD_SOURCE / "archipelago.json"
 # a core too old to run this world from loading it at all.
 REQUIRED_MANIFEST_FIELDS = ("game", "world_version", "minimum_ap_version")
 
-# The mod payload the client's installer deploys, staged into the world package
-# under data/mod. Only our own files: the player supplies the ASI loader and
-# CLEO. The compiled main.scm gates staging, since without it the mod is not
-# playable.
+# The standalone installer's payload. The compiled main.scm gates staging,
+# since without it the mod is not playable.
 MOD_ASI = REPOSITORY_ROOT / "mod" / "asi" / "plugin" / "bin" / "GTA-VC" / "Release" / "GtaVcAp.VC.asi"
 MOD_CLEO_DIR = REPOSITORY_ROOT / "mod" / "cleo"
 MOD_SCM = REPOSITORY_ROOT / "mod" / "scm" / "main.scm"
@@ -134,7 +132,7 @@ def _installer_module():
     # Loads installer.py on its own, without importing the world package, which
     # would need the Archipelago core on the path.
     spec = importlib.util.spec_from_file_location(
-        "gta_vice_city_installer", WORLD_SOURCE / "installer.py")
+        "gta_vice_city_installer", pathlib.Path(__file__).parent / "gta_vc_setup" / "installer.py")
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
@@ -531,23 +529,14 @@ def main() -> int:
     if link_world(root) is None:
         return 1
 
-    # Before anything is staged, so a refusal leaves the previous apworld in
-    # place rather than replacing it with one that has no mod in it.
     game = manifest_game()
-    _refuse_unshippable_payload()
-    _refuse_oversized_main()
-    _refuse_unpatchable_payload()
 
-    # Staging is inside the guard as well as packaging, so a copy that fails
-    # part way through leaves no half payload behind. The installer prefers a
-    # local data/mod to the packaged one, and half a payload is one the mod
-    # cannot run on.
+    # The APWorld contains generation logic and docs. The standalone setup
+    # stages the mod payload through the helpers in this module.
     try:
         stage_licence_files()
-        stage_mod_payload()
         built = package(root, game)
     finally:
-        clear_staged_payload()
         clear_licence_files()
     if built is None:
         return 1

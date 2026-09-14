@@ -19,6 +19,7 @@
 #include <CHud.h>
 #include <CPad.h>
 #include <CMenuManager.h>
+#include <COnscreenTimer.h>
 
 #include "ap_client.hpp"
 #include "game_addresses.hpp"
@@ -26,6 +27,7 @@
 #include "status_page.hpp"
 #include "ingame_console.hpp"
 #include "save_isolation.hpp"
+#include "toast_stack.hpp"
 
 using namespace plugin;
 
@@ -59,6 +61,9 @@ ThiscallEvent<AddressListMulti<gtavc::kFrontendMenuDrawCall10, GAME_10EN, H_CALL
 
 CdeclEvent<AddressListMulti<gtavc::kPickupsUpdateCall10, GAME_10EN, H_CALL>,
            PRIORITY_AFTER, ArgPickNone, void()> afterPickupsEvent;
+
+ThiscallEvent<AddressListMulti<gtavc::kCounterDisplayCall10, GAME_10EN, H_CALL>,
+              PRIORITY_AFTER, ArgPickNone, void(COnscreenTimer*)> afterCounterDisplayEvent;
 
 // CPad::UpdatePads references from plugin-sdk's meta.CPad.h (VC 1.0).
 CdeclEvent<AddressListMulti<0x490476, GAME_10EN, H_CALL, 0x4A4412, GAME_10EN, H_CALL,
@@ -142,10 +147,15 @@ struct AsiMain {
     // would be flushed before the HUD drew over it; and not the pre-world hook,
     // which is before any drawing at all.
     Events::drawHudEvent += [] { instance.OnDrawHud(); };
+    afterCounterDisplayEvent += [] { instance.game.UpdateTaxiCounter(); };
     mainMapBlipsEvent += [] { instance.game.DrawCheckMarkers(); };
     // Hook the SDK's complete set of UpdatePads call sites, including frontend
     // and save menus, before scripts or menus can consume console keystrokes.
-    plugin::Events::shutdownRwEvent += [] { instance.bridge.Stop(); instance.console.ReleaseGraphics(); };
+    plugin::Events::shutdownRwEvent += [] {
+      instance.bridge.Stop();
+      instance.console.ReleaseGraphics();
+      gtavc::ReleaseToastGraphics();
+    };
     afterPadsEvent += [] { instance.console.BlockControls(); };
     afterPickupsEvent += [] { instance.game.OnPickupsUpdated(); };
     client_ready = gtavc::InstallSaveIsolation(
@@ -192,10 +202,15 @@ struct AsiMain {
     // Every menu frame, because the row the player stands on is what tells the
     // borrowed page whether the panel's entry opened it. The same answer says
     // whether the panel draws, so the menu is read once.
-    if (status_page.Follow().draw) status_page.Draw(game.BuildStatusPanelState());
+    const bool connected = bridge.Connected();
+    if (status_page.Follow().draw) {
+      auto state = game.BuildStatusPanelState();
+      state.client_connected = connected;
+      status_page.Draw(state);
+    }
     console.Draw(FrontEndMenuManager.m_bGameNotLoaded &&
                  FrontEndMenuManager.m_nCurrentMenuPage == MENUPAGE_START_MENU,
-                 game.ClientConnected());
+                 connected);
     // The menu already flushed its text before this callback.
     CFont::DrawFonts();
   }

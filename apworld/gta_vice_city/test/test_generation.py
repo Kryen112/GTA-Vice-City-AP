@@ -3832,7 +3832,7 @@ class TestRememberEmergencyProgressOff(WorldTestBase):
         # leaves all 56 milestones exactly where they were.
         names = {location.name
                  for location in self.multiworld.get_locations(self.player)}
-        for name in data.emergency_names():
+        for name in set(data.emergency_names()) - set(data.EXTRA_TAXI_NAMES):
             self.assertIn(name, names)
 
 
@@ -4030,7 +4030,7 @@ class TestRejections(WorldTestBase):
         # With every collectible class off, the story pool's progressive
         # unlocks and the two area items outnumber the 44 story checks, so a
         # solo seed has nowhere to put the surplus.
-        self._assert_rejected(dict(_STORY_ONLY_OPTIONS), "45 progression and useful items")
+        self._assert_rejected(dict(_STORY_ONLY_OPTIONS), "45 progression items")
 
     def test_story_only_rejects_with_extra_useful_items(self) -> None:
         # Each world modifier adds pool items without adding checks, so an
@@ -4039,7 +4039,7 @@ class TestRejections(WorldTestBase):
                       {"ability_locks": _ALL_ABILITY_LOCKS}):
             with self.subTest(**extra):
                 self._assert_rejected(dict(_STORY_ONLY_OPTIONS, **extra),
-                                      "progression and useful items")
+                                      "progression items")
 
     def test_properties_absorbs_the_story_only_surplus(self) -> None:
         # Story-only is refused because its 45 progression and useful items
@@ -4471,7 +4471,7 @@ class TestTables(WorldTestBase):
         self.assertEqual(len(classes["hidden_packages"][1]), 100)
         self.assertEqual(len(classes["rampages"][1]), 35)
         self.assertEqual(len(classes["stunt_jumps"][1]), 36)
-        self.assertEqual(len(classes["emergency_vehicles"][1]), 56)
+        self.assertEqual(len(classes["emergency_vehicles"][1]), 146)
         self.assertEqual(len(classes["side_events"][1]), 14)
         self.assertEqual(len(classes["robbable_stores"][1]), 15)
         # 15 property purchases, the venue mission strands, and the six
@@ -4907,10 +4907,9 @@ class TestReservedGlobals(WorldTestBase):
         # a continuous run reaches 0.4.
         self.assertEqual(scm.VIGILANTE_TIME_RAMP_GLOBAL, 10164)
         self.assertEqual(scm.VIGILANTE_WANTED_RAMP_GLOBAL, 10165)
-        # Seven of the sixteen spares are in use, so nine are left for the single
-        # flags this layout keeps gaining. The count is what the spare-tail
+        # The count is what the spare-tail
         # exclusion above is built from, so it cannot be wrong in only one place.
-        self.assertEqual(scm.SPARE_FLAGS_USED, 7)
+        self.assertEqual(scm.SPARE_FLAGS_USED, 12)
         # The finale warp flag, hard-coded in the ASI (scm_game_state.cpp) and in
         # build_scm.py, which reads it in the APFIN watcher and in the mission
         # branch that jumps to the ending cutscene. It is also the foundation's

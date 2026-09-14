@@ -47,15 +47,7 @@ constexpr const char* kDistrictNames[kDistrictCount] = {
     "Prawn Island", "Leaf Links", "Downtown", "Little Haiti", "Little Havana",
     "Viceport", "Escobar International", "Junk Yard",
 };
-// The emergency and side-job activities the seed turns into checks, with how many
-// levels each one has, matching data.EMERGENCY_LEVELS: the three emergency
-// vehicles count twelve levels, and the taxi and the pizza boy count ten, one per
-// ten fares or deliveries.
-constexpr int kEmergencyLevels = 12;
-constexpr int kSideJobLevels = 10;
-// The taxi's own cadence, and only the taxi's: its checks fire on career fares
-// at every tenth. The pizza boy has no such number, see the state fields below.
-constexpr int kTaxiFaresPerLevel = 10;
+constexpr int kTaxiMilestoneSpacingGlobal = 10169;
 
 // Player-facing names for the radio stations, in the station-byte order the
 // unlock globals follow. The MP3 player and the police scanner are not stations
@@ -141,27 +133,10 @@ struct StatusPanelState {
   bool minimap_shuffled = false;
   bool minimap_unlocked = false;
 
-  // What the game counts for itself, which is the progress toward the checks
-  // those classes carry: nothing outside the game knows how close the next one
-  // is, since the client only ever sees a location checked or not.
+  // Progress matches the HUD, including the seed's selected emergency checks.
   int packages_collected = 0;
   int packages_total = 0;
-  int paramedic_level = 0;
-  int vigilante_level = 0;
-  int firefighter_level = 0;
-  // The taxi and the pizza boy have no level of their own in the game's stats,
-  // and the two do not count the same way, so each is read from the variable its
-  // own checks fire on rather than from a stat and a shared divisor.
-  //
-  // The taxi's checks fire on career fares at every tenth, so ten fares are a
-  // level. The pizza boy's do not: its mission hands out one pizza per level
-  // number, so level N takes N deliveries and a delivery total divides into
-  // nothing (level ten lands at 55 deliveries, not 100). What the mission keeps
-  // instead is the level it is working on, and a win flag for the last one,
-  // which is also why it steps back to nine afterwards so ten can be replayed.
-  int taxi_fares = 0;
-  int pizza_level_in_progress = 0;
-  bool pizza_finished = false;
+  std::array<std::pair<int, int>, 5> emergency_checks{};
 
   // Lines the client composed, because only it knows what this seed's goal asks
   // for and how far each mission strand has come. Empty until a client says.
@@ -375,12 +350,10 @@ inline StatusSection ComposeStrandSection(const StatusPanelState& state) {
   return section;
 }
 
-// The package tally matches the HUD (seed-wide when shuffled). Emergency
-// activities show local progress; taxi and pizza keep fares and deliveries
-// rather than levels, so those are converted below.
+// Selected activity checks stay visible when complete, with the completion color.
 inline StatusSection ComposeRewardSection(const StatusPanelState& state) {
   StatusSection section;
-  section.heading = "THE GAME COUNTS";
+  section.heading = "ACTIVITY PROGRESS";
   if (state.packages_total > 0) {
     const bool done = state.packages_collected >= state.packages_total;
     section.rows.push_back({"Hidden Packages",
@@ -388,31 +361,13 @@ inline StatusSection ComposeRewardSection(const StatusPanelState& state) {
                                 std::to_string(state.packages_total),
                             done ? StatusTone::kOpen : StatusTone::kPlain});
   }
-  // Each row shows the level its own checks are placed on. The taxi divides its
-  // fares; the pizza boy cannot, so its finished levels are the level it is
-  // working on less the one it has not finished, and the win flag stands for the
-  // tenth on its own.
-  const int taxi_level = state.taxi_fares / kTaxiFaresPerLevel;
-  const int pizza_level =
-      state.pizza_finished
-          ? kSideJobLevels
-          : (state.pizza_level_in_progress > 1 ? state.pizza_level_in_progress - 1 : 0);
-  const std::pair<const char*, std::pair<int, int>> activities[] = {
-      {"Paramedic", {state.paramedic_level, kEmergencyLevels}},
-      {"Vigilante", {state.vigilante_level, kEmergencyLevels}},
-      {"Firefighter", {state.firefighter_level, kEmergencyLevels}},
-      {"Taxi", {taxi_level < kSideJobLevels ? taxi_level : kSideJobLevels,
-                kSideJobLevels}},
-      {"Pizza", {pizza_level < kSideJobLevels ? pizza_level : kSideJobLevels,
-                 kSideJobLevels}},
-  };
-  for (const auto& [name, progress] : activities) {
-    const auto [level, levels] = progress;
+  const char* names[] = {"Firefighter", "Taxi", "Paramedic", "Vigilante", "Pizza"};
+  for (std::size_t activity = 0; activity < state.emergency_checks.size(); ++activity) {
+    const auto [done, total] = state.emergency_checks[activity];
+    if (total == 0) continue;
     section.rows.push_back(
-        {name,
-         level > 0 ? std::to_string(level) + "/" + std::to_string(levels) : "none",
-         level >= levels ? StatusTone::kOpen
-                         : (level > 0 ? StatusTone::kPlain : StatusTone::kPlain)});
+        {names[activity], std::to_string(done) + "/" + std::to_string(total),
+         done >= total ? StatusTone::kOpen : StatusTone::kPlain});
   }
   return section;
 }

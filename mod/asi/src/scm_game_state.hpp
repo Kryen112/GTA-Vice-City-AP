@@ -63,6 +63,8 @@ class ScmGameState : public GameState {
   void SetClientConnected(bool connected) override;
   bool ClientConnected();
   void SetTrapConsumer(TrapConsumer consume) override;
+  EmergencyProgress GetEmergencyProgress() override;
+  void SetEmergencyProgress(const EmergencyProgress& progress) override;
   void SetClientStatus(const ClientStatus& status) override;
   std::vector<std::int64_t> TakeNewChecks() override;
   void RequeueChecks(const std::vector<std::int64_t>& undelivered) override;
@@ -74,6 +76,7 @@ class ScmGameState : public GameState {
 
   // Called from the game frame. All SCM memory access is here.
   void OnGameFrame();
+  void UpdateTaxiCounter();
   void OnPickupsUpdated(); // observe collections before script consumers clear them
 
   // Called from the frame's HUD draw, after the game's own HUD and before the
@@ -250,6 +253,7 @@ class ScmGameState : public GameState {
   std::map<std::int64_t, int> item_globals_;
   std::map<std::int64_t, ItemEffect> item_effects_;
   TrapConsumer consume_trap_;
+  EmergencyProgress emergency_progress_{};
   bool trap_baseline_pending_ = true;
   std::string trap_error_;
   std::map<int, int> config_globals_;
@@ -394,6 +398,7 @@ class ScmGameState : public GameState {
   // showing zeroes as if they were counts.
   bool client_connected_ = false;
   bool client_status_known_ = false;
+  std::string emergency_hud_text_;
   ClientStatus client_status_;
 };
 

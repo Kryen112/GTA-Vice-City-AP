@@ -7,49 +7,7 @@
 #include "console_font.hpp"
 
 namespace gtavc {
-class ConsoleFont {
-  struct Entry {
-    std::wstring text;
-    std::unique_ptr<CSprite2d> sprite;
-    int width, height, advance;
-  };
-  std::deque<Entry> cache_;
- public:
-  const int cell_width, height;
-  ConsoleFont(int width, int font_height) : cell_width(width), height(font_height) {}
-  float Draw(float x, float y, std::wstring text, const CRGBA& color) {
-    for (auto& c : text) if (c < 32) c = L' ';
-    if (text.empty()) return 0;
-    auto entry = std::find_if(cache_.begin(), cache_.end(), [&](const Entry& e) { return e.text == text; });
-    if (entry == cache_.end()) {
-      ConsoleTextBitmap bitmap(text, cell_width, height);
-      if (!bitmap.pixels) return static_cast<float>(bitmap.advance);
-      auto* image = RwImageCreate(bitmap.width, bitmap.height, 32);
-      if (!image) return static_cast<float>(bitmap.advance);
-      if (!RwImageAllocatePixels(image)) { RwImageDestroy(image); return static_cast<float>(bitmap.advance); }
-      for (int row = 0; row < bitmap.height; ++row) {
-        auto* dest = image->cpPixels + row * image->stride;
-        for (int col = 0; col < bitmap.width; ++col) {
-          dest[col * 4] = dest[col * 4 + 1] = dest[col * 4 + 2] = 255;
-          dest[col * 4 + 3] = static_cast<unsigned char>(bitmap.pixels[row * bitmap.width + col] & 255);
-        }
-      }
-      auto* raster = RwRasterCreate(bitmap.width, bitmap.height, 32, rwRASTERTYPETEXTURE | rwRASTERFORMAT8888);
-      const bool uploaded = raster && RwRasterSetFromImage(raster, image);
-      RwImageDestroy(image);
-      if (!uploaded) { if (raster) RwRasterDestroy(raster); return static_cast<float>(bitmap.advance); }
-      auto sprite = std::make_unique<CSprite2d>();
-      sprite->m_pTexture = RwTextureCreate(raster);
-      if (!sprite->m_pTexture) { RwRasterDestroy(raster); return static_cast<float>(bitmap.advance); }
-      // Bound GPU memory even in busy rooms. Glyph coverage is reused across colors.
-      if (cache_.size() == 128) cache_.pop_front();
-      cache_.push_back({std::move(text), std::move(sprite), bitmap.width, bitmap.height, bitmap.advance});
-      entry = std::prev(cache_.end());
-    }
-    entry->sprite->Draw(CRect(x, y, x + entry->width, y + entry->height), color);
-    return static_cast<float>(entry->advance);
-  }
-};
+
 
 IngameConsole* IngameConsole::instance_ = nullptr;
 namespace {
@@ -65,29 +23,7 @@ std::string Utf8(const std::wstring& text) {
   WideCharToMultiByte(CP_UTF8, 0, text.data(), static_cast<int>(text.size()), result.data(), count, nullptr, nullptr);
   return result;
 }
-float PrintMixed(ConsoleFont& fallback, float x, float y, std::wstring text, const CRGBA& color) {
-  const float start = x;
-  for (auto& c : text) if (c < 32) c = L' ';
-  for (std::size_t first = 0; first < text.size();) {
-    const bool native = ViceCityConsoleGlyph(text[first]) != 0;
-    auto last = first + 1;
-    while (last < text.size() && (ViceCityConsoleGlyph(text[last]) != 0) == native) ++last;
-    auto run = text.substr(first, last - first);
-    if (native) {
-      for (auto& c : run) c = ViceCityConsoleGlyph(c);
-      // Vice City trims trailing spaces while printing, so measure first.
-      const float advance = CFont::GetStringWidth(run.c_str(), true);
-      CFont::SetColor(color);
-      // Space-only runs become empty font-buffer entries, which VC misrenders.
-      if (run.find_first_not_of(L' ') != std::wstring::npos) CFont::PrintString(x, y, run.c_str());
-      x += advance;
-    } else {
-      x += fallback.Draw(x, y, run, color);
-    }
-    first = last;
-  }
-  return x - start;
-}
+
 void Print(ConsoleFont& font, float y, const std::wstring& text) {
   PrintMixed(font, StretchX(24), StretchY(y), text, CRGBA(235, 225, 245, 255));
 }

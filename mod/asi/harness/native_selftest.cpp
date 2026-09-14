@@ -193,6 +193,8 @@ int main(int argc, char** argv) {
                        [](std::uint32_t pixel) { return (pixel & 255) != 0; }));
   }
   ConsoleTextBitmap letter(L"a", 10, 24), spaced(L"a ", 10, 24), pair(L"ab", 10, 24);
+  ConsoleTextBitmap slash(L"/", 10, 24);
+  assert(slash.pixels && slash.advance == letter.advance);
   assert(spaced.advance == pair.advance && pair.advance > letter.advance);
   ConsoleTextBitmap accented(L"\u00e9\u00e4\u00f1", 10, 24);
   assert(accented.pixels);
@@ -241,6 +243,53 @@ int main(int argc, char** argv) {
     session.Handle({{"cmd", "ReceivedItems"}, {"index", 0}, {"items", json::array({item})}});
   };
   {
+    TestGame menu_game;
+    const auto menu_directory = directory / "main-menu-connection";
+    std::filesystem::create_directories(menu_directory);
+    bool prepared = false;
+    NativeSession menu_session(&menu_game, logger, sender, "rando.vc", "", menu_directory,
+        [&](const std::string&) { return prepared; });
+    assert(!menu_session.Connected());
+    menu_session.Handle({{"cmd", "RoomInfo"}, {"seed_name", "test-seed"}});
+    assert(!menu_session.Connected());
+    menu_session.Handle(connected);
+    assert(menu_session.Connected() && !menu_game.ClientConnected());
+    menu_session.Handle({{"cmd", "ReceivedItems"}, {"index", 0}, {"items", json::array({item})}});
+    menu_session.Tick(true);
+    assert(menu_session.Connected() && !menu_game.ClientConnected());
+    assert(menu_game.AppliedItems().empty());
+    prepared = true;
+    menu_session.Tick(true);
+    assert(menu_session.Connected() && menu_game.ClientConnected());
+    assert(menu_game.AppliedItems().size() == 1);
+    menu_session.Tick(false);
+    assert(!menu_session.Connected() && !menu_game.ClientConnected());
+    menu_session.Handle({{"cmd", "RoomInfo"}, {"seed_name", "test-seed"}});
+    menu_session.Handle({{"cmd", "ConnectionRefused"}, {"errors", {"InvalidSlot"}}});
+    assert(!menu_session.Connected());
+  }
+  {
+    TestGame empty_game;
+    const auto empty_directory = directory / "empty-inventory";
+    std::filesystem::create_directories(empty_directory);
+    NativeSession empty_session(&empty_game, logger, sender, "rando.vc", "", empty_directory);
+    empty_session.Handle({{"cmd", "RoomInfo"}, {"seed_name", "test-seed"}});
+    empty_game.ShowNotice(ToastNotice::kBridgeDown, "Archipelago client disconnected.");
+    empty_session.Handle(connected);
+    assert(empty_session.Connected());
+    assert(empty_game.Notices()[ToastNoticeSlot(ToastNotice::kBridgeDown)].empty());
+    empty_session.Tick(true);
+    assert(!empty_game.ClientConnected());
+    const auto trap_key = "gta_vice_city_consumed_traps_0_1_" + NativeSeedHash("test-seed", "rando.vc");
+    empty_session.Handle({{"cmd", "Retrieved"}, {"keys", {{trap_key, nullptr}}}});
+    empty_session.Tick(true);
+    assert(empty_game.ClientConnected() && empty_game.AppliedItems().empty());
+    empty_session.Handle({{"cmd", "ReceivedItems"}, {"index", 0}, {"items", json::array({item})}});
+    assert(empty_game.AppliedItems().size() == 1);
+    empty_session.Tick(false);
+    assert(!empty_session.Connected() && !empty_game.ClientConnected());
+  }
+  {
     TestGame jump_game;
     const auto jump_directory = directory / "jump-markers";
     std::filesystem::create_directories(jump_directory);
@@ -252,6 +301,11 @@ int main(int argc, char** argv) {
     login(jump_session, config);
     assert(std::abs(jump_game.Markers().at(9268).x - 464.8) < 0.01);
     assert(std::abs(jump_game.Markers().at(9269).x - 453.1) < 0.01);
+    assert(!jump_game.Markers().at(9268).requirements.empty());
+    config["slot_data"]["mission_shuffle"] = true;
+    config["slot_data"]["marker_requirements"] = json::object();
+    login(jump_session, config);
+    assert(jump_game.Markers().at(9268).requirements.empty());
   }
   NativeSession session(&game, logger, sender, "rando.vc", "", directory);
   assert(!game.ClientConnected());
@@ -532,7 +586,7 @@ int main(int argc, char** argv) {
       [&](const ConsoleMessage& row, bool notify) { output.push_back(row); notifications.push_back(notify); });
   login(commands, connected);
   assert(std::any_of(sent.begin(), sent.end(), [](const json& packet) {
-    return packet.at("cmd") == "Get" && packet.at("keys").size() == 3;
+    return packet.at("cmd") == "Get" && packet.at("keys").size() == 8;
   }));
   const std::string item_groups_key = "_read_item_name_groups_Grand Theft Auto Vice City";
   const std::string location_groups_key = "_read_location_name_groups_Grand Theft Auto Vice City";
@@ -607,6 +661,105 @@ int main(int argc, char** argv) {
   try { commands.Handle(groups_packet); }
   catch (const std::runtime_error&) { invalid_groups = true; }
   assert(invalid_groups);
+  // Activity progress survives without a GTA save or a completed AP milestone.
+  {
+    const auto progress_directory = directory / "emergency-progress";
+    const auto hash = NativeSeedHash("test-seed", "rando.vc");
+    const auto key = [&](const char* activity) {
+      return "gta_vice_city_emergency_0_1_" + hash + "_" + activity;
+    };
+    const auto cache_file = progress_directory / ("GtaVcAp." + hash + ".json");
+    TestGame progress_game;
+    NativeSession progress_session(&progress_game, logger, sender, "rando.vc", "", progress_directory);
+    login(progress_session, connected);
+    assert(std::any_of(sent.begin(), sent.end(), [&](const json& packet) {
+      return packet.at("cmd") == "Get" &&
+          std::find(packet.at("keys").begin(), packet.at("keys").end(), key("taxi")) != packet.at("keys").end();
+    }));
+    // Six fares survive even when the next AP milestone is at ten.
+    progress_game.SetEmergencyProgress({6, 3, 20, 6, 4});
+    progress_session.Tick(false);
+    std::ifstream input(cache_file);
+    const auto cached = json::parse(input);
+    input.close();
+    assert(cached.at("emergency_progress").at("0").at("taxi") == 6);
+    assert(cached.at("emergency_progress").at("0").at("firefighter") == 20);
+
+    TestGame restarted_game;
+    NativeSession restarted_session(&restarted_game, logger, sender, "rando.vc", "", progress_directory);
+    login(restarted_session, connected);
+    assert((restarted_game.GetEmergencyProgress() == EmergencyProgress{6, 3, 20, 6, 4}));
+    sent.clear();
+    restarted_session.Tick(true);
+    assert(std::any_of(sent.begin(), sent.end(), [&](const json& packet) {
+      return packet.at("cmd") == "Set" && packet.at("key") == key("taxi") && packet.at("want_reply") == true &&
+          packet.at("operations") == json::array({{{"operation", "max"}, {"value", 6}}});
+    }));
+    restarted_session.Handle({{"cmd", "Retrieved"}, {"keys", {
+        {key("taxi"), 9}, {key("paramedic"), 5}, {key("firefighter"), 7},
+        {key("vigilante"), 18}, {key("pizza"), nullptr}}}});
+    assert((restarted_game.GetEmergencyProgress() == EmergencyProgress{9, 5, 20, 18, 4}));
+    restarted_session.Handle({{"cmd", "SetReply"}, {"key", key("taxi")}, {"value", 2}});
+    assert(restarted_game.GetEmergencyProgress()[0] == 9); // Stale replies never roll progress back.
+    restarted_session.Tick(true);
+    TestGame another_restart;
+    NativeSession another_session(&another_restart, logger, sender, "rando.vc", "", progress_directory);
+    login(another_session, connected);
+    assert((another_restart.GetEmergencyProgress() == EmergencyProgress{9, 5, 20, 18, 4}));
+
+    for (const auto& invalid : {json(-1), json(true), json(1.5), json("9"), json(2147483648LL)}) {
+      bool rejected = false;
+      try {
+        another_session.Handle({{"cmd", "SetReply"}, {"key", key("taxi")}, {"value", invalid}});
+      } catch (const std::runtime_error&) { rejected = true; }
+      assert(rejected && another_restart.GetEmergencyProgress()[0] == 9);
+    }
+    for (const auto& activity : {"paramedic", "pizza"}) {
+      bool rejected = false;
+      try {
+        another_session.Handle({{"cmd", "SetReply"}, {"key", key(activity)}, {"value", 13}});
+      } catch (const std::runtime_error&) { rejected = true; }
+      assert(rejected);
+    }
+
+    TestGame remote_only_game;
+    NativeSession remote_only(&remote_only_game, logger, sender, "rando.vc", "", directory / "remote-only");
+    login(remote_only, connected);
+    remote_only.Handle({{"cmd", "Retrieved"}, {"keys", {{key("taxi"), 9}, {key("vigilante"), 18}}}});
+    assert((remote_only_game.GetEmergencyProgress() == EmergencyProgress{9, 0, 0, 18, 0}));
+    remote_only.Tick(true);
+
+    auto other_team_config = connected;
+    other_team_config["team"] = 1;
+    TestGame other_team_game;
+    NativeSession other_team(&other_team_game, logger, sender, "rando.vc", "", progress_directory);
+    login(other_team, other_team_config);
+    assert(other_team_game.GetEmergencyProgress() == EmergencyProgress{});
+    other_team_game.SetEmergencyProgress({1, 0, 0, 0, 0});
+    other_team.Tick(true);
+    TestGame original_team_game;
+    NativeSession original_team(&original_team_game, logger, sender, "rando.vc", "", progress_directory);
+    login(original_team, connected);
+    assert((original_team_game.GetEmergencyProgress() == EmergencyProgress{9, 5, 20, 18, 4}));
+
+    TestGame other_seed_game;
+    NativeSession other_seed_session(&other_seed_game, logger, sender, "rando.vc", "", progress_directory);
+    other_seed_session.Handle({{"cmd", "RoomInfo"}, {"seed_name", "another-seed"}});
+    other_seed_session.Handle(connected);
+    other_seed_session.Handle({{"cmd", "ReceivedItems"}, {"index", 0}, {"items", json::array({item})}});
+    assert(other_seed_game.GetEmergencyProgress() == EmergencyProgress{});
+
+    const auto temporary = std::filesystem::path(cache_file.wstring() + L".tmp");
+    std::filesystem::create_directory(temporary);
+    another_restart.SetEmergencyProgress({11, 5, 20, 18, 4});
+    bool failed = false;
+    try { another_session.Tick(false); } catch (const std::exception&) { failed = true; }
+    assert(failed);
+    std::filesystem::remove(temporary);
+    another_session.Tick(false); // Failed writes stay dirty and retry while offline.
+    std::ifstream retried(cache_file);
+    assert(json::parse(retried).at("emergency_progress").at("0").at("taxi") == 11);
+  }
   // Consumed receipts survive New Game, disconnects, and process restarts.
   const auto trap_directory = directory / "traps";
   std::filesystem::create_directories(trap_directory);

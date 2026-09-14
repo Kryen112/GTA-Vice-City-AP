@@ -244,6 +244,16 @@ class FakeGameState : public GameState {
     consume_trap_ = std::move(consume);
   }
 
+  EmergencyProgress emergency_progress_{};
+  EmergencyProgress GetEmergencyProgress() override {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return emergency_progress_;
+  }
+  void SetEmergencyProgress(const EmergencyProgress& progress) override {
+    std::lock_guard<std::mutex> lock(mutex_);
+    MergeEmergencyProgress(emergency_progress_, progress);
+  }
+
   TrapAction ConsumeTrap(std::int64_t index) {
     std::lock_guard<std::mutex> lock(mutex_);
     return consume_trap_ ? consume_trap_(index) : TrapAction::kWait;

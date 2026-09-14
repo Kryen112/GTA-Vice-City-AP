@@ -70,7 +70,6 @@ def uninstall(install_dir: Path) -> list[str]:
 
 
 def choose_action() -> str:
-    """Only setup has an external window; the running client lives in the ASI."""
     import tkinter as tk
     from tkinter import ttk
 
@@ -93,12 +92,8 @@ def choose_action() -> str:
     return result
 
 
-def launch(install_folder: str = "", *, open_directory=None, messagebox=None,
+def launch(install_folder: str = "", *, open_directory, messagebox,
            before_install=None) -> None:
-    if open_directory is None or messagebox is None:
-        import Utils
-        open_directory = Utils.open_directory
-        messagebox = Utils.messagebox
     try:
         folder = install_folder or open_directory("Select the folder containing gta-vc.exe")
         if not folder:

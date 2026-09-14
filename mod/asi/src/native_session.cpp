@@ -4,6 +4,7 @@
 #include <charconv>
 #include <cctype>
 #include <fstream>
+#include <limits>
 #include <windows.h>
 #include <bcrypt.h>
 #include "native_data.hpp"
@@ -34,6 +35,14 @@ std::uint32_t ConsoleColor(const std::string& names) {
 
 bool Enabled(const json& value) {
   return value == true || value == 1;
+}
+
+int EmergencyValue(const json& value, std::size_t activity) {
+  if (value.is_null()) return 0;
+  const int maximum = activity == 1 ? 12 : activity == 4 ? 10 : std::numeric_limits<int>::max() - 1;
+  if (!value.is_number_integer() || value < 0 || value > maximum)
+    throw std::runtime_error("Invalid emergency activity progress");
+  return value.get<int>();
 }
 
 double Now() {
@@ -75,13 +84,38 @@ bool NativeSession::SeedMatches() const {
 
 void NativeSession::PersistChecks() {
   if (state_file_.empty()) return;
+  auto& progress = emergency_cache_[std::to_string(team_)];
+  progress = json::object();
+  for (std::size_t activity = 0; activity < emergency_progress_.size(); ++activity)
+    progress[kEmergencyActivityNames[activity]] = emergency_progress_[activity];
+  std::filesystem::create_directories(state_file_.parent_path());
   const std::filesystem::path temporary = state_file_.wstring() + L".tmp";
   std::ofstream file(temporary, std::ios::binary | std::ios::trunc);
   file.exceptions(std::ios::failbit | std::ios::badbit);
-  file << json({{"seed_hash", seed_hash_}, {"checks", pending_}, {"percentage", percentage_}}).dump();
+  file << json({{"seed_hash", seed_hash_}, {"checks", pending_}, {"percentage", percentage_},
+               {"emergency_progress", emergency_cache_}}).dump();
   file.close();
   if (!MoveFileExW(temporary.c_str(), state_file_.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH))
-    throw std::runtime_error("Cannot persist pending Archipelago checks");
+    throw std::runtime_error("Cannot persist Archipelago state");
+  emergency_dirty_ = false;
+}
+
+void NativeSession::MergeEmergency(const EmergencyProgress& progress) {
+  const auto before = emergency_progress_;
+  MergeEmergencyProgress(emergency_progress_, progress);
+  emergency_dirty_ = emergency_dirty_ || before != emergency_progress_;
+  if (active_ && SeedMatches()) game_->SetEmergencyProgress(emergency_progress_);
+}
+
+void NativeSession::ReceiveEmergency(const json& values) {
+  if (!values.is_object()) throw std::runtime_error("Invalid emergency progress response");
+  auto received = emergency_remote_;
+  for (std::size_t activity = 0; activity < emergency_keys_.size(); ++activity) {
+    const auto value = values.find(emergency_keys_[activity]);
+    if (value != values.end()) received[activity] = EmergencyValue(*value, activity);
+  }
+  emergency_remote_ = received;
+  MergeEmergency(received);
 }
 
 bool NativeSession::Activate() {
@@ -101,6 +135,8 @@ bool NativeSession::Activate() {
   configuration["check_markers"] = json::object();
   configuration["marker_requirements"] = defaults_.at("marker_requirements").at(
       Enabled(config_.value("split_mainland_access", json(false))) ? 1 : 0);
+  if (Enabled(config_.value("mission_shuffle", json(false))) && config_.contains("marker_requirements"))
+    configuration["marker_requirements"] = config_.at("marker_requirements");
   for (auto entry = defaults_["markers"].begin(); entry != defaults_["markers"].end(); ++entry) {
     const auto watched = configuration["completion_watch"].find(entry.key());
     if (watched == configuration["completion_watch"].end() || !watched->is_number_integer() ||
@@ -125,11 +161,22 @@ bool NativeSession::Activate() {
     for (const auto location : stored.at("checks").get<std::set<std::int64_t>>())
       if (all_locations_.count(location) && !checked_.count(location)) pending_.insert(location);
     percentage_ = stored.value("percentage", -1);
+    emergency_cache_ = stored.value("emergency_progress", json::object());
+    if (!emergency_cache_.is_object()) throw std::runtime_error("Invalid emergency progress cache");
+    const auto saved = emergency_cache_.find(std::to_string(team_));
+    if (saved != emergency_cache_.end()) {
+      if (!saved->is_object()) throw std::runtime_error("Invalid emergency progress cache");
+      EmergencyProgress progress{};
+      for (std::size_t activity = 0; activity < progress.size(); ++activity)
+        progress[activity] = EmergencyValue(saved->value(kEmergencyActivityNames[activity], json()), activity);
+      MergeEmergency(progress);
+    }
   }
   if (!ApplyClientMessage(game_, configuration, logger_))
     throw std::runtime_error("Invalid Archipelago slot configuration");
   game_->SetTrapConsumer([history = traps_](std::int64_t index) { return history->Consume(index); });
   game_->StampSeedHash(seed_hash_);
+  game_->SetEmergencyProgress(emergency_progress_);
   PublishItems();
   game_->MarkChecked({checked_.begin(), checked_.end()});
   game_->MarkChecked({pending_.begin(), pending_.end()});
@@ -169,8 +216,8 @@ void NativeSession::Handle(const json& packet) {
     const int new_slot = packet.at("slot").get<int>();
     const auto canonical = packet.at("slot_info").at(std::to_string(new_slot)).value("name", slot_name_);
     const auto new_hash = NativeSeedHash(seed_name_, canonical);
-    if (!seed_hash_.empty() && seed_hash_ != new_hash)
-      throw std::runtime_error("The server changed seeds. Restart Vice City before connecting to the new seed.");
+    if (!seed_hash_.empty() && (seed_hash_ != new_hash || team_ != packet.at("team").get<int>()))
+      throw std::runtime_error("The server changed seeds or teams. Restart Vice City before connecting.");
     slot_ = packet.at("slot").get<int>();
     team_ = packet.at("team").get<int>();
     config_ = packet.at("slot_data");
@@ -179,6 +226,11 @@ void NativeSession::Handle(const json& packet) {
     seed_hash_ = new_hash;
     trap_key_ = "gta_vice_city_consumed_traps_" + std::to_string(team_) + "_" +
                 std::to_string(slot_) + "_" + seed_hash_;
+    for (std::size_t activity = 0; activity < emergency_keys_.size(); ++activity)
+      emergency_keys_[activity] = "gta_vice_city_emergency_" + std::to_string(team_) + "_" +
+          std::to_string(slot_) + "_" + seed_hash_ + "_" + kEmergencyActivityNames[activity];
+    emergency_remote_ = {};
+    last_emergency_send_ = {};
     // Stop the game callback before replacing its cache so an offline trap
     // cannot be written by the old history after the new history reads it.
     game_->SetTrapConsumer({});
@@ -186,13 +238,16 @@ void NativeSession::Handle(const json& packet) {
         ("GtaVcAp." + seed_hash_ + "." + std::to_string(team_) + ".traps.json"));
     last_trap_send_ = {};
     online_ = true;
+    game_->ClearNotice(ToastNotice::kBridgeDown);
     active_ = items_ready_ = finished_ = false;
     checked_ = packet.at("checked_locations").get<std::set<std::int64_t>>();
     name_groups_.clear();
-    Send({{"cmd", "SetNotify"}, {"keys", {trap_key_}}});
-    Send({{"cmd", "Get"}, {"keys", {
-        std::string("_read_item_name_groups_") + kGame,
-        std::string("_read_location_name_groups_") + kGame, trap_key_}}});
+    auto keys = json(emergency_keys_);
+    keys.push_back(trap_key_);
+    Send({{"cmd", "SetNotify"}, {"keys", keys}});
+    keys.push_back(std::string("_read_item_name_groups_") + kGame);
+    keys.push_back(std::string("_read_location_name_groups_") + kGame);
+    Send({{"cmd", "Get"}, {"keys", keys}});
     all_locations_ = packet.at("missing_locations").get<std::set<std::int64_t>>();
     all_locations_.insert(checked_.begin(), checked_.end());
     pending_.clear();
@@ -240,7 +295,13 @@ void NativeSession::Handle(const json& packet) {
     if (packet.contains("players")) players_ = packet["players"];
     if (active_) { PersistChecks(); PublishStatus(); }
   } else if (command == "Retrieved" && online_) {
-    if (traps_ && packet.at("keys").contains(trap_key_)) traps_->Merge(packet.at("keys").at(trap_key_));
+    ReceiveEmergency(packet.at("keys"));
+    if (traps_ && packet.at("keys").contains(trap_key_)) {
+      traps_->Merge(packet.at("keys").at(trap_key_));
+      // The server omits ReceivedItems for an empty inventory. Our Get reply
+      // follows the initial item batch, so it also confirms an empty list.
+      items_ready_ = true;
+    }
     for (const char* kind : {"item", "location"}) {
       const std::string key = std::string("_read_") + kind + "_name_groups_" + kGame;
       const auto& keys = packet.at("keys");
@@ -256,6 +317,8 @@ void NativeSession::Handle(const json& packet) {
     }
   } else if (command == "SetReply" && online_ && packet.value("key", std::string()) == trap_key_) {
     traps_->Merge(packet.at("value"));
+  } else if (command == "SetReply" && online_) {
+    ReceiveEmergency(json{{packet.at("key").get<std::string>(), packet.at("value")}});
   } else if (command == "DataPackage") {
     const json& games = packet.at("data").at("games");
     for (auto game = games.begin(); game != games.end(); ++game) {
@@ -462,6 +525,8 @@ void NativeSession::Tick(bool socket_connected) {
                      "Wrong seed save loaded. Load this seed's save or start a new game.");
     return;
   }
+  MergeEmergency(game_->GetEmergencyProgress());
+  if (emergency_dirty_) PersistChecks();
   const auto checks = game_->TakeNewChecks();
   bool new_checks = false;
   for (const auto location : checks)
@@ -489,6 +554,13 @@ void NativeSession::Tick(bool socket_connected) {
     PublishPercentage();
   }
   const auto now = std::chrono::steady_clock::now();
+  if (online_ && now - last_emergency_send_ >= std::chrono::seconds(1)) {
+    for (std::size_t activity = 0; activity < emergency_progress_.size(); ++activity)
+      if (emergency_progress_[activity] > emergency_remote_[activity])
+        Send({{"cmd", "Set"}, {"key", emergency_keys_[activity]}, {"default", 0}, {"want_reply", true},
+              {"operations", json::array({{{"operation", "max"}, {"value", emergency_progress_[activity]}}})}});
+    last_emergency_send_ = now;
+  }
   if (online_ && traps_ && now - last_trap_send_ >= std::chrono::seconds(1)) {
     const auto pending = traps_->Pending();
     if (!pending.empty()) Send({{"cmd", "Set"}, {"key", trap_key_},

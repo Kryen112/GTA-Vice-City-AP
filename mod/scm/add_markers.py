@@ -27,6 +27,7 @@ import sys
 # first would shadow them for the rest of the process.
 sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)),
                              "..", "..", "apworld", "gta_vice_city"))
+import mission_order
 import pickup_data
 import shop_data
 
@@ -380,7 +381,7 @@ lines = kept
 # VC gives the MAIN section a fixed buffer, so a thread that does not have to
 # live there should not. Two kinds move. APPKG (100 package checks), APSTAT
 # (rampage/stunt/taxi checks) and APACT (activity and side-event flags) poll only
-# numeric globals and are rewritten into the watcher below; the completion
+# numeric globals and move into the watcher below; the completion
 # globals they set are unchanged, so the ASI polls them identically. APAREA,
 # APREWD, APRADIO and APPAD do real work with objects, road switches and player
 # state and are carried across as they stand.
@@ -416,7 +417,8 @@ def remove_thread(label):
 
 
 remove_thread("APPKG")
-remove_thread("APSTAT")
+stat_body = remove_thread("APSTAT")
+assert stat_body[-1] == "goto @APSTAT_LOOP", "relocate: incomplete APSTAT thread"
 remove_thread("APACT")
 
 # Four more threads leave MAIN, and unlike the three above they are carried
@@ -516,11 +518,8 @@ lines = [ln for ln in lines
 # collectable pickup to its coordinate), so the CLEO watcher no longer counts
 # them; it polls the stat and activity/side-event flags only.
 cleo = ["{$CLEO .cs}", "", "0000:", "", ":AW_LOOP", "wait 500"]
-stat_checks = ([(f"${1439 + n} == 1", 9202 + n) for n in range(35)]
-               + [(f"${795 + n} == 1", 9237 + n) for n in range(36)]
-               + [(f"$369 >= {10 * n}", 9308 + n) for n in range(1, 11)])
-for idx, (cond, comp) in enumerate(stat_checks):
-    cleo += ["if ", f"  {cond}", f"goto_if_false @AW_S{idx}", f"${comp} = 1", f":AW_S{idx}"]
+# Carry the generated checks across, including the seed's taxi spacing.
+cleo += stat_body[stat_body.index("wait 1000") + 1:-1]
 # Activity + side events (APACT), mirroring build_scm.add_activity_watcher:
 # Checkpoint Charlie ($607), the six Sunshine Autos races ($1588..$1593, one
 # check each in showroom menu order), and 14 side-event win flags. Every flag is
@@ -763,6 +762,8 @@ for m in managed:
 def strand_block(strand, missions):
     out = [f":APMARK_{strand}"]
     done = f"APMARK_{strand}_DONE"
+    out += [f"${mission_order.COMPLETED_GLOBAL} = 1"]
+    out += [f"${mission_order.COMPLETED_GLOBAL} += {mission['passed']}" for mission in missions]
     for m in sorted(missions, key=lambda x: x["ordinal"]):
         launcher = m["launcher"]
         active = f"APMARK_{launcher}_ACTIVE"
@@ -773,6 +774,12 @@ def strand_block(strand, missions):
                 "if ", f"  ${m['shown']} == 1", f"goto_if_false @{after}",
                 f"remove_blip ${m['handle']}", f"${m['shown']} = 0", f"goto @{after}",
                 f":{active}"]
+        unlock, count = m["gate"][0]
+        ordered = f"APMARK_{launcher}_ORDERED"
+        out += ["if ", f"  ${mission_order.order_global(unlock)} > 0", f"goto_if_false @{ordered}"]
+        out += mission_order.rank_lines(unlock, count, f"APMARK_{launcher}_RANK")
+        out += ["if ", f"  ${mission_order.RANK_GLOBAL} == ${mission_order.COMPLETED_GLOBAL}",
+                f"goto_if_false @{after}", f":{ordered}"]
         # First unpassed mission: decide show/hide on its gate.
         gate_true = f"APMARK_{launcher}_SHOW"
         for term in m["gate"]:
@@ -785,7 +792,12 @@ def strand_block(strand, missions):
                         f"goto_if_false {hide}"]
             else:
                 global_index, count = term
-                out += ["if ", f"  ${global_index} >= {count}", f"goto_if_false {hide}"]
+                if mission_order.UNLOCK_FIRST <= global_index <= mission_order.UNLOCK_LAST:
+                    out += mission_order.gate_lines(
+                        global_index, count, hide.removeprefix("@"),
+                        f"APMARK_{launcher}_GATE_{global_index}_{count}")
+                else:
+                    out += ["if ", f"  ${global_index} >= {count}", f"goto_if_false {hide}"]
         # Gate holds: show marker (once) and start launcher (once), then done strand.
         # No remove_blip before create: the handle is either fresh (0, never
         # created) or was just removed by HIDE / the passed path, so there is no

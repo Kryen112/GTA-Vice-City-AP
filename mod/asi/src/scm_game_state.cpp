@@ -32,6 +32,7 @@
 #include <ePickupType.h>
 #include <CPad.h>
 #include <CTimer.h>
+#include <CUserDisplay.h>
 #include <CGame.h>
 #include <CMenuManager.h>
 #include <CStats.h>
@@ -103,22 +104,8 @@ constexpr int kMinimapUnlockGlobal = 9905;
 // is for every vanilla launcher, so the mod only carries the ask across.
 constexpr int kFinaleWarpGlobal = 10175;
 
-// The three VANILLA globals the taxi and pizza rows read. Most constants here
-// are reserved globals this mod owns; these and the on-mission flag below belong
-// to the 1.0 script and are pinned like any other 1.0 fact, because they are what
-// the checks for those two activities are placed on.
-// Reading them is what keeps the status page from disagreeing with the checks:
-// a stat that merely resembles the count can drift from it, and for the pizza
-// boy no stat corresponds at all.
-//
-// $369 is the taxi's persistent career fare count, which its checks compare
-// against every tenth. $7994 is the pizza mission's own level, one-based, and
-// the level completes just before it advances, so the finished count is one
-// less. $389 is that mission's win flag for the last level, which is also why
-// the mission drops $7994 back to nine afterwards: level ten stays replayable,
-// so the flag rather than the level is what says it is done.
+// Persistent mission counters used to restore emergency progress.
 constexpr int kTaxiCareerFaresGlobal = 369;
-constexpr int kPizzaLevelGlobal = 7994;
 constexpr int kPizzaWonGlobal = 389;
 // The game's pickup pool size, matching plugin-sdk's CPickup (&aPickUps)[336].
 constexpr int kPickupPoolSize = 336;
@@ -1355,6 +1342,7 @@ void ScmGameState::StampSeedHash(const std::string& expected) {
   // under it, so this is held for as long as the session is up: the seed every
   // game that comes up without one of its own is stamped with.
   expected_seed_hash_ = expected;
+  if (configured_seed_hash_ != expected) emergency_progress_ = {};
   configured_seed_hash_ = expected;
 }
 
@@ -1411,6 +1399,16 @@ void ScmGameState::SetTrapConsumer(TrapConsumer consume) {
   std::lock_guard<std::mutex> lock(mutex_);
   consume_trap_ = std::move(consume);
   trap_baseline_pending_ = true;
+}
+
+EmergencyProgress ScmGameState::GetEmergencyProgress() {
+  std::lock_guard<std::mutex> lock(mutex_);
+  return emergency_progress_;
+}
+
+void ScmGameState::SetEmergencyProgress(const EmergencyProgress& progress) {
+  std::lock_guard<std::mutex> lock(mutex_);
+  MergeEmergencyProgress(emergency_progress_, progress);
 }
 
 void ScmGameState::SetClientConnected(bool connected) {
@@ -1515,22 +1513,11 @@ StatusPanelState ScmGameState::BuildStatusPanelState() {
   // The stat the game's own menu prints, truncated the way that menu truncates
   // it, so the two lines never disagree by a rounding.
   state.percentage = DisplayedPercentage(CStats::GetPercentageProgress());
-  // Match the package HUD's seed-wide tally, including checks newer than this
-  // save. Emergency levels still describe the game's local activity progress.
+  // Match both HUD trackers, including checks newer than the loaded save.
   const auto packages = PackageProgress();
   state.packages_collected = packages.first;
   state.packages_total = packages.second;
-  state.paramedic_level = CStats::HighestLevelAmbulanceMission;
-  state.vigilante_level = CStats::HighestLevelVigilanteMission;
-  state.firefighter_level = CStats::HighestLevelFireMission;
-  // The taxi and the pizza boy keep no level, so each row reads the variable its
-  // own checks fire on rather than a stat that resembles it. The taxi's checks
-  // read the career fare count; the pizza boy's read the mission's level and, for
-  // the last one, its win flag. Reading these means the page cannot disagree with
-  // the checks, which a stat and a divisor could.
-  state.taxi_fares = GetGlobal(kTaxiCareerFaresGlobal);
-  state.pizza_level_in_progress = GetGlobal(kPizzaLevelGlobal);
-  state.pizza_finished = GetGlobal(kPizzaWonGlobal) != 0;
+  state.emergency_checks = EmergencyCheckCounts(completion_watch_, reported_);
   return state;
 }
 
@@ -1937,6 +1924,14 @@ void ScmGameState::OnPickupsUpdated() {
   }
 }
 
+void ScmGameState::UpdateTaxiCounter() {
+  std::lock_guard<std::mutex> lock(mutex_);
+  if (!ConfiguredSeedMatches(ReadSeedHash(), configured_seed_hash_)) return;
+  for (auto& counter : CUserDisplay::OnscnTimer.m_aCounters)
+    SyncTaxiCounter(counter.m_nVarId, counter.m_acDescriptionTextKey, counter.m_bEnabled,
+        std::max(GetGlobal(kTaxiCareerFaresGlobal), emergency_progress_[0]), counter.m_acDisplayedText);
+}
+
 void ScmGameState::OnGameFrame() {
   std::lock_guard<std::mutex> lock(mutex_);
 
@@ -2281,6 +2276,25 @@ void ScmGameState::OnGameFrame() {
       }
   }
 
+  // Checked milestones also recover progress from seeds played before the cache exists.
+  MergeEmergencyProgress(emergency_progress_, CheckedEmergencyProgress(completion_watch_, reported_,
+      GetGlobal(kTaxiMilestoneSpacingGlobal)));
+  if (world_loaded) {
+    MergeEmergencyProgress(emergency_progress_, {
+        GetGlobal(kTaxiCareerFaresGlobal), CStats::HighestLevelAmbulanceMission,
+        CStats::HighestLevelFireMission, CStats::HighestLevelVigilanteMission,
+        GetGlobal(kPizzaWonGlobal) != 0 ? 10 : std::max(0, GetGlobal(kEmergencyProgressBase + 3) - 1)});
+    RestoreEmergencyLevels(emergency_progress_,
+        [](int index) { return GetGlobal(index); },
+        [](int index, int value) { SetGlobal(index, value); });
+    SetGlobal(kTaxiCareerFaresGlobal, emergency_progress_[0]);
+    CStats::PassengersDroppedOffWithTaxi = std::max(CStats::PassengersDroppedOffWithTaxi, emergency_progress_[0]);
+    if (GetGlobal(kRememberEmergencyGlobal) == 1) {
+      CStats::HighestLevelAmbulanceMission = emergency_progress_[1];
+      CStats::HighestLevelFireMission = emergency_progress_[2];
+      CStats::HighestLevelVigilanteMission = emergency_progress_[3];
+    }
+  }
   std::map<int, int> current;
   for (const auto& entry : completion_watch_) {
     current[entry.first] = GetGlobal(entry.first);
@@ -2329,6 +2343,15 @@ void ScmGameState::OnGameFrame() {
 
 void ScmGameState::DrawToasts() {
   std::lock_guard<std::mutex> lock(mutex_);
+  const auto emergency = cached_seed_hash_.empty() ? std::string() :
+      EmergencyCheckProgress(completion_watch_, reported_);
+  if (emergency != emergency_hud_text_) {
+    emergency_hud_text_ = emergency;
+    const auto slot = ToastNoticeSlot(ToastNotice::kEmergencyChecks);
+    toasts_.notices[slot] = emergency.empty() ? ToastRow{} :
+        PlainToastRow(emergency, ToastRole::kLocation);
+    toasts_.notices_fitted[slot] = false;
+  }
   // One lock over the whole thing, so the bridge thread cannot add a row between
   // the advance deciding what fits and the drawing laying it out.
   //

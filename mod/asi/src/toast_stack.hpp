@@ -9,6 +9,8 @@
 
 namespace gtavc {
 
+void ReleaseToastGraphics(); // Before RenderWare shuts down.
+
 // What the caller does between the cutting and the drawing: expire what is
 // finished and admit what fits. Taken as a callback rather than done here because
 // it owns the clock, and it has to run in that gap, since a row is not a fixed

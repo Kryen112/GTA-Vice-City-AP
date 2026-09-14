@@ -88,15 +88,15 @@ inline LiveToast QueuedToast(const ToastRow& row) {
 }
 
 // The rows that hold their place until something clears them, each addressed by
-// what it is about so a repeat replaces rather than stacks. Both explain a state
-// the player has to act on rather than reporting an event, so neither expires.
+// what it is about so a repeat replaces rather than stacks. They do not expire.
 enum class ToastNotice {
   // Why nothing in this seed will work: the client refused the running game.
   kHandshakeRefusal,
   // The bridge is down, so checks are going nowhere.
   kBridgeDown,
+  kEmergencyChecks,
 };
-constexpr std::size_t kToastNoticeCount = 2;
+constexpr std::size_t kToastNoticeCount = 3;
 
 inline std::size_t ToastNoticeSlot(ToastNotice notice) {
   return static_cast<std::size_t>(notice);

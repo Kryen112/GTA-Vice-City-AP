@@ -20,6 +20,7 @@ from pathlib import Path
 from Options import PerGameCommonOptions
 from Utils import local_path, read_apignore
 from werkzeug.utils import secure_filename
+from worlds.LauncherComponents import components
 
 from .. import GTAViceCityWorld
 from ..locations import LOCATION_CLASS
@@ -70,6 +71,11 @@ def _page_counts() -> dict[str, int]:
 
 
 class TestDocs(unittest.TestCase):
+    def test_world_contains_no_installer_or_setup_launcher(self) -> None:
+        self.assertFalse((WORLD_PACKAGE / "installer.py").exists())
+        self.assertFalse((WORLD_PACKAGE / "setup.py").exists())
+        self.assertFalse(any(component.display_name == "GTA Vice City Setup" for component in components))
+
     def test_every_tutorial_names_a_file_that_exists(self) -> None:
         # The WebHost copies each tutorial file out of the apworld by name and
         # links to it whether or not it arrived, so a typo here is a dead page
@@ -144,5 +150,5 @@ class TestDocs(unittest.TestCase):
         grouped = next(group for group in GTAViceCityWorld.web.option_groups
                        if group.name == "Check Classes")
         expected = {GTAViceCityOptions.type_hints[name]
-                    for name in CHECK_CLASS_OPTIONS}
+                    for name in [*CHECK_CLASS_OPTIONS, "location_percentages", "milestone_spacing"]}
         self.assertEqual(set(grouped.options), expected)

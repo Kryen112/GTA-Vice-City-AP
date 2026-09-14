@@ -21,7 +21,7 @@ def standalone(tmp_path, monkeypatch):
     package.mkdir()
     (package / "__init__.py").touch()
     for name in ("setup.py", "installer.py"):
-        shutil.copyfile(root / "apworld/gta_vice_city" / name, package / name)
+        shutil.copyfile(root / "scripts/gta_vc_setup" / name, package / name)
     monkeypatch.syspath_prepend(str(tmp_path))
     monkeypatch.syspath_prepend(str(root / "scripts"))
     dependencies = importlib.import_module("setup_dependencies")
@@ -114,6 +114,23 @@ def test_shared_setup_validates_game_before_dependencies(standalone, tmp_path):
         before.assert_not_called()
         deploy.assert_not_called()
         messages.assert_called_once_with(setup.TITLE, "Wrong script", error=True)
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows process check")
+@pytest.mark.parametrize("output, running", [(b"No tasks match: \xff", False),
+                                            (b"GTA-VC.EXE \xff", True)])
+def test_process_check_handles_localized_output(standalone, output, running):
+    _, setup, _ = standalone
+    run = subprocess.run
+
+    def tasklist(arguments, **kwargs):
+        if kwargs.get("text"):
+            kwargs["encoding"] = "utf-8"
+        return run([sys.executable, "-c",
+                    f"import sys; sys.stdout.buffer.write({output!r})"], **kwargs)
+
+    with mock.patch.object(setup.installer.subprocess, "run", side_effect=tasklist):
+        assert setup.installer.game_process_running() is running
 
 
 @pytest.mark.skipif(sys.platform != "win32", reason="Windows Shell shortcut")

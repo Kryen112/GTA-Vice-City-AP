@@ -8,8 +8,7 @@ Check classes: story missions (always on), hidden packages, rampages, stunt
 jumps, emergency vehicle milestones, side events, robbable stores, and
 properties (purchases plus venue mission strands), each optional behind a
 toggle.
-The offline setup tool is registered as a launcher component below,
-the in-game mod connects directly to Archipelago.
+The standalone installer supplies the mod, which connects directly to Archipelago.
 """
 
 from __future__ import annotations
@@ -29,8 +28,6 @@ from BaseClasses import (
 )
 from Options import DeathLink, OptionError, OptionGroup
 from worlds.AutoWorld import WebWorld, World
-from worlds.LauncherComponents import Component, Type, components
-from worlds.LauncherComponents import launch as launch_component
 
 from . import data, regions, rules, scm
 from .check_markers import check_markers, marker_requirements
@@ -60,6 +57,9 @@ from .options import (
     Goal,
     GTAViceCityOptions,
     HiddenPackagesRequired,
+    LocationPercentages,
+    MilestoneSpacing,
+    MissionShuffle,
     RandomizePickups,
     RandomizeRadioStations,
     RememberEmergencyProgress,
@@ -99,19 +99,6 @@ _UNCOUNTED_LOCATION_NAMES: frozenset[str] = frozenset(
 # validates; three was never measured, so the test below it holds the refusal
 # down to two and no further. Measured against scripts/fuzz_fill.py.
 MINIMUM_DIRECTED_SPHERE_ZERO = 4
-
-
-def launch_setup(*args: str) -> None:
-    from .setup import launch
-    launch_component(launch, name="GTA Vice City Setup", args=args)
-
-
-components.append(Component(
-    "GTA Vice City Setup",
-    func=launch_setup,
-    component_type=Type.TOOL,
-    description="Install or update the game mod offline, then connect in game using APCpp.",
-))
 
 
 class GTAViceCityItem(Item):
@@ -157,12 +144,12 @@ class GTAViceCityWeb(WebWorld):
         OptionGroup("Check Classes", [
             EnableHiddenPackages, EnableRampages, EnableStuntJumps,
             EnableEmergencyVehicles, EnableProperties, EnableRobbableStores,
-            EnableSideEvents, EnablePickups, ShuffleShops,
+            EnableSideEvents, EnablePickups, ShuffleShops, LocationPercentages, MilestoneSpacing,
         ]),
         OptionGroup("In-World Modifiers", [
             ShuffleEmergencyRewards, RememberEmergencyProgress,
             RandomizePickups, RandomizeRadioStations, ShuffleMinimap,
-            SplitMainlandAccess,
+            SplitMainlandAccess, MissionShuffle,
         ]),
         OptionGroup("Locks", [
             AbilityLocks, StartingAbilityUnlock, ContentLocks,
@@ -211,6 +198,9 @@ class GTAViceCityWorld(World):
     # Rolled in generate_early when randomize_pickups is on; None when off.
     pickup_permutation: list[int] | None = None
 
+    removed_locations: frozenset[str] = frozenset()
+    mission_order: dict[str, list[str]] | None = None
+
     item_name_to_id = ITEM_NAME_TO_ID
     location_name_to_id = LOCATION_NAME_TO_ID
     item_name_groups = ITEM_GROUPS
@@ -227,6 +217,9 @@ class GTAViceCityWorld(World):
         # Rebuild the world-shaping options from a played seed's slot_data, so a
         # tracker regeneration matches that seed's locations and pool.
         options = self.options
+        options.mission_shuffle.value = int(bool(slot_data.get("mission_shuffle", False)))
+        options.location_percentages = LocationPercentages.from_any(slot_data.get("location_percentages", {}))
+        options.milestone_spacing = MilestoneSpacing.from_any(slot_data.get("milestone_spacing", {}))
         options.goal.value = type(options.goal).options[slot_data["goal"]]
         options.hidden_packages_required.value = int(slot_data["hidden_packages_required"])
         options.death_link.value = int(bool(slot_data["death_link"]))
@@ -273,16 +266,31 @@ class GTAViceCityWorld(World):
         passthrough = self._tracker_passthrough()
         if passthrough is not None:
             self._restore_options(passthrough)
+            self._choose_locations(passthrough)
+            self._choose_mission_order(passthrough)
             self._choose_radio_start(passthrough)
             self._choose_pickup_permutation(passthrough)
             self._choose_starting_unlocks(passthrough)
             return
         options = self.options
+        self._choose_locations(None)
+        self._choose_mission_order(None)
         self._choose_radio_start(None)
         self._choose_pickup_permutation(None)
         self._choose_directed_opener()
         self._choose_starting_unlocks(None)
         if options.goal == Goal.option_hundred_percent:
+            reduced = [key for key, (option_attr, names) in data.optional_check_classes().items()
+                       if option_attr in HUNDRED_PERCENT_CLASS_OPTIONS
+                       and (any(options.location_percentages.value.get(
+                           activity.lower(), options.location_percentages.value.get(key, 100)) < 100
+                           for activity in data.EMERGENCY_LEVELS) if key == "emergency_vehicles"
+                            else options.location_percentages.value.get(key, 100) < 100)]
+            if reduced:
+                raise OptionError(
+                    f"{self.game}: the 100 percent goal requires location_percentages "
+                    f"of 100 for completion-related classes. Reduced: {', '.join(sorted(reduced))}."
+                )
             missing = [name for name in HUNDRED_PERCENT_CLASS_OPTIONS
                        if not getattr(options, name).value]
             if missing:
@@ -416,13 +424,60 @@ class GTAViceCityWorld(World):
                     permutation[other], permutation[slot_index])
         self.pickup_permutation = permutation
 
+    def _choose_mission_order(self, passthrough: dict | None) -> None:
+        self.mission_order = {}
+        if not self.options.mission_shuffle:
+            return
+        for strand, (class_key, missions) in data.progressive_strands().items():
+            if strand == "Sunshine Autos" or not self._class_enabled(class_key):
+                continue
+            first = missions[:1] if strand == data.SPHERE_ZERO_GIVER else []
+            last = missions[-1:] if missions[-1] in data.MISSION_SHUFFLE_LAST else []
+            middle = [mission for mission in missions if mission not in first + last]
+            if passthrough is None:
+                self.random.shuffle(middle)
+                order = first + middle + last
+            else:
+                order = passthrough.get("mission_order", {}).get(strand)
+                if (not isinstance(order, list) or len(order) != len(missions)
+                        or set(order) != set(missions) or order[:len(first)] != first
+                        or (last and order[-1:] != last)):
+                    raise OptionError(f"{self.game}: invalid saved mission order for {strand}.")
+            self.mission_order[strand] = list(order)
+
+    def _choose_locations(self, passthrough: dict | None) -> None:
+        if passthrough is not None:
+            self.removed_locations = frozenset(passthrough.get("removed_locations", [])) | frozenset(
+                name for name in data.EXTRA_TAXI_NAMES
+                if str(scm.completion_global(name)) not in passthrough.get("completion_watch", {}))
+            return
+        removed = set()
+        for key, (option_attr, names) in data.optional_check_classes().items():
+            if not getattr(self.options, option_attr).value:
+                continue
+            percentage = self.options.location_percentages.value.get(key, 100)
+            if key == "emergency_vehicles":
+                for activity, levels in data.EMERGENCY_LEVELS.items():
+                    activity_percentage = self.options.location_percentages.value.get(activity.lower(), percentage)
+                    max_checks = data.TAXI_MAX_FARES if activity == "Taxi" else levels
+                    count = (max_checks * activity_percentage + 99) // 100
+                    if activity == "Taxi":
+                        count //= self.options.milestone_spacing.value.get("taxi", 10)
+                    removed.update(data.emergency_name(activity, level)
+                                   for level in range(count + 1, max_checks + 1))
+                continue
+            if percentage < 100:
+                count = (len(names) * percentage + 99) // 100
+                removed.update(self.random.sample(names, len(names) - count))
+        self.removed_locations = frozenset(removed)
+
     def _location_enabled(self, name: str) -> bool:
         # Story missions carry no toggle and are always on. Every other class
         # is enabled by its option.
         option_attr = LOCATION_TOGGLE.get(name)
         if option_attr is None:
             return True
-        return bool(getattr(self.options, option_attr).value)
+        return bool(getattr(self.options, option_attr).value) and name not in self.removed_locations
 
     def _class_enabled(self, class_key: str) -> bool:
         # Story missions are always on; every optional class is enabled by its
@@ -492,6 +547,7 @@ class GTAViceCityWorld(World):
             self._content_lock_keys(),
             bool(self.options.split_mainland_access.value),
             self._split_content_locks(),
+            self.mission_order,
         )
 
     def create_item(self, name: str) -> GTAViceCityItem:
@@ -637,23 +693,28 @@ class GTAViceCityWorld(World):
         placeable_locations = sum(
             1 for name in LOCATION_NAME_TO_ID
             if self._location_enabled(name) and not self._location_excluded(name)
+            and name not in self.options.exclude_locations.value
         )
         overflow = len(placeable) - placeable_locations
-        if overflow > 0:
-            # More progression and useful items than checks. Filler is what
-            # gives way as the item count grows, and by here there is none left
-            # to give, so only the options can resolve it. Splitting the content
-            # locks is the widest of them, turning five items into 42, so it is
-            # named when it is on.
+        optional_indices = [index for index, name in enumerate(placeable)
+                            if not ITEM_CLASSIFICATIONS[name] & ItemClassification.progression]
+        if overflow > len(optional_indices):
             advice = ("Widen the seed with another check class, or narrow "
                       "split_content_locks")
             if not self.options.split_content_locks.value:
                 advice = "Enable another check class"
+            if self.removed_locations:
+                advice += " or increase location_percentages"
             raise OptionError(
-                f"{self.game}: {len(placeable)} progression and useful items but "
-                f"only {placeable_locations} checks this seed. {advice} so the items "
+                f"{self.game}: {len(placeable) - len(optional_indices)} progression items but "
+                f"only {placeable_locations} checks can hold them. {advice} so the items "
                 "have reachable homes."
             )
+        if overflow > 0:
+            # Optional items give way before progression. Sampling indices
+            # preserves duplicate quantities and the retained pool's order.
+            removed = set(self.random.sample(optional_indices, overflow))
+            placeable = [name for index, name in enumerate(placeable) if index not in removed]
         self._guard_fill_room()
 
         pool = [self.create_item(name) for name in placeable]
@@ -894,6 +955,7 @@ class GTAViceCityWorld(World):
         return lambda state: rule(state, player)
 
     def fill_slot_data(self) -> dict:
+        active_globals = {str(scm.completion_global(name)) for name in self._enabled_locations()}
         # The client reads this on connect and configures the ASI from it: how
         # to turn received items into count-global writes (item_globals), the
         # one-shot consumable effects (item_effects), the config flags that tell
@@ -903,6 +965,11 @@ class GTAViceCityWorld(World):
         # Universal Tracker can regenerate the world from slot_data alone. JSON
         # object keys are strings.
         return {
+            "mission_shuffle": bool(self.options.mission_shuffle.value),
+            "mission_order": self.mission_order or {},
+            "location_percentages": dict(self.options.location_percentages.value),
+            "milestone_spacing": dict(self.options.milestone_spacing.value),
+            "removed_locations": sorted(self.removed_locations),
             "goal": self.options.goal.current_key,
             "hidden_packages_required": self.options.hidden_packages_required.value,
             # The client counts received copies of this item to detect the
@@ -974,11 +1041,17 @@ class GTAViceCityWorld(World):
             "completion_watch": {
                 str(global_index): location_id
                 for global_index, location_id in scm.completion_watch().items()
+                if str(global_index) in active_globals
             },
-            "check_markers": check_markers({
-                name: bool(getattr(self.options, name).value) for name in CHECK_CLASS_OPTIONS
-            }),
-            "marker_requirements": marker_requirements(bool(self.options.split_mainland_access.value)),
+            "check_markers": {
+                global_index: marker
+                for global_index, marker in check_markers({
+                    name: bool(getattr(self.options, name).value) for name in CHECK_CLASS_OPTIONS
+                }).items()
+                if global_index in active_globals
+            },
+            "marker_requirements": marker_requirements(
+                bool(self.options.split_mainland_access.value), self.mission_order),
             # Only when the class is enabled: with packages off their locations
             # do not exist, so the ASI must not detect or report them.
             "package_coords": {
@@ -1032,7 +1105,7 @@ class GTAViceCityWorld(World):
                 source_index = self.pickup_permutation[slot_index]
                 model, ammo = data.PICKUP_SLOTS[source_index][4:6]
             check_global = (scm.completion_global(data.pickup_name(slot_index))
-                            if checks_on else 0)
+                            if self._location_enabled(data.pickup_name(slot_index)) else 0)
             # No price term: a world stand that charges is priced by the
             # marker like every other, which is the ASI's own figure and not a
             # promise about any shop.
@@ -1042,7 +1115,7 @@ class GTAViceCityWorld(World):
             item = data.SHOP_STAND_ITEMS[handle]
             check_global = (
                 scm.completion_global(data.shop_data.shop_item_name(item))
-                if shops_on else 0)
+                if self._location_enabled(data.shop_data.shop_item_name(item)) else 0)
             # The stand's own price index, so a pending check costs what the
             # stand costs rather than what the marker costs. The shop class
             # promises a purchase is priced the way vanilla priced it, and these
@@ -1052,6 +1125,10 @@ class GTAViceCityWorld(World):
         return layout
 
     def write_spoiler(self, spoiler_handle: typing.TextIO) -> None:
+        if self.mission_order:
+            spoiler_handle.write(f"\nMission order ({self.multiworld.player_name[self.player]}):\n")
+            for giver, missions in self.mission_order.items():
+                spoiler_handle.write(f"  {giver}: {' -> '.join(missions)}\n")
         # The pickup layout is decided at generation, so the spoiler log lists
         # it: each spot named by its vanilla item, then what stands there now.
         if self.pickup_permutation is None:
@@ -1086,6 +1163,7 @@ class GTAViceCityWorld(World):
         # Restore emergency activity progress when enabled.
         flags.update(scm.remember_emergency_flag(
             bool(self.options.remember_emergency_progress.value)))
+        flags.update(scm.mission_order_globals(self.mission_order or {}))
         # The shop threads read this before they hide what a shop sells, so a
         # seed without the class leaves every shop exactly vanilla.
         flags.update(scm.shops_enabled_flag(
@@ -1109,6 +1187,13 @@ class GTAViceCityWorld(World):
             # rather than the item in hand: it would describe the police bribe
             # the shuffle moved elsewhere. A vanilla flag, not a reserved one.
             flags.update(scm.pickups_randomized_globals())
+        # Shop scripts give ordinary stock once the check is spent.
+        flags.update({scm.completion_global(name): 1
+                      for name in data.optional_check_classes()["shops"][1]
+                      if name in self.removed_locations})
+        flags[scm.TAXI_MILESTONE_SPACING_GLOBAL] = (
+            self.options.milestone_spacing.value.get("taxi", 10)
+            if self.options.enable_emergency_vehicles.value else 10)
         return flags
 
     def _completion_condition(self) -> Callable[[CollectionState], bool]:

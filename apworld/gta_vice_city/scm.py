@@ -59,6 +59,7 @@ UNLOCK_BASE = RESERVED_BASE + 10
 # Every progressive strand, then each area item, in a stable order. Each gets
 # one unlock global holding a count (progressive) or one (area).
 UNLOCK_KEYS: list[str] = list(data.progressive_strands().keys()) + list(data.AREA_ITEMS)
+UNLOCK_KEYS += [f"Mission Order: {strand}" for strand in data.progressive_strands()]
 
 # Every block here reserves more room than it uses, for the reason the
 # completion block does: each base is derived from the end of the one below, so
@@ -266,7 +267,12 @@ VIGILANTE_TIME_RAMP_GLOBAL = (EMERGENCY_PROGRESS_BASE
                               + len(EMERGENCY_PROGRESS_ACTIVITIES))
 VIGILANTE_WANTED_RAMP_GLOBAL = VIGILANTE_TIME_RAMP_GLOBAL + 1
 
-SPARE_FLAGS_USED = 1 + len(EMERGENCY_PROGRESS_ACTIVITIES) + 2
+MISSION_RANK_GLOBAL = VIGILANTE_WANTED_RAMP_GLOBAL + 1
+MISSION_DIGIT_GLOBAL = MISSION_RANK_GLOBAL + 1
+MISSION_COMPLETED_GLOBAL = MISSION_DIGIT_GLOBAL + 1
+TAXI_MILESTONE_SPACING_GLOBAL = MISSION_COMPLETED_GLOBAL + 1
+TAXI_MILESTONE_COUNT_GLOBAL = TAXI_MILESTONE_SPACING_GLOBAL + 1
+SPARE_FLAGS_USED = 1 + len(EMERGENCY_PROGRESS_ACTIVITIES) + 2 + 3 + 2
 
 assert SPARE_FLAGS_USED <= SPARE_FLAG_CAPACITY, (
     f"{SPARE_FLAGS_USED} spare flags handed out of {SPARE_FLAG_CAPACITY}; "
@@ -288,6 +294,19 @@ FINALE_ACTIVE_GLOBAL = FINALE_WARP_GLOBAL + 1
 
 def unlock_global(key: str) -> int:
     return UNLOCK_BASE + UNLOCK_KEYS.index(key)
+
+
+def mission_order_globals(mission_order: dict[str, list[str]]) -> dict[int, int]:
+    result = {}
+    for strand, (_, missions) in data.progressive_strands().items():
+        gated = missions[1:] if strand == data.SPHERE_ZERO_GIVER else missions
+        assert len(gated) <= 9, "A mission-order integer can hold at most nine decimal ranks."
+        order = mission_order.get(strand, missions)
+        offset = int(strand == data.SPHERE_ZERO_GIVER)
+        result[unlock_global(f"Mission Order: {strand}")] = (
+            sum((order.index(mission) + 1 - offset) * 10 ** index for index, mission in enumerate(gated))
+            if strand in mission_order else 0)
+    return result
 
 
 def ownership_global(item_name: str) -> int:
@@ -485,6 +504,11 @@ def reserved_global_map() -> dict[str, int]:
         "base:EMERGENCY_PROGRESS_BASE": EMERGENCY_PROGRESS_BASE,
         "base:VIGILANTE_TIME_RAMP_GLOBAL": VIGILANTE_TIME_RAMP_GLOBAL,
         "base:VIGILANTE_WANTED_RAMP_GLOBAL": VIGILANTE_WANTED_RAMP_GLOBAL,
+        "base:MISSION_RANK_GLOBAL": MISSION_RANK_GLOBAL,
+        "base:MISSION_DIGIT_GLOBAL": MISSION_DIGIT_GLOBAL,
+        "base:MISSION_COMPLETED_GLOBAL": MISSION_COMPLETED_GLOBAL,
+        "base:TAXI_MILESTONE_SPACING_GLOBAL": TAXI_MILESTONE_SPACING_GLOBAL,
+        "base:TAXI_MILESTONE_COUNT_GLOBAL": TAXI_MILESTONE_COUNT_GLOBAL,
         "base:FINALE_WARP_GLOBAL": FINALE_WARP_GLOBAL,
         "base:FINALE_ACTIVE_GLOBAL": FINALE_ACTIVE_GLOBAL,
     }

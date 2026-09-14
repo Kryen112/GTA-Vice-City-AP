@@ -22,6 +22,7 @@ class NativeSession {
   void Handle(const json& packet);
   void Tick(bool socket_connected);
   void Command(const std::string& text);
+  bool Connected() const { return online_; }
 
  private:
   bool Send(json message);
@@ -31,6 +32,8 @@ class NativeSession {
   bool GoalReached() const;
   void PublishPercentage();
   void PersistChecks();
+  void MergeEmergency(const EmergencyProgress& progress);
+  void ReceiveEmergency(const json& values);
   bool SeedMatches() const;
   bool ConcernsSelf(int slot) const;
   std::string PlayerName(int slot) const;
@@ -51,6 +54,11 @@ class NativeSession {
   std::set<std::int64_t> all_locations_, checked_, pending_;
   std::shared_ptr<TrapHistory> traps_;
   std::string trap_key_;
+  std::array<std::string, 5> emergency_keys_;
+  EmergencyProgress emergency_progress_{}, emergency_remote_{};
+  json emergency_cache_ = json::object();
+  bool emergency_dirty_ = false;
+  std::chrono::steady_clock::time_point last_emergency_send_{};
   std::chrono::steady_clock::time_point last_trap_send_{};
   int slot_ = 0, team_ = 0, percentage_ = -1;
   bool online_ = false, active_ = false, items_ready_ = false, finished_ = false;

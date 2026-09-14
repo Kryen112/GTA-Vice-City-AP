@@ -17,6 +17,7 @@
 #include "scm_content_locks.hpp"
 #include "scm_crossings.hpp"
 #include "scm_toasts.hpp"
+#include "emergency_progress.hpp"
 
 namespace gtavc {
 
@@ -207,6 +208,9 @@ class GameState {
   // from anything the frame does.
   virtual void SetClientConnected(bool connected) = 0;
   virtual void SetTrapConsumer(TrapConsumer consume) = 0;
+  // Seed-wide progress; implementations exchange snapshots without reading game memory here.
+  virtual EmergencyProgress GetEmergencyProgress() = 0;
+  virtual void SetEmergencyProgress(const EmergencyProgress& progress) = 0;
 
   // What only the client knows, for that same page: how many of this seed's
   // locations are checked, how many it has, how many items have arrived, whether

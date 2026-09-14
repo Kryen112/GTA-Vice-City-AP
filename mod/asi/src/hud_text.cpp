@@ -4,6 +4,36 @@
 
 namespace gtavc {
 
+float PrintMixed(ConsoleFont& fallback, float x, float y, std::wstring text, const CRGBA& color, bool draw) {
+  const float start = x;
+  for (auto& c : text) if (c < 32) c = L' ';
+  for (std::size_t first = 0; first < text.size();) {
+    const bool native = ViceCityConsoleGlyph(text[first]) != 0;
+    auto last = first + 1;
+    while (last < text.size() && (ViceCityConsoleGlyph(text[last]) != 0) == native) ++last;
+    auto run = text.substr(first, last - first);
+    if (native) {
+      for (auto& c : run) c = ViceCityConsoleGlyph(c);
+      // Vice City trims trailing spaces while printing, so measure first.
+      const float advance = CFont::GetStringWidth(run.c_str(), true);
+      if (draw) CFont::SetColor(color);
+      // Space-only runs become empty font-buffer entries, which VC misrenders.
+      if (draw && run.find_first_not_of(L' ') != std::wstring::npos) CFont::PrintString(x, y, run.c_str());
+      x += advance;
+    } else {
+      if (draw && CFont::Details.m_nShadowPos > 0) {
+        const float offset = static_cast<float>(CFont::Details.m_nShadowPos);
+        fallback.Draw(x + offset, y + offset, run, CFont::Details.m_DropColor);
+      }
+      x += draw ? fallback.Draw(x, y, run, color) :
+          static_cast<float>(ConsoleTextBitmap(run, fallback.cell_width, fallback.height).advance);
+    }
+    first = last;
+  }
+  return x - start;
+}
+
+
 float StretchX(float x) {
   return x * static_cast<float>(RsGlobal.maximumWidth) / kVirtualWidth;
 }

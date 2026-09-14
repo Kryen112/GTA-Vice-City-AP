@@ -18,11 +18,54 @@ from Options import (
     DeathLink,
     DefaultOnToggle,
     NamedRange,
+    OptionDict,
+    OptionError,
     OptionSet,
     PerGameCommonOptions,
     StartInventoryPool,
     Toggle,
 )
+
+from .data import EMERGENCY_LEVELS, optional_check_classes
+
+
+class LocationPercentages(OptionDict):
+    """AP checks per enabled type: 0-100% (default 100%, rounded up).
+    Emergency activities keep the first checks; other types choose randomly.
+    """
+    display_name = "Location percentages"
+    default: ClassVar[dict[str, int]] = {
+        **dict.fromkeys((key for key in optional_check_classes() if key != "emergency_vehicles"), 100),
+        **dict.fromkeys((activity.lower() for activity in EMERGENCY_LEVELS), 100),
+    }
+    valid_keys = frozenset(default) | {"emergency_vehicles"}
+
+    def __init__(self, value: dict[str, int]) -> None:
+        super().__init__(value)
+        for key, percentage in self.value.items():
+            if key not in self.valid_keys:
+                raise OptionError(f"Location percentages: unknown class {key!r}. "
+                                  f"Valid keys: {', '.join(sorted(self.valid_keys))}.")
+            if type(percentage) is not int or not 0 <= percentage <= 100:
+                raise OptionError(f"Location percentages: {key} must be a whole number from 0 to 100.")
+
+
+class MilestoneSpacing(OptionDict):
+    """Taxi fares per AP check: 1-100 (default 10).
+    location_percentages reduces the 100-fare target first.
+    Example: taxi percentage 10 and spacing 1 gives 10 checks over 10 fares.
+    """
+    display_name = "Milestone spacing"
+    default: ClassVar[dict[str, int]] = {"taxi": 10}
+    valid_keys = frozenset(default)
+
+    def __init__(self, value: dict[str, int]) -> None:
+        super().__init__(value)
+        for key, spacing in self.value.items():
+            if key not in self.valid_keys:
+                raise OptionError(f"Milestone spacing: unknown activity {key!r}. Valid keys: taxi.")
+            if type(spacing) is not int or not 1 <= spacing <= 100:
+                raise OptionError("Milestone spacing: taxi must be a whole number from 1 to 100.")
 
 
 class Goal(Choice):
@@ -140,6 +183,17 @@ class RandomizeRadioStations(Toggle):
     at random and the other eight are in the pool.
     The radio can always be turned off and the MP3 player is excluded."""
     display_name = "Randomize radio stations"
+
+
+class MissionShuffle(Toggle):
+    """Shuffle mission order within each giver, including mission-based assets.
+
+    Progressive items unlock that giver's next mission in the seed's order.
+    An Old Friend stays first. Cortez's departure, Rub Out, asset finales and
+    Keep Your Friends Close stay last in their branches.
+    Cross-giver mission prerequisites still apply.
+    """
+    display_name = "Mission shuffle"
 
 
 class ShuffleMinimap(Toggle):
@@ -284,6 +338,8 @@ class GTAViceCityOptions(PerGameCommonOptions):
     start_inventory_from_pool: StartInventoryPool
     goal: Goal
     hidden_packages_required: HiddenPackagesRequired
+    location_percentages: LocationPercentages
+    milestone_spacing: MilestoneSpacing
     enable_hidden_packages: EnableHiddenPackages
     enable_rampages: EnableRampages
     enable_stunt_jumps: EnableStuntJumps
@@ -297,6 +353,7 @@ class GTAViceCityOptions(PerGameCommonOptions):
     randomize_pickups: RandomizePickups
     shuffle_shops: ShuffleShops
     randomize_radio_stations: RandomizeRadioStations
+    mission_shuffle: MissionShuffle
     shuffle_minimap: ShuffleMinimap
     split_mainland_access: SplitMainlandAccess
     ability_locks: AbilityLocks

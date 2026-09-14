@@ -92,7 +92,116 @@ void Expect(bool condition, const char* label) {
 }  // namespace
 
 int main() {
-  const json small = CheckMessage(542000000);
+  {
+    std::map<int, std::int64_t> watch;
+    std::set<int> reported;
+    Expect(EmergencyCheckProgress(watch, reported).empty(), "disabled emergency checks have no HUD row");
+    for (int global = 9273; global <= 9328; ++global) watch[global] = global;
+    Expect(EmergencyCheckProgress(watch, reported) == "A:0/12 F:0/12 P:0/10 T:0/10 V:0/12",
+           "emergency HUD shows checks alphabetically in A/F/P/T/V order");
+    reported.insert(9297);
+    for (int global = 9309; global <= 9318; ++global) reported.insert(global);
+    Expect(EmergencyCheckProgress(watch, reported) == "A:0/12 F:1/12 P:0/10 V:0/12",
+           "completed checks decrement counts and completed activities disappear");
+    for (int global = 9550; global < 9640; ++global) watch[global] = global;
+    Expect(EmergencyCheckProgress(watch, reported) == "A:0/12 F:1/12 P:0/10 T:10/100 V:0/12",
+           "taxi progress includes all 100 possible milestones");
+    watch = {{9309, 101}, {9273, 102}, {9274, 103}, {9102, 104}};
+    reported.clear();
+    Expect(EmergencyCheckProgress(watch, reported) == "A:0/2 T:0/1",
+           "reduced percentages count only enabled milestones and ignore story checks");
+    reported = {9309, 9273, 9274};
+    Expect(EmergencyCheckProgress(watch, reported).empty(), "all emergency checks done hides the HUD row");
+  }
+    const json small = CheckMessage(542000000);
+    {
+      char text[40] = "0";
+      Expect(SyncTaxiCounter(6712 * 4, "FARES", true, 8, text) && std::string(text) == "8",
+             "taxi display resumes at the persisted fare total");
+      Expect(SyncTaxiCounter(6712 * 4, "FARES", true, 9, text) && std::string(text) == "9",
+             "the next delivery displays the next career fare");
+      Expect(!SyncTaxiCounter(6712 * 4, "FARES", false, 10, text) && std::string(text) == "9",
+             "a stopped taxi mission stays hidden");
+      Expect(!SyncTaxiCounter(1234, "FARES", true, 10, text) &&
+             !SyncTaxiCounter(6712 * 4, "OTHER", true, 10, text), "other mission counters stay unchanged");
+    }
+  {
+    std::map<int, std::int64_t> taxi_checks;
+    std::set<int> checked;
+    for (int milestone = 1; milestone <= 100; ++milestone)
+      taxi_checks[TaxiCompletionGlobal(milestone)] = milestone;
+    for (int milestone = 1; milestone <= 6; ++milestone) checked.insert(TaxiCompletionGlobal(milestone));
+    Expect(RestoredTaxiFares(taxi_checks, checked, 1, 0) == 6, "new game restores six checked taxi fares");
+    Expect(RestoredTaxiFares(taxi_checks, checked, 1, 7) == 7, "the next fare advances past restored progress");
+    Expect(RestoredTaxiFares(taxi_checks, checked, 5, 0) == 30, "restoration follows taxi milestone spacing");
+    Expect(RestoredTaxiFares(taxi_checks, checked, 0, 0) == 60, "old seeds use ten fares per milestone");
+    checked.insert(TaxiCompletionGlobal(20));
+    Expect(RestoredTaxiFares(taxi_checks, checked, 1, 0) == 20, "extended taxi milestones restore too");
+    Expect(RestoredTaxiFares(taxi_checks, checked, 1, 23) == 23, "restoration preserves newer saved progress");
+    Expect(RestoredTaxiFares({}, checked, 1, 0) == 0, "disabled taxi checks do not change fares");
+      Expect(RestoredTaxiFares(taxi_checks, {}, 1, 0) == 0, "an unplayed seed gains no fares");
+    }
+    {
+      std::map<int, std::int64_t> watch;
+      std::set<int> checked;
+      for (const int first : {9273, 9297, 9285, 9319}) {
+        for (int level = 1; level <= 6; ++level) {
+          watch[first + level - 1] = first + level;
+          checked.insert(first + level - 1);
+        }
+      }
+      std::map<int, int> globals;
+      const auto restore = [&] {
+        RestoreEmergencyLevels(CheckedEmergencyProgress(watch, checked, 10),
+            [&](int index) { return globals[index]; },
+            [&](int index, int value) { globals[index] = value; });
+      };
+      restore();
+      Expect(globals[kEmergencyProgressBase] == 0, "disabled remember option preserves vanilla starts");
+      globals[kRememberEmergencyGlobal] = 1;
+      restore();
+      Expect(globals[10160] == 7 && globals[10161] == 7 && globals[10162] == 6 && globals[10163] == 7,
+             "six checked levels restore the existing resume counters for all four jobs");
+      float time, wanted;
+      std::memcpy(&time, &globals[kVigilanteTimeRampGlobal], sizeof(time));
+      std::memcpy(&wanted, &globals[kVigilanteWantedRampGlobal], sizeof(wanted));
+      Expect(time > 3.399f && time < 3.401f && wanted > 0.699f && wanted < 0.701f,
+             "vigilante resumes with the earned time and wanted scaling");
+      globals[10161] = 20;
+      globals[10162] = 18;
+      globals[kVigilanteTimeRampGlobal] = 123;
+      restore();
+      Expect(globals[10161] == 20 && globals[10162] == 18 && globals[kVigilanteTimeRampGlobal] == 123,
+             "newer saved levels and multipliers survive repeated restoration");
+      for (const int last : {9284, 9308, 9296, 9328}) {
+        watch[last] = last;
+        checked.insert(last);
+      }
+      globals.clear();
+      globals[kRememberEmergencyGlobal] = 1;
+      restore();
+      Expect(globals[10160] == 12 && globals[10161] == 13 && globals[10162] == 12 && globals[10163] == 10,
+             "paramedic and pizza cap safely while firefighter and vigilante can continue");
+      globals.clear();
+      globals[kRememberEmergencyGlobal] = 1;
+      watch.clear();
+      restore();
+      Expect(globals[10160] == 0 && globals[10161] == 0 && globals[10162] == 0 && globals[10163] == 0,
+             "disabled checks cannot restore levels from stale reported flags");
+      watch[9273] = 1;
+      checked.clear();
+      restore();
+      Expect(globals[10160] == 0, "an unplayed activity gains no levels");
+      RestoreEmergencyLevels(EmergencyProgress{6, 5, 19, 20, 4},
+          [&](int index) { return globals[index]; },
+          [&](int index, int value) { globals[index] = value; });
+      Expect(globals[10160] == 6 && globals[10161] == 20 && globals[10162] == 20 && globals[10163] == 5,
+             "cached levels restore independently of AP checks, including levels beyond twelve");
+      std::memcpy(&time, &globals[kVigilanteTimeRampGlobal], sizeof(time));
+      std::memcpy(&wanted, &globals[kVigilanteWantedRampGlobal], sizeof(wanted));
+      Expect(time > 2.699f && time < 2.701f && wanted > 0.399f && wanted < 0.401f,
+             "high vigilante levels retain vanilla multiplier floors");
+    }
   const std::vector<json> small_result = RoundTrip(small);
   Expect(small_result.size() == 1 && small_result[0] == small, "small round-trip");
 
@@ -2470,50 +2579,39 @@ int main() {
                strands.rows[1].tone == StatusTone::kOpen,
            "and a finished strand carries the tone the client gave it");
 
-    // The game's own counts, which no client can answer: the package tally and
-    // the level each emergency activity has reached.
+    // The status page and HUD use the same selected AP checks, even after New Game.
     state.packages_collected = 37;
     state.packages_total = 100;
-    state.paramedic_level = 7;
-    sections = ComposeStatusPanel(state);
-    const StatusSection own = Section(sections, "THE GAME COUNTS");
-    Expect(own.rows.size() == 6 && own.rows[0].label == "Hidden Packages" &&
-               own.rows[0].value == "37/100",
-           "the package tally displays the supplied HUD progress");
-    Expect(own.rows[1].value == "7/12" && own.rows[2].value == "none",
-           "and an emergency activity reads its level or says it has none");
-    // The taxi and the pizza boy keep no level in the game's stats, and they do
-    // not count alike: the taxi divides its career fares, while the pizza boy is
-    // read from the level its mission is working on, because that mission hands
-    // out one pizza per level number and a delivery total divides into nothing.
-    StatusPanelState jobs = state;
-    jobs.taxi_fares = 37;
-    jobs.pizza_level_in_progress = 4;
-    const StatusSection counted = ComposeRewardSection(jobs);
-    Expect(counted.rows[4].label == "Taxi" && counted.rows[4].value == "3/10",
-           "every tenth career fare is a taxi level");
-    Expect(counted.rows[5].label == "Pizza" && counted.rows[5].value == "3/10",
-           "and the pizza level in progress is not one the player has finished");
-
-    jobs.pizza_level_in_progress = 1;
-    Expect(ComposeRewardSection(jobs).rows[5].value == "none",
-           "the first level being unfinished reads as none rather than as zero");
-
-    // Level ten stays replayable, so the mission steps its level back to nine
-    // and the win flag is the only thing that says the tenth is done.
-    jobs.pizza_level_in_progress = 9;
-    jobs.pizza_finished = true;
-    const StatusSection won = ComposeRewardSection(jobs);
-    Expect(won.rows[5].value == "10/10" && won.rows[5].tone == StatusTone::kOpen,
-           "the win flag reads as all ten done however far the level has stepped back");
-
-    jobs.taxi_fares = 999;
-    jobs.pizza_finished = false;
-    jobs.pizza_level_in_progress = 10;
-    const StatusSection capped = ComposeRewardSection(jobs);
-    Expect(capped.rows[4].value == "10/10" && capped.rows[5].value == "9/10",
-           "fares past the last level do not read as an eleventh, and nor does "
-           "standing on the tenth without having finished it");
+    std::map<int, std::int64_t> job_checks;
+    std::set<int> completed_jobs;
+    for (int milestone = 1; milestone <= 10; ++milestone) {
+      job_checks[TaxiCompletionGlobal(milestone)] = milestone;
+      if (milestone <= 8) completed_jobs.insert(TaxiCompletionGlobal(milestone));
+    }
+    for (int level = 0; level < 6; ++level) job_checks[9273 + level] = 20 + level;
+    state.emergency_checks = EmergencyCheckCounts(job_checks, completed_jobs);
+    const auto own = Section(ComposeStatusPanel(state), "ACTIVITY PROGRESS");
+    Expect(own.rows.size() == 3 && own.rows[0].label == "Hidden Packages" &&
+               own.rows[0].value == "37/100", "packages retain their HUD tally; disabled jobs have no row");
+    Expect(own.rows[1].label == "Taxi" && own.rows[1].value == "8/10",
+           "the status page shows the reduced taxi check target");
+    Expect(own.rows[2].label == "Paramedic" && own.rows[2].value == "0/6",
+           "unstarted activities show zero and their reduced target");
+    Expect(EmergencyCheckProgress(job_checks, completed_jobs) == "A:0/6 T:8/10",
+           "the status page and HUD agree without local mission counters");
+    for (const auto& [global, location] : job_checks) completed_jobs.insert(global);
+    state.emergency_checks = EmergencyCheckCounts(job_checks, completed_jobs);
+    const auto finished = ComposeRewardSection(state);
+    Expect(finished.rows[1].value == "10/10" && finished.rows[1].tone == StatusTone::kOpen &&
+               finished.rows[2].value == "6/6" && finished.rows[2].tone == StatusTone::kOpen,
+           "completed reduced activities stay visible in green");
+    Expect(EmergencyCheckProgress(job_checks, completed_jobs).empty(), "completed activities leave the HUD");
+    for (int milestone = 11; milestone <= 100; ++milestone)
+      job_checks[TaxiCompletionGlobal(milestone)] = 100 + milestone;
+    state.emergency_checks = EmergencyCheckCounts(job_checks, completed_jobs);
+    Expect(ComposeRewardSection(state).rows[1].value == "10/100", "all extended taxi checks count on the page");
+    state.emergency_checks = EmergencyCheckCounts({}, completed_jobs);
+    Expect(ComposeRewardSection(state).rows.size() == 1, "stale check flags cannot display disabled activities");
 
     // One selected ability key and one unselected: only the selected one is
     // listed, since an unselected key is fully vanilla.

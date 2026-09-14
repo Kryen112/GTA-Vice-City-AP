@@ -16,7 +16,7 @@ def stage_setup(folder: Path) -> Path:
     package.mkdir()
     (package / "__init__.py").write_text("", encoding="utf-8")
     for name in ("setup.py", "installer.py"):
-        shutil.copyfile(payload.WORLD_SOURCE / name, package / name)
+        shutil.copyfile(Path(__file__).parent / "gta_vc_setup" / name, package / name)
     original = payload.STAGED_PAYLOAD
     try:
         payload.STAGED_PAYLOAD = package / "data" / "mod"

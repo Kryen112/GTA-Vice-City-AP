@@ -64,6 +64,7 @@ void ArchipelagoClient::Run() {
   bool connected = false;
   bool reported_unavailable = false;
   const auto disconnect = [&] {
+    connected_ = false;
     if (AP_IsInit()) AP_Shutdown();
     AP_SetPacketCallback({});
     AP_SetTransportCallback({});
@@ -151,7 +152,7 @@ void ArchipelagoClient::Run() {
             logger_("/items [page] [filter], /locations [page] [filter]");
             logger_("/item_groups [page] [group], /location_groups [page] [group]");
             logger_("!missing [filter], !checked [filter], !hint [item]. !help lists server commands.");
-            logger_("Saves select themselves per seed and slot. Installation/removal: AP Launcher's Vice City Setup.");
+            logger_("Saves select themselves per seed and slot. Installation/removal: GTA-Vice-City-AP-Setup.exe.");
           } else if (text.rfind("/server ", 0) == 0 || text.rfind("/slot ", 0) == 0 ||
                      text == "/password" || text.rfind("/password ", 0) == 0) {
             const auto space = text.find(' ');
@@ -195,6 +196,7 @@ void ArchipelagoClient::Run() {
           }
         }
         if (native) native->Tick(connected);
+        connected_ = native && native->Connected();
         last_error.clear();
       } catch (const std::exception& error) {
         if (last_error != error.what()) { last_error = error.what(); logger_(last_error); }

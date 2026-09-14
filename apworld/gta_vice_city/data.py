@@ -169,6 +169,13 @@ SPHERE_ZERO_GIVER = "Rosenberg"
 # The default goal mission.
 FINAL_MISSION = "Keep Your Friends Close..."
 
+# These missions retire a quest giver, transfer the mansion, finish an asset, or end
+# the game. They stay after the other missions that use that giver's state.
+MISSION_SHUFFLE_LAST: frozenset[str] = frozenset({
+    "All Hands On Deck!", "Rub Out", FINAL_MISSION, "The Job", "G-spotlight",
+    "Hit the Courier", "Cabmaggedon",
+})
+
 HIDDEN_PACKAGE_COUNT = len(package_data.PACKAGE_NAMES)
 
 # The macguffin item of the hidden-packages goal. Collecting a physical package
@@ -722,8 +729,7 @@ SIDE_EVENTS: list[str] = [
     "Trial by Dirt", "Test Track", "PCJ Playground", "Cone Crazy",
 ]
 
-# Emergency-vehicle milestone checks, one per level. Milestone means per level,
-# never per fare or kill. Taxi and pizza count every tenth fare and level 1-10.
+# Default emergency milestone counts. Taxi spacing can provide up to 100 checks.
 EMERGENCY_LEVELS: dict[str, int] = {
     "Paramedic": 12, "Vigilante": 12, "Firefighter": 12, "Taxi": 10, "Pizza": 10,
 }
@@ -733,12 +739,16 @@ def emergency_name(activity: str, level: int) -> str:
     return f"{activity} Level {level:02d}"
 
 
+TAXI_MAX_FARES = 100
+EXTRA_TAXI_NAMES = [emergency_name("Taxi", level) for level in range(11, TAXI_MAX_FARES + 1)]
+
+
 def emergency_names() -> list[str]:
     return [
         emergency_name(activity, level)
         for activity, levels in EMERGENCY_LEVELS.items()
         for level in range(1, levels + 1)
-    ]
+    ] + EXTRA_TAXI_NAMES
 
 
 # Robbable stores. The SCM has 15 add_stores_knocked_off sites, matching the
@@ -1785,7 +1795,8 @@ def location_ability_requirements() -> dict[str, list[str]]:
         requirements[stunt_jump_name(index)] = [LAND_VEHICLES_ITEM]
     for activity, levels in EMERGENCY_LEVELS.items():
         extras = EMERGENCY_ABILITY_EXTRAS.get(activity, [])
-        for level in range(1, levels + 1):
+        max_checks = TAXI_MAX_FARES if activity == "Taxi" else levels
+        for level in range(1, max_checks + 1):
             requirements[emergency_name(activity, level)] = [
                 LAND_VEHICLES_ITEM, *extras]
     for name in SIDE_EVENTS:

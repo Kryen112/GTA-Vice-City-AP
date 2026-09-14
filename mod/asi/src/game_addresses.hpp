@@ -23,6 +23,8 @@ constexpr unsigned int kFrontendMenuTransitionDrawSecondCall10 = 0x498442;
 // IsPickUpPickedUp (0x441880) compares [ecx*4 + 0x94AF48] then clears a match;
 // this is a direct 20-int array, not a pointer. Verified against VC 1.0.
 constexpr unsigned int kPickupsUpdateCall10 = 0x4A45DC;
+// COnscreenTimer::ProcessForDisplay formats counter text after the HUD pass.
+constexpr unsigned int kCounterDisplayCall10 = 0x4A64DF;
 constexpr unsigned int kCollectedPickupsAddress10 = 0x94AF48;
 
 // CPickup::Update passes CO_ONE/CO_ALL to the garage-message function at
