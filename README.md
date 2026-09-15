@@ -73,6 +73,8 @@ Wasted only, so an arrest is not a death.
 Enabled, unfinished non-mission checks appear on the minimap and pause-menu map as colored dots.
 Packages are green, robberies light red, rampages dark red, pickups orange, stunt jumps blue,
 properties yellow, side events cyan, and shop stock purple.
+For final-mission and 100% goals, unpurchased income assets also appear without an AP purchase location attached.
+These assets are lime green, those linked to an AP purchase location turn yellow when their purchase requirements are met.
 Dots disappear when checked. Content-locked checks stay hidden until their content is unlocked.
 Markers also follow the world's mission, ability and region requirements, including alternative vehicle routes and their sources.
 

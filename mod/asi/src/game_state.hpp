@@ -25,6 +25,9 @@ enum class TrapAction { kWait, kSkip, kApply };
 using TrapConsumer = std::function<TrapAction(std::int64_t)>;
 
 // Completion global -> world position on the minimap.
+constexpr int kFinaleAssetMarker = 9;
+constexpr int kFinaleAssetCheckMarker = 10;
+
 struct MarkerTerm {
   int global = 0;
   int minimum = 1;
@@ -59,6 +62,13 @@ struct CheckMarker {
       if (satisfied < threshold.needed) return false;
     }
     return true;
+  }
+
+  template <typename ReadGlobal>
+  int DisplayCategory(ReadGlobal read) const {
+    if (category == kFinaleAssetMarker) return kFinaleAssetMarker;
+    if (category == kFinaleAssetCheckMarker) return Available(read) ? 6 : kFinaleAssetMarker;
+    return Available(read) ? category : -1;
   }
 };
 using CheckMarkers = std::map<int, CheckMarker>;

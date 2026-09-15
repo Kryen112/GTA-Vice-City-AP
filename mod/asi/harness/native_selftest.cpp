@@ -132,6 +132,10 @@ int main(int argc, char** argv) {
     assert(!ApplyClientMessage(&marker_game, marker_config, [](const std::string&) {}));
   }
   ConsoleCommandCompletion completion;
+  assert(MalibuEntranceLock(1, 1, 1) == 0); // Late Death Row call after completion.
+  assert(MalibuEntranceLock(1, 0, 0) == 0); // Unavailable AP mission cannot block entry.
+  assert(MalibuEntranceLock(1, 1, 0) == 1); // Keep an available Death Row entrance.
+  assert(MalibuEntranceLock(0, 1, 0) == 0); // Do not introduce a new vanilla lock.
   ConsoleInputHistory input_history;
   std::wstring recalled = L"draft";
   std::size_t recalled_cursor = 2;
@@ -347,12 +351,40 @@ int main(int argc, char** argv) {
     login(jump_session, config);
     assert(jump_game.Markers().at(9268).requirements.empty());
   }
+  {
+    TestGame asset_game;
+    const auto asset_directory = directory / "asset-markers";
+    std::filesystem::create_directories(asset_directory);
+    NativeSession asset_session(&asset_game, logger, sender, "rando.vc", "", asset_directory);
+    auto config = connected;
+    config["slot_data"]["completion_watch"] = {{"9358", 101}, {"9361", 999}, {"9366", 102}};
+    login(asset_session, config);
+    const auto& markers = asset_game.Markers();
+    assert(markers.at(9358).category == kFinaleAssetCheckMarker); // AP purchase is yellow when available.
+    assert(markers.at(9361).category == kFinaleAssetMarker); // Excluded purchase still guides the finale.
+    assert(markers.at(9365).category == kFinaleAssetMarker); // No completion-watch entry required.
+    assert(markers.at(9366).category == 6 && !markers.count(9367)); // Safehouses stay ordinary AP checks.
+    const auto locked = [](int) { return 0; };
+    const auto unlocked = [](int) { return 100; };
+    assert(markers.at(9358).DisplayCategory(locked) == kFinaleAssetMarker);
+    assert(markers.at(9358).DisplayCategory(unlocked) == 6);
+    assert(markers.at(9361).DisplayCategory(locked) == kFinaleAssetMarker);
+    assert(markers.at(9361).DisplayCategory(unlocked) == kFinaleAssetMarker);
+    assert(markers.at(9366).DisplayCategory(locked) == -1);
+    config["slot_data"]["goal"] = "hidden_packages";
+    login(asset_session, config);
+    assert(asset_game.Markers().size() == 2 && !asset_game.Markers().count(9361));
+    assert(asset_game.Markers().at(9358).category == 6);
+    config["slot_data"]["goal"] = "hundred_percent";
+    login(asset_session, config);
+    assert(asset_game.Markers().at(9361).category == kFinaleAssetMarker);
+  }
   NativeSession session(&game, logger, sender, "rando.vc", "", directory);
   assert(!game.ClientConnected());
   login(session, connected);
   assert(game.ClientConnected());
   assert(game.AppliedItems().size() == 1);
-  assert(game.Markers().size() == 2);
+  assert(game.Markers().size() == 10); // Two AP checks plus eight income-asset purchases.
   assert(game.Markers().at(9102).category == 1);
   assert(game.Markers().at(9102).content_unlock_global == DistrictUnlockGlobal(kContentHiddenPackages, 0));
   assert(game.Markers().at(9103).content_unlock_global == DistrictUnlockGlobal(kContentHiddenPackages, 1));

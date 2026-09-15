@@ -29,6 +29,12 @@ constexpr int kVigilanteTimeRampGlobal = 10164;
 constexpr int kVigilanteWantedRampGlobal = 10165;
 constexpr int kTaxiSessionFaresGlobal = 6712;
 
+inline int MalibuEntranceLock(int vanilla_lock, int death_row_unlock, int death_row_passed) {
+  // CELL can deliver its Death Row call after AP has already completed the mission.
+  // Its $996 lock must not outlive that mission or wait on an unavailable AP item.
+  return vanilla_lock && death_row_unlock > 0 && death_row_passed == 0;
+}
+
 inline bool SyncTaxiCounter(unsigned int variable, const char* key, bool enabled,
                             int fares, char (&text)[40]) {
   if (!enabled || variable != kTaxiSessionFaresGlobal * sizeof(int) ||

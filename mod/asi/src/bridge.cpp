@@ -237,8 +237,11 @@ bool ApplyClientMessage(GameState* game, const json& message, const Logger& logg
       CheckMarkers check_markers;
       if (message.contains("check_markers") && message.at("check_markers").is_object()) {
         const json& markers = message.at("check_markers");
-        for (const auto& [global_index, location] : completion_watch) {
-          const auto position = markers.find(std::to_string(global_index));
+        for (auto position = markers.begin(); position != markers.end(); ++position) {
+          std::size_t parsed = 0;
+          const int global_index = std::stoi(position.key(), &parsed);
+          if (parsed != position.key().size() || global_index < 0 || global_index >= 65128)
+            throw std::runtime_error("Invalid marker global");
           if (position == markers.end() || !position->is_array() ||
               position->size() < 2 || position->size() > 4 ||
               !position->at(0).is_number() || !position->at(1).is_number()) continue;
@@ -246,6 +249,9 @@ bool ApplyClientMessage(GameState* game, const json& message, const Logger& logg
           const float y = position->at(1).get<float>();
           const int category = position->size() >= 3 && position->at(2).is_number_integer()
                                    ? position->at(2).get<int>() : 0;
+          const bool asset = global_index >= 9358 && global_index <= 9365 &&
+              (category == kFinaleAssetMarker || category == kFinaleAssetCheckMarker);
+          if (!completion_watch.count(global_index) && !asset) continue;
           if (position->size() == 4 && !position->at(3).is_number_integer()) continue;
           const int content_global = position->size() == 4 ? position->at(3).get<int>() : 0;
           if (content_global < 0 || content_global >= 65128) continue; // VC ScriptSpace bounds

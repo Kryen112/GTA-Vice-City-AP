@@ -18,8 +18,9 @@ namespace gtavc {
 inline std::array<unsigned char, 3> CheckMarkerColor(int category) {
   static constexpr std::array<unsigned char, 3> colors[] = {
       {255, 255, 255}, {60, 255, 90}, {255, 130, 140}, {185, 35, 55},
-      {255, 155, 30}, {65, 140, 255}, {255, 235, 65}, {55, 240, 240}, {215, 120, 255}};
-  return colors[category >= 0 && category < 9 ? category : 0];
+      {255, 155, 30}, {65, 140, 255}, {255, 235, 65}, {55, 240, 240}, {215, 120, 255},
+      {180, 255, 35}}; // Lime: finale assets without an available AP purchase check.
+  return colors[category >= 0 && category < 10 ? category : 0];
 }
 
 // Pin nearby dots inside the rim and around the corner in a 3x minimap size radius.

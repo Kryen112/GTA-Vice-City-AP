@@ -139,8 +139,12 @@ bool NativeSession::Activate() {
     configuration["marker_requirements"] = config_.at("marker_requirements");
   for (auto entry = defaults_["markers"].begin(); entry != defaults_["markers"].end(); ++entry) {
     const auto watched = configuration["completion_watch"].find(entry.key());
-    if (watched == configuration["completion_watch"].end() || !watched->is_number_integer() ||
-        !all_locations_.count(watched->get<std::int64_t>())) continue;
+    const bool purchase_check = watched != configuration["completion_watch"].end() && watched->is_number_integer() &&
+        all_locations_.count(watched->get<std::int64_t>());
+    const auto goal = config_.value("goal", std::string());
+    const bool finale_asset = (goal == "final_mission" || goal == "hundred_percent") &&
+        std::stoll(entry.key()) >= 9358 && std::stoll(entry.key()) <= 9365;
+    if (!purchase_check && !finale_asset) continue;
     json marker = entry.value();
     // Stunt jump positions are fixed; use the corrected local table.
     if (marker[2] != 5 && config_.contains("check_markers") && config_["check_markers"].is_object()) {
@@ -150,6 +154,7 @@ bool NativeSession::Activate() {
         marker[1] = (*supplied)[1];
       }
     }
+    if (finale_asset) marker[2] = purchase_check ? kFinaleAssetCheckMarker : kFinaleAssetMarker;
     configuration["check_markers"][entry.key()] = marker;
   }
   state_file_ = state_directory_ / ("GtaVcAp." + seed_hash_ + ".json");

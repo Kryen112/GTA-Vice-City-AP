@@ -706,9 +706,11 @@ void ScmGameState::DrawCheckMarkers() {
   const float radius_x = std::abs(edge.x - centre.x);
   const float radius_y = std::abs(edge.y - centre.y);
   for (const auto& [global_index, position] : check_markers_) {
+    const bool asset = position.category == kFinaleAssetMarker || position.category == kFinaleAssetCheckMarker;
     if (global_index < 0 || global_index >= sizeof(CTheScripts::ScriptSpace) / sizeof(int) ||
-        reported_.count(global_index) || GetGlobal(global_index) != 0) continue;
-    if (!position.Available([this](int index) { return GetGlobal(index); })) continue;
+        (!asset && reported_.count(global_index)) || GetGlobal(global_index) != 0) continue;
+    const int category = position.DisplayCategory([this](int index) { return GetGlobal(index); });
+    if (category < 0) continue;
     CVector2D radar, screen;
     CRadar::TransformRealWorldPointToRadarSpace(radar, CVector2D(position.x, position.y));
     if (!main_map && !ProjectCheckMarker(radar.x, radar.y, radius_x, radius_y)) continue;
@@ -717,7 +719,7 @@ void ScmGameState::DrawCheckMarkers() {
     const float y = std::floor(screen.y);
     if (main_map && !CheckMarkerFitsScreen(x, y, static_cast<float>(RsGlobal.screenWidth),
                                          static_cast<float>(RsGlobal.screenHeight))) continue;
-    const auto color = CheckMarkerColor(position.category);
+    const auto color = CheckMarkerColor(category);
     CSprite2d::DrawRect(CRect(x - 3.0f, y - 3.0f, x + 4.0f, y + 4.0f), CRGBA(0, 0, 0, 255));
     CSprite2d::DrawRect(CRect(x - 2.0f, y - 2.0f, x + 3.0f, y + 3.0f),
                         CRGBA(color[0], color[1], color[2], 255));
@@ -2247,6 +2249,11 @@ void ScmGameState::OnGameFrame() {
   // has not arrived. Same global-driven shape as the radio, so it also works
   // offline from a save.
   EnforceMinimap();
+
+  // Repair the vanilla phone call's Malibu entrance lock, including saved locks.
+  // Leave mission-owned transitions alone while a mission or cutscene is running.
+  if (controllable && GetGlobal(kOnMissionGlobal) == 0)
+    SetGlobal(996, MalibuEntranceLock(GetGlobal(996), GetGlobal(9013), GetGlobal(9073)));
 
   // Enforce both lock families from the lock-flag and unlock globals written
   // above. Same global-driven shape, so a save's own persisted state keeps
