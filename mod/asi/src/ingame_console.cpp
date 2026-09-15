@@ -5,6 +5,8 @@
 #include <CSprite2d.h>
 #include "hud_text.hpp"
 #include "console_font.hpp"
+#include "native_data.hpp"
+#include "json.hpp"
 
 namespace gtavc {
 
@@ -39,7 +41,13 @@ void PrintLine(ConsoleFont& font, float y, const ConsoleLine& line, int alpha = 
   }
 }
 }
-IngameConsole::IngameConsole(std::function<void(std::string)> send) : send_(std::move(send)) {}
+IngameConsole::IngameConsole(std::function<void(std::string)> send) : send_(std::move(send)) {
+  const auto data = nlohmann::json::parse(kNativeData);
+  for (const auto& entry : data.at("items")) completion_.items.push_back(Wide(entry.at(0).get<std::string>()));
+  for (const auto& entry : data.at("locations")) completion_.locations.push_back(Wide(entry.get<std::string>()));
+  std::sort(completion_.items.begin(), completion_.items.end());
+  std::sort(completion_.locations.begin(), completion_.locations.end());
+}
 void IngameConsole::ReleaseGraphics() { font_.reset(); }
 IngameConsole::~IngameConsole() {
   if (window_ && reinterpret_cast<WNDPROC>(GetWindowLongPtrW(window_, GWLP_WNDPROC)) == WindowProc)
@@ -50,6 +58,7 @@ void IngameConsole::Add(const std::string& text) {
   Add(ConsoleMessage{{text, 0xFFFFFF}});
 }
 void IngameConsole::Add(const ConsoleMessage& message, bool notify) {
+  notify = notify && !active_.load();
   ConsoleLine wide;
   std::size_t remaining = 16384;
   for (const auto& span : message) {

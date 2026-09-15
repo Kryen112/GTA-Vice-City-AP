@@ -1,5 +1,6 @@
 #pragma once
 #include <windows.h>
+#include <atomic>
 #include <deque>
 #include <functional>
 #include <mutex>
@@ -24,7 +25,7 @@ class IngameConsole {
   static IngameConsole* instance_;
   HWND window_ = nullptr;
   WNDPROC previous_ = nullptr;
-  bool active_ = false;
+  std::atomic<bool> active_{false};
   std::wstring input_;
   ConsoleCommandCompletion completion_;
   ConsoleInputHistory input_history_;

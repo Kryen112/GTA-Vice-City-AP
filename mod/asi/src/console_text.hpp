@@ -1,6 +1,7 @@
 #pragma once
 #include <algorithm>
 #include <cstdint>
+#include <cwctype>
 #include <deque>
 #include <functional>
 #include <string>
@@ -18,14 +19,27 @@ using ConsoleOutput = std::function<void(const ConsoleMessage&, bool notify)>;
 class ConsoleCommandCompletion {
   std::wstring prefix_;
   int selected_ = -1;
+  bool arguments_ = false;
  public:
+  std::vector<std::wstring> items, locations;
   void Reset() { prefix_.clear(); selected_ = -1; }
   bool Complete(std::wstring& text, std::size_t& cursor, bool reverse = false) {
-    const auto end = std::min(text.find_first_of(L" \t\r\n"), text.size());
-    if (cursor == 0 || cursor > end || (text[0] != L'/' && text[0] != L'!')) {
+    auto end = std::min(text.find_first_of(L" \t\r\n"), text.size());
+    const bool arguments = cursor > end;
+    const auto command = text.substr(0, end);
+    if (cursor == 0 || cursor > text.size() || (text[0] != L'/' && text[0] != L'!') ||
+        (arguments && command != L"!hint" && command != L"!hint_location")) {
       Reset(); return false;
     }
-    // Complete only command names; arguments and ordinary chat stay untouched.
+    if (arguments != arguments_) Reset();
+    arguments_ = arguments;
+    std::size_t start = 0;
+    if (arguments) {
+      start = text.find_first_not_of(L" \t\r\n", end);
+      if (start == std::wstring::npos) start = cursor;
+      if (cursor < start) { Reset(); return false; }
+      end = text.size();
+    }
     static constexpr std::wstring_view commands[] = {
         L"/commands", L"/connect", L"/deathlink", L"/disconnect", L"/help", L"/hint",
         L"/item_groups", L"/items", L"/location_groups", L"/locations", L"/password",
@@ -33,18 +47,35 @@ class ConsoleCommandCompletion {
         L"!admin", L"!alias", L"!checked", L"!collect", L"!countdown", L"!getitem",
         L"!help", L"!hint", L"!hint_location", L"!license", L"!missing", L"!options",
         L"!players", L"!release", L"!remaining", L"!status"};
-    if (prefix_.empty()) prefix_ = text.substr(0, cursor);
+    const bool fresh = prefix_.empty();
+    if (fresh) prefix_ = text.substr(start, cursor - start);
     std::vector<std::wstring_view> matches;
-    for (const auto command : commands)
-      if (command.substr(0, prefix_.size()) == prefix_) matches.push_back(command);
+    if (arguments) {
+      for (const auto& name : command == L"!hint" ? items : locations)
+        if (name.size() >= prefix_.size() && std::equal(prefix_.begin(), prefix_.end(), name.begin(),
+            [](wchar_t a, wchar_t b) { return std::towlower(a) == std::towlower(b); })) matches.push_back(name);
+    } else {
+      for (const auto name : commands)
+        if (name.substr(0, prefix_.size()) == prefix_) matches.push_back(name);
+    }
     if (matches.empty()) { Reset(); return false; }
     const auto count = static_cast<int>(matches.size());
     selected_ = selected_ < 0 ? (reverse ? count - 1 : 0) :
         (selected_ + (reverse ? -1 : 1) + count) % count;
-    const auto match = matches[selected_];
-    if (text.size() - end + match.size() > 1024) { Reset(); return false; }
-    text.replace(0, end, match);
-    cursor = match.size();
+    auto match = matches[selected_];
+    if (arguments && fresh && !reverse && matches.size() > 1) {
+      auto common = matches.front();
+      for (const auto name : matches) {
+        std::size_t i = 0;
+        while (i < common.size() && i < name.size() &&
+               std::towlower(common[i]) == std::towlower(name[i])) ++i;
+        common = common.substr(0, i);
+      }
+      if (common.size() > prefix_.size()) { match = common; selected_ = -1; }
+    }
+    if (text.size() - (end - start) + match.size() > 1024) { Reset(); return false; }
+    text.replace(start, end - start, match);
+    cursor = start + match.size();
     return true;
   }
 };

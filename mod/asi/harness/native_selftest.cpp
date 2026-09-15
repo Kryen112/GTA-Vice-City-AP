@@ -168,7 +168,7 @@ int main(int argc, char** argv) {
   assert(completion.Complete(command_text, command_cursor));
   assert(command_text == L"!hint_location Ocean Beach" && command_cursor == 14);
   command_cursor = command_text.size();
-  assert(!completion.Complete(command_text, command_cursor)); // No argument completion.
+  assert(!completion.Complete(command_text, command_cursor)); // No names loaded yet.
   for (const auto text : {L"", L"hello", L"/unknown", L"/password secret"}) {
     completion.Reset(); command_text = text; command_cursor = command_text.size();
     assert(!completion.Complete(command_text, command_cursor) && command_text == text);
@@ -180,6 +180,21 @@ int main(int argc, char** argv) {
   completion.Reset(); command_text = L"/re " + std::wstring(1020, L'x'); command_cursor = 3;
   const auto full_input = command_text;
   assert(!completion.Complete(command_text, command_cursor) && command_text == full_input);
+  completion.items = {L"Progressive Diaz", L"Progressive Lance"};
+  completion.locations = {L"Ocean Beach - Check", L"Ocean View Hotel"};
+  completion.Reset(); command_text = L"!hint prog"; command_cursor = command_text.size();
+  assert(completion.Complete(command_text, command_cursor) && command_text == L"!hint Progressive ");
+  assert(completion.Complete(command_text, command_cursor) && command_text == L"!hint Progressive Diaz");
+  assert(completion.Complete(command_text, command_cursor) && command_text == L"!hint Progressive Lance");
+  assert(completion.Complete(command_text, command_cursor, true) && command_text == L"!hint Progressive Diaz");
+  completion.Reset(); command_text = L"!hint progressive d"; command_cursor = command_text.size();
+  assert(completion.Complete(command_text, command_cursor) && command_text == L"!hint Progressive Diaz");
+  completion.Reset(); command_text = L"!hint_location ocean b"; command_cursor = command_text.size();
+  assert(completion.Complete(command_text, command_cursor) && command_text == L"!hint_location Ocean Beach - Check");
+  for (const auto text : {L"!hint ocean", L"!hint_location prog", L"/hint prog", L"!getitem prog", L"prog"}) {
+    completion.Reset(); command_text = text; command_cursor = command_text.size();
+    assert(!completion.Complete(command_text, command_cursor) && command_text == text);
+  }
   // Ocean Beach plaza bribe. Its vanilla script consumes the collection before
   // APPICKUP can see it; the ASI observes the ring first without clearing it.
   const std::vector<PickupTarget> pickup_targets = {{9399, 116.0, -1313.1, 4.4, 15, 375, 0}};
