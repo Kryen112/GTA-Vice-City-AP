@@ -3,6 +3,7 @@
 #include <cassert>
 #include <iostream>
 #include <fstream>
+#include <vector>
 #include "../src/save_isolation.hpp"
 
 constexpr int GAME_10EN = 1, MENUPAGE_START_MENU = 29, MENUPAGE_PAUSE_MENU = 32;
@@ -52,7 +53,8 @@ int main(int argc, char** argv) {
   saves.installed = true;
   saves.game_prefix = prefix;
   saves.documents = std::filesystem::absolute(argv[1]).string();
-  saves.log = [](const std::string&) {};
+  std::vector<std::string> messages;
+  saves.log = [&](const std::string& message) { messages.push_back(message); };
   bool valid_loaded_seed = true;
   saves.can_write = [&](const std::string&) { return valid_loaded_seed; };
   const std::string seed = "0123456789abcdef";
@@ -60,11 +62,27 @@ int main(int argc, char** argv) {
   std::filesystem::create_directories(existing.parent_path());
   { std::ofstream file(existing); file << "existing save"; }
   assert(!gtavc::PrepareSaveSeed(seed));
+  assert(messages.back().find("seed requested") != std::string::npos);
+  saves.game_prefix = nullptr;
+  saves.documents.clear();
+  gtavc::TickSaveIsolation();
+  assert(messages.back().find("save-path callback") != std::string::npos);
+  const auto waiting_messages = messages.size();
+  gtavc::TickSaveIsolation();
+  assert(messages.size() == waiting_messages);
+  saves.game_prefix = prefix;
+  // Simulate the game initializing its prefix before our hook was installed.
+  const auto original_directory = std::filesystem::absolute(argv[1]).string();
+  std::snprintf(prefix, sizeof(prefix), "%s\\GTAVCsf", original_directory.c_str());
   gtavc::TickSaveIsolation(); // renderer not initialized yet
+  assert(saves.documents == original_directory);
+  assert(std::string(prefix) == "?:\\GTAVCsf");
+  assert(messages.back().find("renderer initialization") != std::string::npos);
   assert(saves.selected.empty());
   RwEngineInstance = &saves;
   camera = &FrontEndMenuManager;
   gtavc::TickSaveIsolation(); // connection arrives during menu drawing
+  assert(messages.back().find("rendering to finish") != std::string::npos);
   assert(saves.selected.empty() && FrontEndMenuManager.transitions == 0);
   assert(PcSaveHelper.scans == 0 && !PcSaveHelper.slot_visible);
   assert(std::string(prefix) == "?:\\GTAVCsf");

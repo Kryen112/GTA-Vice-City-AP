@@ -243,6 +243,7 @@ void NativeSession::Handle(const json& packet) {
         ("GtaVcAp." + seed_hash_ + "." + std::to_string(team_) + ".traps.json"));
     last_trap_send_ = {};
     online_ = true;
+    logger_("Server authenticated; waiting for initial item synchronization.");
     game_->ClearNotice(ToastNotice::kBridgeDown);
     active_ = items_ready_ = finished_ = false;
     checked_ = packet.at("checked_locations").get<std::set<std::int64_t>>();
@@ -287,6 +288,7 @@ void NativeSession::Handle(const json& packet) {
       if (index + offset < received_.size()) received_[index + offset] = batch[offset];
       else received_.push_back(batch[offset]);
     }
+    if (!items_ready_) logger_("Initial item synchronization received: " + std::to_string(received_.size()) + " items.");
     items_ready_ = true;
     if (!active_) Activate();
     else if (SeedMatches()) { PublishItems(); PublishStatus(); }

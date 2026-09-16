@@ -51,6 +51,7 @@ constexpr unsigned int kGarageMessageSecondNumber10 = 0x975358;
 // executable; the OpenFile/OpenFileForWriting call sites both call its CRT fopen.
 // The replacement keeps the game's CRT ownership and checks all call targets.
 constexpr unsigned int kSavePrefixFormatCall10 = 0x61D944;
+constexpr unsigned int kSavePrefixBuffer10 = 0x97509C;
 constexpr unsigned int kGameSprintf10 = 0x648C10;
 constexpr unsigned int kFileOpenCall10 = 0x48DF9A;
 constexpr unsigned int kFileWriteOpenCall10 = 0x48DF7A;

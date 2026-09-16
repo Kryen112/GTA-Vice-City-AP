@@ -21,8 +21,23 @@ struct Saves {
   char* game_prefix = nullptr;
   bool installed = false;
   bool failed = false;
+  const char* wait_reason = nullptr;
 };
 Saves& State() { static Saves state; return state; }
+
+bool CaptureExistingSaveDirectory(Saves& state) {
+  if (!state.documents.empty()) return true;
+  if (!state.game_prefix) return false;
+  const auto length = strnlen(state.game_prefix, 256);
+  if (length == 256) return false;
+  const std::filesystem::path prefix(std::string(state.game_prefix, length));
+  if (!prefix.is_absolute() || prefix.filename() != "GTAVCsf") return false;
+  state.documents = prefix.parent_path().string();
+  state.prefix = "?:\\GTAVCsf";
+  std::snprintf(state.game_prefix, 256, "%s", state.prefix.c_str());
+  state.log("Save isolation: recovered the game's initialized save directory");
+  return true;
+}
 
 int __cdecl MakePrefix(char* output, const char*, const char* directory, const char*) {
   auto& state = State();
@@ -72,6 +87,10 @@ bool InstallSaveIsolation(std::function<void(const std::string&)> log,
   // This is the fopen call INSIDE OpenFileForWriting, with both path and mode
   // already pushed, so it has the same signature as OpenSave.
   injector::MakeCALL(kFileWriteOpenCall10, &OpenSave, true);
+  // The ASI can load after SetSaveDirectory has already run. Its persistent
+  // prefix is also the source of truth when the startup callback was missed.
+  state.game_prefix = reinterpret_cast<char*>(kSavePrefixBuffer10);
+  CaptureExistingSaveDirectory(state);
   state.installed = true;
   return true;
 }
@@ -82,6 +101,7 @@ bool PrepareSaveSeed(const std::string& hash) {
   if (!state.installed || state.failed) throw std::runtime_error("Automatic save isolation is unavailable.");
   if (!state.requested.empty() && state.requested != hash)
     throw std::runtime_error("Restart Vice City to change seed or slot; the current saves stay isolated.");
+  if (state.requested.empty()) state.log("Save isolation: seed requested " + hash);
   state.requested = hash;
   return state.selected == hash;
 }
@@ -89,12 +109,20 @@ bool PrepareSaveSeed(const std::string& hash) {
 void TickSaveIsolation() {
   auto& state = State();
   std::unique_lock<std::mutex> lock(state.mutex);
-  if (!state.installed || state.failed || !state.game_prefix ||
+  if (!state.installed || state.failed ||
       state.requested.empty() || !state.selected.empty()) return;
   // SwitchToNewScreen renders and ends its own frames. Calling it inside a
   // drawing callback clears the outer frame's current camera and crashes the
   // next draw (VC 1.0: 0x6664BA). Defer until a frontend/game update instead.
-  if (!RwEngineInstance || RwCameraGetCurrentCamera()) return;
+  const char* reason = !CaptureExistingSaveDirectory(state) ? "waiting for the game's save-path callback" :
+      !RwEngineInstance ? "waiting for renderer initialization" :
+      RwCameraGetCurrentCamera() ? "waiting for rendering to finish" : nullptr;
+  if (reason) {
+    if (state.wait_reason != reason) state.log(std::string("Save isolation: ") + reason);
+    state.wait_reason = reason;
+    return;
+  }
+  state.wait_reason = nullptr;
   try {
     const auto folder = SeedSaveDirectory(state.documents, state.requested);
     // Refuse junctions/symlinks in the managed subdirectories, including existing
