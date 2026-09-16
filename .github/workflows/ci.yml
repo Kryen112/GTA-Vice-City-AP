@@ -43,7 +43,8 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r ci-requirements.txt
           python ModuleUpdate.py --yes --force
-          python Launcher.py --update_settings
+          pip install -r requirements.txt
+          SKIP_REQUIREMENTS_UPDATE=1 python Launcher.py --update_settings
           grep '^werkzeug==' WebHostLib/requirements.txt | xargs pip install
       - name: Run world tests
         working-directory: world
