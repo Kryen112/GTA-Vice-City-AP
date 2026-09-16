@@ -50,6 +50,26 @@ def _context() -> context_module.GTAViceCityContext:
     return context_module.GTAViceCityContext(None, None, 52300, "Player1")
 
 
+class TestCheckMarkers(unittest.TestCase):
+    def test_slot_markers_reach_the_bridge_on_reconnect(self) -> None:
+        async def scenario() -> None:
+            with _fake_settings("", auto_launch_game=False):
+                context = _context()
+                with mock.patch.object(context, "setup_and_launch", new_callable=mock.AsyncMock), \
+                     mock.patch.object(context.bridge, "send", new_callable=mock.AsyncMock) as send:
+                    for slot_data in ({"check_markers": {"9075": [479.5, -1718.5, 1]}}, {}):
+                        context.on_package("Connected", {"slot_data": slot_data})
+                        await asyncio.gather(*list(context._background_tasks))
+                        for _ in range(2):
+                            send.reset_mock()
+                            await context.on_bridge_connected(context.bridge)
+                            config = next(call.args[0] for call in send.await_args_list
+                                          if call.args[0]["type"] == protocol.CONFIG)
+                            self.assertEqual(config["check_markers"], slot_data.get("check_markers", {}))
+
+        asyncio.run(scenario())
+
+
 class TestOutboundChecksSurviveAFailedSend(unittest.TestCase):
     """A check the server never receives has to be recoverable.
 

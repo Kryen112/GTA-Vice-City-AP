@@ -48,7 +48,7 @@ Client to ASI:
               pickup_layout,    to poll and report; package coordinates for
               mainland_routes,  per-package detection; the ambient pickup
               content_district_globals,
-              content_districts}
+              content_districts, check_markers}
                               layout to enforce (empty when pickups are
                               vanilla); and the ways to the mainland, one entry
                               when Mainland Access opens them all and one per
@@ -219,6 +219,7 @@ def config_message(
     item_globals: dict, completion_watch: dict, item_effects: dict, config_globals: dict,
     package_coords: dict, pickup_layout: list, mainland_routes: list,
     content_district_globals: dict, content_districts: list,
+    check_markers: dict | None = None,
 ) -> dict:
     return {
         "type": CONFIG,
@@ -234,6 +235,8 @@ def config_message(
         "content_district_globals": content_district_globals,
         # Where each holdable pickup stands and which district it belongs to.
         "content_districts": content_districts,
+        # Completion global -> [x, y, category] for enabled map checks.
+        "check_markers": check_markers or {},
     }
 
 

@@ -36,6 +36,9 @@ namespace {
 CdeclEvent<AddressListMulti<gtavc::kBeforeWorldProcessCallSite10, GAME_10EN, H_CALL>,
            PRIORITY_AFTER, ArgPickNone, void()> beforeWorldProcessEvent;
 
+CdeclEvent<AddressListMulti<gtavc::kMainMapBlipsCallSite10, GAME_10EN, H_CALL>,
+           PRIORITY_BEFORE, ArgPickNone, void()> mainMapBlipsEvent;
+
 std::mutex g_log_mutex;
 
 std::string LogPath() {
@@ -105,6 +108,7 @@ struct AsiMain {
     // would be flushed before the HUD drew over it; and not the pre-world hook,
     // which is before any drawing at all.
     Events::drawHudEvent += [] { instance.OnDrawHud(); };
+    mainMapBlipsEvent += [] { instance.game.DrawCheckMarkers(); };
     bridge.Start();
   }
 
@@ -125,6 +129,7 @@ struct AsiMain {
     // And not over a fade. The HUD draw runs whatever the fade is doing, so a row
     // would otherwise print over a black screen or the load blur.
     if (CDraw::FadeValue != 0 || TheCamera.m_bFading) return;
+    game.DrawCheckMarkers();
     game.DrawToasts();
   }
 

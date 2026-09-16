@@ -81,6 +81,12 @@ int main(int argc, char** argv) {
     summary["config_globals"][std::to_string(entry.first)] = entry.second;
   }
   summary["pickup_layout"] = json::array();
+  summary["check_markers"] = json::object();
+  for (const auto& [global_index, position] : game.Markers()) {
+    summary["check_markers"][std::to_string(global_index)] = {position.x, position.y, position.category};
+    if (position.content_unlock_global)
+      summary["check_markers"][std::to_string(global_index)].push_back(position.content_unlock_global);
+  }
   for (const auto& target : game.PickupTargets()) {
     // Seven elements, the last being the completion global of the check on this
     // slot. Echoed so the round trip proves the decode carried it; a row that

@@ -26,8 +26,14 @@
 // started with no client waits, which is the state the mod already sits in
 // before its first welcome and heals on the next one.
 #pragma once
+#include <string>
 
 namespace gtavc {
+
+// Configuration remains tied to its save even while the server is offline.
+inline bool ConfiguredSeedMatches(const std::string& loaded, const std::string& configured) {
+  return !loaded.empty() && loaded == configured;
+}
 
 // Whether this frame writes the seed hash into the game. `game_hash_empty` is
 // the reserved globals reading zero, which only a game whose script space was
