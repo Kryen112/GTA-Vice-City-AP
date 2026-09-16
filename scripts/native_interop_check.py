@@ -54,10 +54,14 @@ async def main(executable: Path, *, legacy: bool = False) -> None:
                         expected = {f"_read_{kind}_name_groups_Grand Theft Auto Vice City"
                                     for kind in ("item", "location")}
                         trap_key = f"gta_vice_city_consumed_traps_0_1_{seed_hash}"
-                        assert set(packet["keys"]) == expected | {trap_key}, f"Unexpected Get keys: {packet['keys']}"
+                        emergency_keys = {f"gta_vice_city_emergency_0_1_{seed_hash}_{activity}"
+                                          for activity in ("taxi", "paramedic", "firefighter", "vigilante", "pizza")}
+                        assert set(packet["keys"]) == expected | {trap_key} | emergency_keys, (
+                            f"Unexpected Get keys: {packet['keys']}")
                         group_requests.append(current)
                         await socket.send(json.dumps([{"cmd": "Retrieved", "keys": {
                             **{key: {"Example group": ["Example member"]} for key in expected},
+                            **dict.fromkeys(emergency_keys),
                             trap_key: None}}]))
                     elif command == "Say":
                         messages.append(packet["text"])

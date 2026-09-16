@@ -341,7 +341,7 @@ class PolePositionCharge(NamedRange):
     range_start = 1
     range_end = 100
     default = 20
-    special_range_names = {"vanilla": 5}
+    special_range_names: ClassVar[dict[str, int]] = {"vanilla": 5}
 
 
 @dataclass

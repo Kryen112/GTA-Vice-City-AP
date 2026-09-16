@@ -4919,7 +4919,8 @@ class TestReservedGlobals(WorldTestBase):
         self.assertEqual(scm.VIGILANTE_WANTED_RAMP_GLOBAL, 10165)
         # The count is what the spare-tail
         # exclusion above is built from, so it cannot be wrong in only one place.
-        self.assertEqual(scm.SPARE_FLAGS_USED, 12)
+        self.assertEqual(scm.POLE_POSITION_CHARGE_GLOBAL, 10171)
+        self.assertEqual(scm.SPARE_FLAGS_USED, 13)
         # The finale warp flag, hard-coded in the ASI (scm_game_state.cpp) and in
         # build_scm.py, which reads it in the APFIN watcher and in the mission
         # branch that jumps to the ending cutscene. It is also the foundation's

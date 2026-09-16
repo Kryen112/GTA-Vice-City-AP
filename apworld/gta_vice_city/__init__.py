@@ -60,6 +60,7 @@ from .options import (
     LocationPercentages,
     MilestoneSpacing,
     MissionShuffle,
+    PolePositionCharge,
     RandomizePickups,
     RandomizeRadioStations,
     RememberEmergencyProgress,
@@ -149,7 +150,7 @@ class GTAViceCityWeb(WebWorld):
         OptionGroup("In-World Modifiers", [
             ShuffleEmergencyRewards, RememberEmergencyProgress,
             RandomizePickups, RandomizeRadioStations, ShuffleMinimap,
-            SplitMainlandAccess, MissionShuffle,
+            SplitMainlandAccess, MissionShuffle, PolePositionCharge,
         ]),
         OptionGroup("Locks", [
             AbilityLocks, StartingAbilityUnlock, ContentLocks,
