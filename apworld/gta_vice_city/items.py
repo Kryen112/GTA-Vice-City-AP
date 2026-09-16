@@ -44,8 +44,9 @@ _ORDERED_ITEM_NAMES: list[str] = (
     + data.PROPERTY_OWNERSHIP_ITEMS
     + [data.MINIMAP_ITEM]
     + data.ABILITY_ITEMS
-    + data.CONTENT_ITEMS
+    + [item for item in data.CONTENT_ITEMS if item != data.PICKUPS_ITEM]
     + data.all_district_content_items()
+    + [data.PICKUPS_ITEM]
 )
 
 # The district content items as a set, for classification. Every one of them is

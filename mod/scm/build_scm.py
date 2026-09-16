@@ -11,6 +11,10 @@ loudly. Reads SRC, writes DST; line endings preserved.
 import math
 import re
 import sys
+from pathlib import Path
+
+sys.path.append(str(Path(__file__).resolve().parents[2] / "apworld" / "gta_vice_city"))
+import mission_order
 
 SRC, DST = sys.argv[1], sys.argv[2]
 
@@ -282,6 +286,9 @@ def gate_term(term, loopback):
         return ["if ", f"  {PASSED_FLAGS[term[1]]} == 1",
                 f"goto_if_false @{loopback}"]
     global_index, count = term
+    if UNLOCK_FIRST <= global_index <= UNLOCK_LAST:
+        return mission_order.gate_lines(
+            global_index, count, loopback, f"APORDER_{loopback}_{global_index}_{count}")
     return ["if ", f"  ${global_index} >= {count}", f"goto_if_false @{loopback}"]
 
 
@@ -982,18 +989,8 @@ def _hold_condition(class_index, district):
 
 
 def gate_stunt_jumps():
-    # Each jump is detected at its own takeoff, a locate_player_in_car_3d over
-    # the ramp followed by `$792 = <id>`, and gating there is what makes the hold
-    # per district: the id is the index into STUNT_JUMP_DISTRICTS. A held jump
-    # never enters the sequence at all, so no per-jump flag ($795..$830) sets and
-    # the APSTAT watcher sees nothing, the 36-counter $791 does not advance,
-    # player_made_progress and register_unique_jump_found do not run so neither
-    # the completion percentage nor the jump stat moves, and no pass text or cash
-    # prints. The jump still flies, since only the detection is skipped, and it
-    # stays re-doable forever.
-    #
-    # Ids 25 and 26 each have two takeoff definitions, so there are more sites
-    # than jumps; every site gates on its own id's district.
+    # Skip locked or completed jumps before the slow-motion camera starts.
+    # Jumps 25 and 26 each have two takeoffs; both use the same completion flags.
     sites = []
     for index, line in enumerate(lines):
         match = re.fullmatch(r"\$792 = (\d+)", line)
@@ -1021,8 +1018,12 @@ def gate_stunt_jumps():
     for index, identifier in sorted(sites, reverse=True):
         district = STUNT_JUMP_DISTRICTS[identifier - 1]
         lines[index - 3] = "if and"
-        lines[index - 2:index - 2] = [_hold_condition(STUNT_JUMPS_CLASS, district)]
-    edits.append(f"stunt jumps: {len(sites)} takeoffs gated by district")
+        lines[index - 2:index - 2] = [
+            _hold_condition(STUNT_JUMPS_CLASS, district),
+            f"  ${794 + identifier} == 0",
+            f"  ${9236 + identifier} == 0",
+        ]
+    edits.append(f"stunt jumps: {len(sites)} takeoffs gated by district and completion")
 
 
 STORE_GUARD_NUMBER = r"(-?[\d.]+|\$\d+)"
@@ -2489,6 +2490,22 @@ def audit_pass_banners():
     edits.append(f"pass banner audit: {sum(found.values())} moneyless banners")
 
 
+TAXI_MILESTONE_SPACING = 10169
+TAXI_MILESTONE_COUNT = 10170
+TAXI_EXTRA_COMPLETION_BASE = 9550
+
+
+def taxi_milestone_lines():
+    # Unconfigured games keep the vanilla cadence of ten fares per milestone.
+    return [
+        f"set_var_int_to_var_int ${TAXI_MILESTONE_COUNT} = $369",
+        "if", f"  ${TAXI_MILESTONE_SPACING} > 0", "goto_if_false @APSTAT_TAXI_DEFAULT_SPACING",
+        f"div_int_var_by_int_var ${TAXI_MILESTONE_COUNT} /= ${TAXI_MILESTONE_SPACING}",
+        "goto @APSTAT_TAXI_COUNT_READY", ":APSTAT_TAXI_DEFAULT_SPACING",
+        f"${TAXI_MILESTONE_COUNT} /= 10", ":APSTAT_TAXI_COUNT_READY",
+    ]
+
+
 def add_stat_watcher():
     # Rampages and unique stunt jumps each set a dedicated per-instance flag
     # (0->1 on genuine completion, never reset, never reused), so a boot-started
@@ -2497,11 +2514,14 @@ def add_stat_watcher():
     # compiles to nothing (only array WRITE round-trips), so a loop cannot read
     # the flags. Rampages $1439..$1473 -> $9202..$9236 (35); stunts $795..$830 ->
     # $9237..$9272 (36); Taxi $369 (persistent career fares) -> $9309..$9318 at
-    # every tenth fare.
-    body = ["", ":APSTAT", "script_name 'APSTAT'", "", ":APSTAT_LOOP", "wait 1000"]
+    # the configured fare spacing.
+    body = ["", ":APSTAT", "script_name 'APSTAT'", "", ":APSTAT_LOOP", "wait 1000",
+            *taxi_milestone_lines()]
     checks = ([(f"${1439 + n} == 1", 9202 + n) for n in range(35)]
               + [(f"${795 + n} == 1", 9237 + n) for n in range(36)]
-              + [(f"$369 >= {10 * n}", 9308 + n) for n in range(1, 11)])
+              + [(f"${TAXI_MILESTONE_COUNT} >= {n}", 9308 + n) for n in range(1, 11)]
+              + [(f"${TAXI_MILESTONE_COUNT} >= {n}", TAXI_EXTRA_COMPLETION_BASE + n - 11)
+                 for n in range(11, 101)])
     for index, (condition, completion) in enumerate(checks):
         label = f"@APSTAT_C{index}"
         body += ["if ", f"  {condition}", f"goto_if_false {label}", f"${completion} = 1", f":APSTAT_C{index}"]
@@ -2521,19 +2541,8 @@ def _level_marks(level_var, base, maxlevel, done_label):
     return [*block, f":{done_label}"]
 
 
-# Emergency progress. The flag says whether this seed remembers where a player
-# left an activity; the four globals above it hold the LEVEL TO START AT, one per
-# activity whose mission restarts its level counter from scratch, and the two
-# above those hold Vigilante's per-level ramps. Mirrors
-# scm.REMEMBER_EMERGENCY_GLOBAL, scm.EMERGENCY_PROGRESS_BASE and the two ramp
-# globals, all pinned by the mirror check. They take the first seven of the
-# spare flags between the district grid and the finale globals, so nothing in
-# the numbering moves and a save written by an earlier build already has room
-# for them, holding zero.
-#
-# Vigilante counts levels COMPLETED where the other three count the level in
-# play, so for it those two readings are the same number and one global serves
-# both ends.
+# Emergency progress globals; keep aligned with scm.py (checked by the mirror test).
+# Store the option flag, four resume counters and two Vigilante multipliers.
 REMEMBER_EMERGENCY = 10159
 EMERGENCY_PROGRESS_BASE = 10160
 PARAMEDIC_PROGRESS = EMERGENCY_PROGRESS_BASE
@@ -2545,16 +2554,8 @@ VIGILANTE_WANTED_RAMP = 10165
 
 
 def _resume_level(stored, level_var, mirrors, floats, label):
-    # Overwrite the level only when the seed remembers progress AND something is
-    # stored, so the vanilla constant this sits after IS the fallback for both a
-    # seed without the option and an activity never played. Nothing recomputes
-    # vanilla's starting level, which is what makes the option off identical to
-    # vanilla by construction rather than by arithmetic.
-    #
-    # The stored value is the level to START at, not levels completed, so the
-    # read needs no addition. That matters more than it reads: `$7994 += 1` is a
-    # vanilla line this script anchors on, and emitting a second copy of one
-    # would leave the built file ambiguous for every later anchor on it.
+    # Restore a saved counter when enabled; otherwise keep vanilla defaults.
+    # Copy directly: extra increments would also duplicate script anchors.
     return [
         "if and",
         f"  ${REMEMBER_EMERGENCY} == 1",
@@ -2562,9 +2563,7 @@ def _resume_level(stored, level_var, mirrors, floats, label):
         f"goto_if_false @{label}",
         f"set_var_int_to_var_int {level_var} = ${stored}",
         *[f"set_var_int_to_var_int {mirror} = {level_var}" for mirror in mirrors],
-        # The float ramps ride the level's own guard, so they are read only once
-        # a level has been stored, which is also the only time they hold
-        # anything. At new game every one of these globals is zero together.
+        # Restore multipliers under the same saved-progress guard.
         *[f"set_var_float_to_var_float {target} = ${source}"
           for target, source in floats],
         f":{label}",
@@ -2572,47 +2571,28 @@ def _resume_level(stored, level_var, mirrors, floats, label):
 
 
 def add_emergency_instrumentation():
-    # Paramedic/Firefighter/Vigilante/Pizza level globals live in a shared
-    # mission-scratch pool, valid only while that mission runs, so mark each
-    # level at its in-mission completion point rather than from a watcher. At
-    # register_*_level the level global holds the just-completed level (1..N).
+    # Record completed levels inside each mission; scratch globals are reused.
     for anchor, level_var, base, maxlevel, done in [
         ("register_ambulance_level $6756", "$6756", 9273, 12, "APAMB_DONE"),
         ("register_fire_level $6848", "$6848", 9297, 12, "APFIR_DONE"),
         ("register_vigilante_level $6938", "$6938", 9285, 12, "APVIG_DONE"),
     ]:
         insert_after(anchor, _level_marks(level_var, base, maxlevel, done), f"emergency {level_var}")
-    # Pizza levels 1..9 complete just before $7994 advances (pre-increment value
-    # is the completed level); level 10 completes at the win flag $389 = 1.
+    # Pizza completes levels 1-9 before incrementing; level 10 sets the win flag.
     insert_before("$7994 += 1", _level_marks("$7994", 9319, 9, "APPIZ_DONE"),
                   "emergency pizza levels 1-9")
     insert_after("$389 = 1", ["$9328 = 1"], "emergency pizza level 10")
 
 
 def add_emergency_progress():
-    # Resume each emergency activity at the level the player left it at. Vanilla
-    # writes a constant at every mission init, so any end other than finishing
-    # the chain loses the level: cancelling, stepping out of the vehicle, dying,
-    # being busted and failing a level all restart at 1. Reading the stored
-    # global there instead is the whole feature.
-    #
-    # Taxi has no entry because it needs none: its career fares live in the
-    # vanilla global $369, which the mission never resets, so its ten levels
-    # already survive a save and quit.
+    # Restore progress after mission initialization. Taxi already persists.
     for anchor, stored, level_var, mirrors, floats, label in [
-        # Paramedic carries its patient requirement in a second global. $6744 is
-        # what the level gate `$6753 == $6744` reads, what divides the onscreen
-        # timer and what drives the patient blip chain, and vanilla moves it in
-        # lockstep with $6756 from the same starting 1, so restoring the level
-        # without it would announce level 9 and then ask for one patient.
+        # Restore the patient requirement alongside the Paramedic level.
         ("$6756 = 1", PARAMEDIC_PROGRESS, "$6756", ["$6744"], [],
          "APRESUME_PARAMEDIC"),
         ("$6848 = 1", FIREFIGHTER_PROGRESS, "$6848", [], [],
          "APRESUME_FIREFIGHTER"),
-        # Anchored on the LAST of Vigilante's three starting values rather than
-        # on `$6892 = 0`, which the init writes first: the two float ramps are
-        # set nineteen lines below it, so a block placed at the level would have
-        # its ramps overwritten by the vanilla constants it is meant to replace.
+        # Restore after the final initializer so vanilla cannot overwrite the multipliers.
         ("$6981 = 1.0", VIGILANTE_PROGRESS, "$6892", [],
          [("$6980", VIGILANTE_TIME_RAMP), ("$6981", VIGILANTE_WANTED_RAMP)],
          "APRESUME_VIGILANTE"),
@@ -2621,14 +2601,8 @@ def add_emergency_progress():
         insert_after(anchor,
                      _resume_level(stored, level_var, mirrors, floats, label),
                      f"emergency resume {level_var}")
-    # Store the level to come as each one finishes, which is the counter the
-    # mission has just incremented. Unconditional, unlike the reads: a global
-    # nothing reads changes nothing in game, and gating it would double the flag
-    # checks to no effect.
-    #
-    # Vigilante counts levels COMPLETED where the other three count the level in
-    # play, so for it the two readings are the same number and the same global
-    # serves both ends.
+    # Always store the next resume counter; reads are gated by the option.
+    # Vigilante counts completed levels; the others count the current level.
     for anchor, stored in [
         ("$6756 += 1", PARAMEDIC_PROGRESS),
         ("$6848 += 1", FIREFIGHTER_PROGRESS),
@@ -2638,31 +2612,17 @@ def add_emergency_progress():
         source = anchor.split(" ")[0]
         insert_after(anchor, [f"set_var_int_to_var_int ${stored} = {source}"],
                      f"emergency progress stores {source}")
-    # Vigilante's ramps, each stored where its own decrement leaves it, which is
-    # what makes the restored value the one a continuous run would carry into the
-    # next level. $6980 drops at the START of a level, so storing it beside the
-    # level captures the value the mission's own decrement then advances from.
-    # $6981 drops at the END, so it is stored after its decrement instead.
-    #
-    # One wait separates the level store from this one, so a death in that window
-    # leaves the wanted ramp a single 0.05 step behind the level. It corrects
-    # itself on the next level completed.
+    # Save time scaling before the next level starts, and wanted scaling after it drops.
+    # A death between these writes can leave wanted scaling one 0.05 step behind
+    # until the next completed level.
     insert_after("$6892 += 1",
                  [f"set_var_float_to_var_float ${VIGILANTE_TIME_RAMP} = $6980"],
                  "emergency progress stores vigilante time ramp")
     insert_after("set_wanted_multiplier $6981",
                  [f"set_var_float_to_var_float ${VIGILANTE_WANTED_RAMP} = $6981"],
                  "emergency progress stores vigilante wanted ramp")
-    # Firefighter and Vigilante loop for as long as the player keeps playing, so
-    # nothing caps them. Paramedic needs a cap: its store writes 13 on finishing
-    # level 12, and re-entering at 13 would hang, because it returns on
-    # `$6756 == 13` and creates only twelve patients, so a thirteenth could never
-    # be delivered. The line this rides is inside that completion branch, which
-    # with this option on is reached on every re-entry, and the write is the same
-    # every time, so it needs no comparison and no label.
-    #
-    # Pizza needs no cap at all: `$7994 += 1` runs only where `$7994 == 10` is
-    # false, so its store can never write above 10 in the first place.
+    # Cap Paramedic at 12; resuming at 13 would hang. Pizza naturally stops at 10.
+    # Firefighter and Vigilante remain uncapped.
     insert_after("print_with_number_big 'A_COMP1' number 15000 time 5000 style 5",
                  [f"${PARAMEDIC_PROGRESS} = 12"], "emergency progress caps paramedic")
 
@@ -2745,7 +2705,7 @@ DISTRICTS = [
     "Prawn Island", "Leaf Links",
     "Downtown", "Little Haiti",
     "Little Havana", "Viceport",
-    "Escobar International",
+    "Escobar International", "Junk Yard",
 ]
 
 # scm.CONTENT_KEYS order, which fixes the class-major stride into the block.
@@ -2753,7 +2713,7 @@ DISTRICTS = [
 # class.
 CONTENT_KEYS_ORDER = [
     "hidden packages", "rampages", "stunt jumps", "property purchases",
-    "robbable stores",
+    "robbable stores", "pickups",
 ]
 STUNT_JUMPS_CLASS = 2
 ROBBABLE_STORES_CLASS = 4
@@ -2972,7 +2932,7 @@ def add_reward_applier():
 # the ten below that are the seed hash and the bookkeeping scratch).
 #
 # That last line does double duty for the active flag, which is the top: it is
-# also the flag's initialization, so a new game starts with the ambient pickup
+# also the flag's initialization, so a new game starts with the world pickup
 # layout live. It sits above the boot thread's own loop label, so it runs once
 # when the thread starts and cannot clear a flag a running finale has raised.
 # add_markers.py anchors on that line.

@@ -1,7 +1,7 @@
-// Pure ambient-pickup layout planning, free of any game headers so the
+// Pure world pickup layout planning, free of any game headers so the
 // console self-test can exercise it without plugin-sdk or the game.
 //
-// The randomize_pickups option permutes the ambient world pickups: the world
+// The randomize_pickups option permutes the world pickups: the world
 // ships a target layout (position, pickup type, model, ammo per slot) and the
 // plan matches each target to the pickup pool by position and type, returning
 // a rewrite for every matched entry whose model differs. Matching on the type
@@ -12,6 +12,9 @@
 #pragma once
 
 #include <cstddef>
+#include <algorithm>
+#include <cstdint>
+#include <set>
 #include <vector>
 
 #include "game_state.hpp"
@@ -28,7 +31,71 @@ struct PickupPoolEntry {
   int pool_index = 0;
 };
 
-// The model an ambient slot shows while its AP check is still to be taken.
+// Rampage markers use the skull's placement coordinates. Only checked AP
+// rampages disappear on an older save; a class absent from the seed stays vanilla.
+inline int CheckedRampageAt(const CheckMarkers& markers, const std::set<int>& reported,
+                            float x, float y) {
+  for (const auto& [global, marker] : markers) {
+    if (marker.category != 3 || !reported.count(global)) continue;
+    const double dx = x - marker.x, dy = y - marker.y;
+    if (dx * dx + dy * dy <= 1.0) return global;
+  }
+  return 0;
+}
+
+template <typename WriteGlobal>
+void RestoreStuntJumpChecks(const CheckMarkers& markers, const std::set<int>& reported,
+                           WriteGlobal write) {
+  for (const auto& [global, marker] : markers)
+    if (marker.category == 5 && reported.count(global)) write(global, 1);
+}
+
+// RAMPAGE's 35 passed flags mirror APSTAT's completion block. Its completed
+// count lets the script award the single all-rampages progress point itself.
+constexpr int kRampagePassedBase = 1439;
+constexpr int kRampageCheckBase = 9202;
+constexpr int kRampageCount = 35;
+constexpr int kRampagesCompletedGlobal = 1403;
+
+template <typename ReadGlobal, typename WriteGlobal>
+bool RestoreRampageProgress(const CheckMarkers& markers, const std::set<int>& reported,
+                            ReadGlobal read, WriteGlobal write) {
+  bool restored = false;
+  int completed = 0;
+  for (int index = 0; index < kRampageCount; ++index) {
+    const int check = kRampageCheckBase + index, passed = kRampagePassedBase + index;
+    const auto marker = markers.find(check);
+    if (marker != markers.end() && marker->second.category == 3 && reported.count(check)) {
+      write(check, 1);
+      if (read(passed) == 0) { write(passed, 1); restored = true; }
+    }
+    if (read(passed) != 0) ++completed;
+  }
+  if (restored) write(kRampagesCompletedGlobal, std::max(read(kRampagesCompletedGlobal), completed));
+  return restored;
+}
+
+inline double PickupDistanceSquared(const PickupTarget& target, const PickupPoolEntry& entry) {
+  const double dx = entry.x - target.x, dy = entry.y - target.y, dz = entry.z - target.z;
+  return dx * dx + dy * dy + dz * dz;
+}
+
+// A collection handle includes the pool slot's generation. An old ring entry
+// must never check a new pickup that has since reused the same pool slot.
+inline int CollectedPickupCheck(const std::vector<PickupTarget>& targets,
+                               std::uint32_t handle, std::uint16_t generation,
+                               const PickupPoolEntry& entry) {
+  if (handle == 0 || handle == 0xFFFFFFFF || (handle & 0xFFFF) != static_cast<std::uint32_t>(entry.pool_index) ||
+      (handle >> 16) != generation) return 0;
+  for (const auto& target : targets) {
+    // A one-shot pickup can already have type zero after its collection.
+    if (target.check_global && (entry.pickup_type == target.pickup_type || entry.pickup_type == 0) &&
+        PickupDistanceSquared(target, entry) <= 0.0625) return target.check_global;
+  }
+  return 0;
+}
+
+// The model a world slot shows while its AP check is still to be taken.
 // 376 is `bonus` in the game's own data/maps/generic.ide, one mesh at the same
 // draw distance and flags as the pickup icons beside it, and on a texture
 // dictionary of its own like most of them. It is placed nowhere in Vice City by
@@ -131,35 +198,44 @@ struct PickupLayoutPlan {
   std::vector<PickupPriceOverride> price_overrides;
 };
 
+// Within a quarter unit (Euclidean) counts as the same slot, mirrored from
+// data.PICKUP_MATCH_TOLERANCE, which the mirror checker compares against this.
+//
+// Two measured bounds hold it there, both taken over the decompile by
+// dump_pickups.py rather than written down: the closest pair of slots is 3.67
+// units apart, and the closest same-type pickup that NO table of ours owns is
+// 0.94 units from a slot. The second is the tight one and it used to be 1.91,
+// which is why the tolerance used to be 1.0: the four pickups Rub Out leaves
+// in the estate courtyard brought it down, because the body armour among them
+// has the finale's Tec-9 less than a unit away and both are the street type.
+// The finale holds the whole layout off the pool while it runs, so that pair
+// never actually meets; the tolerance stays under it anyway, so the matcher
+// does not depend on that.
+//
+// A quarter unit is far more than the positions need. They round-trip from the
+// decompile through JSON as decimals and land on the same float the script
+// literal compiled to, so what is being absorbed is the last bits of a float
+// and nothing else.
+constexpr double kMatchDistanceSquared = 0.0625;
+
+// Fixed pickups only; shop stock and dropped pickups keep their own rules.
+// Only Phil's shop stands carry a price override; hospital pay stands do not.
+inline bool IsWorldPickup(const std::vector<PickupTarget>& targets,
+                            const PickupPoolEntry& entry) {
+  for (const PickupTarget& target : targets) {
+    if (target.price_weapon_type == 0 &&
+        target.pickup_type == entry.pickup_type &&
+        PickupDistanceSquared(target, entry) <= kMatchDistanceSquared) return true;
+  }
+  return false;
+}
+
 // check_pending carries one flag per target, true while that slot's AP check is
-// still to be taken. Empty means no slot is a check, which is every seed with
-// the class off and the whole of vanilla, so the default keeps the shuffle-only
-// callers unchanged. A slot whose check is pending shows the marker instead of
-// whatever the layout would give it, and reverts to the layout the frame after
-// the check is taken, since the flag is what the caller re-derives per frame.
+// still to be taken. Empty means no slot is a check.
 inline PickupLayoutPlan PlanPickupLayout(
     const std::vector<PickupTarget>& targets,
     const std::vector<PickupPoolEntry>& pool_entries,
     const std::vector<bool>& check_pending = {}) {
-  // Within a quarter unit (Euclidean) counts as the same slot, mirrored from
-  // data.PICKUP_MATCH_TOLERANCE, which the mirror checker compares against this.
-  //
-  // Two measured bounds hold it there, both taken over the decompile by
-  // dump_pickups.py rather than written down: the closest pair of slots is 3.67
-  // units apart, and the closest same-type pickup that NO table of ours owns is
-  // 0.94 units from a slot. The second is the tight one and it used to be 1.91,
-  // which is why the tolerance used to be 1.0: the four pickups Rub Out leaves
-  // in the estate courtyard brought it down, because the body armour among them
-  // has the finale's Tec-9 less than a unit away and both are the street type.
-  // The finale holds the whole layout off the pool while it runs, so that pair
-  // never actually meets; the tolerance stays under it anyway, so the matcher
-  // does not depend on that.
-  //
-  // A quarter unit is far more than the positions need. They round-trip from the
-  // decompile through JSON as decimals and land on the same float the script
-  // literal compiled to, so what is being absorbed is the last bits of a float
-  // and nothing else.
-  constexpr double kMatchDistanceSquared = 0.0625;
   PickupLayoutPlan plan;
   for (std::size_t index = 0; index < targets.size(); ++index) {
     const PickupTarget& target = targets[index];
@@ -180,11 +256,7 @@ inline PickupLayoutPlan PlanPickupLayout(
     double match_distance_squared = 0.0;
     for (const PickupPoolEntry& entry : pool_entries) {
       if (entry.pickup_type != target.pickup_type) continue;
-      const double delta_x = entry.x - target.x;
-      const double delta_y = entry.y - target.y;
-      const double delta_z = entry.z - target.z;
-      const double distance_squared =
-          delta_x * delta_x + delta_y * delta_y + delta_z * delta_z;
+      const double distance_squared = PickupDistanceSquared(target, entry);
       if (distance_squared > kMatchDistanceSquared) continue;
       if (match != nullptr && distance_squared >= match_distance_squared) continue;
       match = &entry;

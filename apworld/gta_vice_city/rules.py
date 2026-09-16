@@ -1,5 +1,4 @@
 """Access rules: the logic core.
-
 Every mission location (story giver or venue strand) has a rule that is the
 conjunction of: its strand's progressive-unlock count, any cross-giver
 prerequisite gating the whole strand (the finale behind the protection strand,
@@ -216,7 +215,8 @@ def _event_terms(mission: str, active_items: frozenset[str],
                  properties_enabled: bool,
                  sale_requirements: list[Requirement],
                  sale_thresholds: list[Threshold],
-                 ) -> tuple[list[Requirement], list[Threshold]]:
+    mission_order: dict[str, list[str]] | None = None,
+) -> tuple[list[Requirement], list[Threshold]]:
     """What passing a mission takes, for the event that stands for it.
 
     A venue mission's event is the awkward one. With the properties class on it
@@ -231,9 +231,9 @@ def _event_terms(mission: str, active_items: frozenset[str],
     giver = locations.MISSION_GIVER[mission]
     requirements = _mission_requirements(
         mission, giver, active_items, split_content_locks, split_mainland_access,
-        properties_enabled)
+        properties_enabled, mission_order=mission_order)
     thresholds = _mission_thresholds(mission, giver, active_items,
-                                     split_mainland_access, properties_enabled)
+                                     split_mainland_access, properties_enabled, mission_order=mission_order)
     if giver not in data.VENUE_STRANDS:
         return requirements, thresholds
     if properties_enabled:
@@ -321,8 +321,22 @@ def _mission_edges(mission: str, properties_enabled: bool) -> list[tuple[str, in
     return edges
 
 
+def _ordered_missions(giver: str, mission_order: dict[str, list[str]] | None) -> list[str]:
+    return (mission_order or {}).get(giver, locations.STRAND_MISSIONS[giver])
+
+
+def _progressive_count(giver: str, count: int, mission_order: dict[str, list[str]] | None) -> int:
+    if not count or not mission_order or giver not in mission_order:
+        return count
+    offset = int(giver == data.SPHERE_ZERO_GIVER)
+    mission = locations.STRAND_MISSIONS[giver][count - 1 + offset]
+    return mission_order[giver].index(mission) + 1 - offset
+
+
 def _inherited_missions(mission: str, giver: str,
-                        properties_enabled: bool = True) -> list[str]:
+                        properties_enabled: bool = True,
+    mission_order: dict[str, list[str]] | None = None,
+) -> list[str]:
     """Every mission whose rules this one inherits, transitively.
 
     A mission cannot start until its strand's earlier missions have passed, and
@@ -343,12 +357,15 @@ def _inherited_missions(mission: str, giver: str,
     pending = [(mission, giver)]
     while pending:
         current, current_giver = pending.pop()
-        index = locations.MISSION_INDEX[current]
-        earlier = list(locations.STRAND_MISSIONS[current_giver][:index])
+        ordered = _ordered_missions(current_giver, mission_order)
+        index = ordered.index(current)
+        earlier = list(ordered[:index])
         edges = list(data.STRAND_PREREQUISITES.get(current_giver, []))
         edges += _mission_edges(current, properties_enabled)
         for strand, count in edges:
-            earlier += locations.STRAND_MISSIONS[strand][:count]
+            required = _progressive_count(strand, count, mission_order)
+            required += int(strand == data.SPHERE_ZERO_GIVER)
+            earlier += _ordered_missions(strand, mission_order)[:required]
         for predecessor in earlier:
             if predecessor in seen:
                 continue
@@ -361,7 +378,9 @@ def _inherited_missions(mission: str, giver: str,
 def _predecessor_requirements(mission: str, giver: str,
                               active_items: frozenset[str],
                               split_content_locks: int,
-                              properties_enabled: bool) -> list[Requirement]:
+                              properties_enabled: bool,
+    mission_order: dict[str, list[str]] | None = None,
+) -> list[Requirement]:
     # What the missions this one inherits demand. A strand runs in order: APMARK
     # reveals only the strand's first unpassed mission and the vanilla launcher
     # starts are severed, so a mission cannot start until every earlier mission
@@ -380,11 +399,12 @@ def _predecessor_requirements(mission: str, giver: str,
     # in-strand progressives here only ever restate it; the counts that matter
     # are the ones an inherited mission of ANOTHER strand opens on.
     requirements: list[Requirement] = []
-    for earlier in _inherited_missions(mission, giver, properties_enabled):
+    for earlier in _inherited_missions(mission, giver, properties_enabled, mission_order=mission_order):
         edges = list(data.STRAND_PREREQUISITES.get(locations.MISSION_GIVER[earlier], []))
         edges += _mission_edges(earlier, properties_enabled)
         for prerequisite_giver, count in edges:
-            requirements.append((data.progressive_item_name(prerequisite_giver), count))
+            requirements.append((data.progressive_item_name(prerequisite_giver),
+                                 _progressive_count(prerequisite_giver, count, mission_order)))
         requirements.extend(
             _lock_terms(earlier, active_items, split_content_locks))
         requirements.extend(_mission_terms(earlier))
@@ -394,7 +414,9 @@ def _predecessor_requirements(mission: str, giver: str,
 def _mission_requirements(mission: str, giver: str, active_items: frozenset[str],
                           split_content_locks: int,
                           split_mainland_access: bool,
-                          properties_enabled: bool = True) -> list[Requirement]:
+                          properties_enabled: bool = True,
+    mission_order: dict[str, list[str]] | None = None,
+) -> list[Requirement]:
     # The launcher-gate view: progressive unlocks, plus any area item the mission
     # needs that its own region does not give it, its own or a predecessor's, plus
     # the mission's ability terms and those of the earlier missions of its
@@ -404,34 +426,38 @@ def _mission_requirements(mission: str, giver: str, active_items: frozenset[str]
     # purchase's completion global), and an ability lock is ASI-enforced, not
     # gated in the SCM.
     requirements: list[Requirement] = []
-    index = locations.MISSION_INDEX[mission]
+    index = _ordered_missions(giver, mission_order).index(mission)
     # Sphere-0 giver: first mission (index 0) is free; mission i needs i.
     # Every other giver: mission i needs its first i+1 unlocks.
     own_count = index if giver == data.SPHERE_ZERO_GIVER else index + 1
     if own_count > 0:
         requirements.append((data.progressive_item_name(giver), own_count))
     for prerequisite_giver, count in data.STRAND_PREREQUISITES.get(giver, []):
-        requirements.append((data.progressive_item_name(prerequisite_giver), count))
+        requirements.append((data.progressive_item_name(prerequisite_giver),
+                             _progressive_count(prerequisite_giver, count, mission_order)))
     for prerequisite_giver, count in _mission_edges(mission, properties_enabled):
-        requirements.append((data.progressive_item_name(prerequisite_giver), count))
+        requirements.append((data.progressive_item_name(prerequisite_giver),
+                             _progressive_count(prerequisite_giver, count, mission_order)))
     # Its own regions and the ones it inherits, from the one gatherer, so the
     # flat half here and the threshold half in _mission_thresholds always
     # describe the same set.
     region_requirements, _ = _region_terms(
-        _inherited_regions(mission, giver, properties_enabled), split_mainland_access,
+        _inherited_regions(mission, giver, properties_enabled, mission_order=mission_order), split_mainland_access,
         active_items)
     requirements.extend(region_requirements)
     requirements.extend(_lock_terms(mission, active_items, split_content_locks))
     requirements.extend(_mission_terms(mission))
     requirements.extend(_predecessor_requirements(
-        mission, giver, active_items, split_content_locks, properties_enabled))
+        mission, giver, active_items, split_content_locks, properties_enabled, mission_order=mission_order))
     requirements.extend(_crossing_requirements(
-        mission, giver, split_mainland_access, properties_enabled))
+        mission, giver, split_mainland_access, properties_enabled, mission_order=mission_order))
     return _deduplicated(requirements)
 
 
 def _inherited_regions(mission: str, giver: str,
-                       properties_enabled: bool = True) -> list[str]:
+                       properties_enabled: bool = True,
+    mission_order: dict[str, list[str]] | None = None,
+) -> list[str]:
     """Every region this mission needs, its own and the ones it inherits.
 
     A predecessor contributes two regions, and both are part of passing it: the
@@ -455,7 +481,7 @@ def _inherited_regions(mission: str, giver: str,
     """
     own_region = locations.LOCATION_REGIONS[mission]
     regions = list(data.MISSION_REGION_REQUIREMENTS.get(mission, []))
-    for earlier in _inherited_missions(mission, giver, properties_enabled):
+    for earlier in _inherited_missions(mission, giver, properties_enabled, mission_order=mission_order):
         if locations.LOCATION_REGIONS[earlier] != own_region:
             regions.append(locations.LOCATION_REGIONS[earlier])
         regions.extend(data.MISSION_REGION_REQUIREMENTS.get(earlier, []))
@@ -463,7 +489,9 @@ def _inherited_regions(mission: str, giver: str,
 
 
 def _crossing_requirements(mission: str, giver: str, split_mainland_access: bool,
-                           properties_enabled: bool) -> list[Requirement]:
+                           properties_enabled: bool,
+    mission_order: dict[str, list[str]] | None = None,
+) -> list[Requirement]:
     """The one crossing a mission needs open, its own or an inherited one.
 
     A mission reaching the mainland is usually satisfied by any crossing, which
@@ -477,14 +505,16 @@ def _crossing_requirements(mission: str, giver: str, split_mainland_access: bool
         return []
     crossings = [data.MISSION_CROSSING_REQUIREMENTS[name]
                  for name in [mission, *_inherited_missions(mission, giver,
-                                                            properties_enabled)]
+                                                            properties_enabled, mission_order=mission_order)]
                  if name in data.MISSION_CROSSING_REQUIREMENTS]
     return [(crossing, 1) for crossing in dict.fromkeys(crossings)]
 
 
 def _mission_thresholds(mission: str, giver: str, active_items: frozenset[str],
                         split_mainland_access: bool,
-                        properties_enabled: bool = True) -> list[Threshold]:
+                        properties_enabled: bool = True,
+    mission_order: dict[str, list[str]] | None = None,
+) -> list[Threshold]:
     # Everything about this mission that is a one-of rather than a term: the
     # threshold part of its regions, which only the mainland has and only while
     # the crossings are split, and the audit's several-routes requirements, its
@@ -492,11 +522,11 @@ def _mission_thresholds(mission: str, giver: str, active_items: frozenset[str],
     # the terms do, so a mission behind Death Row needs a car or a helicopter
     # too, and no fill can strand both behind it.
     _flat, thresholds = _region_terms(
-        _inherited_regions(mission, giver, properties_enabled), split_mainland_access,
+        _inherited_regions(mission, giver, properties_enabled, mission_order=mission_order), split_mainland_access,
         active_items)
     thresholds.extend(_ability_alternative_thresholds(mission, active_items,
                                                       split_mainland_access))
-    for earlier in _inherited_missions(mission, giver, properties_enabled):
+    for earlier in _inherited_missions(mission, giver, properties_enabled, mission_order=mission_order):
         thresholds.extend(_ability_alternative_thresholds(earlier, active_items,
                                                           split_mainland_access))
     return _deduplicated_thresholds(thresholds)
@@ -507,6 +537,7 @@ def _property_sale_requirements(
     split_content_locks: int,
     split_mainland_access: bool,
     properties_enabled: bool,
+    mission_order: dict[str, list[str]] | None = None,
 ) -> tuple[list[Requirement], list[Threshold]]:
     # A business is for sale only once Shakedown passes, so anything behind
     # buying one requires everything logic needs to pass Shakedown: its items
@@ -519,7 +550,7 @@ def _property_sale_requirements(
     giver = locations.MISSION_GIVER[mission]
     requirements = _mission_requirements(
         mission, giver, active_items, split_content_locks, split_mainland_access,
-        properties_enabled)
+        properties_enabled, mission_order=mission_order)
     region = locations.LOCATION_REGIONS[mission]
     # Shakedown's island has a barrier and two audited routes, so this half is
     # flat only when the routes leave it with one group.
@@ -535,7 +566,7 @@ def _property_sale_requirements(
     thresholds = _deduplicated_thresholds([
         *region_route_thresholds,
         *_mission_thresholds(mission, giver, active_items, split_mainland_access,
-                             properties_enabled),
+                             properties_enabled, mission_order=mission_order),
     ])
     if data.WALLET_ITEM in active_items:
         requirements = [*requirements, (data.WALLET_ITEM, 1)]
@@ -548,7 +579,9 @@ def _property_sale_requirements(
 
 def _asset_completion_requirements(asset: str, progressive_count: int,
                                    active_items: frozenset[str],
-                                   split_content_locks: int) -> list[Requirement]:
+                                   split_content_locks: int,
+    mission_order: dict[str, list[str]] | None = None,
+) -> list[Requirement]:
     # The items to complete an income asset: its ownership item (buying the
     # property is covered by the property-sale requirements the finale rule
     # carries once), where the asset completes through its venue strand the
@@ -576,8 +609,9 @@ def _asset_completion_requirements(asset: str, progressive_count: int,
                                  split_content_locks),
     ]
     if progressive_count > 0:
+        progressive_count = _progressive_count(asset, progressive_count, mission_order)
         requirements.append((data.progressive_item_name(asset), progressive_count))
-    for mission in data.VENUE_STRANDS.get(asset, [])[:progressive_count]:
+    for mission in ((mission_order or {}).get(asset, data.VENUE_STRANDS.get(asset, []))[:progressive_count]):
         requirements.extend(_lock_terms(mission, active_items, split_content_locks))
     requirements.extend(
         (item, 1)
@@ -591,6 +625,7 @@ def _finale_asset_terms(
     active_items: frozenset[str],
     split_content_locks: int,
     sale_requirements: list[Requirement],
+    mission_order: dict[str, list[str]] | None = None,
 ) -> tuple[list[Requirement], list[list[Requirement]]]:
     # The finale's vanilla asset prerequisite as items. Hit the Courier
     # (Printworks' last mission) is individually mandatory, Cop Land arrives
@@ -601,12 +636,12 @@ def _finale_asset_terms(
     mandatory = (
         _asset_completion_requirements(
             "Printworks", len(data.VENUE_STRANDS["Printworks"]), active_items,
-            split_content_locks)
+            split_content_locks, mission_order=mission_order)
         + sale_requirements
     )
     optional = [
         _asset_completion_requirements(asset, progressive_count, active_items,
-                                       split_content_locks)
+                                       split_content_locks, mission_order=mission_order)
         for asset, progressive_count in data.FINALE_OPTIONAL_ASSETS.items()
     ]
     return mandatory, optional
@@ -618,6 +653,7 @@ def build_location_requirements(
     content_locks: frozenset[str] = frozenset(),
     split_mainland_access: bool = False,
     split_content_locks: int = data.CONTENT_SPLIT_OFF,
+    mission_order: dict[str, list[str]] | None = None,
 ) -> dict[str, LocationRequirements]:
     """Every location that carries a rule, and what that rule asks for.
 
@@ -636,15 +672,15 @@ def build_location_requirements(
     )
     requirements_by_location: dict[str, LocationRequirements] = {}
     sale_requirements, sale_thresholds = _property_sale_requirements(
-        active_items, split_content_locks, split_mainland_access, properties_enabled)
+        active_items, split_content_locks, split_mainland_access, properties_enabled, mission_order=mission_order)
     finale_mandatory, finale_optional = _finale_asset_terms(
-        active_items, split_content_locks, sale_requirements)
+        active_items, split_content_locks, sale_requirements, mission_order=mission_order)
     for mission, giver in locations.MISSION_GIVER.items():
         requirements = _mission_requirements(
             mission, giver, active_items, split_content_locks, split_mainland_access,
-            properties_enabled)
+            properties_enabled, mission_order=mission_order)
         mission_thresholds = _mission_thresholds(
-            mission, giver, active_items, split_mainland_access, properties_enabled)
+            mission, giver, active_items, split_mainland_access, properties_enabled, mission_order=mission_order)
         if giver in data.VENUE_STRANDS:
             requirements = [
                 *requirements,
@@ -740,7 +776,7 @@ def build_location_requirements(
     for mission in data.ROUTE_MISSIONS:
         event_requirements, event_thresholds = _event_terms(
             mission, active_items, split_content_locks, split_mainland_access,
-            properties_enabled, sale_requirements, sale_thresholds)
+            properties_enabled, sale_requirements, sale_thresholds, mission_order=mission_order)
         if not event_requirements and not event_thresholds:
             raise ValueError(
                 f"{mission} stands for something else and needs nothing itself; "
@@ -762,6 +798,7 @@ def build_location_rules(
     content_locks: frozenset[str] = frozenset(),
     split_mainland_access: bool = False,
     split_content_locks: int = data.CONTENT_SPLIT_OFF,
+    mission_order: dict[str, list[str]] | None = None,
 ) -> dict[str, RulePredicate]:
     """Every location's rule, as the predicates the world sets on them."""
     return {
@@ -772,5 +809,6 @@ def build_location_rules(
             content_locks=content_locks,
             split_mainland_access=split_mainland_access,
             split_content_locks=split_content_locks,
+            mission_order=mission_order,
         ).items()
     }

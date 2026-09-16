@@ -1,14 +1,15 @@
-// The in-game toast stack's drawing, and the optional file that tunes where it
-// draws. The model is in scm_toasts.hpp and carries no game headers; everything
+// The in-game toast stack's drawing. The model is in scm_toasts.hpp and carries
+// no game headers; everything
 // that needs plugin-sdk is here.
 #pragma once
 
 #include <functional>
-#include <string>
 
 #include "scm_toasts.hpp"
 
 namespace gtavc {
+
+void ReleaseToastGraphics(); // Before RenderWare shuts down.
 
 // What the caller does between the cutting and the drawing: expire what is
 // finished and admit what fits. Taken as a callback rather than done here because
@@ -32,24 +33,5 @@ using ToastAdvance = std::function<void(ToastStackState&, std::size_t)>;
 // exactly a row height, so the two collide glyph on glyph.
 void DrawToastStack(ToastStackState& state, const ToastGeometry& geometry,
                     int alpha, const ToastAdvance& advance);
-
-// The geometry the file beside the running module says to use. An absent,
-// unreadable or unparseable file means the compiled-in defaults, silently, because
-// a player who never writes one is the normal case and not an error case; a file
-// present but missing a key keeps the default for that key alone.
-//
-// Every value is bounded against the virtual screen before it is returned, so a
-// hand-edited file cannot put the stack off the screen. It CAN give the stack a
-// band only one line tall, which the model handles rather than the bounds: the
-// notices own a band that small, and the admission rule is what keeps a row from
-// starting a lifetime it cannot be seen through.
-ToastGeometry LoadToastGeometry();
-
-// The file the geometry is read from: the running module's own path with its
-// extension replaced, so `GtaVcAp.VC.asi` reads `GtaVcAp.VC.ini` and the two
-// cannot drift if the build ever renames its output. Empty when the module cannot
-// be named, which the caller reads as defaults. This is also the convention the
-// other ASIs in a Vice City folder follow.
-std::string ModuleSettingsPath();
 
 }  // namespace gtavc

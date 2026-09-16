@@ -60,15 +60,15 @@ int failures = 0;
 // and in the band the game actually uses.
 //
 // The real page measures with CFont, which no console build has. A character
-// averages 5.4 units on the drawn page, spaces included, so the numbers here are
+// averages 5.4 units at the design scale, spaces included, so the numbers here are
 // the ones the game works in.
-constexpr float kColumnUnits = 146.0f;
+constexpr float kColumnUnits = 198.0f;
 constexpr float kLabelGapUnits = 5.0f;
 constexpr float kBandUnits = 337.0f;
 // The band the panel keeps where the borrowed page's back entry cannot be moved,
 // which is the one every seed gets if another mod owns that entry.
 constexpr float kFallbackBandUnits = 251.0f;
-constexpr float kDesignRowUnits = 13.0f;
+constexpr float kDesignRowUnits = 15.0f;
 constexpr float kUnitsPerCharacter = 5.4f;
 
 float MeasureUnits(const std::string& text) {
@@ -92,7 +92,116 @@ void Expect(bool condition, const char* label) {
 }  // namespace
 
 int main() {
-  const json small = CheckMessage(542000000);
+  {
+    std::map<int, std::int64_t> watch;
+    std::set<int> reported;
+    Expect(EmergencyCheckProgress(watch, reported).empty(), "disabled emergency checks have no HUD row");
+    for (int global = 9273; global <= 9328; ++global) watch[global] = global;
+    Expect(EmergencyCheckProgress(watch, reported) == "A:0/12 F:0/12 P:0/10 T:0/10 V:0/12",
+           "emergency HUD shows checks alphabetically in A/F/P/T/V order");
+    reported.insert(9297);
+    for (int global = 9309; global <= 9318; ++global) reported.insert(global);
+    Expect(EmergencyCheckProgress(watch, reported) == "A:0/12 F:1/12 P:0/10 V:0/12",
+           "completed checks decrement counts and completed activities disappear");
+    for (int global = 9550; global < 9640; ++global) watch[global] = global;
+    Expect(EmergencyCheckProgress(watch, reported) == "A:0/12 F:1/12 P:0/10 T:10/100 V:0/12",
+           "taxi progress includes all 100 possible milestones");
+    watch = {{9309, 101}, {9273, 102}, {9274, 103}, {9102, 104}};
+    reported.clear();
+    Expect(EmergencyCheckProgress(watch, reported) == "A:0/2 T:0/1",
+           "reduced percentages count only enabled milestones and ignore story checks");
+    reported = {9309, 9273, 9274};
+    Expect(EmergencyCheckProgress(watch, reported).empty(), "all emergency checks done hides the HUD row");
+  }
+    const json small = CheckMessage(542000000);
+    {
+      char text[40] = "0";
+      Expect(SyncTaxiCounter(6712 * 4, "FARES", true, 8, text) && std::string(text) == "8",
+             "taxi display resumes at the persisted fare total");
+      Expect(SyncTaxiCounter(6712 * 4, "FARES", true, 9, text) && std::string(text) == "9",
+             "the next delivery displays the next career fare");
+      Expect(!SyncTaxiCounter(6712 * 4, "FARES", false, 10, text) && std::string(text) == "9",
+             "a stopped taxi mission stays hidden");
+      Expect(!SyncTaxiCounter(1234, "FARES", true, 10, text) &&
+             !SyncTaxiCounter(6712 * 4, "OTHER", true, 10, text), "other mission counters stay unchanged");
+    }
+  {
+    std::map<int, std::int64_t> taxi_checks;
+    std::set<int> checked;
+    for (int milestone = 1; milestone <= 100; ++milestone)
+      taxi_checks[TaxiCompletionGlobal(milestone)] = milestone;
+    for (int milestone = 1; milestone <= 6; ++milestone) checked.insert(TaxiCompletionGlobal(milestone));
+    Expect(RestoredTaxiFares(taxi_checks, checked, 1, 0) == 6, "new game restores six checked taxi fares");
+    Expect(RestoredTaxiFares(taxi_checks, checked, 1, 7) == 7, "the next fare advances past restored progress");
+    Expect(RestoredTaxiFares(taxi_checks, checked, 5, 0) == 30, "restoration follows taxi milestone spacing");
+    Expect(RestoredTaxiFares(taxi_checks, checked, 0, 0) == 60, "old seeds use ten fares per milestone");
+    checked.insert(TaxiCompletionGlobal(20));
+    Expect(RestoredTaxiFares(taxi_checks, checked, 1, 0) == 20, "extended taxi milestones restore too");
+    Expect(RestoredTaxiFares(taxi_checks, checked, 1, 23) == 23, "restoration preserves newer saved progress");
+    Expect(RestoredTaxiFares({}, checked, 1, 0) == 0, "disabled taxi checks do not change fares");
+      Expect(RestoredTaxiFares(taxi_checks, {}, 1, 0) == 0, "an unplayed seed gains no fares");
+    }
+    {
+      std::map<int, std::int64_t> watch;
+      std::set<int> checked;
+      for (const int first : {9273, 9297, 9285, 9319}) {
+        for (int level = 1; level <= 6; ++level) {
+          watch[first + level - 1] = first + level;
+          checked.insert(first + level - 1);
+        }
+      }
+      std::map<int, int> globals;
+      const auto restore = [&] {
+        RestoreEmergencyLevels(CheckedEmergencyProgress(watch, checked, 10),
+            [&](int index) { return globals[index]; },
+            [&](int index, int value) { globals[index] = value; });
+      };
+      restore();
+      Expect(globals[kEmergencyProgressBase] == 0, "disabled remember option preserves vanilla starts");
+      globals[kRememberEmergencyGlobal] = 1;
+      restore();
+      Expect(globals[10160] == 7 && globals[10161] == 7 && globals[10162] == 6 && globals[10163] == 7,
+             "six checked levels restore the existing resume counters for all four jobs");
+      float time, wanted;
+      std::memcpy(&time, &globals[kVigilanteTimeRampGlobal], sizeof(time));
+      std::memcpy(&wanted, &globals[kVigilanteWantedRampGlobal], sizeof(wanted));
+      Expect(time > 3.399f && time < 3.401f && wanted > 0.699f && wanted < 0.701f,
+             "vigilante resumes with the earned time and wanted scaling");
+      globals[10161] = 20;
+      globals[10162] = 18;
+      globals[kVigilanteTimeRampGlobal] = 123;
+      restore();
+      Expect(globals[10161] == 20 && globals[10162] == 18 && globals[kVigilanteTimeRampGlobal] == 123,
+             "newer saved levels and multipliers survive repeated restoration");
+      for (const int last : {9284, 9308, 9296, 9328}) {
+        watch[last] = last;
+        checked.insert(last);
+      }
+      globals.clear();
+      globals[kRememberEmergencyGlobal] = 1;
+      restore();
+      Expect(globals[10160] == 12 && globals[10161] == 13 && globals[10162] == 12 && globals[10163] == 10,
+             "paramedic and pizza cap safely while firefighter and vigilante can continue");
+      globals.clear();
+      globals[kRememberEmergencyGlobal] = 1;
+      watch.clear();
+      restore();
+      Expect(globals[10160] == 0 && globals[10161] == 0 && globals[10162] == 0 && globals[10163] == 0,
+             "disabled checks cannot restore levels from stale reported flags");
+      watch[9273] = 1;
+      checked.clear();
+      restore();
+      Expect(globals[10160] == 0, "an unplayed activity gains no levels");
+      RestoreEmergencyLevels(EmergencyProgress{6, 5, 19, 20, 4},
+          [&](int index) { return globals[index]; },
+          [&](int index, int value) { globals[index] = value; });
+      Expect(globals[10160] == 6 && globals[10161] == 20 && globals[10162] == 20 && globals[10163] == 5,
+             "cached levels restore independently of AP checks, including levels beyond twelve");
+      std::memcpy(&time, &globals[kVigilanteTimeRampGlobal], sizeof(time));
+      std::memcpy(&wanted, &globals[kVigilanteWantedRampGlobal], sizeof(wanted));
+      Expect(time > 2.699f && time < 2.701f && wanted > 0.399f && wanted < 0.401f,
+             "high vigilante levels retain vanilla multiplier floors");
+    }
   const std::vector<json> small_result = RoundTrip(small);
   Expect(small_result.size() == 1 && small_result[0] == small, "small round-trip");
 
@@ -272,6 +381,46 @@ int main() {
     auto far_result = DetectNewlyCollectedPackages({packages[0]}, far, one_seen, none);
     Expect(far_result.size() == 1 && far_result[0] == 9075,
            "a pickup beyond two units leaves the package collected");
+
+    std::set<int> server_checked = {9075, 9076, 9999};
+    std::map<int, int> save_flags = {{9076, 1}};
+    const auto count = [&] {
+      return CheckedPackageCount(packages, server_checked,
+                                 [&](int index) { return save_flags[index]; });
+    };
+    Expect(count() == 2, "package display includes checks newer than the save, without double counting");
+    save_flags[9077] = 1;
+    Expect(count() == 3, "a fresh package counts immediately, before server acknowledgement");
+    save_flags.clear();
+    Expect(count() == 2, "loading an older save does not erase the seed's package count");
+    server_checked.clear();
+    Expect(count() == 0, "non-package checks never contribute to the package count");
+
+    // Reconciliation removes the already-checked middle package and restores
+    // its flag before detection. It must produce neither a check nor a payout.
+    const auto restored = DetectNewlyCollectedPackages(packages, without_middle, seen, recorded);
+    Expect(restored.empty() && PackageCashClawBack(static_cast<int>(restored.size()), 2, 3, 500) == 0,
+           "removing a restored package does not count as a new paid collection");
+    server_checked = recorded;
+    Expect(DetectCompletedLocations({{9076, 123}}, {{9076, 0}}, {{9076, 1}}, server_checked).empty(),
+           "restoring a checked package flag cannot send another check");
+    Expect(PackageMatchesPosition(packages[1], {100, 100, UnsunkHeight(100 - kPickupLowerOffset)}),
+           "a content-locked restored package matches after its height is normalized");
+    Expect(!PackageMatchesPosition(packages[1], {100, 100, 110}),
+           "reconciliation cannot remove a pickup on a different floor");
+
+    char message[8] = "CO_ONE";
+    int number = 1, total = 100;
+    SyncPackageMessage(message, number, total, 12, 100);
+    Expect(number == 12 && total == 100, "the blue package message uses the seed total");
+    std::memcpy(message, "CO_ALL", 7);
+    SyncPackageMessage(message, number, total, 100, 100);
+    Expect(std::strcmp(message, "CO_ONE") == 0 && number == 100,
+           "the final package also displays the seed counter");
+    std::memcpy(message, "GA_001", 7);
+    SyncPackageMessage(message, number, total, 0, 3);
+    Expect(std::strcmp(message, "GA_001") == 0 && number == 100 && total == 100,
+           "unrelated garage messages keep their text and numbers");
   }
 
   // The hunt goal's ending: the flag rises only while the client asks AND the
@@ -1343,7 +1492,7 @@ int main() {
   // an override is what the shop class's promise about price rests on.
   {
     std::vector<PickupTarget> targets = {
-        // An ambient in-shop stand: a check, and priced like any marker.
+        // A world in-shop stand: a check, and priced like any marker.
         {5, -113.2, -975.7, 10.4, 1, 366, 0},
         // Phil's minigun stand: a check, and priced at what the minigun costs.
         {6, -1105.9, 325.3, 11.1, 1, 290, 0},
@@ -1638,7 +1787,7 @@ int main() {
     Expect(ClassifyHeldPickup(3, 7, 7) == HeldPickupClass::kRampage,
            "the kill-frenzy model is a rampage icon");
     Expect(ClassifyHeldPickup(2, 42, 7) == HeldPickupClass::kNone,
-           "an ambient street pickup is none of them");
+           "a world street pickup is none of them");
     Expect(ClassifyHeldPickup(2, -1, -1) == HeldPickupClass::kNone,
            "an unresolved kill-frenzy model matches nothing");
     // An unresolved model costs only the rampage class: the type-matched
@@ -1652,6 +1801,45 @@ int main() {
            "property icons too");
     Expect(ClassifyHeldPickup(3, 7, -1) == HeldPickupClass::kNone,
            "and a rampage entry is left alone, retried next frame");
+  }
+  {
+    const PickupTarget world{0, 10.0, 20.0, 3.0, 2, 42, 30};
+    const PickupTarget paid{0, 20.0, 20.0, 3.0, kPickupTypeInShop, 42, 30};
+    const PickupTarget shop{0, 30.0, 20.0, 3.0, kPickupTypeInShop, 42, 30, 12};
+    const std::vector<PickupTarget> targets{world, paid, shop};
+    PickupPoolEntry entry{10.0f, 20.0f, 3.0f, 2, kPickupCheckMarkerModel, 0};
+    Expect(IsWorldPickup(targets, entry), "an AP marker retains its pickup lock");
+    entry.z = UnsunkHeight(entry.z - kPickupLowerOffset);
+    Expect(IsWorldPickup(targets, entry), "a saved sunk pickup retains its identity");
+    Expect(!PlanPickupLayout(targets, {entry}).rewrites.empty(),
+           "a held pickup still restores its assigned model");
+    entry.x += 0.94f;
+    Expect(!IsWorldPickup(targets, entry), "a nearby mission pickup is unaffected");
+    entry.x = 10.0f;
+    entry.z += 1.0f;
+    Expect(!IsWorldPickup(targets, entry), "a different floor is not the same pickup");
+    entry.z = 3.0f;
+    entry.pickup_type = 3;
+    Expect(!IsWorldPickup(targets, entry), "a dropped pickup type is unaffected");
+    entry.pickup_type = kPickupTypeInShop;
+    entry.x = 20.0f;
+    Expect(IsWorldPickup(targets, entry), "fixed hospital pay stands are pickups");
+    entry.x = 30.0f;
+    Expect(!IsWorldPickup(targets, entry), "Phil's shop stock is unaffected");
+    ContentLocks held{};
+    held[ContentDistrictSlot(kContentPickups, 0)] = true;
+    const std::vector<PickupDistrict> districts{{10.0f, 20.0f, kContentPickups, 0}};
+    const int district = DistrictForPickup(districts, HeldPickupClass::kPickup, 10, 20);
+    Expect(district == 0 && ShouldHoldPickup(HeldPickupClass::kPickup, district,
+                                           false, {}, held),
+           "the pickup is held in its locked district");
+    Expect(!ShouldHoldPickup(HeldPickupClass::kPickup, 1, false, {}, held),
+           "another district stays available");
+    held.fill(false);
+    Expect(!ShouldHoldPickup(HeldPickupClass::kPickup, district, false, {}, held) &&
+               PlanPickupHold(false, 3.0f - kPickupLowerOffset, false) ==
+                   PickupHoldAction::kRaise,
+           "receiving the unlock raises the pickup");
   }
   // The two lock families union on a rampage icon: either alone holds it, and
   // the two run-them-down icons answer only to the rampages content key, since
@@ -1830,12 +2018,6 @@ int main() {
     // same one-point guarantee the whole change was made to replace.
     Expect(geometry.floor_y + ToastLineAdvance(geometry) <= kRadarTopY,
            "and no line it admits can reach the radar, from any top");
-    // A hand-edited file may tune the leading but not make the rows overlap.
-    const ToastGeometry crushed = ParseToastGeometry(
-        {"[toasts]", "line_height = 6", "scale_y = 1.0"});
-    Expect(crushed.line_height >= ToastLineAdvance(crushed),
-           "and a file asking for less leading than the glyphs need is floored at "
-           "them");
     // The leading clears the font's own advance, which the scale does NOT carry
     // with it: 16 * scale_y + 2, where the 2 is constant, so a proportional step
     // down overlaps the rows.
@@ -1845,7 +2027,7 @@ int main() {
     narrow.floor_y = narrow.anchor_y;
     Expect(ToastLineCapacity(narrow) == 1,
            "a band with no height still holds one line, so a notice is never lost");
-    // Not reachable through the file, which orders the two, but a hand-built one
+    // An inverted geometry
     // must still answer a count rather than a negative or an enormous cast.
     ToastGeometry inverted;
     inverted.floor_y = inverted.anchor_y - 100.0f;
@@ -2232,101 +2414,7 @@ int main() {
            "and a continuation line to its own narrower width, not the first's");
   }
 
-  // The settings file a module reads is derived from its own name, so the two
-  // cannot drift if the build renames its output.
-  {
-    Expect(SettingsPathForModule("C:\\Games\\GtaVcAp.VC.asi") ==
-               "C:\\Games\\GtaVcAp.VC.ini",
-           "the module's extension is replaced, not its dotted name");
-    Expect(SettingsPathForModule("C:\\Games\\plugin") ==
-               "C:\\Games\\plugin.ini",
-           "a module with no extension gets one rather than nothing");
-    Expect(SettingsPathForModule("C:\\Games.v2\\plugin") ==
-               "C:\\Games.v2\\plugin.ini",
-           "a dot in a directory name is not the module's extension");
-    Expect(SettingsPathForModule("").empty(),
-           "an unnamed module reads no file at all");
-  }
-
-  // The optional file that tunes the stack. Absent is the normal case, so every
-  // way a hand edit can go wrong has to leave a geometry that still draws.
-  {
-    const ToastGeometry defaults;
-    Expect(ParseToastGeometry({}).anchor_y == defaults.anchor_y,
-           "an empty file is the compiled-in defaults");
-    Expect(ParseToastGeometry({"anchor_y = 200"}).anchor_y == defaults.anchor_y,
-           "a setting outside the section is ignored");
-
-    ToastGeometry read = ParseToastGeometry({
-        "; a comment",
-        "[other]",
-        "anchor_y = 999",
-        "[toasts]",
-        "  anchor_y  =  200  ",
-        "width = 300 # trailing comment",
-        "line_height = 20",
-        "lifetime_ms = 6000",
-        "nonsense = 4",
-        "scale_x = not a number",
-    });
-    Expect(read.anchor_y == 200.0f, "whitespace either side of a value is dropped");
-    Expect(read.width == 300.0f, "a trailing comment is not part of the value");
-    Expect(read.line_height == 20.0f && read.lifetime_ms == 6000,
-           "every key the file names is applied");
-    Expect(read.scale_x == defaults.scale_x,
-           "a value that is not a whole number leaves its setting alone");
-
-    Expect(ParseToastGeometry({"[toasts]", "width = 3 4"}).width == defaults.width,
-           "a value with a trailing token is not taken as its prefix");
-    Expect(ParseToastGeometry({"[toasts]", "lifetime_ms = -5"}).lifetime_ms ==
-               defaults.lifetime_ms,
-           "a negative duration leaves its setting alone rather than wrapping");
-
-    // NaN is the one value every bound below would pass unchanged, because every
-    // comparison against it is false. A NaN band then makes the line count a cast
-    // from a NaN, which admits the whole queue onto a stack whose floor test can
-    // never be true.
-    for (const char* spelling : {"nan", "-nan", "NAN", "inf", "-inf"}) {
-      const ToastGeometry hostile =
-          ParseToastGeometry({"[toasts]", std::string("anchor_y = ") + spelling});
-      Expect(hostile.anchor_y == defaults.anchor_y,
-             "a value that is not a finite number leaves its setting alone");
-      Expect(ToastLineCapacity(hostile) >= 1 &&
-                 ToastLineCapacity(hostile) <= 128,
-             "the band a hostile file produces is still a band");
-    }
-
-    // The bounds. A file may move the stack but never lose it off the screen.
-    const ToastGeometry far_out = ParseToastGeometry({
-        "[toasts]", "anchor_x = 5000", "anchor_y = 5000", "width = 5000",
-        "scale_x = 50", "scale_y = 0", "line_height = 0",
-        "lifetime_ms = 100000000",
-    });
-    Expect(far_out.anchor_x >= 0.0f && far_out.anchor_x < kVirtualScreenWidth,
-           "the anchor stays on the screen");
-    Expect(far_out.anchor_x + far_out.width <= kVirtualScreenWidth,
-           "and the stack ends on the screen");
-    Expect(far_out.anchor_y < kVirtualScreenHeight, "so does the anchor's row");
-    Expect(far_out.scale_x <= kToastMaxScale && far_out.scale_y >= kToastMinScale,
-           "the text stays a size that can be read");
-    Expect(far_out.line_height >= kToastMinLineHeight,
-           "a line keeps a height, so the band is a count and not a division by "
-           "nothing");
-    Expect(far_out.lifetime_ms <= kToastMaxLifetimeMs,
-           "a row cannot be made to hold the screen forever");
-
-    // An inverted band is ordered rather than left negative, so the floor is never
-    // above the anchor.
-    const ToastGeometry swapped =
-        ParseToastGeometry({"[toasts]", "anchor_y = 400", "floor_y = 100"});
-    Expect(swapped.floor_y >= swapped.anchor_y,
-           "the floor is never above the top it is measured from");
-    Expect(ToastLineCapacity(swapped) >= 1, "and the band still holds a line");
-  }
-
-  // A band too small for what is in it. Neither of these is reachable with the
-  // measured geometry, and both are reachable through the file, so both are the
-  // model's problem rather than the bounds'.
+  // The stack still handles a band too small for its current contents.
   {
     const auto row = [](std::size_t lines) {
       ToastRow built;
@@ -2491,50 +2579,39 @@ int main() {
                strands.rows[1].tone == StatusTone::kOpen,
            "and a finished strand carries the tone the client gave it");
 
-    // The game's own counts, which no client can answer: the package tally and
-    // the level each emergency activity has reached.
+    // The status page and HUD use the same selected AP checks, even after New Game.
     state.packages_collected = 37;
     state.packages_total = 100;
-    state.paramedic_level = 7;
-    sections = ComposeStatusPanel(state);
-    const StatusSection own = Section(sections, "THE GAME COUNTS");
-    Expect(own.rows.size() == 6 && own.rows[0].label == "Hidden Packages" &&
-               own.rows[0].value == "37/100",
-           "the package tally is the game's own count of them");
-    Expect(own.rows[1].value == "7/12" && own.rows[2].value == "none",
-           "and an emergency activity reads its level or says it has none");
-    // The taxi and the pizza boy keep no level in the game's stats, and they do
-    // not count alike: the taxi divides its career fares, while the pizza boy is
-    // read from the level its mission is working on, because that mission hands
-    // out one pizza per level number and a delivery total divides into nothing.
-    StatusPanelState jobs = state;
-    jobs.taxi_fares = 37;
-    jobs.pizza_level_in_progress = 4;
-    const StatusSection counted = ComposeRewardSection(jobs);
-    Expect(counted.rows[4].label == "Taxi" && counted.rows[4].value == "3/10",
-           "every tenth career fare is a taxi level");
-    Expect(counted.rows[5].label == "Pizza" && counted.rows[5].value == "3/10",
-           "and the pizza level in progress is not one the player has finished");
-
-    jobs.pizza_level_in_progress = 1;
-    Expect(ComposeRewardSection(jobs).rows[5].value == "none",
-           "the first level being unfinished reads as none rather than as zero");
-
-    // Level ten stays replayable, so the mission steps its level back to nine
-    // and the win flag is the only thing that says the tenth is done.
-    jobs.pizza_level_in_progress = 9;
-    jobs.pizza_finished = true;
-    const StatusSection won = ComposeRewardSection(jobs);
-    Expect(won.rows[5].value == "10/10" && won.rows[5].tone == StatusTone::kOpen,
-           "the win flag reads as all ten done however far the level has stepped back");
-
-    jobs.taxi_fares = 999;
-    jobs.pizza_finished = false;
-    jobs.pizza_level_in_progress = 10;
-    const StatusSection capped = ComposeRewardSection(jobs);
-    Expect(capped.rows[4].value == "10/10" && capped.rows[5].value == "9/10",
-           "fares past the last level do not read as an eleventh, and nor does "
-           "standing on the tenth without having finished it");
+    std::map<int, std::int64_t> job_checks;
+    std::set<int> completed_jobs;
+    for (int milestone = 1; milestone <= 10; ++milestone) {
+      job_checks[TaxiCompletionGlobal(milestone)] = milestone;
+      if (milestone <= 8) completed_jobs.insert(TaxiCompletionGlobal(milestone));
+    }
+    for (int level = 0; level < 6; ++level) job_checks[9273 + level] = 20 + level;
+    state.emergency_checks = EmergencyCheckCounts(job_checks, completed_jobs);
+    const auto own = Section(ComposeStatusPanel(state), "ACTIVITY PROGRESS");
+    Expect(own.rows.size() == 3 && own.rows[0].label == "Hidden Packages" &&
+               own.rows[0].value == "37/100", "packages retain their HUD tally; disabled jobs have no row");
+    Expect(own.rows[1].label == "Taxi" && own.rows[1].value == "8/10",
+           "the status page shows the reduced taxi check target");
+    Expect(own.rows[2].label == "Paramedic" && own.rows[2].value == "0/6",
+           "unstarted activities show zero and their reduced target");
+    Expect(EmergencyCheckProgress(job_checks, completed_jobs) == "A:0/6 T:8/10",
+           "the status page and HUD agree without local mission counters");
+    for (const auto& [global, location] : job_checks) completed_jobs.insert(global);
+    state.emergency_checks = EmergencyCheckCounts(job_checks, completed_jobs);
+    const auto finished = ComposeRewardSection(state);
+    Expect(finished.rows[1].value == "10/10" && finished.rows[1].tone == StatusTone::kOpen &&
+               finished.rows[2].value == "6/6" && finished.rows[2].tone == StatusTone::kOpen,
+           "completed reduced activities stay visible in green");
+    Expect(EmergencyCheckProgress(job_checks, completed_jobs).empty(), "completed activities leave the HUD");
+    for (int milestone = 11; milestone <= 100; ++milestone)
+      job_checks[TaxiCompletionGlobal(milestone)] = 100 + milestone;
+    state.emergency_checks = EmergencyCheckCounts(job_checks, completed_jobs);
+    Expect(ComposeRewardSection(state).rows[1].value == "10/100", "all extended taxi checks count on the page");
+    state.emergency_checks = EmergencyCheckCounts({}, completed_jobs);
+    Expect(ComposeRewardSection(state).rows.size() == 1, "stale check flags cannot display disabled activities");
 
     // One selected ability key and one unselected: only the selected one is
     // listed, since an unselected key is fully vanilla.
@@ -2565,7 +2642,7 @@ int main() {
     }
     sections = ComposeStatusPanel(state);
     const StatusSection content = Section(sections, "CONTENT");
-    Expect(content.rows.size() > 2 && content.rows[0].value == "HELD 7/11",
+    Expect(content.rows.size() > 2 && content.rows[0].value == "HELD 7/12",
            "a class held in part of the city carries its district count");
     Expect(content.rows[1].label.empty() &&
                content.rows[1].value.rfind("free in:", 0) == 0 &&
@@ -2596,7 +2673,7 @@ int main() {
     sparse.content_flags[kContentRobbableStores] = 1;
     // Ocean Beach, Starfish Island, Prawn Island, Leaf Links, Viceport and
     // Escobar International hold no store, leaving five that do.
-    for (const int district : {0, 3, 4, 5, 9, 10}) {
+    for (const int district : {0, 3, 4, 5, 9, 10, 11}) {
       sparse.content_absent[ContentDistrictSlot(kContentRobbableStores, district)] =
           true;
     }
@@ -2708,99 +2785,6 @@ int main() {
     Expect(Section(sections, "MINIMAP").rows.size() == 1 &&
                Section(sections, "MINIMAP").rows[0].value == "HIDDEN",
            "and the radar says whether the item has arrived");
-
-    // The pause page's recent messages. Laid out UNDER the columns across the whole
-    // page rather than dealt into one of them, so it is composed on its own and is
-    // deliberately NOT a section of the page the columns are flowed from.
-    {
-      const auto movement = [](const std::string& item, const std::string& location) {
-        ToastRow row;
-        std::vector<ToastSegment> line = {{"You", ToastRole::kOwnSlot},
-                                          {" found your ", ToastRole::kConnective},
-                                          {item, ToastRole::kProgression}};
-        if (!location.empty()) {
-          line.push_back({" (", ToastRole::kConnective});
-          line.push_back({location, ToastRole::kLocation});
-          line.push_back({")", ToastRole::kConnective});
-        }
-        row.lines.push_back(line);
-        return row;
-      };
-
-      StatusPanelState state;
-      Expect(ComposeRecentSection(state).rows.empty(),
-             "a seed that has moved no item has no recent block at all");
-      // And it is never dealt into the columns, whatever it holds: a message is a
-      // sentence and a location, and in a 146 unit column every one of them was cut.
-      state.recent_rows = {movement("Body Armour", "Cherry Popper Fourth Delivery")};
-      // Read directly rather than through HasSection, whose own guard requires
-      // every heading it is asked for to appear on some page. This one deliberately
-      // appears on none: it is drawn under the columns, not dealt into them.
-      bool dealt_into_a_column = false;
-      for (const StatusSection& section : ComposeStatusPanel(state)) {
-        if (section.heading == "RECENT MESSAGES") dealt_into_a_column = true;
-      }
-      Expect(!dealt_into_a_column, "the recent block is not a column section");
-
-      const StatusSection recent = ComposeRecentSection(state);
-      Expect(recent.heading == "RECENT MESSAGES", "and it names itself in full");
-      Expect(recent.rows.size() == 1,
-             "a movement is ONE row, the sentence and its location together");
-      Expect(recent.rows[0].label.empty() && recent.rows[0].value.empty(),
-             "a segmented row carries no label and no value, so nothing about the "
-             "page's own rows is changed by its presence");
-      Expect(recent.rows[0].segments[0].role == ToastRole::kOwnSlot,
-             "and it keeps the colours the stack drew it in");
-      Expect(ToastLineText(state.recent_rows[0].lines[0]) ==
-                 "You found your Body Armour (Cherry Popper Fourth Delivery)",
-             "the whole message is one line");
-
-      // Bounded, so a long history cannot run off the band the columns left it.
-      state.recent_rows.clear();
-      for (int index = 0; index < 40; ++index) {
-        state.recent_rows.push_back(movement("Item", "Somewhere"));
-      }
-      Expect(ComposeRecentSection(state).rows.size() == kRecentMaxLines,
-             "one-line rows fill the budget to the line and no further");
-
-      // A two-line row can still reach here, since a notice is broken rather than
-      // cut, and it is taken whole or not at all.
-      state.recent_rows.clear();
-      for (int index = 0; index < 40; ++index) {
-        ToastRow two = movement("Item", "");
-        two.lines.push_back({{"second", ToastRole::kConnective}});
-        state.recent_rows.push_back(two);
-      }
-      // Where the block lands, and whether it lands at all. This is what keeps it
-      // off the columns above it and off the pause page's own back button below.
-      {
-        constexpr float kTop = 60.0f;
-        constexpr float kRow = 13.0f;
-        Expect(RecentFooterTop(kTop, kRow, 10) == kTop + kRow * 11.0f,
-               "the block starts a blank row under the tallest column");
-        Expect(RecentFooterTop(kTop, kRow, 0) == kTop + kRow,
-               "and a page with no rows at all still leaves that blank row");
-        const float footer_top = RecentFooterTop(kTop, kRow, 10);
-        Expect(!RecentFooterFits(footer_top, footer_top + kRow, kRow),
-               "a band with room for a heading alone draws no block, since a "
-               "heading over nothing says less than nothing");
-        Expect(RecentFooterFits(footer_top, footer_top + kRow * 2.0f, kRow),
-               "a heading and one message is enough to be worth the band");
-        Expect(RecentFooterRows(footer_top, footer_top + kRow * 2.0f, kRow, 9) == 1,
-               "and that band holds exactly the one message");
-        Expect(RecentFooterRows(footer_top, footer_top + kRow * 5.0f, kRow, 2) == 2,
-               "a band with room to spare holds only what there is to show");
-        Expect(RecentFooterRows(footer_top, footer_top, kRow, 9) == 0,
-               "and a band of nothing holds nothing");
-      }
-
-      const StatusSection pairs = ComposeRecentSection(state);
-      Expect(pairs.rows.size() % 2 == 0 && pairs.rows.size() <= kRecentMaxLines,
-             "a multi-line row is taken whole, never half");
-      // Nothing marks them as belonging together, and nothing needs to: the block
-      // is drawn as one run under the columns, so its lines are always adjacent.
-      // The column dealing, which is what joined_above exists for, never sees them.
-    }
 
     // The comparison the two sets above exist for.
     for (const std::string& heading : asked_headings) {
@@ -2917,21 +2901,21 @@ int main() {
                          RouteState::kAbsent, RouteState::kWaiting};
     full.packages_total = 100;
     const std::vector<PanelLine> worst = FlattenPanel(ComposeStatusPanel(full));
-    Expect(TallestColumn(PlanPanelColumns(worst, 4)) <= 26,
-           "the busiest seed stays inside twenty-six lines a column");
+    Expect(TallestColumn(PlanPanelColumns(worst, 4)) <= 32,
+           "all six content classes fit with the fourth column available");
     // And once every line is narrowed to its column, which is what the page is
     // really laid out from, it still fits the band at a size worth reading.
     const std::vector<PanelLine> narrowed =
-        FitPanelLines(worst, kColumnUnits, kLabelGapUnits, MeasureUnits,
+        FitPanelLines(worst, 146.0f, kLabelGapUnits, MeasureUnits,
                       MeasureHeadingUnits);
     const int narrowed_tallest = TallestColumn(PlanPanelColumns(narrowed, 4));
-    Expect(narrowed_tallest <= 28,
-           "and inside twenty-eight once every line is narrowed to its column");
+    Expect(narrowed_tallest <= 32,
+           "district lists and their class labels fit together in the crowded layout");
     Expect(FittedRowHeight(narrowed_tallest, kBandUnits, kDesignRowUnits) >
-               kDesignRowUnits * 0.9f,
-           "so the busiest seed still draws at nearly the design size");
+               kDesignRowUnits * 0.7f,
+           "the busiest seed keeps readable text within the full page height");
     Expect(FittedRowHeight(narrowed_tallest, kFallbackBandUnits, kDesignRowUnits) >
-               kDesignRowUnits * 0.65f,
+               kDesignRowUnits * 0.5f,
            "and still reads on the shorter band, which is what it gets where that "
            "entry cannot be moved");
 
@@ -2986,6 +2970,35 @@ int main() {
            "and no column opens on a line broken out of the one before it, short "
            "of a run longer than a column");
 
+    // The pickup class and both free districts stay together wherever the
+    // preceding stats put the column boundary.
+    StatusPanelState pickup_state;
+    pickup_state.content_flags[kContentPickups] = 1;
+    pickup_state.content_districts_held[kContentPickups] = kDistrictCount - 2;
+    for (int district = 2; district < kDistrictCount; ++district)
+      pickup_state.content_held[ContentDistrictSlot(kContentPickups, district)] = true;
+    for (int padding = 0; padding < 20; ++padding) {
+      StatusSection preceding;
+      preceding.rows.resize(padding, {"Other stat", "1/2"});
+      const auto fitted = FitPanelLines(
+          FlattenPanel({preceding, ComposeContentSection(pickup_state)}),
+          kColumnUnits, kLabelGapUnits, MeasureUnits, MeasureHeadingUnits);
+      for (int column_count : {3, 4}) {
+        const auto grouped = PlanPanelColumns(fitted, column_count);
+        int pickup_column = -1;
+        for (std::size_t column = 0; column < grouped.size(); ++column) {
+          for (const auto& line : grouped[column]) {
+            if (line.label == "Pickups") pickup_column = static_cast<int>(column);
+            if (line.value.find("Ocean Beach") != std::string::npos ||
+                line.value.find("Washington") != std::string::npos)
+              Expect(pickup_column == static_cast<int>(column),
+                     "pickup districts stay in the column containing their class label");
+          }
+        }
+        Expect(pickup_column >= 0, "pickup content remains present in the fitted page");
+      }
+    }
+
     // A list of one needs no wrapping, a list of none produces no line at all,
     // and a name wider than the column still gets drawn rather than truncated.
     Expect(WrapNameList("Locked", {}, StatusTone::kHeld, kWrappedLineChars).empty(),
@@ -3015,6 +3028,8 @@ int main() {
   // the column's edge by folding its tail onto the row below, where it prints over
   // whatever is there.
   {
+    // Narrow columns deliberately exercise the overflow paths.
+    constexpr float kColumnUnits = 146.0f;
     // A pair that fits keeps its row, however little room is left over.
     const std::vector<PanelLine> fits =
         FitPanelLines({{"Taxi", "none", StatusTone::kPlain, false, false}},
@@ -3238,14 +3253,24 @@ int main() {
   Expect(CheckMarkerFitsScreen(900, 700, 1920, 1080), "main-map clipping follows screen resolution");
   Expect(!CheckMarkerFitsScreen(std::numeric_limits<float>::quiet_NaN(), 20, 640, 448),
          "invalid map projections draw nothing");
-  Expect(CheckMarkerFits(0.0f, 0.0f, 50.0f, 40.0f), "marker fits at radar centre");
-  Expect(CheckMarkerFits(0.9f, 0.0f, 50.0f, 40.0f), "nearby marker fits");
-  Expect(!CheckMarkerFits(1.0f, 0.0f, 50.0f, 40.0f), "outline stays inside radar");
-  Expect(!CheckMarkerFits(0.7f, 0.7f, 50.0f, 40.0f), "diagonal outline stays inside radar");
-  Expect(!CheckMarkerFits(-2.0f, 0.0f, 50.0f, 40.0f), "distant markers stay off the edge");
-  Expect(!CheckMarkerFits(0.0f, 0.0f, 0.0f, 40.0f), "zero size radar draws nothing");
-  Expect(!CheckMarkerFits(std::numeric_limits<float>::quiet_NaN(), 0.0f, 50.0f, 40.0f),
-         "invalid projected coordinates draw nothing");
+  float radar_x = 0.3f, radar_y = 0.4f;
+  Expect(ProjectCheckMarker(radar_x, radar_y, 50, 40) && radar_x == 0.3f && radar_y == 0.4f,
+         "nearby markers keep their position");
+  for (const auto point : {std::pair<float, float>{3, 0}, {-3, 0}, {2.0f, 2.0f}}) {
+    radar_x = point.first; radar_y = point.second;
+    Expect(ProjectCheckMarker(radar_x, radar_y, 50, 40), "markers within three times the range stay visible");
+    const float outer_x = std::abs(radar_x) + 4.0f / 50;
+    const float outer_y = std::abs(radar_y) + 4.0f / 40;
+    Expect(outer_x * outer_x + outer_y * outer_y <= 1.0f, "rim marker outline fits");
+    Expect(std::abs(radar_x * point.second - radar_y * point.first) < 0.0001f,
+           "rim markers retain their direction");
+  }
+  radar_x = 3.01f; radar_y = 0;
+  Expect(!ProjectCheckMarker(radar_x, radar_y, 50, 40), "markers beyond three times the range disappear");
+  radar_x = 0;
+  Expect(!ProjectCheckMarker(radar_x, radar_y, 0, 40), "zero size radar draws nothing");
+  radar_x = std::numeric_limits<float>::quiet_NaN();
+  Expect(!ProjectCheckMarker(radar_x, radar_y, 50, 40), "invalid projections draw nothing");
 
   if (failures == 0) {
     std::cout << "OK: protocol self-test passed\n";

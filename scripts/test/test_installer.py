@@ -1,18 +1,4 @@
-"""Tests for the mod installer, on a temporary install with a fake payload.
-
-The tests up to TestDeltaPayload pass an explicit payload, so the real bundled
-payload (staged by the build once the mod compiles) never matters to them: they
-cover deploy, backup, idempotency, the no-payload path, the removal manifest,
-remove, and the text table patch that carries the pause menu's Archipelago
-label. TestDeltaPayload is the other half, where a payload of patches is put
-where the installer looks for the bundled one, since building the files from the
-install's own script is the thing an explicit payload skips.
-
-The text tables here are built by build_text_table, not copied from a game: the
-structure is the game's (a TABL of table offsets, then per-table TKEY records
-sorted by key and TDAT text in UTF-16) and that is what the patch has to keep
-true.
-"""
+"""Installer tests using temporary folders and fake payloads. Delta tests rebuild scripts from fake stock."""
 
 from __future__ import annotations
 
@@ -24,7 +10,7 @@ import unittest
 import unittest.mock
 from pathlib import Path
 
-from ... import installer
+from gta_vc_setup import installer
 
 ASI = ("GtaVcAp.VC.asi", b"asi-bytes")
 SCM = ("main.scm", b"scm-bytes")
@@ -33,9 +19,7 @@ PAYLOAD = [ASI, CLEO, SCM]
 
 
 def build_text_table(tables: dict[str, dict[str, str]]) -> bytes:
-    """A Vice City text table file carrying the given tables. MAIN comes first
-    and opens with its TKEY chunk; every other table is preceded by its name,
-    the way the game's own files are laid out."""
+    """Build a GXT file. MAIN starts with TKEY, other tables start with their names."""
     names = ["MAIN", *sorted(name for name in tables if name != "MAIN")]
     bodies: list[bytes] = []
     for name in names:
@@ -66,12 +50,7 @@ VANILLA_TABLE = build_text_table({
 
 
 def build_executable(build: str = installer.GAME_BUILD_SUPPORTED) -> bytes:
-    """A minimal PE image carrying one build's prologue where plugin-sdk reads it.
-
-    Not a copy of anything: an MZ stub, a PE header, and one section big enough to
-    cover the addresses in the table. What makes it a given build is four bytes at
-    that build's own address, which is exactly what the detector looks at.
-    """
+    """Build a minimal PE with the chosen build's prologue at its expected address."""
     image_base = 0x400000
     section_address = 0x1000
     section_offset = 0x400
@@ -82,6 +61,7 @@ def build_executable(build: str = installer.GAME_BUILD_SUPPORTED) -> bytes:
     struct.pack_into("<IHH", header, 0x80, 0x4550, 0x14C, 1)
     optional_size = 224
     struct.pack_into("<H", header, 0x80 + 20, optional_size)
+    struct.pack_into("<H", header, 0x80 + 24, 0x10B)
     struct.pack_into("<I", header, 0x80 + 24 + 28, image_base)
     table = 0x80 + 24 + optional_size
     struct.pack_into("<8sIIII", header, table, b".text".ljust(8),
@@ -94,7 +74,7 @@ def build_executable(build: str = installer.GAME_BUILD_SUPPORTED) -> bytes:
 
 
 def install_executable(install_dir: Path, build: str = installer.GAME_BUILD_SUPPORTED) -> Path:
-    """Puts a build's executable where the detector looks for it."""
+    """Write a fake executable to the game folder."""
     path = Path(install_dir) / installer.GAME_EXECUTABLE
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_bytes(build_executable(build))
@@ -123,13 +103,11 @@ class TestDeploy(unittest.TestCase):
         self.assertEqual((self.install / "GtaVcAp.VC.asi").read_bytes(), b"asi-bytes")
         self.assertEqual((self.install / "CLEO" / "gtavc_ap.cs").read_bytes(), b"cleo-bytes")
         self.assertEqual((self.install / "data" / "main.scm").read_bytes(), b"scm-bytes")
-        # One line for the whole payload, however many files carry it, so the
-        # launcher does not read as a dozen separate installs.
+        # One summary for the whole payload.
         self.assertEqual(log, ["Installed the mod into the game folder."])
 
     def test_says_it_installed_once_however_many_files_moved(self) -> None:
-        # Two payloads of different sizes, same one line. The count is what
-        # regressed into a per-file list, so the count is what is pinned.
+        # Payload size must not change the summary.
         one = installer.deploy(self.install, payload=[SCM])
         installer.remove(self.install, payload=[SCM])
         many = installer.deploy(self.install, payload=PAYLOAD)
@@ -137,9 +115,7 @@ class TestDeploy(unittest.TestCase):
         self.assertEqual(len(many), 1)
 
     def test_clears_a_copy_an_earlier_build_left_in_scripts(self) -> None:
-        # The ASI loader scans the install root and scripts alike, so a copy an
-        # earlier build left in scripts runs as a second instance beside the
-        # current one. Deploy takes it out, and says so.
+        # The ASI loader loads copies in both root and scripts.
         stale = self.install / "scripts" / "GtaVcAp.VC.asi"
         stale.parent.mkdir(parents=True)
         stale.write_bytes(b"an-older-build")
@@ -149,14 +125,7 @@ class TestDeploy(unittest.TestCase):
         self.assertTrue(any("scripts/GtaVcAp.VC.asi" in line for line in log))
 
     def test_deploy_clears_the_superseded_shop_script(self) -> None:
-        # One build shipped the six weapon shops as a single apshops.cs. Left in
-        # place it runs beside the six that replaced it, so every shop thread
-        # exists twice. Deploy takes it out, and an install still holding one is
-        # not current, or the heal never runs.
-        #
-        # Deployed FIRST, then the leftover planted: asking before a deploy
-        # answers False because the payload is not there yet, whatever the stale
-        # list says, so the interesting half would bind to nothing.
+        # Deploy first so only the duplicate shop script makes the install stale.
         installer.deploy(self.install, payload=PAYLOAD)
         self.assertTrue(installer.mod_is_current(self.install, payload=PAYLOAD))
         stale = self.install / "CLEO" / "apshops.cs"
@@ -168,19 +137,14 @@ class TestDeploy(unittest.TestCase):
         self.assertTrue(any("CLEO/apshops.cs" in line for line in log))
 
     def test_stale_paths_name_the_folder_a_build_wrote_to(self) -> None:
-        # Stale entries are joined literally while deploy sends a payload path
-        # through _destination, which maps cleo/ to CLEO/. On Windows the two
-        # spellings are the same file, so only this assertion catches the
-        # difference on the machine the mod is built on.
+        # Stale paths keep literal casing
         for stale_path in installer.STALE_PAYLOAD_PATHS:
             first = stale_path.split("/")[0]
             if first.lower() == "cleo":
                 self.assertEqual(first, "CLEO", stale_path)
 
     def test_nothing_is_both_shipped_and_stale_at_one_place(self) -> None:
-        # A file deploy writes and then clears as stale would be rewritten every
-        # run and never read as current. The two lists may name the same file,
-        # since they resolve differently, but not the same DESTINATION.
+        # Compare resolved destinations to catch shipped/stale overlap.
         shipped = {installer._destination(self.install, path)
                    for path in installer.SHIPPED_PAYLOAD_PATHS}
         for stale_path in installer.STALE_PAYLOAD_PATHS:
@@ -188,8 +152,6 @@ class TestDeploy(unittest.TestCase):
             self.assertNotIn(stale, shipped, stale_path)
 
     def test_leaves_other_files_in_scripts_alone(self) -> None:
-        # Only the paths this mod itself used to occupy are cleared; the folder
-        # belongs to the player and may hold anything else.
         other = self.install / "scripts" / "SomeOtherMod.asi"
         other.parent.mkdir(parents=True)
         other.write_bytes(b"not-ours")
@@ -197,8 +159,7 @@ class TestDeploy(unittest.TestCase):
         self.assertEqual(other.read_bytes(), b"not-ours")
 
     def test_a_stale_copy_makes_the_install_not_current(self) -> None:
-        # The client skips deploy while the mod reads as current, so a stale copy
-        # has to make it read stale or the duplicate would never be cleaned.
+        # A duplicate must mark the install stale so deploy removes it.
         installer.deploy(self.install, payload=PAYLOAD)
         self.assertTrue(installer.mod_is_current(self.install, payload=PAYLOAD))
         stale = self.install / "scripts" / "GtaVcAp.VC.asi"
@@ -211,7 +172,7 @@ class TestDeploy(unittest.TestCase):
         stock.parent.mkdir(parents=True)
         stock.write_bytes(b"stock-scm")
         installer.deploy(self.install, payload=[SCM])
-        self.assertEqual(stock.read_bytes(), b"scm-bytes")  # replaced
+        self.assertEqual(stock.read_bytes(), b"scm-bytes")
         self.assertEqual(
             (self.install / "AP_mod_backup" / "main.scm").read_bytes(), b"stock-scm")
 
@@ -274,8 +235,7 @@ class TestRemove(unittest.TestCase):
         self.assertEqual(installer.remove(self.install, payload=PAYLOAD), [])
 
     def test_removes_shipped_names_without_a_payload(self) -> None:
-        # An apworld packaged without a mod still cleans up a modded install,
-        # by the fixed list of every file a payload has ever deployed.
+        # The removal manifest works without a bundled payload.
         for relative_path in installer.SHIPPED_PAYLOAD_PATHS:
             destination = installer._destination(self.install, relative_path)
             destination.parent.mkdir(parents=True, exist_ok=True)
@@ -290,7 +250,7 @@ class TestRemove(unittest.TestCase):
         stock.parent.mkdir(parents=True)
         stock.write_bytes(b"stock-scm")
         installer.deploy(self.install, payload=[SCM])
-        stock.write_bytes(b"player-scm")  # the player replaced it after deploy
+        stock.write_bytes(b"player-scm")  # Player replaces the modded script.
         log = installer.remove(self.install, payload=[SCM])
         self.assertEqual(stock.read_bytes(), b"player-scm")
         self.assertEqual(
@@ -307,7 +267,7 @@ class TestRemove(unittest.TestCase):
         installer.remove(self.install, payload=[SCM])
         self.assertEqual(stock.read_bytes(), b"stock-scm")
         self.assertFalse((self.install / "AP_mod_backup" / "main.scm").exists())
-        self.assertEqual(stray.read_bytes(), b"stray-bytes")  # never swept along
+        self.assertEqual(stray.read_bytes(), b"stray-bytes")
 
     def test_already_stock_scm_only_cleans_the_backup(self) -> None:
         backup = self.install / "AP_mod_backup" / "main.scm"
@@ -315,15 +275,14 @@ class TestRemove(unittest.TestCase):
         backup.write_bytes(b"stock-scm")
         stock = self.install / "data" / "main.scm"
         stock.parent.mkdir(parents=True)
-        stock.write_bytes(b"stock-scm")  # already restored by hand
+        stock.write_bytes(b"stock-scm")  # Manually restored.
         log = installer.remove(self.install, payload=[SCM])
         self.assertEqual(stock.read_bytes(), b"stock-scm")
         self.assertFalse((self.install / "AP_mod_backup").exists())
         self.assertFalse(any("Restored" in line for line in log))
 
     def test_warns_when_the_modded_scm_has_no_backup(self) -> None:
-        # No stock main.scm existed at deploy time, so there is no backup to
-        # restore; the modded file is recognized and left in place with a note.
+        # Without a backup, keep the modded script and warn.
         installer.deploy(self.install, payload=[SCM])
         log = installer.remove(self.install, payload=[SCM])
         self.assertEqual((self.install / "data" / "main.scm").read_bytes(), b"scm-bytes")
@@ -338,12 +297,7 @@ class TestRemove(unittest.TestCase):
         self.assertTrue(player_script.is_file())
 
     def test_removes_a_copy_an_earlier_build_left_in_scripts(self) -> None:
-        # Left behind, it would keep running the mod against the restored stock
-        # main.scm and the deleted CLEO scripts, which is worse than a leftover.
-        #
-        # Every stale path, not one of them: apshops.cs is on this list ALONE,
-        # having come off the shipped list to stop deploy writing and clearing
-        # one file, so an uninstall cleaning it rests entirely on this pass.
+        # Check every stale path, including scripts absent from the shipped list.
         installer.deploy(self.install, payload=PAYLOAD)
         planted = []
         for stale_path in installer.STALE_PAYLOAD_PATHS:
@@ -357,8 +311,7 @@ class TestRemove(unittest.TestCase):
             self.assertTrue(any(stale_path in line for line in log), stale_path)
 
     def test_says_it_removed_once_however_many_files_went(self) -> None:
-        # The counterpart of the install line, and pinned for the same reason:
-        # this was a line per file and read as a dozen separate removals.
+        # One removal summary for the whole payload.
         installer.deploy(self.install, payload=PAYLOAD)
         log = installer.remove(self.install, payload=PAYLOAD)
         summary = [line for line in log if line.startswith(("Installed", "Removed"))]
@@ -381,8 +334,7 @@ class TestTextTablePatch(unittest.TestCase):
                              installer.gxt_value(VANILLA_TABLE, key))
 
     def test_keeps_the_keys_sorted_so_the_game_can_find_them(self) -> None:
-        # The game binary-searches the key records, so an insertion out of order
-        # would hide the new key and every key past it.
+        # Binary search requires sorted keys.
         patched = installer.add_gxt_key(VANILLA_TABLE, "APSTAT", "ARCHIPELAGO")
         keys = installer.gxt_keys(patched)
         self.assertEqual(keys, sorted(keys))
@@ -390,9 +342,8 @@ class TestTextTablePatch(unittest.TestCase):
 
     def test_moves_the_tables_after_main_down_by_what_main_grew(self) -> None:
         patched = installer.add_gxt_key(VANILLA_TABLE, "APSTAT", "ARCHIPELAGO")
-        # Reading a later table's own key proves its TABL offset followed the
-        # text that was inserted above it.
-        record, key_body, key_size, data_body, data_size = \
+        # Later TABL offsets must still point to valid tables.
+        _, _, _, _, data_size = \
             installer._gxt_main_table(patched)
         self.assertGreater(data_size,
                            installer._gxt_main_table(VANILLA_TABLE)[4])
@@ -408,8 +359,7 @@ class TestTextTablePatch(unittest.TestCase):
         self.assertEqual(installer.add_gxt_key(once, "APSTAT", "ARCHIPELAGO"), once)
 
     def test_repoints_a_key_that_reads_something_else(self) -> None:
-        # A table an earlier build patched with another label must heal, or the
-        # install is never current again and deploy runs on every launch.
+        # Update stale labels without duplicating keys.
         stale = installer.add_gxt_key(VANILLA_TABLE, "APSTAT", "OLD LABEL")
         healed = installer.add_gxt_key(stale, "APSTAT", "ARCHIPELAGO")
         self.assertEqual(installer.gxt_value(healed, "APSTAT"), "ARCHIPELAGO")
@@ -429,10 +379,7 @@ class TestTextTablePatch(unittest.TestCase):
             installer.add_gxt_key(b"not a gxt at all", "APSTAT", "x")
 
     def test_no_added_string_asks_the_game_for_a_number(self) -> None:
-        # The whole reason the pass banners have keys of their own is that the
-        # vanilla ones spell the reward amount into the same string, so a "~1~"
-        # left in one would put a number back beside a mission that now pays
-        # nothing, and the script prints these with no number to give it.
+        # The script supplies no number for a ~1~ placeholder.
         for key, value in installer.ADDED_TEXT.items():
             with self.subTest(key=key):
                 self.assertNotIn("~1~", value)
@@ -455,18 +402,13 @@ class TestTextTableDeploy(unittest.TestCase):
         installer.deploy(self.install, payload=PAYLOAD)
         for name in ("american.gxt", "french.gxt"):
             patched = (self.install / "TEXT" / name).read_bytes()
-            # Every key the mod adds, not the panel key alone: a shop stand
-            # whose key is missing prints its own name back, which is the
-            # signal the marker was put there to replace.
             for key, value in installer.ADDED_TEXT.items():
                 self.assertEqual(installer.gxt_value(patched, key), value, key)
             backup = self.install / installer.BACKUP_DIR_NAME / name
             self.assertEqual(backup.read_bytes(), VANILLA_TABLE)
 
     def test_a_table_missing_one_key_makes_the_install_not_current(self) -> None:
-        # What an install patched by an older build looks like: the panel key is
-        # there and a newer one is not. It has to read as stale, or the table
-        # never gains the key and the deploy that would add it never runs.
+        # Any missing mod key must trigger an update.
         for key in installer.ADDED_TEXT:
             with self.subTest(key=key):
                 installer.deploy(self.install, payload=PAYLOAD)
@@ -484,9 +426,7 @@ class TestTextTableDeploy(unittest.TestCase):
                     installer.ADDED_TEXT[key])
 
     def test_never_backs_up_a_table_an_older_build_patched(self) -> None:
-        # The counterpart of the label-change case below, for a key added later:
-        # the table already carries the panel key, so it is not stock and saving
-        # it as the backup would lose the real stock file for good.
+        # A table with any mod key is not a stock backup.
         (self.install / "TEXT" / "american.gxt").write_bytes(
             installer.add_gxt_key(VANILLA_TABLE, installer.PANEL_TEXT_KEY,
                                   installer.PANEL_TEXT))
@@ -514,16 +454,8 @@ class TestTextTableDeploy(unittest.TestCase):
         self.assertFalse([line for line in log if "the mod's text" in line])
 
     def test_a_truncated_table_is_reported_rather_than_raised(self) -> None:
-        # A half-written file raises struct.error out of the readers, which the
-        # guards have to name: deploy and remove both promise not to raise, and
-        # remove runs this after the payload files are already gone.
-        # Twelve bytes cuts an unpack_from short, which raises struct.error;
-        # twenty bytes reaches the chunk check, which raises ValueError. Both have
-        # to be caught, and only the first exercises the struct.error the guard
-        # names.
-        # Pinned rather than assumed, since which error a truncation raises
-        # depends on where it cuts: a length guard added to the reader later would
-        # otherwise turn both of these into ValueError with this test still green.
+        # Verify both errors: 12 bytes raises struct.error, 20 raises ValueError.
+        # Deploy and remove must handle both.
         with self.assertRaises(struct.error):
             installer.gxt_value(VANILLA_TABLE[:12], installer.PANEL_TEXT_KEY)
         with self.assertRaises(ValueError):
@@ -533,14 +465,12 @@ class TestTextTableDeploy(unittest.TestCase):
         log = installer.deploy(self.install, payload=PAYLOAD)
         reported = [line for line in log if "Could not add the mod's text" in line]
         self.assertEqual(len(reported), 2, log)
-        # A table this installer cannot read never holds an install up, and with
-        # both of them unreadable there is nothing left to hold one up.
+        # Unreadable tables do not block installation.
         self.assertTrue(installer.text_tables_are_patched(self.install))
         installer.remove(self.install, payload=PAYLOAD)
 
     def test_never_backs_up_a_table_it_already_patched(self) -> None:
-        # A label change must not save the patched file as the stock one: remove
-        # would then "restore stock" over a table that still carries the key.
+        # Never save a patched table as stock.
         stale = installer.add_gxt_key(VANILLA_TABLE, installer.PANEL_TEXT_KEY,
                                       "OLD LABEL")
         (self.install / "TEXT" / "american.gxt").write_bytes(stale)
@@ -581,9 +511,7 @@ class TestTextTableDeploy(unittest.TestCase):
         self.assertTrue([line for line in log if "No backup for TEXT/american.gxt" in line])
 
     def test_remove_restores_a_table_carrying_only_one_of_the_keys(self) -> None:
-        # A table left by an older build carries some of the keys and not
-        # others. Recognising it by any one of them is what lets remove put the
-        # stock file back instead of reading it as the player's own.
+        # Any mod key identifies a table for restoration.
         for key, value in installer.ADDED_TEXT.items():
             with self.subTest(key=key):
                 installer.deploy(self.install, payload=PAYLOAD)
@@ -594,12 +522,7 @@ class TestTextTableDeploy(unittest.TestCase):
 
 
 class TestGameBuild(unittest.TestCase):
-    """Which executable the mod will attach to, read the way plugin-sdk reads it.
-
-    The mod hooks the build plugin-sdk detects and no other, so an install on
-    another build runs a game that looks fine and sends nothing. Refusing it is
-    the only way a player hears about that at all.
-    """
+    """Executable detection and supported-build checks."""
 
     def setUp(self) -> None:
         self._tmp = tempfile.TemporaryDirectory()
@@ -619,8 +542,6 @@ class TestGameBuild(unittest.TestCase):
         installer.require_supported_game_build(self.install)
 
     def test_another_build_is_refused_by_name(self) -> None:
-        # Named, because "not supported" sends a player looking at everything and
-        # the build they have is the one fact that resolves it.
         for build in ("1.1 English", "Steam"):
             with self.subTest(build):
                 install_executable(self.install, build)
@@ -628,37 +549,38 @@ class TestGameBuild(unittest.TestCase):
                     installer.require_supported_game_build(self.install)
                 self.assertIn(build, str(refused.exception))
 
-    def test_a_build_nothing_can_read_installs_anyway_and_says_so(self) -> None:
-        # Deliberately not a refusal. plugin-sdk reads the game in memory, where
-        # a compressed executable has unpacked itself, so a packed 1.0 reads as
-        # nothing here and as 1.0 there: the mod would attach to it perfectly,
-        # and refusing would turn a working install away over a file this side
-        # cannot see into.
+    def test_an_unrecognized_build_is_refused(self) -> None:
         executable = self.install / installer.GAME_EXECUTABLE
         for content in (b"not an executable at all", build_executable()[:200], b""):
             with self.subTest(len(content)):
                 executable.write_bytes(content)
                 self.assertIsNone(installer.detect_game_build(self.install))
-                warning = installer.require_supported_game_build(self.install)
-                self.assertIn("Could not tell which build", warning)
+                with self.assertRaisesRegex(installer.GameBuildRefused, "Could not confirm"):
+                    installer.require_supported_game_build(self.install)
 
-    def test_no_executable_at_all_is_not_refused_either(self) -> None:
-        # The folder picker already refuses a folder with no gta-vc.exe, so this
-        # is only reachable on one deleted afterwards, and it is the same
-        # unreadable case.
+    def test_a_missing_executable_is_refused(self) -> None:
         self.assertIsNone(installer.detect_game_build(self.install))
-        self.assertIsNotNone(installer.require_supported_game_build(self.install))
+        with self.assertRaises(installer.GameBuildRefused):
+            installer.require_supported_game_build(self.install)
 
-    def test_an_unreadable_build_is_still_installed_and_reported(self) -> None:
+    def test_an_unreadable_build_is_refused_without_writing(self) -> None:
         (self.install / installer.GAME_EXECUTABLE).write_bytes(b"packed, for all we know")
-        log = installer.deploy(self.install, payload=PAYLOAD)
-        self.assertTrue((self.install / "GtaVcAp.VC.asi").is_file())
-        self.assertTrue([line for line in log if "Could not tell which build" in line])
+        with self.assertRaises(installer.GameBuildRefused):
+            installer.deploy(self.install, payload=PAYLOAD)
+        self.assertEqual([path.name for path in self.install.iterdir()], [installer.GAME_EXECUTABLE])
+        self.assertFalse(installer.mod_is_current(self.install, payload=PAYLOAD))
+
+    def test_wrong_pe_headers_are_refused_even_with_a_matching_prologue(self) -> None:
+        for offset, value in ((0, b"XX"), (0x84, b"\x64\x86"), (0x98, b"\x0b\x02")):
+            with self.subTest(offset=offset):
+                image = bytearray(build_executable())
+                image[offset:offset + len(value)] = value
+                (self.install / installer.GAME_EXECUTABLE).write_bytes(image)
+                with self.assertRaises(installer.GameBuildRefused):
+                    installer.require_supported_game_build(self.install)
 
     def test_an_apworld_with_no_payload_ignores_the_build(self) -> None:
-        # The no-op contract: an apworld shipped before the mod touches nothing,
-        # whatever executable is sitting in the folder. Asking about the build
-        # first would have made it refuse instead.
+        # Missing payload takes precedence over build validation.
         install_executable(self.install, "Steam")
         self.assertTrue(installer.mod_is_current(self.install, payload=[]))
         with self.assertRaises(FileNotFoundError):
@@ -671,9 +593,7 @@ class TestGameBuild(unittest.TestCase):
         self.assertFalse((self.install / "GtaVcAp.VC.asi").exists())
 
     def test_an_install_on_another_build_is_never_current(self) -> None:
-        # The one that makes the refusal reachable. Current means deploy is
-        # skipped, and a skipped deploy is a refusal nobody reads, which is the
-        # silent broken game this whole check exists to stop.
+        # Matching files cannot make an unsupported build current.
         install_executable(self.install)
         installer.deploy(self.install, payload=PAYLOAD)
         self.assertTrue(installer.mod_is_current(self.install, payload=PAYLOAD))
@@ -681,8 +601,7 @@ class TestGameBuild(unittest.TestCase):
         self.assertFalse(installer.mod_is_current(self.install, payload=PAYLOAD))
 
     def test_removal_works_on_a_build_the_mod_refuses(self) -> None:
-        # Uninstalling is how a player undoes a mistake, so it must not need the
-        # thing that was mistaken. Same rule as removal not needing the script.
+        # Removal must work on unsupported builds.
         install_executable(self.install)
         installer.deploy(self.install, payload=PAYLOAD)
         install_executable(self.install, "Steam")
@@ -690,15 +609,7 @@ class TestGameBuild(unittest.TestCase):
         self.assertFalse((self.install / "GtaVcAp.VC.asi").exists())
 
     def test_the_table_is_the_one_plugin_sdk_reads(self) -> None:
-        # The table is copied from plugin-sdk/shared/GameVersion.cpp, and the
-        # copy is only as good as its agreement with the original. Each address
-        # is paired with the version the SDK returns for it and with the prologue
-        # it expects, because the addresses alone would let 1.0 and 1.1 be
-        # swapped here and stay green while the check inverted: refuse the build
-        # the mod runs on, install on one it does not.
-        #
-        # A checkout of the SDK beside this one is not a given, so this reads it
-        # when it is there and says nothing when it is not.
+        # Match each SDK version, address and prologue. Skip if SDK is absent.
         source = (Path(__file__).resolve().parents[5]
                   / "plugin-sdk" / "shared" / "GameVersion.cpp")
         if not source.is_file():
@@ -712,7 +623,7 @@ class TestGameBuild(unittest.TestCase):
                          "the SDK names a different number of builds")
         sdk = {version: (int(address, 16), int(prologue, 16))
                for address, prologue, version in pairs}
-        # The SDK's own spelling of each build, against ours.
+        # Map SDK build names to installer names.
         ours = {"GAME_10EN": "1.0 English", "GAME_11EN": "1.1 English",
                 "GAME_STEAM": "Steam"}
         self.assertEqual(set(sdk), set(ours), "the SDK names different builds")
@@ -729,9 +640,7 @@ BUILT_CLEO = b"a watcher thread the mod adds"
 
 def build_delta_payload(root: Path, stock: bytes = STOCK_SCRIPT,
                         targets: dict[str, bytes] | None = None) -> Path:
-    """A bundled payload of the shape the build stages: the ASI whole, every
-    script as a delta against the stock one, and the manifest that says what
-    each delta must reconstruct."""
+    """Stage the ASI, stock-relative script deltas and hash manifest."""
     import hashlib
 
     import bsdiff4
@@ -752,8 +661,7 @@ def build_delta_payload(root: Path, stock: bytes = STOCK_SCRIPT,
 
 
 class TestDeltaPayload(unittest.TestCase):
-    """The payload carries no script of the game's, so every script the mod
-    installs is built here from the player's own file."""
+    """Rebuild scripts from fake stock using bundled deltas."""
 
     def setUp(self) -> None:
         self._tmp = tempfile.TemporaryDirectory()
@@ -791,18 +699,14 @@ class TestDeltaPayload(unittest.TestCase):
         })
 
     def test_the_backup_is_the_source_once_it_exists(self) -> None:
-        # After the first deploy the game folder holds our script, so the stock
-        # one is only in the backup. Reading the live file here would patch a
-        # patched file, which is how a payload builds itself twice into nothing.
+        # Use the stock backup, not the already patched live script.
         self._backup(STOCK_SCRIPT)
         self._script(BUILT_SCRIPT)
         self.assertEqual(dict(installer.materialize_payload(self.install))["main.scm"],
                          BUILT_SCRIPT)
 
     def test_a_backup_that_is_not_stock_refuses_even_when_the_live_file_is(self) -> None:
-        # The strict rule, deliberately: repairing the backup from the live file
-        # would be the mod rewriting the player's only copy of a game file on its
-        # own reasoning about which of the two is real.
+        # Refuse a bad backup and never replace it with the live script.
         self._backup(b"another mod's script")
         self._script(STOCK_SCRIPT)
         with self.assertRaises(installer.StockScriptRefused) as refused:
@@ -815,7 +719,7 @@ class TestDeltaPayload(unittest.TestCase):
             installer.materialize_payload(self.install)
         message = str(refused.exception)
         self.assertIn("data/main.scm", message)
-        # The hash found and the hash wanted, so a report says which file it is.
+        # Include the detected hash in the error.
         import hashlib
         self.assertIn(hashlib.sha256(b"a 1.1 script").hexdigest(), message)
 
@@ -825,8 +729,7 @@ class TestDeltaPayload(unittest.TestCase):
         self.assertIn("no data/main.scm", str(refused.exception))
 
     def test_a_rebuild_that_misses_its_target_refuses(self) -> None:
-        # The patch applies to anything; only the target hash says whether what
-        # came out is the file the build made.
+        # Successful patching still requires a matching target hash.
         manifest = json.loads(
             (self.payload / installer.PAYLOAD_MANIFEST_NAME).read_text(encoding="utf-8"))
         manifest["targets"]["main.scm"] = "0" * 64
@@ -848,16 +751,12 @@ class TestDeltaPayload(unittest.TestCase):
         self.assertTrue(installer.mod_is_current(self.install))
 
     def test_an_install_that_cannot_be_patched_is_not_current(self) -> None:
-        # Reported, not raised: deploy is where the refusal belongs, and a check
-        # that throws would reach the client as an install failure with no name.
+        # Deploy reports the refusal.
         self._script(b"a 1.1 script")
         self.assertFalse(installer.mod_is_current(self.install))
 
     def test_the_payload_reads_the_same_from_inside_an_apworld(self) -> None:
-        # A packaged apworld is a zip, so the payload arrives as a traversable
-        # rather than a directory. That is the only shape a player ever installs
-        # from, and every other test here uses a directory, so nothing else
-        # would catch a walk or a read that only works on real paths.
+        # Exercise zip traversables as well as filesystem paths.
         import zipfile
         archive = self.root / "packaged.apworld"
         with zipfile.ZipFile(archive, "w") as packaged:
@@ -877,18 +776,15 @@ class TestDeltaPayload(unittest.TestCase):
             })
 
     def test_a_payload_with_no_manifest_refuses(self) -> None:
-        # Nothing then says which script the patches were made against, and
-        # patching against a guess is how a game folder fills with rubbish.
+        # No manifest means no verified patch source.
         (self.payload / installer.PAYLOAD_MANIFEST_NAME).unlink()
         self._script(STOCK_SCRIPT)
         with self.assertRaises(installer.StockScriptRefused) as refused:
             installer.materialize_payload(self.install)
-        self.assertIn("Reinstall the apworld", str(refused.exception))
+        self.assertIn("standalone installer again", str(refused.exception))
 
     def test_a_manifest_that_will_not_read_refuses(self) -> None:
-        # Both ways it can fail to be the thing: not json at all, and json of
-        # another shape. The second is the one that would otherwise escape as a
-        # KeyError with no message for the player on it.
+        # Reject invalid JSON and invalid manifest structure.
         for content in (b"{not json at all", b'{"targets": "not a mapping"}',
                         b'["a list"]', b'{"stock_main_scm_sha256": 7}'):
             with self.subTest(content=content):
@@ -898,10 +794,7 @@ class TestDeltaPayload(unittest.TestCase):
                     installer.materialize_payload(self.install)
 
     def test_a_current_install_stays_current_without_its_backup(self) -> None:
-        # The backup is a game file a player may well tidy away. Asking whether
-        # the mod is in place must not depend on it: answering no here would
-        # send deploy to rebuild what is already there, and deploy would refuse
-        # for want of a stock script and hold the game shut over it.
+        # Checking installed files must not require the stock backup.
         self._script(STOCK_SCRIPT)
         installer.deploy(self.install)
         (self.install / installer.BACKUP_DIR_NAME / "main.scm").unlink()
@@ -912,8 +805,7 @@ class TestDeltaPayload(unittest.TestCase):
                          ["GtaVcAp.VC.asi", "cleo/apwatchers.cs", "main.scm"])
 
     def test_uninstalling_needs_no_stock_script(self) -> None:
-        # The install a player most wants to undo is the one that cannot be
-        # patched, so removal reads destinations and never a delta.
+        # Removal must not rebuild scripts.
         self._script(STOCK_SCRIPT)
         installer.deploy(self.install)
         (self.install / installer.BACKUP_DIR_NAME / "main.scm").unlink()
@@ -923,8 +815,7 @@ class TestDeltaPayload(unittest.TestCase):
         self.assertFalse((self.install / "CLEO" / "apwatchers.cs").exists())
 
     def test_removal_restores_the_script_this_payload_would_have_installed(self) -> None:
-        # Recognised by hash rather than by bytes, since the payload holds a
-        # delta and not the file. Anything else in data/main.scm is the player's.
+        # Identify the installed script by target hash, without rebuilding it.
         self._script(STOCK_SCRIPT)
         installer.deploy(self.install)
         installer.remove(self.install)

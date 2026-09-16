@@ -50,7 +50,8 @@ PACKAGE_NAMES: list[str] = list(OPTIONAL_CLASSES["hidden_packages"][1])
 # public release, after which only append and never reorder or remove.
 _ORDERED_LOCATION_NAMES: list[str] = list(STORY_MISSION_NAMES)
 for _class_key, (_option_attr, _names) in OPTIONAL_CLASSES.items():
-    _ORDERED_LOCATION_NAMES.extend(_names)
+    _ORDERED_LOCATION_NAMES.extend(name for name in _names if name not in data.EXTRA_TAXI_NAMES)
+_ORDERED_LOCATION_NAMES.extend(data.EXTRA_TAXI_NAMES)
 
 # The ordered names as the id table read them, so a test can see a duplicate the
 # dict below would silently collapse: the second one would take the first one's
@@ -107,6 +108,8 @@ for _name in data.MAINLAND_PACKAGES:
 for _name in data.STARFISH_PACKAGES:
     LOCATION_REGIONS[_name] = data.REGION_STARFISH
 for _activity, _level_count in data.EMERGENCY_LEVELS.items():
+    if _activity == "Taxi":
+        continue  # Every fare can be completed on the starting island.
     for _level in range(_level_count // 2 + 1, _level_count + 1):
         LOCATION_REGIONS[data.emergency_name(_activity, _level)] = data.REGION_MAINLAND
 for _name in data.MAINLAND_PROPERTIES:

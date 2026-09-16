@@ -320,10 +320,11 @@ def _cleo_problems(cleo_dir: pathlib.Path, scm: types.ModuleType,
                        f"the radio block "
                        f"(${scm.RADIO_RANDOMIZED_GLOBAL}.."
                        f"${scm.RADIO_REQUEST_GLOBAL})"),
-        # Completion globals only: the watchers set checks, they read no rewards.
-        "apwatchers.cs": (((scm.COMPLETION_BASE, completion_top),),
-                          f"the completion globals in use "
-                          f"(${scm.COMPLETION_BASE}..${completion_top})"),
+        # Completion globals plus the taxi spacing and its scratch counter.
+        "apwatchers.cs": (((scm.COMPLETION_BASE, completion_top),
+                          (scm.TAXI_MILESTONE_SPACING_GLOBAL, scm.TAXI_MILESTONE_COUNT_GLOBAL)),
+                          f"the completion globals (${scm.COMPLETION_BASE}..${completion_top}) "
+                          "and taxi milestone globals"),
         # The pickup watcher reads each slot's handle, which is a vanilla global
         # below the reserved block, and writes only the completion global of the
         # slot or stand it polled, so its runs are the pickup run inside the
@@ -331,7 +332,7 @@ def _cleo_problems(cleo_dir: pathlib.Path, scm: types.ModuleType,
         "appickup.cs": (((scm.completion_global(data.PICKUP_NAMES[0]),
                           scm.completion_global(data.PICKUP_NAMES[-1])),
                          (min(stand_globals), max(stand_globals))),
-                        f"the ambient pickup completion globals and Phil's "
+                        f"the world pickup completion globals and Phil's "
                         f"stands (${min(stand_globals)}..${max(stand_globals)})"),
         # The area thread reads unlock globals and bookkeeping, both of which sit
         # below the completion block, so it may reach nothing from there up. Named
@@ -754,7 +755,8 @@ def main() -> int:
     if link_world(root) is None:
         return 1
     sys.path.insert(0, str(root))
-    from worlds.gta_vice_city import data, installer, scm
+    from gta_vc_setup import installer
+    from worlds.gta_vice_city import data, scm
 
     scm_dir = REPOSITORY_ROOT / "mod" / "scm"
     asi_dir = REPOSITORY_ROOT / "mod" / "asi" / "src"
@@ -885,16 +887,21 @@ def main() -> int:
         ("build_scm.py", build, "DISTRICT_STRIDE", scm.DISTRICT_CAPACITY),
         ("build_scm.py", build, "CONTENT_ROWS", scm.CONTENT_CAPACITY),
         ("build_scm.py", build, "SPARE_FLAGS", scm.SPARE_FLAG_CAPACITY),
-        # The emergency-progress globals live in those spares, so they are the
-        # first pair whose drift the band rules would not catch: they sit inside
-        # a block that is deliberately unnamed, where a wrong number lands on
-        # another spare rather than on anything that would misbehave loudly. A
-        # level written to the wrong spare is simply a level never resumed.
+        # Check that emergency progress global numbers match scm.py.
+        ("ASI", asi, "kRememberEmergencyGlobal", scm.REMEMBER_EMERGENCY_GLOBAL),
+        ("ASI", asi, "kEmergencyProgressBase", scm.EMERGENCY_PROGRESS_BASE),
+        ("ASI", asi, "kVigilanteTimeRampGlobal", scm.VIGILANTE_TIME_RAMP_GLOBAL),
+        ("ASI", asi, "kVigilanteWantedRampGlobal", scm.VIGILANTE_WANTED_RAMP_GLOBAL),
         ("build_scm.py", build, "REMEMBER_EMERGENCY", scm.REMEMBER_EMERGENCY_GLOBAL),
         ("build_scm.py", build, "EMERGENCY_PROGRESS_BASE", scm.EMERGENCY_PROGRESS_BASE),
         ("build_scm.py", build, "VIGILANTE_TIME_RAMP", scm.VIGILANTE_TIME_RAMP_GLOBAL),
         ("build_scm.py", build, "VIGILANTE_WANTED_RAMP",
          scm.VIGILANTE_WANTED_RAMP_GLOBAL),
+        ("build_scm.py", build, "TAXI_MILESTONE_SPACING", scm.TAXI_MILESTONE_SPACING_GLOBAL),
+        ("build_scm.py", build, "TAXI_MILESTONE_COUNT", scm.TAXI_MILESTONE_COUNT_GLOBAL),
+        ("build_scm.py", build, "TAXI_EXTRA_COMPLETION_BASE", scm.completion_global("Taxi Level 11")),
+        ("ASI", asi, "kTaxiExtraCompletionBase", scm.completion_global("Taxi Level 11")),
+        ("ASI", asi, "kTaxiMilestoneSpacingGlobal", scm.TAXI_MILESTONE_SPACING_GLOBAL),
         ("ASI", asi, "kRadioStationCount", scm.RADIO_STATION_COUNT),
         ("ASI", asi, "kSeedHashBase", scm.SEED_HASH_BASE),
         ("ASI", asi, "kSeedHashGlobalCount", scm.SEED_HASH_GLOBAL_COUNT),

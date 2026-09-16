@@ -7,7 +7,10 @@
 // the tilde neutralisation cannot drift apart between them.
 #pragma once
 
+#include <algorithm>
 #include <cstddef>
+#include <deque>
+#include <memory>
 #include <string>
 
 #include "scm_toasts.hpp"
@@ -16,8 +19,61 @@
 #include <CFont.h>
 #include <CFontDetails.h>
 #include <RenderWare.h>
+#include <CSprite2d.h>
+#include "console_font.hpp"
 
 namespace gtavc {
+
+class ConsoleFont {
+  struct Entry {
+    std::wstring text;
+    std::unique_ptr<CSprite2d> sprite;
+    int width, height, advance;
+  };
+  std::deque<Entry> cache_;
+ public:
+  const int cell_width, height;
+  ConsoleFont(int width, int font_height) : cell_width(width), height(font_height) {}
+  float Draw(float x, float y, std::wstring text, const CRGBA& color) {
+    for (auto& c : text) if (c < 32) c = L' ';
+    if (text.empty()) return 0;
+    auto entry = std::find_if(cache_.begin(), cache_.end(), [&](const Entry& e) { return e.text == text; });
+    if (entry == cache_.end()) {
+      ConsoleTextBitmap bitmap(text, cell_width, height);
+      if (!bitmap.pixels) return static_cast<float>(bitmap.advance);
+      auto* image = RwImageCreate(bitmap.width, bitmap.height, 32);
+      if (!image) return static_cast<float>(bitmap.advance);
+      if (!RwImageAllocatePixels(image)) { RwImageDestroy(image); return static_cast<float>(bitmap.advance); }
+      for (int row = 0; row < bitmap.height; ++row) {
+        auto* dest = image->cpPixels + row * image->stride;
+        for (int col = 0; col < bitmap.width; ++col) {
+          dest[col * 4] = dest[col * 4 + 1] = dest[col * 4 + 2] = 255;
+          dest[col * 4 + 3] = static_cast<unsigned char>(bitmap.pixels[row * bitmap.width + col] & 255);
+        }
+      }
+      auto* raster = RwRasterCreate(bitmap.width, bitmap.height, 32, rwRASTERTYPETEXTURE | rwRASTERFORMAT8888);
+      const bool uploaded = raster && RwRasterSetFromImage(raster, image);
+      RwImageDestroy(image);
+      if (!uploaded) { if (raster) RwRasterDestroy(raster); return static_cast<float>(bitmap.advance); }
+      auto sprite = std::make_unique<CSprite2d>();
+      sprite->m_pTexture = RwTextureCreate(raster);
+      if (!sprite->m_pTexture) { RwRasterDestroy(raster); return static_cast<float>(bitmap.advance); }
+      // Bound GPU memory even in busy rooms. Glyph coverage is reused across colors.
+      if (cache_.size() == 128) cache_.pop_front();
+      cache_.push_back({std::move(text), std::move(sprite), bitmap.width, bitmap.height, bitmap.advance});
+      entry = std::prev(cache_.end());
+    }
+    // Cached glyphs can be evicted or resized; never leave their raster bound.
+    RwRaster* previous_raster = nullptr;
+    RwRenderStateGet(rwRENDERSTATETEXTURERASTER, &previous_raster);
+    entry->sprite->Draw(CRect(x, y, x + entry->width, y + entry->height), color);
+    RwRenderStateSet(rwRENDERSTATETEXTURERASTER, previous_raster);
+    return static_cast<float>(entry->advance);
+  }
+};
+
+float PrintMixed(ConsoleFont& fallback, float x, float y, std::wstring text,
+                 const CRGBA& color, bool draw = true);
 
 // The virtual screen the frontend lays out in, which the game stretches to
 // whatever resolution is running. The menu table's own positions are in these

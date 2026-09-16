@@ -20,7 +20,6 @@
 
 #include <array>
 #include <cstddef>
-#include <cstdlib>
 #include <string>
 #include <utility>
 #include <vector>
@@ -89,15 +88,15 @@ inline LiveToast QueuedToast(const ToastRow& row) {
 }
 
 // The rows that hold their place until something clears them, each addressed by
-// what it is about so a repeat replaces rather than stacks. Both explain a state
-// the player has to act on rather than reporting an event, so neither expires.
+// what it is about so a repeat replaces rather than stacks. They do not expire.
 enum class ToastNotice {
   // Why nothing in this seed will work: the client refused the running game.
   kHandshakeRefusal,
   // The bridge is down, so checks are going nowhere.
   kBridgeDown,
+  kEmergencyChecks,
 };
-constexpr std::size_t kToastNoticeCount = 2;
+constexpr std::size_t kToastNoticeCount = 3;
 
 inline std::size_t ToastNoticeSlot(ToastNotice notice) {
   return static_cast<std::size_t>(notice);
@@ -114,11 +113,6 @@ constexpr unsigned int kToastLifetimeMs = 4000;
 // multiworld is hundreds of rows, and the bound is far above that. Reaching it
 // means something is generating rows that are not item movements.
 constexpr std::size_t kToastQueueMax = 4096;
-
-// How many rows the pause page's RECENT block keeps. A page column holds some
-// twenty lines and a row is usually two of them, so this fills about one column
-// and leaves the rest of the page to the seed's own state.
-constexpr std::size_t kRecentToastMax = 12;
 
 // The whole stack between frames. The caller owns one and hands it to Advance
 // every frame.
@@ -154,8 +148,7 @@ constexpr float kRadarTopY = 256.0f;
 // Where the stack draws, in the frontend's own 640x448 units. Defaults are the
 // measured band: the anchor sits near the top of an otherwise empty corner, the
 // floor clears the radar, and the width holds a sentence with its location on one
-// line. An optional ini beside the module may override any of them,
-// which is why this is a struct of values rather than a set of constants.
+// line. These built-in values are used for every session.
 struct ToastGeometry {
   float anchor_x = 18.0f;
   // Where the TOP line draws. Rows stack downward from here, newest first, so a
@@ -238,8 +231,7 @@ inline std::size_t ToastLineCapacityFrom(const ToastGeometry& geometry, float to
 }
 
 // The band with nothing pushing its top down, which is what the geometry alone
-// says and what the tests measure. Always at least one line, since
-// BoundToastGeometry keeps the floor at or below the anchor.
+// says and what the tests measure.
 inline std::size_t ToastLineCapacity(const ToastGeometry& geometry) {
   return ToastLineCapacityFrom(geometry, geometry.anchor_y);
 }
@@ -343,7 +335,7 @@ inline void AdvanceToastStack(ToastStackState& state, unsigned int now_ms,
       // the lines that would survive anyway, and cutting it here says so instead of
       // leaving it to wherever the floor happens to fall.
       //
-      // Only reachable through a hand-edited geometry: the measured band holds
+      // For a smaller geometry: the measured band holds
       // eighteen lines and a row carries one, or four at the very most.
       if (!state.visible.empty() || rotating_capacity == 0) break;
       LiveToast trimmed = queued;
@@ -633,197 +625,6 @@ inline ToastRole ToastRoleFromName(const std::string& name) {
 // is a layout marker rather than a segment, and the row builder below turns it
 // into one.
 constexpr const char* kToastNewlineName = "newline";
-
-// The optional file that tunes where the stack draws, parsed here rather than
-// beside the reading so the console self-test can drive every case: the bounds,
-// the malformed lines, the comment forms and the values a hand edit can produce.
-// Only opening the file needs anything the game has.
-//
-// The section keeps the file open to other sections a later change may want
-// without this one having to know about them.
-constexpr const char* kToastSettingsSection = "[toasts]";
-
-// The bounds a hand-edited value is held to. A stack drawn off the screen would
-// take the handshake refusal with it, so the file may move the stack but not lose
-// it.
-constexpr float kToastMinScale = 0.2f;
-constexpr float kToastMaxScale = 2.0f;
-constexpr float kToastMinLineHeight = 6.0f;
-constexpr float kToastMinWidth = 60.0f;
-constexpr unsigned int kToastMinLifetimeMs = 500;
-constexpr unsigned int kToastMaxLifetimeMs = 60000;
-
-inline float ClampToastValue(float value, float low, float high) {
-  return value < low ? low : (value > high ? high : value);
-}
-
-inline void TrimToastText(std::string& text) {
-  const std::size_t first = text.find_first_not_of(" \t\r\n");
-  if (first == std::string::npos) {
-    text.clear();
-    return;
-  }
-  const std::size_t last = text.find_last_not_of(" \t\r\n");
-  text = text.substr(first, last - first + 1);
-}
-
-// One `key = value` line, or nothing. Whitespace either side of both is dropped
-// and anything from a semicolon or a hash onward is a comment, which is what an
-// ini file means by those in every reader a player is likely to have seen.
-inline bool ParseToastSetting(const std::string& raw, std::string& key,
-                              std::string& value) {
-  std::string line = raw;
-  const std::size_t comment = line.find_first_of(";#");
-  if (comment != std::string::npos) line.erase(comment);
-  const std::size_t equals = line.find('=');
-  if (equals == std::string::npos) return false;
-  key = line.substr(0, equals);
-  value = line.substr(equals + 1);
-  TrimToastText(key);
-  TrimToastText(value);
-  return !key.empty() && !value.empty();
-}
-
-// A value only where the whole of it is a finite number. A parse that stopped
-// early means the line is not the number the file meant, so the default is kept
-// rather than a prefix taken: "3 4" and "wide" both leave the setting alone.
-//
-// The finiteness test is not decoration. Every comparison against a NaN is false,
-// so a NaN would pass every bound below unchanged, and a NaN band then makes the
-// line count a cast from a NaN, which is undefined and in practice enormous: the
-// whole queue admitted at once onto a stack whose floor test can never be true.
-inline bool ParseToastFloat(const std::string& text, float& out) {
-  char* end = nullptr;
-  const double parsed = std::strtod(text.c_str(), &end);
-  if (end == nullptr || *end != 0) return false;
-  // Its own negation, which only a NaN is.
-  if (!(parsed == parsed)) return false;
-  if (parsed > 1e30 || parsed < -1e30) return false;
-  out = static_cast<float>(parsed);
-  return true;
-}
-
-inline bool ParseToastUnsigned(const std::string& text, unsigned int& out) {
-  float parsed = 0.0f;
-  if (!ParseToastFloat(text, parsed)) return false;
-  if (parsed < 0.0f) return false;
-  out = static_cast<unsigned int>(parsed);
-  return true;
-}
-
-// Everything the file may say, applied over the defaults it was handed.
-inline void ApplyToastSetting(ToastGeometry& geometry, const std::string& key,
-                              const std::string& value) {
-  float number = 0.0f;
-  if (key == "anchor_x" && ParseToastFloat(value, number)) {
-    geometry.anchor_x = number;
-  } else if (key == "anchor_y" && ParseToastFloat(value, number)) {
-    geometry.anchor_y = number;
-  } else if (key == "width" && ParseToastFloat(value, number)) {
-    geometry.width = number;
-  } else if (key == "floor_y" && ParseToastFloat(value, number)) {
-    geometry.floor_y = number;
-  } else if (key == "line_height" && ParseToastFloat(value, number)) {
-    geometry.line_height = number;
-  } else if (key == "scale_x" && ParseToastFloat(value, number)) {
-    geometry.scale_x = number;
-  } else if (key == "scale_y" && ParseToastFloat(value, number)) {
-    geometry.scale_y = number;
-  } else if (key == "continuation_indent" && ParseToastFloat(value, number)) {
-    geometry.continuation_indent = number;
-  } else {
-    unsigned int milliseconds = 0;
-    if (key == "lifetime_ms" && ParseToastUnsigned(value, milliseconds)) {
-      geometry.lifetime_ms = milliseconds;
-    }
-  }
-}
-
-// The read geometry held to something drawable. The anchor and the floor are
-// ordered rather than each clamped alone, so a file that swapped them draws a
-// band of one line at the anchor instead of an inverted one.
-inline ToastGeometry BoundToastGeometry(ToastGeometry geometry) {
-  geometry.anchor_x = ClampToastValue(geometry.anchor_x, 0.0f,
-                                     kVirtualScreenWidth - kToastMinWidth);
-  geometry.anchor_y =
-      ClampToastValue(geometry.anchor_y, 0.0f, kVirtualScreenHeight - 1.0f);
-  // The floor is never above the top it is measured from, so a file that swapped
-  // them draws a band of one line at the anchor instead of an inverted one.
-  geometry.floor_y = ClampToastValue(geometry.floor_y, geometry.anchor_y,
-                                     kVirtualScreenHeight);
-  geometry.width = ClampToastValue(geometry.width, kToastMinWidth,
-                                   kVirtualScreenWidth - geometry.anchor_x);
-  geometry.line_height = ClampToastValue(geometry.line_height, kToastMinLineHeight,
-                                         kVirtualScreenHeight);
-
-  geometry.scale_x =
-      ClampToastValue(geometry.scale_x, kToastMinScale, kToastMaxScale);
-  geometry.scale_y =
-      ClampToastValue(geometry.scale_y, kToastMinScale, kToastMaxScale);
-  // The leading is floored at the font's own advance, AFTER the scale it depends on
-  // has been clamped. A file may tune the spacing but not draw every row into the
-  // one above it, which is the same rule the bounds above follow for the stack's
-  // position: the file moves the stack, it does not get to break it. Nothing
-  // stopped `line_height = 6` at `scale_y = 1.0` before, which overlapped every row
-  // by twelve units while the geometry's own comments presented non-overlap as a
-  // property.
-  if (geometry.line_height < ToastLineAdvance(geometry)) {
-    geometry.line_height = ToastLineAdvance(geometry);
-  }
-  geometry.continuation_indent =
-      ClampToastValue(geometry.continuation_indent, 0.0f, geometry.width / 2.0f);
-  if (geometry.lifetime_ms < kToastMinLifetimeMs) {
-    geometry.lifetime_ms = kToastMinLifetimeMs;
-  }
-  if (geometry.lifetime_ms > kToastMaxLifetimeMs) {
-    geometry.lifetime_ms = kToastMaxLifetimeMs;
-  }
-  return geometry;
-}
-
-// The settings file a module reads: its own path with the extension replaced, so
-// `GtaVcAp.VC.asi` reads `GtaVcAp.VC.ini`. Derived rather than named, so the two
-// cannot drift if the build renames its output, and it is the convention the other
-// ASIs in a Vice City folder already follow.
-//
-// A path whose last component carries no dot gets the extension appended rather
-// than nothing, and a dot in a DIRECTORY name is not an extension, so the result is
-// always a file beside the module. Pure string work, here rather than beside the
-// module handle so the console self-test can drive both of those cases.
-inline std::string SettingsPathForModule(const std::string& module_path) {
-  if (module_path.empty()) return std::string();
-  std::string path = module_path;
-  const std::size_t separator = path.find_last_of("\\/");
-  const std::size_t dot = path.find_last_of('.');
-  if (dot != std::string::npos &&
-      (separator == std::string::npos || dot > separator)) {
-    path.erase(dot);
-  }
-  return path + ".ini";
-}
-
-// A whole file, as its lines. Settings outside the stack's own section are
-// ignored, so another section cannot reach these keys by accident.
-inline ToastGeometry ParseToastGeometry(const std::vector<std::string>& lines) {
-  ToastGeometry geometry;
-  bool in_section = false;
-  for (const std::string& raw : lines) {
-    std::string trimmed = raw;
-    TrimToastText(trimmed);
-    if (trimmed.empty()) continue;
-    if (trimmed.front() == '[') {
-      in_section = trimmed == kToastSettingsSection;
-      continue;
-    }
-    if (!in_section) continue;
-    std::string key;
-    std::string value;
-    if (ParseToastSetting(trimmed, key, value)) {
-      ApplyToastSetting(geometry, key, value);
-    }
-  }
-  return BoundToastGeometry(geometry);
-}
 
 // A flat wire segment list built into a row, splitting on the newline marker.
 // Bounded on both counts: a row past kToastMaxSegments stops taking segments and
