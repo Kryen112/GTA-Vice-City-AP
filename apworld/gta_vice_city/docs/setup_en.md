@@ -4,8 +4,8 @@
 
 - [Game Info](/games/Grand%20Theft%20Auto%20Vice%20City/info/en)
 - [Options Page](/games/Grand%20Theft%20Auto%20Vice%20City/player-options)
-- [GTA Vice City Archipelago GitHub](https://github.com/randomcodegen/GTA-Vice-City-AP)
-- [Releases](https://github.com/randomcodegen/GTA-Vice-City-AP/releases)
+- [GTA Vice City Archipelago GitHub](https://github.com/Kryen112/GTA-Vice-City-AP)
+- [Releases](https://github.com/Kryen112/GTA-Vice-City-AP/releases)
 
 This mod turns GTA: Vice City into an Archipelago game. Your progress unlocks and
 your rewards come from the multiworld, and your checks send items to the other
@@ -17,7 +17,7 @@ needs to run while you play.
 ## Standalone Windows setup
 
 Download **GTA-Vice-City-AP-Setup.exe** from the
-[releases page](https://github.com/randomcodegen/GTA-Vice-City-AP/releases). It installs
+[releases page](https://github.com/Kryen112/GTA-Vice-City-AP/releases). It installs
 the mod without a separate Python or Archipelago installation:
 
 1. Close Vice City and run the setup file. Allow its Windows administrator prompt.

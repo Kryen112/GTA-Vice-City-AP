@@ -4,7 +4,7 @@
 
 - [Setup Guide](/tutorial/Grand%20Theft%20Auto%20Vice%20City/setup/en)
 - [Options Page](/games/Grand%20Theft%20Auto%20Vice%20City/player-options)
-- [GTA Vice City Archipelago GitHub](https://github.com/randomcodegen/GTA-Vice-City-AP)
+- [GTA Vice City Archipelago GitHub](https://github.com/Kryen112/GTA-Vice-City-AP)
 
 ## What you need before anything else
 
