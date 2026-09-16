@@ -5,7 +5,7 @@ coordinate table: https://github.com/Kryen112/GTAVC_AP_Poptracker/blob/main/data
 The other positions use the world's existing placement tables.
 """
 
-from . import data, district_data, locations, scm, shop_data
+from . import data, district_data, items, locations, rules, scm, shop_data
 
 STORE_COORDS: list[tuple[float, float, float]] = [
     (202.7, -474.1, 10.1),
@@ -55,8 +55,8 @@ STUNT_JUMP_COORDS: list[tuple[float, float, float]] = [
     (296.9, -238.3, 0.0),
     (-668.0, 1156.2, 0.0),
     (-523.4, 847.7, 0.0),
-    (-300.8, 1113.3, 0.0),
     (-832.0, 1148.4, 0.0),
+    (-300.8, 1113.3, 0.0),
     (-1007.8, -35.2, 0.0),
     (-945.3, -117.2, 0.0),
     (-896.5, 293.0, 0.0),
@@ -74,8 +74,8 @@ STUNT_JUMP_COORDS: list[tuple[float, float, float]] = [
     (441.4, -128.9, 0.0),
     (285.2, -503.9, 0.0),
     (367.2, -714.8, 0.0),
-    (453.1, -511.7, 0.0),
     (464.8, -527.3, 0.0),
+    (453.1, -511.7, 0.0),
     (460.9, -382.8, 0.0),
     (250.0, -488.3, 0.0),
     (-355.5, -293.0, 0.0),
@@ -86,6 +86,45 @@ CATEGORY_COLORS = {
     "hidden_packages": 1, "robbable_stores": 2, "rampages": 3, "pickups": 4,
     "stunt_jumps": 5, "properties": 6, "side_events": 7, "shops": 8,
 }
+
+
+def marker_requirements(split_mainland_access: bool,
+                        mission_order: dict[str, list[str]] | None = None) -> dict[str, list]:
+    """Map rules for marker requirements.
+
+    Each term is [count global, minimum, optional ability-lock flag].
+    """
+    by_location = rules.build_location_requirements(
+        ability_locks=frozenset(data.ABILITY_LOCK_ITEMS),
+        split_mainland_access=split_mainland_access, mission_order=mission_order)
+    item_globals = scm.item_globals()
+    globals_by_item = {name: item_globals[item_id]
+                       for name, item_id in items.ITEM_NAME_TO_ID.items()
+                       if item_id in item_globals}
+    globals_by_item.update({data.mission_passed_item_name(mission): scm.completion_global(mission)
+                            for mission in data.ROUTE_MISSIONS})
+
+    def terms(requirements: list[tuple[str, int]]) -> list[list[int]]:
+        return [[globals_by_item[item], count,
+                 scm.ability_lock_flag_global(item) if item in data.ABILITY_ITEMS else 0]
+                for item, count in requirements]
+
+    markers = check_markers(dict.fromkeys(locations.CLASS_TOGGLE.values(), True))
+    result = {}
+    for name, region in locations.LOCATION_REGIONS.items():
+        key = str(scm.completion_global(name))
+        if key not in markers:
+            continue
+        entry = by_location.get(name, rules.LocationRequirements([], []))
+        thresholds = ([[1, [terms(entry.requirements)]]] if entry.requirements else [])
+        thresholds.extend([needed, [terms(route) for route in routes]]
+                          for routes, needed in entry.thresholds)
+        routes = data.region_access_groups(region, split_mainland_access)
+        if routes:
+            thresholds.append([1, [terms([(item, 1) for item in route]) for route in routes]])
+        if thresholds:
+            result[key] = thresholds
+    return dict(sorted(result.items()))
 
 
 def check_markers(enabled_options: dict) -> dict[str, list[float]]:

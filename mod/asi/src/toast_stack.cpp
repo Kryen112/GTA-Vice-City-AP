@@ -2,7 +2,6 @@
 
 #include <algorithm>
 #include <cstddef>
-#include <fstream>
 #include <limits>
 #include <string>
 #include <vector>
@@ -12,10 +11,10 @@
 #include <CHud.h>
 #include <CRect.h>
 
-#include <windows.h>
-
 namespace gtavc {
 namespace {
+
+std::unique_ptr<ConsoleFont> tracker_font;
 
 // How wide a string draws in the stack's own face and scale. A plain function
 // because the fitting takes one, which is also what lets the console self-test
@@ -102,38 +101,7 @@ float ToastTopThisFrame(const ToastGeometry& geometry) {
 
 }  // namespace
 
-std::string ModuleSettingsPath() {
-  // The module this code is in, found from an address inside it rather than from
-  // the process, so it is the .asi's own file and not whatever launched the game.
-  // An unnamed module means no file, which the caller reads as defaults.
-  HMODULE module = nullptr;
-  if (GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS |
-                             GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
-                         reinterpret_cast<LPCSTR>(&ModuleSettingsPath),
-                         &module) == 0) {
-    return std::string();
-  }
-  char path[MAX_PATH] = {};
-  const DWORD written = GetModuleFileNameA(module, path, MAX_PATH);
-  if (written == 0 || written >= MAX_PATH) return std::string();
-  return SettingsPathForModule(std::string(path, written));
-}
-
-ToastGeometry LoadToastGeometry() {
-  const std::string path = ModuleSettingsPath();
-  if (path.empty()) return ToastGeometry();
-  std::ifstream file(path);
-  if (!file) return ToastGeometry();
-  std::vector<std::string> lines;
-  std::string line;
-  // Bounded, so a file that is not one cannot be read into memory whole. Far more
-  // lines than the handful of settings this section has.
-  constexpr std::size_t kMaxSettingLines = 512;
-  while (lines.size() < kMaxSettingLines && std::getline(file, line)) {
-    lines.push_back(line);
-  }
-  return ParseToastGeometry(lines);
-}
+void ReleaseToastGraphics() { tracker_font.reset(); }
 
 void DrawToastStack(ToastStackState& state, const ToastGeometry& geometry,
                     int alpha, const ToastAdvance& advance) {
@@ -197,6 +165,22 @@ void DrawToastStack(ToastStackState& state, const ToastGeometry& geometry,
   const float first_width = right_edge - StretchX(geometry.anchor_x);
   const float continuation_width =
       right_edge - StretchX(geometry.anchor_x + geometry.continuation_indent);
+  const auto tracker_slot = ToastNoticeSlot(ToastNotice::kEmergencyChecks);
+  if (!state.notices[tracker_slot].empty()) {
+    const int width = std::max(1, static_cast<int>(StretchX(5.2f * geometry.scale_x / 0.32f)));
+    const int height = std::max(1, static_cast<int>(StretchY(11.2f * geometry.scale_y / 0.6f)));
+    if (!tracker_font || tracker_font->cell_width != width || tracker_font->height != height) {
+      tracker_font = std::make_unique<ConsoleFont>(width, height);
+      state.notices_fitted[tracker_slot] = false;
+    }
+    if (!state.notices_fitted[tracker_slot]) {
+      BreakToastRow(state.notices[tracker_slot], first_width, continuation_width,
+                    [](const std::string& text) {
+                      return PrintMixed(*tracker_font, 0, 0, Widen(text), CRGBA(255, 255, 255, 255), false);
+                    });
+      state.notices_fitted[tracker_slot] = true;
+    }
+  }
   FitToastStack(state, first_width, continuation_width,
                 line_capacity, &MeasureToastLine);
 
@@ -220,8 +204,11 @@ void DrawToastStack(ToastStackState& state, const ToastGeometry& geometry,
   float y = top_y;
   for (const ToastRow* row : rows) {
     if (row == nullptr) continue;
+    // Keep the tracker above both the console and its popup messages.
+    const bool tracker = row == &state.notices[ToastNoticeSlot(ToastNotice::kEmergencyChecks)];
+    float row_y = tracker ? 4.0f : y;
     for (std::size_t index = 0; index < row->lines.size(); ++index) {
-      if (y > geometry.floor_y) {
+      if (row_y > geometry.floor_y) {
         CFont::Details = saved;
         return;
       }
@@ -233,6 +220,10 @@ void DrawToastStack(ToastStackState& state, const ToastGeometry& geometry,
       for (const ToastSegment& segment : line) {
         if (segment.text.empty()) continue;
         const wchar_t* text = Widen(segment.text);
+        if (tracker) {
+          x += PrintMixed(*tracker_font, x, StretchY(row_y), text, ToastRoleColor(segment.role, alpha));
+          continue;
+        }
         // MEASURED BEFORE IT IS PRINTED, and the order is the whole point:
         // CFont::PrintString overwrites a TRAILING SPACE in the buffer it is
         // handed with a terminator (0x551381, guarded on the character being a
@@ -243,15 +234,16 @@ void DrawToastStack(ToastStackState& state, const ToastGeometry& geometry,
         // walks past spaces (0x5506F4).
         const float advance = CFont::GetStringWidth(text, true);
         CFont::SetColor(ToastRoleColor(segment.role, alpha));
-        CFont::PrintString(x, StretchY(y), text);
+        CFont::PrintString(x, StretchY(row_y), text);
         // Each segment starts where the last one ended, in the face and scale this
         // line draws in. Per segment ONLY to advance: whether the LINE fits was
         // decided from its whole text above, never from a sum of these, since
         // summing drifts and spreads the words apart.
         x += advance;
       }
-      y += geometry.line_height;
+      row_y += geometry.line_height;
     }
+    if (!tracker) y = row_y;
   }
   CFont::Details = saved;
 }

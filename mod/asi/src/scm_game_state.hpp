@@ -54,12 +54,17 @@ class ScmGameState : public GameState {
                    const CheckMarkers& check_markers = {}) override;
   std::string SeedHash() override;
   void StampSeedHash(const std::string& expected) override;
+  bool CanSaveSeed(const std::string& expected); // game thread, immediately before a save write
   void ApplyItems(const std::vector<std::pair<std::int64_t, std::int64_t>>& items) override;
   void MarkChecked(const std::vector<std::int64_t>& locations) override;
-  void ShowToast(const ToastRow& row) override;
+  void ShowToast(const ToastRow& row, bool notify = true) override;
   void ShowNotice(ToastNotice notice, const std::string& text) override;
   void ClearNotice(ToastNotice notice) override;
   void SetClientConnected(bool connected) override;
+  bool ClientConnected();
+  void SetTrapConsumer(TrapConsumer consume) override;
+  EmergencyProgress GetEmergencyProgress() override;
+  void SetEmergencyProgress(const EmergencyProgress& progress) override;
   void SetClientStatus(const ClientStatus& status) override;
   std::vector<std::int64_t> TakeNewChecks() override;
   void RequeueChecks(const std::vector<std::int64_t>& undelivered) override;
@@ -71,6 +76,8 @@ class ScmGameState : public GameState {
 
   // Called from the game frame. All SCM memory access is here.
   void OnGameFrame();
+  void UpdateTaxiCounter();
+  void OnPickupsUpdated(); // observe collections before script consumers clear them
 
   // Called from the frame's HUD draw, after the game's own HUD and before the
   // font buffer is flushed, so the rows land in the same frame. Advances the
@@ -111,6 +118,8 @@ class ScmGameState : public GameState {
   // Returns how many packages it reported this frame, which is what the
   // executable just paid for.
   int DetectCollectedPackages();
+  void RestoreCheckedPickups();
+  std::pair<int, int> PackageProgress() const;
   // Takes back the package cash the executable pays (a hundred per package, a
   // hundred thousand as the count reaches the total) while the hidden-packages
   // class is on, in the frame it lands. With the class off it never fires and
@@ -226,7 +235,7 @@ class ScmGameState : public GameState {
   // press the player just made rather than reporting a multiworld event, and it is
   // the only thing that explains why the button did nothing.
   void ToastAbilityBlocked(int ability);
-  // Keeps the ambient pickup pool on the configured layout: matches each
+  // Keeps the world pickup pool on the configured layout: matches each
   // layout slot to a pool entry by position and type and rewrites the model
   // and quantity where they differ, dropping the stale visible objects so the
   // game recreates them from the new model. Runs every frame, so a script
@@ -243,6 +252,10 @@ class ScmGameState : public GameState {
   std::mutex mutex_;
   std::map<std::int64_t, int> item_globals_;
   std::map<std::int64_t, ItemEffect> item_effects_;
+  TrapConsumer consume_trap_;
+  EmergencyProgress emergency_progress_{};
+  bool trap_baseline_pending_ = true;
+  std::string trap_error_;
   std::map<int, int> config_globals_;
   std::map<int, std::int64_t> completion_watch_;
   std::vector<PackageLocation> package_locations_;
@@ -280,10 +293,6 @@ class ScmGameState : public GameState {
   // the module, so a player tuning it restarts the game rather than the mod
   // re-reading a file every frame.
   ToastGeometry toast_geometry_;
-  // The rows the stack has shown, newest first, for the pause page. The stack is a
-  // marquee, so this is the only place in game a row can be read again. Kept
-  // across a game boundary: it is a record of the multiworld and not of a game.
-  std::vector<ToastRow> recent_toasts_;
   // The seed hash the client welcomed with, which is the one every game that
   // comes up without one is stamped with while that client is still there. Empty
   // until a welcome names it, cleared when that session ends, and read beside
@@ -389,6 +398,7 @@ class ScmGameState : public GameState {
   // showing zeroes as if they were counts.
   bool client_connected_ = false;
   bool client_status_known_ = false;
+  std::string emergency_hud_text_;
   ClientStatus client_status_;
 };
 

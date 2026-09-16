@@ -4,7 +4,7 @@ Story missions are always on. Every other check class has a toggle. A disabled
 class behaves fully vanilla in game: its locations do not exist and its
 class-specific items leave the pool (CLAUDE.md toggle invariant). The 100% goal
 is rejected unless every check class holding content the game's own completion
-stat counts is enabled, which is every class except the ambient pickups and
+stat counts is enabled, which is every class except the world pickups and
 the shops.
 """
 
@@ -18,11 +18,54 @@ from Options import (
     DeathLink,
     DefaultOnToggle,
     NamedRange,
+    OptionDict,
+    OptionError,
     OptionSet,
     PerGameCommonOptions,
     StartInventoryPool,
     Toggle,
 )
+
+from .data import EMERGENCY_LEVELS, optional_check_classes
+
+
+class LocationPercentages(OptionDict):
+    """AP checks per enabled type: 0-100% (default 100%, rounded up).
+    Emergency activities keep the first checks; other types choose randomly.
+    """
+    display_name = "Location percentages"
+    default: ClassVar[dict[str, int]] = {
+        **dict.fromkeys((key for key in optional_check_classes() if key != "emergency_vehicles"), 100),
+        **dict.fromkeys((activity.lower() for activity in EMERGENCY_LEVELS), 100),
+    }
+    valid_keys = frozenset(default) | {"emergency_vehicles"}
+
+    def __init__(self, value: dict[str, int]) -> None:
+        super().__init__(value)
+        for key, percentage in self.value.items():
+            if key not in self.valid_keys:
+                raise OptionError(f"Location percentages: unknown class {key!r}. "
+                                  f"Valid keys: {', '.join(sorted(self.valid_keys))}.")
+            if type(percentage) is not int or not 0 <= percentage <= 100:
+                raise OptionError(f"Location percentages: {key} must be a whole number from 0 to 100.")
+
+
+class MilestoneSpacing(OptionDict):
+    """Taxi fares per AP check: 1-100 (default 10).
+    location_percentages reduces the 100-fare target first.
+    Example: taxi percentage 10 and spacing 1 gives 10 checks over 10 fares.
+    """
+    display_name = "Milestone spacing"
+    default: ClassVar[dict[str, int]] = {"taxi": 10}
+    valid_keys = frozenset(default)
+
+    def __init__(self, value: dict[str, int]) -> None:
+        super().__init__(value)
+        for key, spacing in self.value.items():
+            if key not in self.valid_keys:
+                raise OptionError(f"Milestone spacing: unknown activity {key!r}. Valid keys: taxi.")
+            if type(spacing) is not int or not 1 <= spacing <= 100:
+                raise OptionError("Milestone spacing: taxi must be a whole number from 1 to 100.")
 
 
 class Goal(Choice):
@@ -87,21 +130,10 @@ class ShuffleEmergencyRewards(Toggle):
 
 
 class RememberEmergencyProgress(DefaultOnToggle):
-    """If on, an emergency-vehicle activity resumes at the level you left it
-    at, across a save and quit. Vanilla restarts paramedic, firefighter,
-    vigilante and pizza at level 1 every time, however far you got.
+    """Preserve completed levels in paramedic, firefighter, vigilante and pizza
+    missions across restarts and saved games. Taxi is unchanged.
 
-    Every finished level counts, so cancelling, stepping out of the vehicle,
-    dying and failing a level all resume at the same place. Taxi already works
-    this way in vanilla and is untouched.
-
-    Firefighter and vigilante keep climbing past level 12, the way the game
-    lets them, and their per-level pay is the level squared times 50, so a high
-    level pays a great deal. Paramedic and pizza resume at their top level once
-    finished, since neither mission can run past it.
-
-    Independent of enable_emergency_vehicles. Off leaves every emergency
-    mission starting exactly where vanilla starts it."""
+    Works independently of enable_emergency_vehicles. Disable for vanilla behavior."""
     display_name = "Remember Emergency Vehicle progress"
 
 
@@ -133,7 +165,7 @@ class EnablePickups(Toggle):
 
 
 class RandomizePickups(Toggle):
-    """If on, the ambient world pickups shuffle in their own pool:
+    """If on, the world pickups shuffle in their own pool:
     Weapons, Health, Body armors, Adrenaline and Bribes trade places.
     This is in-world flavor only, not Archipelago locations."""
     display_name = "Randomize pickups"
@@ -151,6 +183,17 @@ class RandomizeRadioStations(Toggle):
     at random and the other eight are in the pool.
     The radio can always be turned off and the MP3 player is excluded."""
     display_name = "Randomize radio stations"
+
+
+class MissionShuffle(Toggle):
+    """Shuffle mission order within each giver, including mission-based assets.
+
+    Progressive items unlock that giver's next mission in the seed's order.
+    An Old Friend stays first. Cortez's departure, Rub Out, asset finales and
+    Keep Your Friends Close stay last in their branches.
+    Cross-giver mission prerequisites still apply.
+    """
+    display_name = "Mission shuffle"
 
 
 class ShuffleMinimap(Toggle):
@@ -193,11 +236,13 @@ class StartingAbilityUnlock(Toggle):
 class ContentLocks(OptionSet):
     """Lock content and add them as items to the pool. Each selected key
     locks its class and puts its item in the pool.
-    Valid keys: [hidden_packages, rampages, stunt_jumps, properties, robbable_stores]
+    Valid keys: [hidden_packages, rampages, stunt_jumps, properties, robbable_stores, pickups]
 
     Packages, rampage icons and property icons are absent from the world until
     their item arrives. A locked stunt jump still flies and stays re-doable but
     registers nothing, and aiming at a shopkeeper starts no robbery.
+    Pickups locks pickup locations, even with Enable pickups off.
+    Dropped weapons and shop stock are unaffected.
 
     If a seed is too restricted to have anywhere to go from the first mission,
     the held item that opens the most of the start island becomes the reward for
@@ -205,7 +250,7 @@ class ContentLocks(OptionSet):
     display_name = "Content locks"
     valid_keys = frozenset({
         "hidden_packages", "rampages", "stunt_jumps", "properties",
-        "robbable_stores",
+        "robbable_stores", "pickups",
     })
     default = frozenset()
 
@@ -218,14 +263,12 @@ class SplitContentLocks(Choice):
     "Ocean Beach Content" releases the Hidden Packages, Rampages, Stunt Jumps
     and Properties in Ocean Beach.
     per_class: one item per class per district. "Ocean Beach Hidden Packages"
-    releases only the packages in Ocean Beach. The finest and the most items:
-    42 with every key selected against 5 with the locks whole.
+    releases only the packages in Ocean Beach. This produces the most available locations.
 
     The districts are Ocean Beach, Washington Beach, Vice Point, Leaf Links,
     Prawn Island, Starfish Island, Downtown, Little Haiti, Little Havana,
-    Viceport and Escobar International.
-    A class-district pair holding nothing gets no item, so Leaf Links only
-    holds Hidden Packages, as there is nothing else on that island."""
+    Viceport, Escobar International and Junk Yard.
+    A class-district pair holding nothing gets no item."""
     display_name = "Split content locks"
     option_off = 0
     option_per_district = 1
@@ -259,8 +302,7 @@ class TrapPercentage(NamedRange):
 # on and are not listed. This is the list a seed publishes into slot_data and a
 # Universal Tracker regeneration replays, so a class missing from it is a class
 # whose setting the played seed does not record and a tracker silently defaults.
-# Which of these the client then hands the ASI is a separate choice, made by the
-# fixed key list in client/context.py.
+# The native client reads the settings it needs from slot_data.
 CHECK_CLASS_OPTIONS: list[str] = [
     "enable_hidden_packages", "enable_rampages", "enable_stunt_jumps",
     "enable_emergency_vehicles", "enable_properties",
@@ -296,6 +338,8 @@ class GTAViceCityOptions(PerGameCommonOptions):
     start_inventory_from_pool: StartInventoryPool
     goal: Goal
     hidden_packages_required: HiddenPackagesRequired
+    location_percentages: LocationPercentages
+    milestone_spacing: MilestoneSpacing
     enable_hidden_packages: EnableHiddenPackages
     enable_rampages: EnableRampages
     enable_stunt_jumps: EnableStuntJumps
@@ -309,6 +353,7 @@ class GTAViceCityOptions(PerGameCommonOptions):
     randomize_pickups: RandomizePickups
     shuffle_shops: ShuffleShops
     randomize_radio_stations: RandomizeRadioStations
+    mission_shuffle: MissionShuffle
     shuffle_minimap: ShuffleMinimap
     split_mainland_access: SplitMainlandAccess
     ability_locks: AbilityLocks

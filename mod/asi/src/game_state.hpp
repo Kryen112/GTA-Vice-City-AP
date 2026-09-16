@@ -6,6 +6,7 @@
 #pragma once
 
 #include <cstdint>
+#include <functional>
 #include <map>
 #include <string>
 #include <utility>
@@ -16,15 +17,59 @@
 #include "scm_content_locks.hpp"
 #include "scm_crossings.hpp"
 #include "scm_toasts.hpp"
+#include "emergency_progress.hpp"
 
 namespace gtavc {
 
+enum class TrapAction { kWait, kSkip, kApply };
+using TrapConsumer = std::function<TrapAction(std::int64_t)>;
+
 // Completion global -> world position on the minimap.
+constexpr int kFinaleAssetMarker = 9;
+constexpr int kFinaleAssetCheckMarker = 10;
+
+struct MarkerTerm {
+  int global = 0;
+  int minimum = 1;
+  int ability_lock_global = 0;
+};
+
+struct MarkerThreshold {
+  int needed = 1;
+  std::vector<std::vector<MarkerTerm>> alternatives;
+};
+
 struct CheckMarker {
   float x = 0.0f;
   float y = 0.0f;
   int category = 0;
   int content_unlock_global = 0; // zero for content that cannot be locked
+  std::vector<MarkerThreshold> requirements;
+
+  template <typename ReadGlobal>
+  bool Available(ReadGlobal read) const {
+    if (content_unlock_global != 0 && read(content_unlock_global) < kDistrictReleased) return false;
+    for (const auto& threshold : requirements) {
+      int satisfied = 0;
+      for (const auto& route : threshold.alternatives) {
+        bool open = true;
+        for (const auto& term : route) {
+          if (term.ability_lock_global != 0 && read(term.ability_lock_global) == 0) continue;
+          if (read(term.global) < term.minimum) { open = false; break; }
+        }
+        if (open) ++satisfied;
+      }
+      if (satisfied < threshold.needed) return false;
+    }
+    return true;
+  }
+
+  template <typename ReadGlobal>
+  int DisplayCategory(ReadGlobal read) const {
+    if (category == kFinaleAssetMarker) return kFinaleAssetMarker;
+    if (category == kFinaleAssetCheckMarker) return Available(read) ? 6 : kFinaleAssetMarker;
+    return Available(read) ? category : -1;
+  }
 };
 using CheckMarkers = std::map<int, CheckMarker>;
 
@@ -54,7 +99,7 @@ struct PackageLocation {
   float z = 0.0f;
 };
 
-// One ambient pickup slot of the randomize_pickups layout: the slot's world
+// One world pickup slot of the randomize_pickups layout: the slot's world
 // position and pickup type identify it in the pool; model and quantity are
 // what the permutation assigns to stand there. An empty layout means the
 // option is off and the pool is never touched. The position is kept at the
@@ -122,7 +167,7 @@ class GameState {
   // or persistent reward). item_effects: AP item id -> a one-shot consumable
   // effect. config_globals: config-flag global index -> value to stamp.
   // completion_watch: completion global index -> AP location id to poll.
-  // pickup_targets: the ambient pickup layout to enforce, empty when vanilla.
+  // pickup_targets: the world pickup layout to enforce, empty when vanilla.
   // routes carries every crossing off the start island: the mainland ways, one
   // entry when Mainland Access opens them all and one per crossing when the seed
   // split them, and then Starfish Island, which is always its own row.
@@ -158,7 +203,8 @@ class GameState {
   // A player-facing row for the in-game toast stack, already built into its
   // coloured segments by the client, since only the client knows which slot is
   // ours and how the server classified an item.
-  virtual void ShowToast(const ToastRow& row) = 0;
+  // notify=false records pause-menu history without drawing a HUD notification.
+  virtual void ShowToast(const ToastRow& row, bool notify = true) = 0;
 
   // A row that holds its place until something clears it, addressed by what it is
   // about so a repeat replaces rather than stacks. The handshake refusal arrives
@@ -171,6 +217,10 @@ class GameState {
   // page is drawn while the game frame does not run, so it cannot infer this
   // from anything the frame does.
   virtual void SetClientConnected(bool connected) = 0;
+  virtual void SetTrapConsumer(TrapConsumer consume) = 0;
+  // Seed-wide progress; implementations exchange snapshots without reading game memory here.
+  virtual EmergencyProgress GetEmergencyProgress() = 0;
+  virtual void SetEmergencyProgress(const EmergencyProgress& progress) = 0;
 
   // What only the client knows, for that same page: how many of this seed's
   // locations are checked, how many it has, how many items have arrived, whether

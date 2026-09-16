@@ -18,16 +18,23 @@ namespace gtavc {
 inline std::array<unsigned char, 3> CheckMarkerColor(int category) {
   static constexpr std::array<unsigned char, 3> colors[] = {
       {255, 255, 255}, {60, 255, 90}, {255, 130, 140}, {185, 35, 55},
-      {255, 155, 30}, {65, 140, 255}, {255, 235, 65}, {55, 240, 240}, {215, 120, 255}};
-  return colors[category >= 0 && category < 9 ? category : 0];
+      {255, 155, 30}, {65, 140, 255}, {255, 235, 65}, {55, 240, 240}, {215, 120, 255},
+      {180, 255, 35}}; // Lime: finale assets without an available AP purchase check.
+  return colors[category >= 0 && category < 10 ? category : 0];
 }
 
-// Keep the entire seven-pixel square inside the radar, including pixel snapping.
-inline bool CheckMarkerFits(float x, float y, float radius_x, float radius_y) {
-  if (radius_x <= 0.0f || radius_y <= 0.0f) return false;
-  const float outer_x = std::abs(x) + 4.0f / radius_x;
-  const float outer_y = std::abs(y) + 4.0f / radius_y;
-  return outer_x * outer_x + outer_y * outer_y <= 1.0f;
+// Pin nearby dots inside the rim and around the corner in a 3x minimap size radius.
+inline bool ProjectCheckMarker(float& x, float& y, float radius_x, float radius_y) {
+  if (!std::isfinite(radius_x) || !std::isfinite(radius_y) ||
+      radius_x <= 0.0f || radius_y <= 0.0f) return false;
+  const float distance = std::hypot(x, y);
+  const float rim = 1.0f - std::hypot(4.0f / radius_x, 4.0f / radius_y);
+  if (!std::isfinite(distance) || distance > 3.0f || rim <= 0.0f) return false;
+  if (distance > rim) {
+    x *= rim / distance;
+    y *= rim / distance;
+  }
+  return true;
 }
 
 // Main-map dots keep their pixel size as the map zooms. Coordinates are snapped

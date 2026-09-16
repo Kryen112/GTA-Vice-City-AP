@@ -56,7 +56,7 @@ CONFIGURATIONS: list[tuple[str, dict]] = [
         "enable_emergency_vehicles": False, "enable_properties": False,
         "enable_robbable_stores": False, "enable_side_events": False,
     }),
-    # The 110 ambient pickups carry the story pool on their own: 53 sit on the
+    # The 110 world pickups carry the story pool on their own: 53 sit on the
     # start island, which is 54 free checks in sphere 0, the widest of these
     # rows but only just, since packages alone give 49.
     ("story plus pickups", {

@@ -54,6 +54,19 @@ def test_absent_artifact_is_not_stale(tmp_path: pathlib.Path) -> None:
     assert stale_sources(tmp_path / "nothing.asi", tmp_path, GLOBS) == []
 
 
+def test_third_party_licences_ship_and_staging_is_cleared(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(build_apworld, "WORLD_SOURCE", tmp_path)
+    expected = {"LICENSE", "NOTICE", "THIRD_PARTY_LICENSES"}
+    assert set(build_apworld.stage_licence_files()) == expected
+    for name in expected:
+        assert (tmp_path / name).read_bytes() == (build_apworld.REPOSITORY_ROOT / name).read_bytes()
+    library_licence = build_apworld.REPOSITORY_ROOT / "mod/asi/third_party/apcpp/LICENSE"
+    assert library_licence.read_text(encoding="utf-8") in (tmp_path / "THIRD_PARTY_LICENSES").read_text(
+        encoding="utf-8")
+    build_apworld.clear_licence_files()
+    assert not any(tmp_path.iterdir())
+
+
 def test_a_newer_source_is_reported(tmp_path: pathlib.Path) -> None:
     artifact = _write(tmp_path / "out.asi", 1000)
     _write(tmp_path / "src" / "newer.cpp", 2000)
@@ -553,11 +566,7 @@ def test_the_data_directory_goes_only_when_the_build_owns_it(tmp_path: pathlib.P
     assert kept.is_file()
 
 
-def test_nothing_is_staged_until_every_gate_has_passed(tmp_path: pathlib.Path, monkeypatch) -> None:
-    # The gates read the repository and the stage writes to it, so the order is
-    # the property: a refusal has to leave the previous apworld and the previous
-    # source tree exactly as they were. Each gate is tested on its own, and
-    # nothing else pins them ahead of the staging.
+def test_apworld_build_neither_reads_nor_stages_the_mod(tmp_path: pathlib.Path, monkeypatch) -> None:
     order: list[str] = []
 
     def records(name: str, result=None):
@@ -574,12 +583,10 @@ def test_nothing_is_staged_until_every_gate_has_passed(tmp_path: pathlib.Path, m
     monkeypatch.setattr(build_apworld, "_refuse_unpatchable_payload", records("deltas"))
     monkeypatch.setattr(build_apworld, "stage_mod_payload", records("stage", []))
     monkeypatch.setattr(build_apworld, "clear_staged_payload", records("clear"))
+    monkeypatch.setattr(build_apworld, "stage_licence_files", records("licences"))
+    monkeypatch.setattr(build_apworld, "clear_licence_files", records("clear licences"))
     monkeypatch.setattr(build_apworld, "package", records("package", None))
     monkeypatch.setattr(sys, "argv", ["build_apworld.py"])
 
     assert build_apworld.main() == 1
-    for gate in ("manifest", "payload", "main", "deltas"):
-        assert order.index(gate) < order.index("stage"), f"{gate} runs after the payload is staged"
-    # And the stage is cleared whatever the packaging did, which is why it is
-    # the last thing to happen on a run that packaged nothing.
-    assert order[-1] == "clear"
+    assert order == ["root", "link", "manifest", "licences", "package", "clear licences"]

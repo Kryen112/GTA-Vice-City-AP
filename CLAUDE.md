@@ -14,9 +14,9 @@ or `git add .`.
 - `apworld/gta_vice_city/`: the AP world package. Hand-written Python, no
   generators. All access logic lives in `rules.py` as boolean predicates;
   diffs there are logic, everything else is plumbing.
-- `apworld/gta_vice_city/client/`: bridge client on CommonClient, bundled in
-  the world and registered as a launcher component. Hosts the localhost
-  listener; the ASI connects to it. `scripts/build_apworld.py` links the world
+- `apworld/gta_vice_city/setup.py`: offline setup tool, bundled in the world
+  and registered as a launcher component. The ASI connects directly to
+  Archipelago. `scripts/build_apworld.py` links the world
   into the Archipelago checkout, stages the mod payload into it, and hands the
   packaging to Archipelago's own `Build APWorlds` launcher component, then
   installs the result to the frozen install's `custom_worlds`. The manifest

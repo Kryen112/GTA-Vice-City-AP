@@ -18,7 +18,7 @@ from __future__ import annotations
 
 # Districts in a fixed order: item ids follow it, so it never reorders. Ordered
 # the way a player crosses the map, the start island first and then the mainland.
-# The Junk Yard is the one district holding nothing lockable: two ambient pickups
+# The Junk Yard is the one district holding nothing lockable: two world pickups
 # and no package, rampage, jump, store or property. It is here because a pickup
 # name says it, and a name has to name a district the tables know.
 
@@ -214,7 +214,7 @@ PROPERTY_COORDS: dict[str, tuple[float, float, float]] = {
     "Skumole Shack": (-560.1, 703.6, 20.5),
 }
 
-# The 116 ambient pickup slots, in pickup_data.PICKUP_SLOTS order.
+# The 116 world pickup slots, in pickup_data.PICKUP_SLOTS order.
 #
 # AUDITED. These were derived once, each slot taking the district of its three
 # nearest audited anchors weighted by inverse horizontal distance, which agreed

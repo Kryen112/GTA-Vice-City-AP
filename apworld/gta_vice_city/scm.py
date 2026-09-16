@@ -39,7 +39,7 @@ from . import data, district_data, items, locations, package_data
 
 # The reserved block starts here, clear of the vanilla maximum global ($8583).
 RESERVED_BASE = 9000
-# Every ambient pickup slot's handle lives in a vanilla global. The generated
+# Every world pickup slot's handle lives in a vanilla global. The generated
 # APPICK watcher polls all 110 of them, and one at or above the reserved base
 # would be a global the mod also writes, so the check would fire on whatever the
 # mod put there. Asserted here because this is where the base is defined.
@@ -59,6 +59,7 @@ UNLOCK_BASE = RESERVED_BASE + 10
 # Every progressive strand, then each area item, in a stable order. Each gets
 # one unlock global holding a count (progressive) or one (area).
 UNLOCK_KEYS: list[str] = list(data.progressive_strands().keys()) + list(data.AREA_ITEMS)
+UNLOCK_KEYS += [f"Mission Order: {strand}" for strand in data.progressive_strands()]
 
 # Every block here reserves more room than it uses, for the reason the
 # completion block does: each base is derived from the end of the one below, so
@@ -89,7 +90,7 @@ _ORDERED_LOCATION_NAMES: list[str] = list(locations.LOCATION_NAME_TO_ID.keys())
 # locations that exist, so a slot nothing names is a zero nobody reads, and the
 # only price is script space: 276 spare globals are 1,104 bytes of a MAIN
 # section with 24,256 bytes to spare. Room for two more classes the size of the
-# ambient pickups.
+# world pickups.
 #
 # It can only be widened BEFORE the numbering is released. Afterwards this is
 # the number that lets a location be added at all.
@@ -215,7 +216,7 @@ CONTENT_UNLOCK_BASE = CONTENT_LOCK_FLAG_BASE + CONTENT_CAPACITY
 #
 # The districts here are the ones holding something a content key covers, not
 # every district on the map. The Junk Yard is the difference: it holds two
-# ambient pickups and nothing of the five classes, so no gate could ever read
+# world pickups and nothing of the five classes, so no gate could ever read
 # its column and reserving one would push the block into the marker scratch for
 # a district with nothing to hold. Every district that HAS content of a class
 # still gets its cell, empty pairs included, so the formula stands.
@@ -250,48 +251,28 @@ DISTRICT_UNLOCK_COUNT = CONTENT_CAPACITY * DISTRICT_CAPACITY
 SPARE_FLAG_BASE = DISTRICT_UNLOCK_BASE + DISTRICT_UNLOCK_COUNT
 SPARE_FLAG_CAPACITY = 16
 
-# The first spare carries the remember_emergency_progress flag, stamped from
-# slot_data, and the four above it carry the LEVEL TO START AT for each emergency
-# activity whose vanilla mission restarts its level counter from scratch. Each
-# mission init overwrites its counter only while the flag is set and its global
-# holds something, so the vanilla constant already there is the fallback for a
-# seed without the option and for an activity never played alike. Nothing
-# recomputes vanilla's starting level, which is what makes the option off
-# identical to vanilla by construction rather than by arithmetic.
-#
-# Taxi is absent deliberately and not by omission: its career fares live in the
-# vanilla global $369, which the mission never resets, so its ten levels already
-# survive a save and quit and there is nothing here for them to remember.
-#
-# Two of the four stop at their top level, because their mission cannot run past
-# it: Paramedic returns on `$6756 == 13` and only ever creates twelve patients,
-# so a thirteenth could never be delivered, and Pizza's win branch stops firing
-# above ten. The other two loop for as long as the player keeps playing, so
-# nothing caps them and the stored level climbs with the player.
+# Store the option flag and each activity's resume level.
+# Disabled or unset progress uses vanilla starting levels. Taxi already persists.
+# Paramedic caps at level 12 and Pizza at 10; the others remain uncapped.
 REMEMBER_EMERGENCY_GLOBAL = SPARE_FLAG_BASE
-# Order is frozen here rather than derived from data.EMERGENCY_LEVELS, whose own
-# order would then decide these globals: reordering that table for any reason
-# would silently point a running seed's save at another activity's level. A test
-# pins the membership against it so a sixth activity cannot be missed.
+# Keep this order stable: it determines the globals stored in saves.
 EMERGENCY_PROGRESS_ACTIVITIES: list[str] = [
     "Paramedic", "Firefighter", "Vigilante", "Pizza",
 ]
 EMERGENCY_PROGRESS_BASE = REMEMBER_EMERGENCY_GLOBAL + 1
 
-# Vigilante alone accumulates state across its levels besides the level itself,
-# so a level is not enough to resume it. Two floats ramp once per level and
-# never reset: $6980 starts at 4.0 and drops 0.1 at each level's START, dividing
-# the distance the time budget comes from, and $6981 starts at 1.0 and drops
-# 0.05 at each level's END, going straight to set_wanted_multiplier. Restoring
-# the level without them puts a resumed level 12 at full police heat where a
-# continuous run reaches 0.4, which is a harder level than the one the player
-# left. Paramedic and Firefighter set their one float at init and only read it,
-# and Pizza's per-level counter resets, so none of the other three needs this.
+# Also restore Vigilante's time-budget and wanted multipliers ($6980/$6981)
+# to preserve difficulty across restarts.
 VIGILANTE_TIME_RAMP_GLOBAL = (EMERGENCY_PROGRESS_BASE
                               + len(EMERGENCY_PROGRESS_ACTIVITIES))
 VIGILANTE_WANTED_RAMP_GLOBAL = VIGILANTE_TIME_RAMP_GLOBAL + 1
 
-SPARE_FLAGS_USED = 1 + len(EMERGENCY_PROGRESS_ACTIVITIES) + 2
+MISSION_RANK_GLOBAL = VIGILANTE_WANTED_RAMP_GLOBAL + 1
+MISSION_DIGIT_GLOBAL = MISSION_RANK_GLOBAL + 1
+MISSION_COMPLETED_GLOBAL = MISSION_DIGIT_GLOBAL + 1
+TAXI_MILESTONE_SPACING_GLOBAL = MISSION_COMPLETED_GLOBAL + 1
+TAXI_MILESTONE_COUNT_GLOBAL = TAXI_MILESTONE_SPACING_GLOBAL + 1
+SPARE_FLAGS_USED = 1 + len(EMERGENCY_PROGRESS_ACTIVITIES) + 2 + 3 + 2
 
 assert SPARE_FLAGS_USED <= SPARE_FLAG_CAPACITY, (
     f"{SPARE_FLAGS_USED} spare flags handed out of {SPARE_FLAG_CAPACITY}; "
@@ -300,9 +281,9 @@ assert SPARE_FLAGS_USED <= SPARE_FLAG_CAPACITY, (
 FINALE_WARP_GLOBAL = SPARE_FLAG_BASE + SPARE_FLAG_CAPACITY
 
 # The finale raises this while it runs and drops it at its single exit, so the
-# ASI can keep the ambient pickup layout off the pool for the length of the
+# ASI can keep the world pickup layout off the pool for the length of the
 # mansion siege: that fight places its own pickups to be survived with, and one
-# ambient slot stands in the same grounds.
+# world slot stands in the same grounds.
 #
 # On top of the block and derived like every other base. The unused space lower
 # down looks free and is not: build_scm.py takes every one of those for scratch,
@@ -313,6 +294,19 @@ FINALE_ACTIVE_GLOBAL = FINALE_WARP_GLOBAL + 1
 
 def unlock_global(key: str) -> int:
     return UNLOCK_BASE + UNLOCK_KEYS.index(key)
+
+
+def mission_order_globals(mission_order: dict[str, list[str]]) -> dict[int, int]:
+    result = {}
+    for strand, (_, missions) in data.progressive_strands().items():
+        gated = missions[1:] if strand == data.SPHERE_ZERO_GIVER else missions
+        assert len(gated) <= 9, "A mission-order integer can hold at most nine decimal ranks."
+        order = mission_order.get(strand, missions)
+        offset = int(strand == data.SPHERE_ZERO_GIVER)
+        result[unlock_global(f"Mission Order: {strand}")] = (
+            sum((order.index(mission) + 1 - offset) * 10 ** index for index, mission in enumerate(gated))
+            if strand in mission_order else 0)
+    return result
 
 
 def ownership_global(item_name: str) -> int:
@@ -435,7 +429,7 @@ def unlocked_district_globals(selected_keys: frozenset[str]) -> dict[int, int]:
 def content_districts() -> list[dict]:
     """Where every holdable pickup is and which district it belongs to.
 
-    The three classes the ASI holds are found in the pickup pool by type or
+    The classes the ASI holds are found in the pickup pool by position, type or
     model, which says what a pickup is but not where, and the district table is
     keyed by index rather than by position. This joins the two, so the ASI can
     put a pool entry in a district without carrying the audit itself. Coordinates
@@ -451,6 +445,8 @@ def content_districts() -> list[dict]:
           for purchase in data.PROPERTY_PURCHASES],
          [district_data.PROPERTY_COORDS[purchase.removesuffix(" Purchase")]
           for purchase in data.PROPERTY_PURCHASES]),
+        (data.PICKUPS_ITEM, district_data.PICKUP_DISTRICTS,
+         [slot[:3] for slot in data.PICKUP_SLOTS]),
     ]
     entries: list[dict] = []
     for content_item, districts, coordinates in positions:
@@ -508,6 +504,11 @@ def reserved_global_map() -> dict[str, int]:
         "base:EMERGENCY_PROGRESS_BASE": EMERGENCY_PROGRESS_BASE,
         "base:VIGILANTE_TIME_RAMP_GLOBAL": VIGILANTE_TIME_RAMP_GLOBAL,
         "base:VIGILANTE_WANTED_RAMP_GLOBAL": VIGILANTE_WANTED_RAMP_GLOBAL,
+        "base:MISSION_RANK_GLOBAL": MISSION_RANK_GLOBAL,
+        "base:MISSION_DIGIT_GLOBAL": MISSION_DIGIT_GLOBAL,
+        "base:MISSION_COMPLETED_GLOBAL": MISSION_COMPLETED_GLOBAL,
+        "base:TAXI_MILESTONE_SPACING_GLOBAL": TAXI_MILESTONE_SPACING_GLOBAL,
+        "base:TAXI_MILESTONE_COUNT_GLOBAL": TAXI_MILESTONE_COUNT_GLOBAL,
         "base:FINALE_WARP_GLOBAL": FINALE_WARP_GLOBAL,
         "base:FINALE_ACTIVE_GLOBAL": FINALE_ACTIVE_GLOBAL,
     }
@@ -638,7 +639,7 @@ def pickups_randomized_globals() -> dict[int, int]:
     already-shown flag, so stamping that flag retires the text for the seed.
 
     Only this one text is model-specific: the other first-collection texts key
-    on the four INFO tutorial icons, which are not ambient pickups and which the
+    on the four INFO tutorial icons, which are not world pickups and which the
     shuffle never touches.
 
     The stamp reaches one step further, which is accepted rather than unnoticed.
@@ -693,18 +694,7 @@ def shops_enabled_flag(shops: bool) -> dict[int, int]:
 
 
 def remember_emergency_flag(remember: bool) -> dict[int, int]:
-    """The remember_emergency_progress flag global -> the raw option.
-
-    Its own function for the reason shops_enabled_flag is: config_flags carries
-    effective SHUFFLED states, meaning an AP item exists to replace a vanilla
-    grant, and this replaces nothing. It has no owning check class either. The
-    emergency chains are content the player walks into whether or not their
-    levels are checks, so remembering where they stopped is an in-world
-    modifier and answers only to its own option.
-
-    At zero every emergency mission starts its level counter where vanilla
-    starts it, which is what the toggle invariant demands of a seed that did
-    not ask for this."""
+    """Map the progress toggle to its SCM global, independent of check settings."""
     return {REMEMBER_EMERGENCY_GLOBAL: int(bool(remember))}
 
 

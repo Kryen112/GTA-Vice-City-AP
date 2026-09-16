@@ -9,12 +9,12 @@
 // district unlock is still zero. So there is one rule here for all three
 // granularities, and it works offline from a save like the ability locks.
 //
-// A class the seed does not lock arrives with all eleven of its districts
+// A class the seed does not lock arrives with all of its districts
 // already released, stamped by the client at config time, which is why holding
 // needs no lock flag: at zero locks nothing is ever held. The per-class lock
 // flags remain, read only to decide which classes the status page lists.
 //
-// Enforcement splits by whether the content has an icon. Three classes are
+// Enforcement splits by whether the content has an icon. Four classes are
 // pickups and are held here, by sinking them out of reach. The other two, the
 // unique stunt jumps and the store robberies, have nothing to hold, so the
 // main.scm gates them itself and this header only reports their state for the
@@ -29,7 +29,7 @@
 
 namespace gtavc {
 
-// The five content items in the reserved-global order, matching apworld
+// The content items in the reserved-global order, matching apworld
 // scm.py CONTENT_KEYS (data.CONTENT_ITEMS). Never reorders: the main.scm
 // hard-codes the stunt jump and store offsets into this same block.
 enum ContentIndex {
@@ -38,6 +38,7 @@ enum ContentIndex {
   kContentStuntJumps,
   kContentPropertyPurchases,
   kContentRobbableStores,
+  kContentPickups,
   kContentCount,
 };
 
@@ -45,15 +46,15 @@ enum ContentIndex {
 // item from the flag base, then one unlock global per item from the unlock
 // base, both in ContentIndex order.
 // Only the flags are read, to decide which classes the status page lists. The
-// five per-class unlocks above them are written by item_globals and read by
+// per-class unlocks above them are written by item_globals and read by
 // nothing here: what is held comes from the district block below.
 constexpr int kContentLockFlagBase = 9943;
 
 // The district block, matching apworld scm.py: one unlock global per class per
 // district, class-major, so a class and a district give a global by formula.
-// Eleven districts in apworld district_data.DISTRICTS order; the main.scm's
-// per-site gates index the same block the same way.
-constexpr int kDistrictCount = 11;
+// Districts follow scm.DISTRICT_KEYS, with Junk Yard appended afterwards.
+// The main.scm's per-site gates index the same block the same way.
+constexpr int kDistrictCount = 12;
 constexpr int kDistrictUnlockBase = 9967;
 
 // The row stride, which is NOT the district count. The grid reserves more than
@@ -78,13 +79,7 @@ constexpr int kDistrictAbsent = 2;
 // True per class per district while that district of that class is held.
 using ContentLocks = std::array<bool, kContentCount * kDistrictCount>;
 
-// True per class per district where that class has NO content at all. Thirteen
-// of the fifty-five pairs are true in every seed: Leaf Links holds only packages,
-// which is four; the robbable stores are absent from five districts besides Leaf
-// Links, being Ocean Beach, Starfish Island, Prawn Island, Viceport and Escobar
-// International; and one each for the rampages absent from Prawn Island and the
-// stunt jumps absent from Viceport, plus the properties absent from Starfish
-// Island and Escobar International. Four and five and one and one and two.
+// True per class per district where that class has no content.
 //
 // Absence rather than presence so that all-false, which is what a default state
 // carries, means nothing is known to be absent. Read the other way a state
@@ -165,9 +160,9 @@ constexpr int kPickupTypePropertyForSale = 18;
 // Which held class a pool entry belongs to. Rampage icons are the one class
 // identified by model rather than type, because the SCM creates them from the
 // kill-frenzy skull; the caller resolves that id by name and passes it here.
-enum class HeldPickupClass { kNone, kPackage, kRampage, kProperty };
+enum class HeldPickupClass { kNone, kPackage, kRampage, kProperty, kPickup };
 constexpr std::size_t kHeldPickupClassCount =
-    static_cast<std::size_t>(HeldPickupClass::kProperty) + 1;
+    static_cast<std::size_t>(HeldPickupClass::kPickup) + 1;
 
 inline HeldPickupClass ClassifyHeldPickup(int pickup_type, int model,
                                           int kill_frenzy_model) {
@@ -215,6 +210,8 @@ inline bool ShouldHoldPickup(HeldPickupClass held_class, int district,
              (ability[kAbilityWeaponEquip] && !vehicle_rampage);
     case HeldPickupClass::kProperty:
       return HeldForDistrict(content, kContentPropertyPurchases, district);
+    case HeldPickupClass::kPickup:
+      return HeldForDistrict(content, kContentPickups, district);
     case HeldPickupClass::kNone:
       return false;
   }
@@ -252,7 +249,7 @@ enum class PickupHoldAction { kLeaveAlone, kLower, kRaise };
 // game puts it back.
 // Which district a pickup is in, from the table the seed sent: entries are
 // positions, and a held pickup keeps its x and y, so a sunk one still matches.
-// Linear because the table is 150 entries and the pool walk asks once per
+// Linear because the table is small and the pool walk asks once per
 // entry per frame; a quantized lookup would be faster and is not needed yet.
 struct PickupDistrict {
   float x = 0.0f;
@@ -279,7 +276,9 @@ inline int DistrictForPickup(const std::vector<PickupDistrict>& table,
         (held_class == HeldPickupClass::kRampage &&
          entry.content_index == kContentRampages) ||
         (held_class == HeldPickupClass::kProperty &&
-         entry.content_index == kContentPropertyPurchases);
+         entry.content_index == kContentPropertyPurchases) ||
+        (held_class == HeldPickupClass::kPickup &&
+         entry.content_index == kContentPickups);
     if (matches) return entry.district;
   }
   return kDistrictUnknown;

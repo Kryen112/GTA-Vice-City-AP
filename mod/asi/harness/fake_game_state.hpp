@@ -70,7 +70,8 @@ class FakeGameState : public GameState {
   // line breaks are the console self-test's business, and it drives the row
   // builder directly. The break is kept visible so a row that lost its second
   // line still reads as different from one that never had one.
-  void ShowToast(const ToastRow& row) override {
+  void ShowToast(const ToastRow& row, bool notify = true) override {
+    if (!notify) return;
     std::lock_guard<std::mutex> lock(mutex_);
     std::string text;
     for (const std::vector<ToastSegment>& line : row.lines) {
@@ -238,6 +239,26 @@ class FakeGameState : public GameState {
     return client_connected_;
   }
 
+  void SetTrapConsumer(TrapConsumer consume) override {
+    std::lock_guard<std::mutex> lock(mutex_);
+    consume_trap_ = std::move(consume);
+  }
+
+  EmergencyProgress emergency_progress_{};
+  EmergencyProgress GetEmergencyProgress() override {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return emergency_progress_;
+  }
+  void SetEmergencyProgress(const EmergencyProgress& progress) override {
+    std::lock_guard<std::mutex> lock(mutex_);
+    MergeEmergencyProgress(emergency_progress_, progress);
+  }
+
+  TrapAction ConsumeTrap(std::int64_t index) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return consume_trap_ ? consume_trap_(index) : TrapAction::kWait;
+  }
+
   bool ClientWasConnected() {
     std::lock_guard<std::mutex> lock(mutex_);
     return client_was_connected_;
@@ -272,6 +293,7 @@ class FakeGameState : public GameState {
   bool goal_pending_ = false;
   int pending_percentage_ = -1;
   bool client_connected_ = false;
+  TrapConsumer consume_trap_;
   bool client_was_connected_ = false;
   ClientStatus client_status_;
 };

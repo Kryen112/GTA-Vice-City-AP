@@ -24,6 +24,7 @@ namespace gtavc {
 // The effects to apply this frame and the resulting applied index.
 struct EffectPlan {
   std::vector<ItemEffect> to_apply;
+  std::vector<std::int64_t> received_indices;
   int new_applied_index = 0;
 };
 
@@ -96,6 +97,7 @@ inline EffectPlan PlanEffects(
     // after this one, in the same received order.
     if (static_cast<int>(plan.to_apply.size()) >= max_per_frame) break;
     plan.to_apply.push_back(it->second);
+    plan.received_indices.push_back(received_index);
     ++effect_index;
     plan.new_applied_index = effect_index;
   }
