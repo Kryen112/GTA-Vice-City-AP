@@ -70,11 +70,16 @@ Wasted only, so an arrest is not a death.
 
 ## In game
 
+`pole_position_charge` sets the private-dance charge per five-second tick ($1–$100, default $20; `vanilla` is $5).
+The asset still needs $300 total spending: about 75 seconds at the default rate.
+
 Enabled, unfinished non-mission checks appear on the minimap and pause-menu map as colored dots.
 Packages are green, robberies light red, rampages dark red, pickups orange, stunt jumps blue,
 properties yellow, side events cyan, and shop stock purple.
 For final-mission and 100% goals, unpurchased income assets also appear without an AP purchase location attached.
 These assets are lime green, those linked to an AP purchase location turn yellow when their purchase requirements are met.
+Asset names on the status page are white without ownership, yellow when owned but unfinished and green once the income asset is completed. 
+The separate `x/y` unlock count turns green when full.
 Dots disappear when checked. Content-locked checks stay hidden until their content is unlocked.
 Markers also follow the world's mission, ability and region requirements, including alternative vehicle routes and their sources.
 

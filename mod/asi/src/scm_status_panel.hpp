@@ -60,7 +60,7 @@ constexpr const char* kRadioStationNames[kRadioStationCount] = {
 // What a row's value means, so the drawing can colour it without reading the
 // text back: held is what the player is waiting on, open is what they have, and
 // plain is a count or a name that is neither.
-enum class StatusTone { kPlain, kHeld, kOpen };
+enum class StatusTone { kPlain, kHeld, kOpen, kPending };
 
 // One line of the panel: what it names, and what that thing is doing. A row with
 // no value is a line of its own rather than a pair; a row with no LABEL is a
@@ -71,6 +71,7 @@ struct StatusRow {
   std::string value;
   StatusTone tone = StatusTone::kPlain;
   bool joined_above = false;
+  StatusTone label_tone = StatusTone::kPlain;
 };
 
 // A titled block of rows. The first block carries no heading: it is the seed's
@@ -325,6 +326,37 @@ inline StatusSection ComposeGoalSection(const StatusPanelState& state) {
   return section;
 }
 
+template <typename ReadGlobal>
+inline void UpdateAssetStrandStatus(std::vector<StatusRow>& rows, ReadGlobal read) {
+  // Income completion, not progressive items received. Sunshine Autos earns
+  // after its first import list, Pole Position has no progressive item.
+  static constexpr struct { const char* name; int ownership; int completion; } assets[] = {
+      {"Printworks", 9880, 9382}, {"Sunshine Autos", 9881, 9388},
+      {"Film Studio", 9882, 9380}, {"Cherry Popper", 9883, 612},
+      {"Kaufman Cabs", 9884, 9385}, {"Malibu Club", 9885, 9376},
+      {"Boatyard", 9886, 9387}, {"Pole Position", 9887, 1096}};
+  bool has_assets = false, has_pole = false;
+  for (auto& row : rows) {
+    for (const auto& asset : assets) {
+      if (row.label != asset.name) continue;
+      has_assets = true;
+      has_pole = has_pole || row.label == "Pole Position";
+      if (row.label == "Pole Position") {
+        row.value = read(asset.ownership) >= 1 ? "1 of 1" : "0 of 1";
+        row.tone = read(asset.ownership) >= 1 ? StatusTone::kOpen : StatusTone::kPlain;
+      }
+      row.label_tone = read(asset.ownership) < 1 ? StatusTone::kPlain :
+          read(asset.completion) >= 1 ? StatusTone::kOpen : StatusTone::kPending;
+    }
+  }
+  if (has_assets && !has_pole) {
+    const bool owned = read(9887) >= 1;
+    rows.push_back({"Pole Position", owned ? "1 of 1" : "0 of 1",
+        owned ? StatusTone::kOpen : StatusTone::kPlain, false,
+        !owned ? StatusTone::kPlain : read(1096) >= 1 ? StatusTone::kOpen : StatusTone::kPending});
+  }
+}
+
 // How far each giver's strand has come, from the client: the counts live in the
 // unlock globals the mod writes, but the strand names and how many missions each
 // one holds are the world's.
@@ -345,7 +377,7 @@ inline StatusSection ComposeStrandSection(const StatusPanelState& state) {
     if (of != std::string::npos) {
       count = count.substr(0, of) + "/" + count.substr(of + 4);
     }
-    section.rows.push_back({row.label, count, row.tone});
+    section.rows.push_back({row.label, count, row.tone, row.joined_above, row.label_tone});
   }
   return section;
 }
@@ -532,6 +564,7 @@ struct PanelLine {
   // in the same column: a value at the head of one column with its label at the
   // foot of the last names nothing at all.
   bool joined_above = false;
+  StatusTone label_tone = StatusTone::kPlain;
 };
 
 inline std::vector<PanelLine> FlattenPanel(const std::vector<StatusSection>& sections) {
@@ -553,6 +586,7 @@ inline std::vector<PanelLine> FlattenPanel(const std::vector<StatusSection>& sec
       line.label = row.label;
       line.value = row.value;
       line.tone = row.tone;
+      line.label_tone = row.label_tone;
       line.joined_above = row.joined_above;
       lines.push_back(line);
     }

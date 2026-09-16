@@ -220,6 +220,7 @@ class GTAViceCityWorld(World):
         options.mission_shuffle.value = int(bool(slot_data.get("mission_shuffle", False)))
         options.location_percentages = LocationPercentages.from_any(slot_data.get("location_percentages", {}))
         options.milestone_spacing = MilestoneSpacing.from_any(slot_data.get("milestone_spacing", {}))
+        options.pole_position_charge.value = slot_data.get("pole_position_charge", 20)
         options.goal.value = type(options.goal).options[slot_data["goal"]]
         options.hidden_packages_required.value = int(slot_data["hidden_packages_required"])
         options.death_link.value = int(bool(slot_data["death_link"]))
@@ -969,6 +970,7 @@ class GTAViceCityWorld(World):
             "mission_order": self.mission_order or {},
             "location_percentages": dict(self.options.location_percentages.value),
             "milestone_spacing": dict(self.options.milestone_spacing.value),
+            "pole_position_charge": self.options.pole_position_charge.value,
             "removed_locations": sorted(self.removed_locations),
             "goal": self.options.goal.current_key,
             "hidden_packages_required": self.options.hidden_packages_required.value,
@@ -1194,6 +1196,7 @@ class GTAViceCityWorld(World):
         flags[scm.TAXI_MILESTONE_SPACING_GLOBAL] = (
             self.options.milestone_spacing.value.get("taxi", 10)
             if self.options.enable_emergency_vehicles.value else 10)
+        flags[scm.POLE_POSITION_CHARGE_GLOBAL] = self.options.pole_position_charge.value
         return flags
 
     def _completion_condition(self) -> Callable[[CollectionState], bool]:

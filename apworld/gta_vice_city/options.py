@@ -333,6 +333,17 @@ UNCOUNTED_CLASS_OPTIONS: list[str] = ["enable_pickups", "shuffle_shops"]
 UNCOUNTED_CLASS_KEYS: list[str] = ["pickups", "shops"]
 
 
+class PolePositionCharge(NamedRange):
+    """Dollars spent per five-second tick in Pole Position's private dance.
+    The asset still requires $300 total. Vanilla is $5; $20 takes about 75 seconds.
+    """
+    display_name = "Pole Position charge"
+    range_start = 1
+    range_end = 100
+    default = 20
+    special_range_names = {"vanilla": 5}
+
+
 @dataclass
 class GTAViceCityOptions(PerGameCommonOptions):
     start_inventory_from_pool: StartInventoryPool
@@ -347,6 +358,7 @@ class GTAViceCityOptions(PerGameCommonOptions):
     shuffle_emergency_rewards: ShuffleEmergencyRewards
     remember_emergency_progress: RememberEmergencyProgress
     enable_properties: EnableProperties
+    pole_position_charge: PolePositionCharge
     enable_robbable_stores: EnableRobbableStores
     enable_side_events: EnableSideEvents
     enable_pickups: EnablePickups

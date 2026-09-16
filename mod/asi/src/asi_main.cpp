@@ -7,6 +7,7 @@
 // event next to gta-vc.exe.
 #include <cstdio>
 #include <ctime>
+#include <cstring>
 #include <mutex>
 #include <string>
 
@@ -28,6 +29,7 @@
 #include "ingame_console.hpp"
 #include "save_isolation.hpp"
 #include "toast_stack.hpp"
+#include "water_creatures.hpp"
 
 using namespace plugin;
 
@@ -94,6 +96,33 @@ void LogLine(const std::string& line) {
   std::fflush(file);
 }
 
+void UpdateWaterCreatures() {
+  auto& creatures = *reinterpret_cast<gtavc::WaterCreature (*)[8]>(gtavc::kWaterCreatures10);
+  auto& count = *reinterpret_cast<int*>(gtavc::kWaterCreatureCount10);
+  gtavc::RetireDeletedWaterCreatures(creatures, count);
+  plugin::Call<gtavc::kWaterCreatureUpdate10>();
+}
+
+void InstallWaterCreatureReferences() {
+  if (plugin::GetGameVersion() != GAME_10EN) return;
+  const unsigned char increment[] = {0xFF, 0x05, 0x80, 0x5F, 0x9B, 0x00};
+  const auto call = gtavc::kWaterCreatureUpdateCall10;
+  if (std::memcmp(reinterpret_cast<void*>(gtavc::kWaterCreatureCreated10), increment, sizeof(increment)) != 0 ||
+      *reinterpret_cast<unsigned char*>(call) != 0xE8 ||
+      call + 5 + *reinterpret_cast<int*>(call + 1) != gtavc::kWaterCreatureUpdate10) {
+    LogLine("Water-creature lifetime fix unavailable: hook bytes differ.");
+    return;
+  }
+  injector::MakeInline(gtavc::kWaterCreatureCreated10, gtavc::kWaterCreatureCreatedEnd10,
+      [](injector::reg_pack& regs) {
+        ++*reinterpret_cast<int*>(gtavc::kWaterCreatureCount10); // displaced instruction
+        auto* creature = reinterpret_cast<gtavc::WaterCreature*>(regs.eax);
+        creature->object->RegisterReference(&creature->object);
+      });
+  injector::MakeCALL(call, &UpdateWaterCreatures, true);
+  LogLine("Water-creature entity references enabled.");
+}
+
 }  // namespace
 
 struct AsiMain {
@@ -116,6 +145,7 @@ struct AsiMain {
                  console.Add(message, notify);
                }) {
     LogLine("loaded");
+    InstallWaterCreatureReferences();
     // Register the frame handlers before starting the bridge, so the game
     // thread is priming the seed-hash cache by the time the bridge presents it.
     Events::gameProcessEvent += [] { instance.OnGameProcess(); };

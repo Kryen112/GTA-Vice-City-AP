@@ -15,6 +15,7 @@
 #include <cstring>
 #include <cstdio>
 #include <map>
+#include <optional>
 #include <set>
 #include <string>
 #include <vector>
@@ -28,6 +29,13 @@ constexpr int kEmergencyProgressBase = 10160;
 constexpr int kVigilanteTimeRampGlobal = 10164;
 constexpr int kVigilanteWantedRampGlobal = 10165;
 constexpr int kTaxiSessionFaresGlobal = 6712;
+
+inline std::optional<std::int64_t> CompletedDistributionCheck(
+    bool income_complete, const std::map<int, std::int64_t>& watch, std::set<int>& reported) {
+  const auto location = watch.find(9386);
+  if (!income_complete || location == watch.end() || !reported.insert(9386).second) return std::nullopt;
+  return location->second;
+}
 
 inline int MalibuEntranceLock(int vanilla_lock, int death_row_unlock, int death_row_passed) {
   // CELL can deliver its Death Row call after AP has already completed the mission.

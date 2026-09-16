@@ -7,6 +7,17 @@
 
 namespace gtavc {
 
+// CWaterCreatures::Create stores its CObject in a 24-byte slot, then increments
+// the active count here. The update call comes from the water particle pass.
+// Verified in the classic 1.0 crash at 0x6616B7: a freed pool object retained
+// by the manager was deleted again through CEntity's base vtable.
+constexpr unsigned int kWaterCreatureCreated10 = 0x637587;
+constexpr unsigned int kWaterCreatureCreatedEnd10 = 0x63758D;
+constexpr unsigned int kWaterCreatureUpdateCall10 = 0x5BC428;
+constexpr unsigned int kWaterCreatureUpdate10 = 0x636EC0;
+constexpr unsigned int kWaterCreatures10 = 0x938350;
+constexpr unsigned int kWaterCreatureCount10 = 0x9B5F80;
+
 // Frontend idle (0x4A5C60) calls CMenuManager::Process here, after UpdatePads
 // and before its camera setup/begin at 0x4A5D0B. Unlike menuDrawingEvent,
 // this point has no active render frame. Verified against the VC 1.0 image.

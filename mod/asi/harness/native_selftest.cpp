@@ -10,6 +10,9 @@
 #include "../src/native_data.hpp"
 #include "../src/console_font.hpp"
 #include "../src/scm_effects.hpp"
+#include "../src/scm_status_panel.hpp"
+#include "../src/scm_pole_position.hpp"
+#include "../src/water_creatures.hpp"
 
 using namespace gtavc;
 
@@ -29,6 +32,20 @@ int main(int argc, char** argv) {
   _set_error_mode(_OUT_TO_STDERR); // keep assertion failures in the test log
   std::cout << std::unitbuf;
   assert(argc == 2);
+  {
+    WaterCreature creatures[8]{};
+    for (auto& creature : creatures) creature.state = 4;
+    creatures[0].state = 0; // spawning creature deleted by world cleanup
+    creatures[1].state = 3; // deleting creature already freed externally
+    creatures[2].state = 1;
+    creatures[2].object = reinterpret_cast<CEntity*>(1); // still alive
+    int count = 3;
+    RetireDeletedWaterCreatures(creatures, count);
+    assert(count == 1 && creatures[0].state == 4 && creatures[1].state == 4);
+    assert(creatures[2].state == 1 && creatures[2].object != nullptr);
+    RetireDeletedWaterCreatures(creatures, count);
+    assert(count == 1); // do not retire a slot twice
+  }
   // Test the marker parser and evaluator with both generated route tables.
   const auto native_tables = json::parse(kNativeData);
   json marker_config = {{"type", msg::kConfig}, {"item_globals", json::object()},
@@ -132,6 +149,89 @@ int main(int argc, char** argv) {
     assert(!ApplyClientMessage(&marker_game, marker_config, [](const std::string&) {}));
   }
   ConsoleCommandCompletion completion;
+  {
+    std::set<int> reported;
+    const std::map<int, std::int64_t> watch{{9386, 542000328}};
+    assert(!CompletedDistributionCheck(false, watch, reported));
+    assert(!CompletedDistributionCheck(true, {}, reported));
+    assert(reported.empty());
+    assert(CompletedDistributionCheck(true, watch, reported) == 542000328);
+    assert(!CompletedDistributionCheck(true, watch, reported));
+    // Server-acknowledged checks and repeated frames are not sent twice.
+    assert(reported.count(9386));
+  }
+  {
+    std::map<int, int> globals;
+    const auto read = [&](int index) { return globals[index]; };
+    std::vector<StatusRow> rows = {{"Malibu Club", "4 of 4", StatusTone::kOpen},
+                                 {"Sunshine Autos", "3 of 4", StatusTone::kPlain},
+                                 {"Diaz", "5 of 5", StatusTone::kOpen}};
+    UpdateAssetStrandStatus(rows, read);
+    assert(rows[0].tone == StatusTone::kOpen && rows[0].label_tone == StatusTone::kPlain && rows[0].value == "4 of 4");
+    assert(rows[2].tone == StatusTone::kOpen); // Story rows retain their existing meaning.
+    assert(rows.back().label == "Pole Position" && rows.back().tone == StatusTone::kPlain);
+    globals[9885] = globals[9881] = globals[9887] = 1;
+    UpdateAssetStrandStatus(rows, read);
+    assert(rows.size() == 4 && rows[0].label_tone == StatusTone::kPending && rows.back().label_tone == StatusTone::kPending);
+    assert(rows[0].tone == StatusTone::kOpen && rows[1].tone == StatusTone::kPlain);
+    assert(rows.back().value == "1 of 1");
+    globals[9376] = globals[9388] = globals[1096] = 1;
+    UpdateAssetStrandStatus(rows, read);
+    assert(rows[0].label_tone == StatusTone::kOpen && rows[1].label_tone == StatusTone::kOpen && rows.back().label_tone == StatusTone::kOpen);
+    assert(rows[1].tone == StatusTone::kPlain); // Completed asset, but only 3/4 unlocks.
+    StatusPanelState panel;
+    panel.strand_rows = rows;
+    const auto lines = FlattenPanel({ComposeStrandSection(panel)});
+    assert(lines[1].label_tone == StatusTone::kOpen && lines[1].tone == StatusTone::kOpen);
+    assert(lines[2].label_tone == StatusTone::kOpen && lines[2].tone == StatusTone::kPlain && lines[2].value == "3/4");
+    globals[9887] = 0;
+    UpdateAssetStrandStatus(rows, read);
+    assert(rows.back().label_tone == StatusTone::kPlain); // Missing ownership takes precedence.
+    std::vector<StatusRow> story = {{"Diaz", "5 of 5", StatusTone::kOpen}};
+    UpdateAssetStrandStatus(story, read);
+    assert(story.size() == 1); // No assets added when the properties class is disabled.
+    std::vector<StatusRow> cherry = {{"Cherry Popper", "1 of 1", StatusTone::kOpen}};
+    globals[9883] = 1;
+    globals[9386] = 1; // AP reporting alone is not the income-asset flag.
+    UpdateAssetStrandStatus(cherry, read);
+    assert(cherry[0].label_tone == StatusTone::kPending);
+    globals[9386] = 0;
+    globals[612] = 1;
+    UpdateAssetStrandStatus(cherry, read);
+    assert(cherry[0].label_tone == StatusTone::kOpen && cherry[0].tone == StatusTone::kOpen);
+  }
+  {
+    std::vector<unsigned char> script(75, 0);
+    const unsigned char check[] = {0x0A, 0x01, 0x02, 0x08, 0x00, 0x04, 5};
+    std::copy(std::begin(check), std::end(check), script.begin());
+    const unsigned char spend[] = {0x09, 0x01, 0x02, 0x08, 0x00, 0x04, 0xFB,
+        0x06, 0x00, 0x03, 0x10, 0x00, 0x04, 0x00, 0x08, 0x00, 0x02, 0xF8, 0x10, 0x04, 5,
+        0x08, 0x00, 0x02, 0xFC, 0x10, 0x04, 1};
+    script.insert(script.end(), std::begin(spend), std::end(spend));
+    const auto vanilla = script;
+    for (int charge : {20, 1, 100, 5}) {
+      assert(PatchPolePositionCharge(script.data(), script.size(), charge));
+      assert(script[6] == charge && script[81] == static_cast<unsigned char>(-charge) && script[95] == charge);
+    }
+    assert(script == vanilla);
+    assert(!PatchPolePositionCharge(script.data(), script.size(), 0));
+    assert(!PatchPolePositionCharge(script.data(), script.size(), 101));
+    script.insert(script.end(), vanilla.begin(), vanilla.end());
+    const auto duplicate = script;
+    assert(!PatchPolePositionCharge(script.data(), script.size(), 20) && script == duplicate);
+    script = vanilla; script[90] = 1;
+    const auto incompatible = script;
+    assert(!PatchPolePositionCharge(script.data(), script.size(), 20) && script == incompatible);
+    std::ifstream compiled("mod/scm/main.scm", std::ios::binary);
+    if (compiled) {
+      std::vector<unsigned char> binary((std::istreambuf_iterator<char>(compiled)), {});
+      const auto before = binary;
+      assert(PatchPolePositionCharge(binary.data(), binary.size(), 20));
+      int changed = 0;
+      for (std::size_t i = 0; i < binary.size(); ++i) changed += binary[i] != before[i];
+      assert(changed == 3); // Actual shipped script: no size/offset changes.
+    }
+  }
   assert(MalibuEntranceLock(1, 1, 1) == 0); // Late Death Row call after completion.
   assert(MalibuEntranceLock(1, 0, 0) == 0); // Unavailable AP mission cannot block entry.
   assert(MalibuEntranceLock(1, 1, 0) == 1); // Keep an available Death Row entrance.
@@ -221,9 +321,9 @@ int main(int argc, char** argv) {
   assert(CollectedPickupCheck(pickup_targets, (7u << 16) | 9, 7, bribe) == 9399);
   const auto directory = std::filesystem::path(argv[1]);
   std::filesystem::create_directories(directory);
-  for (wchar_t c : std::wstring(L"Vice City 123 connect C:\\Games [chat] + ! ? &"))
+  for (wchar_t c : std::wstring(L"Vice City 123 connect C:Games chat + ! ? &"))
     assert(ViceCityConsoleGlyph(c) == c);
-  for (wchar_t c : std::wstring(L"/_<>@^{}|~")) assert(ViceCityConsoleGlyph(c) == 0);
+  for (wchar_t c : std::wstring(L"/\\[]_<>@^{}|~")) assert(ViceCityConsoleGlyph(c) == 0);
   assert(ViceCityConsoleGlyph(L'\u00e9') == 0x9E); // accented letters keep the native font
   assert(ViceCityConsoleGlyph(L'\u00e4') == 0x9A);
   assert(ViceCityConsoleGlyph(L'\u00f1') == 0xAE);
@@ -237,8 +337,10 @@ int main(int argc, char** argv) {
                        [](std::uint32_t pixel) { return (pixel & 255) != 0; }));
   }
   ConsoleTextBitmap letter(L"a", 10, 24), spaced(L"a ", 10, 24), pair(L"ab", 10, 24);
-  ConsoleTextBitmap slash(L"/", 10, 24);
-  assert(slash.pixels && slash.advance == letter.advance);
+  for (wchar_t c : std::wstring(L"/\\[]")) {
+    ConsoleTextBitmap punctuation(std::wstring(1, c), 10, 24);
+    assert(punctuation.pixels && punctuation.advance == letter.advance);
+  }
   assert(spaced.advance == pair.advance && pair.advance > letter.advance);
   ConsoleTextBitmap accented(L"\u00e9\u00e4\u00f1", 10, 24);
   assert(accented.pixels);

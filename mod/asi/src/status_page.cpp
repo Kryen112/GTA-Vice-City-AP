@@ -152,6 +152,8 @@ CRGBA ToneColor(StatusTone tone, int alpha) {
       return CRGBA(214, 96, 72, static_cast<unsigned char>(alpha));
     case StatusTone::kOpen:
       return CRGBA(122, 199, 130, static_cast<unsigned char>(alpha));
+    case StatusTone::kPending:
+      return CRGBA(255, 235, 65, static_cast<unsigned char>(alpha));
     case StatusTone::kPlain:
     default:
       return LabelColor(alpha);
@@ -218,7 +220,7 @@ void DrawColumn(const std::vector<PanelLine>& lines, float column_x,
       continue;
     }
     const wchar_t* label = Widen(line.label);
-    CFont::SetColor(LabelColor(alpha));
+    CFont::SetColor(ToneColor(line.label_tone, alpha));
     CFont::PrintString(left, StretchY(y), label);
     if (!line.value.empty()) {
       const wchar_t* value = Widen(line.value);

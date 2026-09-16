@@ -359,6 +359,7 @@ class ScmGameState : public GameState {
   // Whether the minimap enforcement is holding the radar-hide flag, so the
   // unlock releases it exactly once and then leaves the flag to the game.
   bool minimap_forcing_hidden_ = false;
+  int pole_position_charge_ = 0;
   // Blocked-attempt toast rate limiting, one slot per ability. Reset on the
   // game boundary.
   std::array<bool, kAbilityCount> ability_toast_shown_{};

@@ -73,6 +73,16 @@ class TestDefault(WorldTestBase):
     game = "Grand Theft Auto Vice City"
     # Default options: final-mission goal, hidden packages on.
 
+    def test_pole_position_charge(self) -> None:
+        world = self.multiworld.worlds[self.player]
+        self.assertEqual(world.fill_slot_data()["pole_position_charge"], 20)
+        for charge in (5, 20, 100):
+            world.options.pole_position_charge.value = charge
+            slot = world.fill_slot_data()
+            self.assertEqual(slot["config_globals"][str(scm.POLE_POSITION_CHARGE_GLOBAL)], charge)
+            world._restore_options(slot)
+            self.assertEqual(world.options.pole_position_charge.value, charge)
+
     def test_a_sourced_route_binds_with_no_ability_key_selected(self) -> None:
         # A route's VEHICLE drops out when its key is unselected, since the item
         # is not in the pool and the vehicle is free; the SOURCE does not, and

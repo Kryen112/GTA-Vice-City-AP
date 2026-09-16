@@ -14,6 +14,7 @@
 #include "scm_finale_warp.hpp"
 #include "scm_packages.hpp"
 #include "scm_seed_stamp.hpp"
+#include "scm_pole_position.hpp"
 #include "toast_stack.hpp"
 
 #include <plugin.h>
@@ -1483,6 +1484,8 @@ StatusPanelState ScmGameState::BuildStatusPanelState() {
   // there is no game.
   if (cached_seed_hash_.empty()) return state;
 
+  UpdateAssetStrandStatus(state.strand_rows, [](int index) { return GetGlobal(index); });
+
   // The rest is read out of the globals here and now, the way the frame reads
   // it. The page is drawn with the game frame stopped, so a snapshot taken on
   // the last frame would be no fresher and one more thing to keep in step.
@@ -1798,6 +1801,7 @@ void ScmGameState::OnGameStarted() {
 // hash the frame would otherwise have read as empty. Every write is idempotent,
 // so the paths overlapping costs nothing.
 void ScmGameState::ForgetGameScopedState() {
+  pole_position_charge_ = 0;
   trap_baseline_pending_ = true;
   baseline_captured_ = false;
   // Forget which packages were seen present so a fresh game re-derives from
@@ -1968,6 +1972,14 @@ void ScmGameState::OnGameFrame() {
   // Pending items simply wait: the dirty flag holds until the first
   // controllable frame.
   const bool controllable = PlayerIsControllable();
+  const int pole_charge = GetGlobal(kPolePositionChargeGlobal);
+  const int charge = pole_charge >= 1 && pole_charge <= 100 ? pole_charge : 20;
+  if (controllable && pole_position_charge_ != charge) {
+    const bool patched = PatchPolePositionCharge(CTheScripts::ScriptSpace, sizeof(CTheScripts::ScriptSpace), charge);
+    if (logger_) logger_(patched ? "Pole Position charge: $" + std::to_string(charge) :
+                                  "Pole Position charge unchanged: script pattern not found or ambiguous");
+    pole_position_charge_ = charge;
+  }
   // Everything the game says about whether the player is playing, which is what
   // a grant and a landing report wait for. Wider than the control flag alone: a
   // pause, the frontend menu, a wasted or arrested Tommy and a shop stand's help
@@ -2250,6 +2262,10 @@ void ScmGameState::OnGameFrame() {
   // offline from a save.
   EnforceMinimap();
 
+  // Distribution sets $612 when income starts, its unused launcher flag $337
+  // never records that success.
+  if (GetGlobal(612) == 1) SetGlobal(9386, 1);
+
   // Repair the vanilla phone call's Malibu entrance lock, including saved locks.
   // Leave mission-owned transitions alone while a mission or cutscene is running.
   if (controllable && GetGlobal(kOnMissionGlobal) == 0)
@@ -2314,6 +2330,9 @@ void ScmGameState::OnGameFrame() {
     baseline_captured_ = true;
     if (logger_) logger_("captured completion baseline");
   }
+  // Report once, and only when Distribution is a check in this seed.
+  if (const auto location = CompletedDistributionCheck(GetGlobal(612) == 1, completion_watch_, reported_))
+    outbound_checks_.push_back(*location);
   // Found on every frame, whether or not the player has control. Detection is a
   // live read of a global going nonzero, not a latch, so a completion written
   // and cleared again inside a cutscene is only ever seen by the frame it is
