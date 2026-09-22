@@ -873,7 +873,7 @@ STRAND_PREREQUISITES: dict[str, list[tuple[str, int]]] = {
     # The protection strand starts once Rub Out hands over the mansion, which is
     # Diaz's fifth and last.
     "Vercetti Protection": [("Diaz", 5)],
-    "Vercetti Finale": [("Vercetti Protection", 3)],
+    "Vercetti Finale": [("Diaz", 5)],
 }
 
 # Where a strand's in-game gate waits on a vanilla mission having PASSED, and
@@ -903,24 +903,14 @@ MISSION_PREREQUISITES: dict[str, list[tuple[str, int]]] = {
     "Trojan Voodoo": [("Auntie Poulet", 3)],
 }
 
-# The same, for an edge into a venue strand: Cap the Collector needs the
-# Printworks courier dealt with. Kept apart because a venue strand's progressive
-# leaves the pool when the properties class is off, and no rule may name an item
-# that is not in the pool, so rules.py carries these only while the class is on.
+# Optional cross-venue edges; no business is individually mandatory for the finale.
 PROPERTY_MISSION_PREREQUISITES: dict[str, list[tuple[str, int]]] = {
-    "Cap the Collector": [("Printworks", 2)],
+
 }
 
 
-# The finale's vanilla asset prerequisite, pinned from the decompile. The CELL
-# controller starts Cap the Collector's launcher once Hit the Courier ($273)
-# and Cop Land ($268) have passed and the owned-asset count $1175 exceeds six:
-# seven of the nine income assets complete. Each asset completes differently:
-# a venue strand's last mission, the first Sunshine Autos import garage list, the
-# Pole Position back-room spend, or Cop Land for the Vercetti Estate. The
-# custom FIN1 gate reads the same vanilla globals, and an asset's completion
-# is recognized only while its property is bought and owned, so logic mirrors
-# the prerequisite as the items to complete each asset.
+# Vanilla asset globals remain useful for script auditing. The configurable
+# finale gate counts all nine purchased, owned, completed income assets.
 # The vanilla already-shown flag for the bribe help text, which the pickup
 # randomizer retires by stamping it. The vanilla HELP thread reads it in two
 # places: the guard on its three bribe-text sites, and the all-tutorials-shown

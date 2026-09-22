@@ -17,6 +17,7 @@ def test_stunt_takeoffs_require_unfinished_jump():
     scope = {"lines": lines, "edits": [], "STUNT_JUMPS_CLASS": 2,
              "STUNT_JUMP_DISTRICTS": [0] * 36,
              "_hold_condition": lambda *_: "  $9999 >= 1",
+             "district_conditions": lambda *_: [],
              "re": __import__("re")}
     exec(compile(ast.Module(body=[gate], type_ignores=[]), str(source), "exec"), scope)
     scope["gate_stunt_jumps"]()

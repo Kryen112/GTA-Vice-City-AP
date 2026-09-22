@@ -12,11 +12,14 @@
 #include <vector>
 
 #include "../src/protocol.hpp"
+#include "../src/ped_physics_sample.hpp"
 #include "../src/scm_ability_locks.hpp"
 #include "../src/scm_applied_reports.hpp"
 #include "../src/scm_completion.hpp"
 #include "../src/scm_content_locks.hpp"
 #include "../src/scm_crossings.hpp"
+#include "../src/scm_island_content.hpp"
+#include "../src/scm_mission_markers.hpp"
 #include "../src/scm_death_link.hpp"
 #include "../src/scm_effects.hpp"
 #include "../src/scm_finale_warp.hpp"
@@ -92,6 +95,40 @@ void Expect(bool condition, const char* label) {
 }  // namespace
 
 int main() {
+  {
+    std::map<int, int> globals{{kIslandContentLocksGlobal, 1}};
+    const auto read = [&](int index) { return globals[index]; };
+    AbilityLocks locked{};
+    locked[kAbilityAirVehicles] = locked[kAbilitySeaVehicles] = true;
+    std::vector<MainlandRoute> routes{{9032, "Prawn", 0, ""},
+                                    {9035, "Causeway", kStarfishAccessGlobal, "Starfish"},
+                                    {kStarfishAccessGlobal, "Starfish", 0, ""}};
+    Expect(IslandContentAccess(routes, locked, read) == 0, "island content starts held");
+    globals[9035] = 1;
+    Expect(IslandContentAccess(routes, locked, read) == 0, "causeway alone does not reach mainland");
+    globals[kStarfishAccessGlobal] = 1;
+    Expect(IslandContentAccess(routes, locked, read) == 3, "causeway and Starfish reach both islands");
+    globals[kStarfishAccessGlobal] = 0;
+    globals[9032] = 1;
+    Expect(IslandContentAccess(routes, locked, read) == 1, "mainland access respects air lock");
+    locked[kAbilityAirVehicles] = false;
+    Expect(IslandContentAccess(routes, locked, read) == 3, "mainland and air reach Starfish");
+    globals[9032] = 0;
+    globals[kAllHandsPassedGlobal] = 1;
+    Expect(IslandContentAccess(routes, locked, read) == 0, "Cortez route respects sea lock");
+    locked[kAbilitySeaVehicles] = false;
+    Expect(IslandContentAccess(routes, locked, read) == 2, "Cortez and sea reach Starfish only");
+    globals[kIslandContentLocksGlobal] = 0;
+    Expect(IslandContentAccess(routes, locked, read) == 3, "disabled island locks release everything");
+    ContentLocks original{};
+    original[ContentDistrictSlot(kContentPickups, 0)] = true;
+    const auto held = HoldIslandContent(original, 0);
+    Expect(held[ContentDistrictSlot(kContentPickups, 0)] &&
+          !held[ContentDistrictSlot(kContentHiddenPackages, 0)] &&
+          held[ContentDistrictSlot(kContentHiddenPackages, 3)] &&
+          held[ContentDistrictSlot(kContentHiddenPackages, 6)], "island and district locks combine");
+    Expect(HoldIslandContent(original, 3) == original, "island access preserves district locks");
+  }
   {
     std::map<int, std::int64_t> watch;
     std::set<int> reported;
@@ -1826,6 +1863,9 @@ int main() {
     Expect(IsWorldPickup(targets, entry), "fixed hospital pay stands are pickups");
     entry.x = 30.0f;
     Expect(!IsWorldPickup(targets, entry), "Phil's shop stock is unaffected");
+    Expect(IsWorldPickup(targets, entry, true), "island locks include fixed Phil shop stock");
+    entry.pickup_type = 3;
+    Expect(!IsWorldPickup(targets, entry, true), "island locks exclude dropped weapons at Phil's shop");
     ContentLocks held{};
     held[ContentDistrictSlot(kContentPickups, 0)] = true;
     const std::vector<PickupDistrict> districts{{10.0f, 20.0f, kContentPickups, 0}};
@@ -3271,6 +3311,30 @@ int main() {
   Expect(!ProjectCheckMarker(radar_x, radar_y, 0, 40), "zero size radar draws nothing");
   radar_x = std::numeric_limits<float>::quiet_NaN();
   Expect(!ProjectCheckMarker(radar_x, radar_y, 50, 40), "invalid projections draw nothing");
+
+  Expect(ContactMarkerInRange(0, 0), "contact at the player renders");
+  Expect(ContactMarkerInRange(149.9f, 0), "contact inside native draw range renders");
+  Expect(!ContactMarkerInRange(150, 0), "contact at native cutoff allocates no cylinders");
+  Expect(!ContactMarkerInRange(110, 110), "contact range uses horizontal distance");
+  Expect(!ContactMarkerInRange(std::numeric_limits<float>::quiet_NaN(), 0), "invalid contact does not allocate");
+  int contact_cylinders = 0;
+  for (int index = 0; index < 12; ++index) {
+    const float distance = index == 11 ? 7.0f : 700.0f;
+    if (ContactMarkerInRange(distance, 0)) contact_cylinders += 3;
+  }
+  Expect(contact_cylinders == 3, "eleven distant contacts leave room for the nearby mansion glow");
+
+  PedPhysicsSample physics{{-878.0f, -115.0f, 11.0f, 0.0f, 0.0f, -0.006f}};
+  Expect(physics.IsFinite(), "finite pedestrian physics remains unreported");
+  for (std::size_t index = 0; index < physics.values.size(); ++index) {
+    const float original = physics.values[index];
+    for (const auto bits : {0x7ffffffeu, 0xfffffffeu, 0x7f800000u, 0xff800000u}) {
+      std::memcpy(&physics.values[index], &bits, sizeof(bits));
+      Expect(!physics.IsFinite(), "diagnostics detect crash NaNs and infinities in each component");
+    }
+    physics.values[index] = original;
+  }
+  Expect(physics.IsFinite(), "valid physics sample recovers after invalid sample checks");
 
   if (failures == 0) {
     std::cout << "OK: protocol self-test passed\n";

@@ -115,6 +115,7 @@ void ArchipelagoClient::Run() {
       const auto url = ServerUrl(server);
       if (slot.empty()) throw std::runtime_error("Set your slot with /slot NAME, then /connect.");
       disconnect();
+      reported_unavailable = false;
       if (!native) native = std::make_unique<NativeSession>(game_, logger_, [](const json& messages) {
         return AP_SendPacket(messages.dump());
       }, slot, password, data_directory, prepare_seed_, console_);
@@ -149,6 +150,8 @@ void ArchipelagoClient::Run() {
           else if (text == "/help") {
             logger_("/server HOST:PORT, /slot NAME, /password PASSWORD, /connect, /disconnect");
             logger_("/deathlink [on|off|seed], /ready, /received [page]");
+            logger_("/unstuck: return to Rosenberg outdoors and on foot. Keeps the active mission running.");
+            logger_("/increasetimer: add 60 seconds to the active countdown.");
             logger_("/items [page] [filter], /locations [page] [filter]");
             logger_("/item_groups [page] [group], /location_groups [page] [group]");
             logger_("!missing [filter], !checked [filter], !hint [item]. !help lists server commands.");
@@ -187,7 +190,6 @@ void ArchipelagoClient::Run() {
               logger_("Connection unavailable; APCpp will retry. Check the server, port and ws:// or wss:// scheme.");
               reported_unavailable = true;
             }
-            if (connected) reported_unavailable = false;
             if (!connected && native) native->Tick(false);
           } else if (native) {
             const auto packet = json::parse(event.packet);
@@ -197,6 +199,8 @@ void ArchipelagoClient::Run() {
         }
         if (native) native->Tick(connected);
         connected_ = native && native->Connected();
+        // A socket opening alone does not mean the Archipelago login succeeded.
+        if (connected_) reported_unavailable = false;
         last_error.clear();
       } catch (const std::exception& error) {
         if (last_error != error.what()) { last_error = error.what(); logger_(last_error); }

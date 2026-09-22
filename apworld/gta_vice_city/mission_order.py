@@ -1,4 +1,6 @@
-"""Shared SCM emitters for per-giver mission order. No Archipelago imports."""
+"""Mission-slot assignments and SCM order emitters. No Archipelago imports."""
+
+from random import Random
 
 UNLOCK_FIRST = 9010
 UNLOCK_LAST = 9029
@@ -6,6 +8,51 @@ ORDER_BASE = 9036
 RANK_GLOBAL = 10166
 DIGIT_GLOBAL = 10167
 COMPLETED_GLOBAL = 10168
+
+
+def assigned_slots(strands: dict[str, list[str]], assignment: dict[str, list[str]]) -> dict[str, tuple[str, int]]:
+    """Return each mission's destination slot."""
+    if not isinstance(assignment, dict) or assignment.keys() != strands.keys():
+        raise ValueError("Mission assignment must contain exactly the enabled givers.")
+    expected = [mission for missions in strands.values() for mission in missions]
+    if len(set(expected)) != len(expected):
+        raise ValueError("Mission pool contains duplicate missions.")
+    result = {}
+    for giver, missions in strands.items():
+        assigned = assignment[giver]
+        if not isinstance(assigned, list) or len(assigned) != len(missions):
+            raise ValueError(f"Mission assignment has the wrong number of slots for {giver}.")
+        for ordinal, mission in enumerate(assigned):
+            if not isinstance(mission, str) or mission not in expected or mission in result:
+                raise ValueError("Mission assignment contains an unknown or repeated mission.")
+            result[mission] = (giver, ordinal)
+    return result
+
+
+def shuffle_slots(strands: dict[str, list[str]], random: Random) -> dict[str, list[str]]:
+    """Shuffle the supplied gameplay missions across all supplied start slots."""
+    assigned_slots(strands, strands)
+    missions = [mission for strand in strands.values() for mission in strand]
+    random.shuffle(missions)
+    assignment = {}
+    start = 0
+    for giver, original in strands.items():
+        assignment[giver] = missions[start:start + len(original)]
+        start += len(original)
+    return assignment
+
+
+def event_trigger_slot(strands: dict[str, list[str]], assignment: dict[str, list[str]],
+                       mission: str, timing: str) -> tuple[str, int]:
+    """Resolve a permanent event to its original milestone or assigned mission."""
+    destinations = assigned_slots(strands, assignment)
+    if timing == "quest_giver_progress":
+        destinations = assigned_slots(strands, strands)
+    elif timing != "mission_completion":
+        raise ValueError(f"Unknown world event timing: {timing}")
+    if mission not in destinations:
+        raise ValueError(f"World event mission is absent: {mission}")
+    return destinations[mission]
 
 
 def order_global(unlock: int) -> int:

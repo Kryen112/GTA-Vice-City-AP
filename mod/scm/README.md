@@ -14,6 +14,10 @@ version control.
    the reserved-global foundation, each launcher's unlock gate, each location's
    completion write, reward re-gating, the mainland-area watcher, and the
    package, activity, stat, and reward watchers.
+   Shakedown's eight business-opening actions live in the shared MAIN routine
+   `AP_OPEN_BUSINESSES`. Its original mission calls that routine at the same
+   point. This separates the actions from their caller without changing when
+   businesses become available.
 3. Apply the AP-driven markers: `python add_markers.py built.txt built.markers.txt apwatchers.txt`.
    This makes every mission-giver marker appear only on its AP unlock, holds the
    whole marker and launcher pass until An Old Friend is done (the vanilla flag
@@ -48,6 +52,48 @@ version control.
    the game `CLEO` folder.
 
 ## Notes
+
+### Production mission dispatch
+
+`add_markers.py` always builds the seed-configured mission dispatcher. Full
+shuffle assignments and world-event timing come from seed configuration.
+Mission checks follow the assigned mission; slot progress follows the giver.
+
+Missions temporarily open required island routes. Cleanup returns Tommy to the
+giver before restoring locked routes. Death and arrest keep their normal
+respawns. Payphone slots save their accepted position; other slots use their
+vanilla drop-off point.
+
+The build verifies labels, compacts rank checks, and keeps Cap the Collector's
+asset gate before its launcher. The third output is `apwatchers.txt`;
+`appickup.txt` is generated beside it.
+
+### Island Content Locks
+
+`island_content_locks` defaults on and is independent of `content_locks`.
+Content on the mainland or Starfish waits until its island is logically
+accessible, even when Tommy reaches it through a mission or another teleport.
+Turning it off removes this additional gate; the existing content and mission
+unlocks still apply.
+
+The native resolver owns three globals: `$10172` is the option flag, `$10173`
+is the access mask (bit 0 mainland, bit 1 Starfish), and `$10174` is permission
+at Tommy's current island. The resolver follows the world's access routes,
+including the Starfish alternatives, rather than treating a crossing item
+alone as access. Disabled locks resolve to mask 3 and player permission 1.
+The script foundation initializes these two resolved values to their disabled
+defaults; the native resolver refreshes them from the current seed.
+
+SCM gates mission, property, activity, emergency and save entries, the six
+weapon-shop counters, Sunshine import recognition, stunt jumps and robberies.
+Markers read their giver's fixed island permission. Native pickup enforcement
+handles pickup interactions, including asset revenue and Phil's shop stands.
+Active mission payloads and the package-goal finale launcher keep their existing
+flow. The startup comparison `$10174 > $onmission` combines permission and an
+idle player in one opcode: both inputs are booleans, so only 1 > 0 admits entry.
+
+Release builds must keep MAIN within 225,512 bytes and every mission within
+35,000 bytes. Compilation does not replace in-game verification.
 
 - The gate tables in `build_scm.py` and `add_markers.py` mirror the world tables
   (`scm.py`, `data.py`, `rules.py`). `scripts/dump_scm_spec.py` prints the same
@@ -134,11 +180,10 @@ version control.
   | ability lock flags / unlocks | `$9911..$9926` / `$9927..$9942` | 8 each |
   | content lock flags / unlocks | `$9943..$9954` / `$9955..$9966` | 5 each |
   | district grid | `$9967..$10158` | 12 rows of 16, 5 by 11 used |
-  | spare flags | `$10159..$10174` | 0 |
+  | spare flags | `$10159..$10174` | 16 |
 
-  Nothing hands a spare slot out and nothing may claim one as scratch: the world
-  publishes no name for them, and `scripts/check_scm_mirrors.py` reads a
-  compiled script that names one as stale. The district grid is padded in BOTH
+  Every spare flag has a published owner in `scm.py`; none is available as
+  scratch. The last three hold the island-content contract above. The district grid is padded in BOTH
   dimensions, since its row stride is the district count, and the spare flag
   block exists so the next single flag this layout gains takes a spare instead
   of moving the finale globals and the top of the block.

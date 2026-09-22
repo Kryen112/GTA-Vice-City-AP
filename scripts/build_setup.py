@@ -12,6 +12,7 @@ import build_apworld as payload
 
 
 def stage_setup(folder: Path) -> Path:
+    payload.verify_release_script(payload.MOD_SCM, payload.MOD_SCM.with_suffix(".release.json"))
     package = folder / "gta_vc_setup"
     package.mkdir()
     (package / "__init__.py").write_text("", encoding="utf-8")

@@ -450,7 +450,7 @@ def test_an_installer_that_cannot_rebuild_deltas_refuses(tmp_path: pathlib.Path,
     # leaving the game with no script of ours at all.
     _stock(tmp_path, monkeypatch)
     monkeypatch.setattr(build_apworld, "MOD_SCM", _write(tmp_path / "main.scm", 1000))
-    monkeypatch.setattr(build_apworld, "_installer_module", lambda: object())
+    monkeypatch.setattr(build_apworld, "_installer_module", object)
     try:
         build_apworld._refuse_unpatchable_payload()
     except SystemExit as refusal:
@@ -590,3 +590,25 @@ def test_apworld_build_neither_reads_nor_stages_the_mod(tmp_path: pathlib.Path, 
 
     assert build_apworld.main() == 1
     assert order == ["root", "link", "manifest", "licences", "package", "clear licences"]
+
+def test_release_script_requires_matching_production_provenance(tmp_path):
+    import hashlib
+    import json
+
+    script = tmp_path / "main.scm"
+    provenance = tmp_path / "main.release.json"
+    script.write_bytes(b"compiled production script")
+    for flavor, digest, accepted in (
+            ("production", hashlib.sha256(script.read_bytes()).hexdigest(), True),
+            ("test", hashlib.sha256(script.read_bytes()).hexdigest(), False),
+            ("production", "stale", False)):
+        provenance.write_text(json.dumps({"flavor": flavor, "contract": 30000, "sha256": digest}))
+        if accepted:
+            build_apworld.verify_release_script(script, provenance)
+        else:
+            try:
+                build_apworld.verify_release_script(script, provenance)
+            except SystemExit:
+                pass
+            else:
+                raise AssertionError("Unverified script was accepted")

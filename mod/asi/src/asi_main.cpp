@@ -21,15 +21,20 @@
 #include <CPad.h>
 #include <CMenuManager.h>
 #include <COnscreenTimer.h>
+#include <CTimer.h>
+#include <C3dMarkers.h>
+#include <common.h>
 
 #include "ap_client.hpp"
 #include "game_addresses.hpp"
 #include "scm_game_state.hpp"
+#include "scm_mission_markers.hpp"
 #include "status_page.hpp"
 #include "ingame_console.hpp"
 #include "save_isolation.hpp"
 #include "toast_stack.hpp"
 #include "water_creatures.hpp"
+#include "ped_physics_diagnostics.hpp"
 
 using namespace plugin;
 
@@ -123,6 +128,28 @@ void InstallWaterCreatureReferences() {
   LogLine("Water-creature entity references enabled.");
 }
 
+void DrawNearbyContactMarker(unsigned int id, unsigned short type, CVector& position, float size,
+                             unsigned char red, unsigned char green, unsigned char blue, unsigned char alpha,
+                             unsigned short pulse_period, float pulse_fraction, short rotate_rate) {
+  if (FindPlayerPed() == nullptr) return;
+  const auto& origin = FindPlayerCentreOfWorld(0);
+  if (!gtavc::ContactMarkerInRange(position.x - origin.x, position.y - origin.y)) return;
+  C3dMarkers::PlaceMarkerSet(id, type, position, size, red, green, blue, alpha,
+                            pulse_period, pulse_fraction, rotate_rate);
+}
+
+void InstallContactMarkerRange() {
+  if (plugin::GetGameVersion() != GAME_10EN) return;
+  const auto call = gtavc::kContactPointMarkerCall10;
+  if (*reinterpret_cast<unsigned char*>(call) != 0xE8 ||
+      call + 5 + *reinterpret_cast<int*>(call + 1) != gtavc::kContactPointMarkerTarget10) {
+    LogLine("Contact marker range fix unavailable: hook bytes do not match.");
+    return;
+  }
+  injector::MakeCALL(call, &DrawNearbyContactMarker, true);
+  LogLine("Contact marker range culling enabled.");
+}
+
 }  // namespace
 
 struct AsiMain {
@@ -131,11 +158,29 @@ struct AsiMain {
   gtavc::IngameConsole console;
   gtavc::ArchipelagoClient bridge;
   bool client_ready = false;
+  bool unstuck_pending = false;
+  bool increase_timer_pending = false;
 
   AsiMain()
       : game([](const std::string& line) { LogLine("game: " + line); }),
         status_page([](const std::string& line) { LogLine("page: " + line); }),
-        console([this](std::string text) { bridge.Command(std::move(text)); }),
+        console([this](std::string text) {
+          if (text == "/unstuck") {
+            if (CTimer::m_UserPause || CTimer::m_CodePause || FrontEndMenuManager.m_bMenuActive ||
+                FrontEndMenuManager.m_bGameNotLoaded)
+              console.Add("Resume a loaded game before using /unstuck.");
+            else unstuck_pending = true;
+          }
+          else if (text.rfind("/unstuck ", 0) == 0) console.Add("Usage: /unstuck");
+          else if (text == "/increasetimer") {
+            if (CTimer::m_UserPause || CTimer::m_CodePause || FrontEndMenuManager.m_bMenuActive ||
+                FrontEndMenuManager.m_bGameNotLoaded)
+              console.Add("Resume a loaded game before using /increasetimer.");
+            else increase_timer_pending = true;
+          }
+          else if (text.rfind("/increasetimer ", 0) == 0) console.Add("Usage: /increasetimer (adds 60 seconds)");
+          else bridge.Command(std::move(text));
+        }),
         bridge(&game,
                [this](const std::string& line) { LogLine("APCpp: " + line); console.Add(line); },
                &gtavc::PrepareSaveSeed, {}, [this](const gtavc::ConsoleMessage& message, bool notify) {
@@ -146,6 +191,7 @@ struct AsiMain {
                }) {
     LogLine("loaded");
     InstallWaterCreatureReferences();
+    InstallContactMarkerRange();
     // Register the frame handlers before starting the bridge, so the game
     // thread is priming the seed-hash cache by the time the bridge presents it.
     Events::gameProcessEvent += [] { instance.OnGameProcess(); };
@@ -162,8 +208,15 @@ struct AsiMain {
     // No frame condition says it. The frame keeps running with the pause menu
     // open, and the player ped survives death, arrest and a cutscene, so nothing
     // a frame can see separates the frame before a load from the frame after.
-    Events::initGameEvent += [] { instance.OnGameStarted(); };
-    Events::restartGameEvent += [] { instance.OnGameStarted(); };
+    Events::initGameEvent += [] {
+      gtavc::ped_diagnostics::Install(LogPath().substr(0, LogPath().find_last_of("\\/") + 1));
+      gtavc::ped_diagnostics::Reset();
+      instance.OnGameStarted();
+    };
+    Events::restartGameEvent += [] {
+      gtavc::ped_diagnostics::Reset();
+      instance.OnGameStarted();
+    };
     beforeWorldProcessEvent += [] { instance.OnBeforeWorldProcess(); };
     // Draw over the complete menu, including in the frontend without a game.
     frontendDrawEvent += [] { instance.OnMenuDraw(); };
@@ -203,10 +256,22 @@ struct AsiMain {
   void OnGameProcess() {
     OnClientUpdate();
     game.OnGameFrame();
+    if (increase_timer_pending) {
+      increase_timer_pending = false;
+      console.Add(game.IncreaseTimer());
+    }
+    if (unstuck_pending) {
+      unstuck_pending = false;
+      console.Add(game.Unstuck());
+    }
   }
-  void OnGameStarted() { game.OnGameStarted(); }
+  void OnGameStarted() { unstuck_pending = false; increase_timer_pending = false; game.OnGameStarted(); }
 
-  void OnBeforeWorldProcess() { game.OnBeforeWorldProcess(); console.BlockControls(); }
+  void OnBeforeWorldProcess() {
+    gtavc::ped_diagnostics::BeforeWorld();
+    game.OnBeforeWorldProcess();
+    console.BlockControls();
+  }
 
   void OnDrawHud() {
     console.Draw();

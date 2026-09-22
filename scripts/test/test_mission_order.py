@@ -14,11 +14,12 @@ mission_order = importlib.util.module_from_spec(specification)
 specification.loader.exec_module(mission_order)
 
 
-def run_lines(lines, values):
+def run_lines(lines, values, *, conditions=None, executed=None):
     labels = {line[1:]: index for index, line in enumerate(lines) if line.startswith(":")}
     position = 0
     condition = True
     started = []
+    returns = []
 
     def value(token):
         return values[token] if token.startswith("$") else int(token)
@@ -27,7 +28,16 @@ def run_lines(lines, values):
         line = lines[position]
         position += 1
         tokens = line.split()
-        if line.startswith("goto ") or (line.startswith("goto_if_false ") and not condition):
+        if line.startswith("gosub "):
+            returns.append(position)
+            position = labels[tokens[-1][1:]]
+        elif line.strip() == "return":
+            position = returns.pop()
+        elif line.strip() == "terminate_this_script":
+            break
+        elif line.startswith("load_and_launch_mission_internal "):
+            started.append(value(tokens[-1]))
+        elif line.startswith("goto ") or (line.startswith("goto_if_false ") and not condition):
             position = labels[tokens[-1][1:]]
         elif line.startswith("start_new_script "):
             started.append(tokens[-1][1:])
@@ -48,6 +58,8 @@ def run_lines(lines, values):
             assert not right.startswith("$"), "Variable comparisons need an explicit integer opcode."
             condition = {">": value(left) > value(right), ">=": value(left) >= value(right),
                          "==": value(left) == value(right)}[operator]
+        elif conditions is not None and line.strip() in conditions:
+            condition = conditions[line.strip()]
         elif line.startswith("$"):
             left, operator, right = tokens
             assert not right.startswith("$"), "Variable arithmetic needs an explicit integer opcode."
@@ -64,6 +76,8 @@ def run_lines(lines, values):
                 values[left] //= operand
             else:
                 raise AssertionError(line)
+        elif executed is not None:
+            executed.append(line)
     return started
 
 
@@ -113,7 +127,9 @@ def test_every_five_mission_order_selects_only_the_next_received_mission():
     tree = ast.parse(source.read_text())
     function = next(node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == "strand_block")
     scope = {"mission_order": mission_order, "MAINLAND_ANY": "any mainland crossing",
-             "MISSION_PASSED": "mission passed"}
+             "MISSION_PASSED": "mission passed", "marker_gate_lines": lambda *_: [],
+             "slot_gate_lines": lambda *_: [], "payload_gate_lines": lambda *_: [],
+             "raw": b"", "nl": "\n"}
     exec(compile(ast.Module(body=[function], type_ignores=[]), str(source), "exec"), scope)
     missions = [{"ordinal": index, "launcher": f"GEN{index + 1}", "passed": f"$passed{index}",
                  "shown": 11000 + index, "started": 11010 + index, "handle": 11020 + index,

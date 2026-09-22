@@ -7,6 +7,29 @@
 
 namespace gtavc {
 
+// Direct native physics calls in VC classic 1.0
+constexpr unsigned int kPedBuoyancyCall10 = 0x5094FC;
+constexpr unsigned int kBuoyancyTarget10 = 0x5AAC90;
+constexpr unsigned int kPhysicalMoveTarget10 = 0x4BAC70;
+constexpr unsigned int kPhysicalMoveCalls10[] = {0x4D7A01, 0x4E03CA, 0x500CB4, 0x5191C1,
+    0x5950A2, 0x5950C4, 0x60FA71, 0x60FA93};
+constexpr unsigned int kCollisionPairTarget10 = 0x4B6600;
+constexpr unsigned int kCollisionPairCalls10[] = {0x4AF4E8, 0x4AF7FC, 0x4AFBDC, 0x4AFF38,
+    0x4B25BD, 0x4B2927, 0x4B2D4C, 0x4B30FA};
+constexpr unsigned int kCollisionWorldTarget10 = 0x4B8AA0;
+constexpr unsigned int kCollisionWorldCalls10[] = {0x5B4E1A};
+constexpr unsigned int kCollisionAlternateTarget10 = 0x4B5DB0;
+constexpr unsigned int kCollisionAlternateCalls10[] = {0x4B1973, 0x4B1D54};
+constexpr unsigned int kFrictionPairTarget10 = 0x4B39F0;
+constexpr unsigned int kFrictionPairCalls10[] = {0x4AFA77, 0x4AFE57, 0x4B01B6, 0x4B2BFC, 0x4B301C, 0x4B33CC};
+constexpr unsigned int kFrictionWorldTarget10 = 0x4B5200;
+constexpr unsigned int kFrictionWorldCalls10[] = {0x4B225D};
+
+// CRadar::Draw3dMarkers allocates three cylinders per contact before distance
+// culling. This call targets C3dMarkers::PlaceMarkerSet in VC 1.0.
+constexpr unsigned int kContactPointMarkerCall10 = 0x4C3FC2;
+constexpr unsigned int kContactPointMarkerTarget10 = 0x570270;
+
 // CWaterCreatures::Create stores its CObject in a 24-byte slot, then increments
 // the active count here. The update call comes from the water particle pass.
 // Verified in the classic 1.0 crash at 0x6616B7: a freed pool object retained

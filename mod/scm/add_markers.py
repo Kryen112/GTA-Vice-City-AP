@@ -19,6 +19,8 @@ import os
 import re
 import sys
 
+from mission_dispatch import instrument_production_dispatch
+
 # The world's own pickup and shop tables, for the handles the pickup watcher
 # polls and for where Phil's four stands sit in the shop block.
 # A leaf module with no Archipelago imports, so this stays a standalone script.
@@ -30,9 +32,14 @@ sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)),
 import mission_order
 import pickup_data
 import shop_data
+from island_gates import marker_gate_lines
+from mission_mansion import MANSION_APPLIED
+from mission_runtime import compact_rank_reads, finale_asset_count_lines, payload_gate_lines, slot_gate_lines
 
 SRC, DST = sys.argv[1], sys.argv[2]
 CLEO_OUT = sys.argv[3] if len(sys.argv) > 3 else None
+assert CLEO_OUT is None or os.path.basename(CLEO_OUT).lower() != "appickup.txt", (
+    "The third output is the general watcher (apwatchers.txt); appickup.txt is generated separately.")
 
 # A gate term meaning "any mainland crossing", mirroring build_scm.MAINLAND_ANY.
 # Mainland Access and the four crossing items are alternatives, so a gate naming
@@ -93,14 +100,10 @@ STRANDS = {
     "LoveFist": [("ROC1", [(9020, 1)]), ("ROC2", [(9020, 2)]), ("ROC3", [(9020, 3)])],
     "MrBlack": [("ASSIN_1", [(9021, 1)]), ("ASSIN_2", [(9021, 2)]), ("ASSIN_3", [(9021, 3)]),
                 ("ASSIN_4", [(9021, 4)]), ("ASSIN_5", [(9021, 5)])],
-    # Cap the Collector keeps its vanilla asset prerequisite: Hit the Courier
-    # passed ($273), Cop Land passed ($268), and the owned-asset count $1175
-    # at seven or more, so the finale marker and launcher wait for the assets.
-    # The last mission's mainland term is MAINLAND_ANY, since Mainland Access and
-    # the crossing items are alternatives and this gate guards both the marker
-    # and the launcher start.
-    "VercettiFinale": [("FIN1", [(9022, 1), (9016, 3), (268, 1), (273, 1), (1175, 7)]),
-                       ("FIN2", [(9022, 2), (9016, 3), MAINLAND_ANY])],
+    # The shared asset gate counts purchased, owned income assets. The upstairs
+    # finale also needs mansion access, independently of Estate income.
+    "VercettiFinale": [("FIN1", [(9022, 1), (9012, 5), (10575, 1)]),
+                       ("FIN2", [(9022, 2), (9012, 5), mission_passed("BAR5"), (10575, 1), MAINLAND_ANY])],
     # Venue strand gates also require the property bought (the venue purchase's
     # completion global) and owned (the ownership global its AP item drives),
     # so the beam and blip stay hidden and the launcher stays unstarted until
@@ -377,6 +380,24 @@ for i, ln in enumerate(lines):
     kept.append(ln)
 lines = kept
 
+# Separate both finale triggers from the business missions they overlap.
+# Keep Printworks' vanilla coordinates, including Hit the Courier, untouched.
+# Match/remove vanilla reveals above before changing the finale marker specs.
+assert lines.count("$475 = -278.8") == 1, "unexpected Printworks entrance coordinate"
+for launcher, original, shifted in (
+    ("FIN1", ("$474", "$475", "$476"), ("$474", "-274.3", "$476")),
+    ("FIN2", ("-378.3", "-579.8", "24.5"), ("-378.3", "-575.3", "24.5")),
+):
+    finale_marker = next(m for m in managed if m["launcher"] == launcher)
+    assert finale_marker["coords"] == original, f"unexpected {launcher} marker position"
+    finale_start = lines.index(f":{launcher}")
+    finale_trigger = f"  locate_player_on_foot_3d $player_char 0 {' '.join(original)} radius 1.5 2.0 2.0"
+    finale_locate = lines.index(finale_trigger, finale_start)
+    assert not any(line.startswith("script_name '") for line in lines[finale_start + 2:finale_locate]), (
+        "finale marker: trigger belongs to another launcher")
+    lines[finale_locate] = finale_trigger.replace(" ".join(original), " ".join(shifted))
+    finale_marker["coords"] = shifted
+
 # --- Relocate threads out of the MAIN section to CLEO -------------------------
 # VC gives the MAIN section a fixed buffer, so a thread that does not have to
 # live there should not. Two kinds move. APPKG (100 package checks), APSTAT
@@ -649,9 +670,9 @@ for label, handle, completion, may_be_zero, near in polled:
         pickup_cleo += [
             "if and",
             "  is_player_playing $player_char",
-            f"  locate_player_any_means_3d $player_char 0 {near[0]} {near[1]} "
+            (f"  locate_player_any_means_3d $player_char 0 {near[0]} {near[1]} "
             f"{near[2]} radius {PROXIMITY_RADIUS} {PROXIMITY_RADIUS} "
-            f"{PROXIMITY_RADIUS}",
+             f"{PROXIMITY_RADIUS}"),
             f"goto_if_false @{label}"]
     pickup_cleo += [f"${completion} = 1", f":{label}"]
 pickup_cleo += ["goto @APPICK_LOOP", ""]
@@ -680,10 +701,16 @@ MODEL_NAME_IDS = {
     "#COMGATE1OPEN": 2444,   # starisl.ide, the Starfish Island gates
     "#COMGATE2OPEN": 2443,
 }
+GLOBAL_NAME_IDS = {
+    "onmission": 313,
+    "passed_COL1_Treacherous_Swine": 229,
+    "player_actor": 3,
+    "player_char": 2,
+}
 
 
 def numeric_models(carried, where):
-    """Turns every #NAME model reference into its numeric id."""
+    """Use numeric references in standalone CLEO scripts."""
     def numbered(match):
         name = match.group(0)
         model = MODEL_NAME_IDS.get(name.upper())
@@ -692,10 +719,15 @@ def numeric_models(carried, where):
             "the object is created; add its model id to MODEL_NAME_IDS")
         return str(model)
 
-    # Matched whole, so a name that is a prefix of a longer one cannot be
-    # rewritten in place of it, and every name is checked rather than only
-    # the ones this table happens to hold.
-    return [re.sub(r"#[A-Za-z0-9_]+", numbered, line) for line in carried]
+    def global_numbered(match):
+        name = match.group(1)
+        index = GLOBAL_NAME_IDS.get(name)
+        assert index is not None, f"relocate: {where} uses unknown global ${name}"
+        return f"${index}"
+
+    return [re.sub(r"\$([A-Za-z_][A-Za-z0-9_]*)", global_numbered,
+                   re.sub(r"#[A-Za-z0-9_]+", numbered, line))
+            for line in carried]
 
 
 if CLEO_OUT:
@@ -722,6 +754,13 @@ if CLEO_OUT:
         own = [ln for ln in body
                if ln != f":{label}" and ln != f"script_name '{label}'"]
         assert own, f"relocate: :{label} has no body of its own"
+        loop = own.index(f":{label}_10")
+        assert (own[loop + 1:loop + 4] == ["wait 0", "if ",
+                                                   "  is_player_playing $player_char"]
+                and own[loop + 4].startswith("goto_if_false @")), (
+            f"relocate: {label.lower()}.cs has an unexpected player guard")
+        # CLEO threads survive New Game; refresh the player ped handle they use.
+        own.insert(loop + 5, "get_player_char $player_actor = create_emulated_actor_from_player $player_char")
         carried = own if label == SHOP_SHARED else own + shared_copy
         # Each file has to be closed on its own: whatever it names, it defines.
         defined = {match.group(1) for match in
@@ -755,6 +794,9 @@ if CLEO_OUT:
         print(f"relocated {label} to {filename}.txt ({len(carried)} lines)")
 
 # --- Build the APMARK watcher --------------------------------------------------
+instrument_production_dispatch(lines, managed, raw.decode("latin-1").split(nl))
+PASSED_FLAGS["BAR5"] = f"${MANSION_APPLIED}"
+
 by_strand: dict[str, list] = {}
 for m in managed:
     by_strand.setdefault(m["strand"], []).append(m)
@@ -782,12 +824,22 @@ def strand_block(strand, missions):
         ordered = f"APMARK_{launcher}_ORDERED"
         out += ["if ", f"  ${mission_order.order_global(unlock)} > 0", f"goto_if_false @{ordered}"]
         out += mission_order.rank_lines(unlock, count, f"APMARK_{launcher}_RANK")
-        out += ["if ", f"  is_int_var_equal_to_int_var ${mission_order.RANK_GLOBAL} "
-                f"== ${mission_order.COMPLETED_GLOBAL}",
+        out += ["if ", (f"  is_int_var_equal_to_int_var ${mission_order.RANK_GLOBAL} "
+                f"== ${mission_order.COMPLETED_GLOBAL}"),
                 f"goto_if_false @{after}", f":{ordered}"]
         # First unpassed mission: decide show/hide on its gate.
         gate_true = f"APMARK_{launcher}_SHOW"
-        for term in m["gate"]:
+        out += marker_gate_lines(launcher, f"APMARK_{launcher}_HIDE")
+        out += slot_gate_lines(launcher, f"APMARK_{launcher}_HIDE")
+        out += payload_gate_lines(launcher, raw.decode("latin-1").split(nl), f"APMARK_{launcher}_HIDE")
+        for term_index, term in enumerate(m["gate"]):
+            skip_original = term == MAINLAND_ANY or (
+                isinstance(term, tuple) and isinstance(term[0], int)
+                and mission_order.UNLOCK_FIRST <= term[0] <= mission_order.UNLOCK_LAST
+                and term[0] != m["gate"][0][0])
+            original_done = f"APMARK_ORIGINAL_{launcher}_{term_index}"
+            if skip_original:
+                out += ["if ", "  $10466 == 0", f"goto_if_false @{original_done}"]
             hide = f"@APMARK_{launcher}_HIDE"
             if term == MAINLAND_ANY:
                 out += ["if or", *[f"  ${unlock} >= 1" for unlock in MAINLAND_UNLOCKS],
@@ -803,14 +855,16 @@ def strand_block(strand, missions):
                         f"APMARK_{launcher}_GATE_{global_index}_{count}")
                 else:
                     out += ["if ", f"  ${global_index} >= {count}", f"goto_if_false {hide}"]
+            if skip_original:
+                out += [f":{original_done}"]
         # Gate holds: show marker (once) and start launcher (once), then done strand.
         # No remove_blip before create: the handle is either fresh (0, never
         # created) or was just removed by HIDE / the passed path, so there is no
         # stale blip to free and no risk of removing handle 0.
         out += [f":{gate_true}",
                 "if ", f"  ${m['shown']} == 0", f"goto_if_false @APMARK_{launcher}_STARTED",
-                f"add_sprite_blip_for_contact_point ${m['handle']} = create_icon_marker_and_sphere "
-                f"{m['sprite']} at {m['coords'][0]} {m['coords'][1]} {m['coords'][2]}",
+                (f"add_sprite_blip_for_contact_point ${m['handle']} = create_icon_marker_and_sphere "
+                f"{m['sprite']} at {m['coords'][0]} {m['coords'][1]} {m['coords'][2]}"),
                 f"${m['shown']} = 1",
                 f":APMARK_{launcher}_STARTED",
                 "if ", f"  ${m['started']} == 0", f"goto_if_false @{done}",
@@ -845,10 +899,23 @@ def strand_block(strand, missions):
 # launcher start, which is what the ordering needs, for three lines of the MAIN
 # section instead of the thousand-odd bytes a condition on every launcher gate
 # costs.
+# Diaz's first four launchers and their visible marker share $462. Move the
+# whole trigger five metres west so the open mansion entrance stays clear.
+# Refresh it in the watcher so loaded saves also receive the new position.
+assert lines.count("$462 = -378.5") == 1, "Diaz marker: unexpected original entrance coordinate"
+lines[lines.index("$462 = -378.5")] = "$462 = -383.5"
 body = ["", ":APMARK", "script_name 'APMARK'", "", ":APMARK_LOOP", "wait 250",
+        "if ", "  $462 == -383.5", "goto_if_false @APMARK_MOVE_DIAZ", "goto @APMARK_DIAZ_READY",
+        ":APMARK_MOVE_DIAZ", "$462 = -383.5"]
+for m in managed:
+    if m["launcher"] in ("BAR1", "BAR2", "BAR3", "BAR4"):
+        body += ["if ", f"  ${m['shown']} == 1", f"goto_if_false @APMARK_MOVE_{m['launcher']}",
+                 f"remove_blip ${m['handle']}", f"${m['shown']} = 0", f":APMARK_MOVE_{m['launcher']}"]
+body += [":APMARK_DIAZ_READY",
         "if ", "  is_player_playing $player_char", "goto_if_false @APMARK_LOOP",
         "if ", "  $onmission == 0", "goto_if_false @APMARK_LOOP",
         "if ", f"  ${AN_OLD_FRIEND_PASSED} == 1", "goto_if_false @APMARK_LOOP"]
+body += finale_asset_count_lines()
 for strand in by_strand:
     body += [f"gosub @APMARK_{strand}"]
 body += ["goto @APMARK_LOOP"]
@@ -884,7 +951,13 @@ assert len(sizing) == 1, (
     f"scratch starts; move SIZING_GLOBAL with scm.py's own highest reserved "
     f"global")
 found = sizing[0]
-lines[found + 1:found + 1] = [f"${highest_global} = 0"]
+lines[found + 1:found + 1] = [f"${highest_global} = 0", "$10576 = 0", "$10575 = 0", "$10573 = 7"]
+
+compact_rank_reads(lines)
+labels = [line[1:] for line in lines if line.startswith(":")]
+references = {match.group(1) for line in lines for match in re.finditer(r"@(\w+)", line)}
+assert len(labels) == len(set(labels)), "production dispatcher has duplicate labels"
+assert references <= set(labels), f"production dispatcher has unresolved labels: {references - set(labels)}"
 
 with open(DST, "wb") as handle:
     handle.write(nl.join(lines).encode("latin-1"))

@@ -584,13 +584,13 @@ def carried_stunt_jumps(
     """
     path = pathlib.Path(destination)
     if not path.is_file():
-        return [], [f"{destination} does not exist, and the stunt jump table"
-                    " can only be carried forward from it"]
+        return [], [(f"{destination} does not exist, and the stunt jump table"
+                    " can only be carried forward from it")]
     try:
         tree = ast.parse(path.read_text(encoding="utf-8"))
     except (OSError, SyntaxError, ValueError):
-        return [], [f"{destination} exists but does not parse, so the stunt jumps"
-                    " it holds cannot be carried forward"]
+        return [], [(f"{destination} exists but does not parse, so the stunt jumps"
+                    " it holds cannot be carried forward")]
     for statement in tree.body:
         target = None
         if isinstance(statement, ast.AnnAssign) and isinstance(statement.target, ast.Name):
@@ -602,10 +602,10 @@ def carried_stunt_jumps(
         try:
             return [tuple(entry) for entry in ast.literal_eval(statement.value)], []
         except (TypeError, ValueError):
-            return [], [f"{destination} holds a STUNT_JUMP_COORDS that is not a"
-                        " table of positions"]
-    return [], [f"{destination} holds no STUNT_JUMP_COORDS to carry"
-                " forward"]
+            return [], [(f"{destination} holds a STUNT_JUMP_COORDS that is not a"
+                        " table of positions")]
+    return [], [(f"{destination} holds no STUNT_JUMP_COORDS to carry"
+                " forward")]
 
 
 def check_names(label: str, found: set[str], expected: set[str]) -> list[str]:

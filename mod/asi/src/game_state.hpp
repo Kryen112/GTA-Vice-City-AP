@@ -66,8 +66,8 @@ struct CheckMarker {
 
   template <typename ReadGlobal>
   int DisplayCategory(ReadGlobal read) const {
-    if (category == kFinaleAssetMarker) return kFinaleAssetMarker;
-    if (category == kFinaleAssetCheckMarker) return Available(read) ? 6 : kFinaleAssetMarker;
+    if (category == kFinaleAssetMarker) return Available(read) ? kFinaleAssetMarker : -1;
+    if (category == kFinaleAssetCheckMarker) return Available(read) ? 6 : -1;
     return Available(read) ? category : -1;
   }
 };

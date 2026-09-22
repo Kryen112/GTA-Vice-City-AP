@@ -58,7 +58,6 @@ void IngameConsole::Add(const std::string& text) {
   Add(ConsoleMessage{{text, 0xFFFFFF}});
 }
 void IngameConsole::Add(const ConsoleMessage& message, bool notify) {
-  notify = notify && !active_.load();
   ConsoleLine wide;
   std::size_t remaining = 16384;
   for (const auto& span : message) {
@@ -70,6 +69,7 @@ void IngameConsole::Add(const ConsoleMessage& message, bool notify) {
     if (!remaining) break;
   }
   std::lock_guard<std::mutex> lock(mutex_);
+  notify = notify && !active_.load();
   wrap_dirty_ = true;
   // Preserve complete message lines for the console's measured screen width.
   // The shorter HUD popup rows must not become permanent history line breaks.
@@ -78,7 +78,7 @@ void IngameConsole::Add(const ConsoleMessage& message, bool notify) {
     if (notify)
       for (const auto& popup : WrapConsoleText(line)) popups_.Add(popup);
     lines_.push_back(std::move(line));
-    if (lines_.size() > 300) lines_.pop_front();
+    if (lines_.size() > 4096) lines_.pop_front();
   }
 }
 void IngameConsole::Key(WPARAM key) {
@@ -123,7 +123,11 @@ LRESULT CALLBACK IngameConsole::WindowProc(HWND window, UINT message, WPARAM w, 
   if (message == WM_KILLFOCUS) { self.active_ = false; self.completion_.Reset(); }
   if (message == WM_KEYDOWN && w == VK_F8) {
     self.completion_.Reset();
-    if (!(l & (1L << 30))) self.active_ = !self.active_;
+    if (!(l & (1L << 30))) {
+      std::lock_guard<std::mutex> lock(self.mutex_);
+      self.active_ = !self.active_;
+      if (self.active_) self.popups_.Clear();
+    }
     self.BlockControls();
     return 0;
   }
@@ -226,7 +230,6 @@ void IngameConsole::Draw(bool show_hint, bool connected) {
       y += 16;
     }
   } else {
-    popups_.Pause(now);
     BlockControls();
     CSprite2d::DrawRect(CRect(StretchX(14), StretchY(28), StretchX(626), StretchY(414)), CRGBA(10, 12, 30, 235));
     Print(*font_, 40, L"ARCHIPELAGO | F8/Esc close | PgUp/PgDn Scroll | type /help for more.");

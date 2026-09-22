@@ -5,7 +5,7 @@ coordinate table: https://github.com/Kryen112/GTAVC_AP_Poptracker/blob/main/data
 The other positions use the world's existing placement tables.
 """
 
-from . import data, district_data, items, locations, rules, scm, shop_data
+from . import data, district_data, items, locations, mission_layout, rules, scm, shop_data
 
 STORE_COORDS: list[tuple[float, float, float]] = [
     (202.7, -474.1, 10.1),
@@ -89,20 +89,29 @@ CATEGORY_COLORS = {
 
 
 def marker_requirements(split_mainland_access: bool,
-                        mission_order: dict[str, list[str]] | None = None) -> dict[str, list]:
+                        mission_order: dict[str, list[str]] | None = None,
+                        full_shuffle: bool = False, timing: str = "quest_giver_progress",
+                        properties_enabled: bool = True) -> dict[str, list]:
     """Map rules for marker requirements.
 
     Each term is [count global, minimum, optional ability-lock flag].
     """
-    by_location = rules.build_location_requirements(
-        ability_locks=frozenset(data.ABILITY_LOCK_ITEMS),
-        split_mainland_access=split_mainland_access, mission_order=mission_order)
+    if full_shuffle:
+        by_location, _, _ = rules.full_mission_requirements(
+            mission_order, timing, properties_enabled, frozenset(data.ABILITY_LOCK_ITEMS),
+            frozenset(), split_mainland_access, data.CONTENT_SPLIT_OFF)
+    else:
+        by_location = rules.build_location_requirements(
+            ability_locks=frozenset(data.ABILITY_LOCK_ITEMS),
+            split_mainland_access=split_mainland_access, mission_order=mission_order)
     item_globals = scm.item_globals()
     globals_by_item = {name: item_globals[item_id]
                        for name, item_id in items.ITEM_NAME_TO_ID.items()
                        if item_id in item_globals}
     globals_by_item.update({data.mission_passed_item_name(mission): scm.completion_global(mission)
                             for mission in data.ROUTE_MISSIONS})
+    if full_shuffle:
+        globals_by_item.update(mission_layout.WORLD_EVENT_GLOBALS)
 
     def terms(requirements: list[tuple[str, int]]) -> list[list[int]]:
         return [[globals_by_item[item], count,

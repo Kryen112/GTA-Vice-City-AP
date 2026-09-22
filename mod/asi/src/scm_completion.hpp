@@ -14,6 +14,7 @@
 #include <cstdint>
 #include <cstring>
 #include <cstdio>
+#include <limits>
 #include <map>
 #include <optional>
 #include <set>
@@ -41,6 +42,17 @@ inline int MalibuEntranceLock(int vanilla_lock, int death_row_unlock, int death_
   // CELL can deliver its Death Row call after AP has already completed the mission.
   // Its $996 lock must not outlive that mission or wait on an unavailable AP item.
   return vanilla_lock && death_row_unlock > 0 && death_row_passed == 0;
+}
+
+inline bool IncreaseCountdown(unsigned int variable, unsigned char direction,
+                              int* globals, std::size_t count) {
+  if (variable == 0 || variable % sizeof(int) != 0 || variable / sizeof(int) >= count || direction == 0)
+    return false;
+  int& remaining = globals[variable / sizeof(int)];
+  constexpr int extra = 60000;
+  if (remaining <= 0 || remaining > std::numeric_limits<int>::max() - extra) return false;
+  remaining += extra;
+  return true;
 }
 
 inline bool SyncTaxiCounter(unsigned int variable, const char* key, bool enabled,

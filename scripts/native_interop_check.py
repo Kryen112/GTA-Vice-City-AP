@@ -14,6 +14,7 @@ from websockets.exceptions import ConnectionClosed
 
 async def main(executable: Path, *, legacy: bool = False) -> None:
     connections = 0
+    authenticated_connections = 0
     checks = 0
     goal = asyncio.Event()
     errors = []
@@ -22,9 +23,14 @@ async def main(executable: Path, *, legacy: bool = False) -> None:
     group_requests = []
 
     async def server(socket):
-        nonlocal connections, checks
+        nonlocal connections, authenticated_connections, checks
         connections += 1
-        current = connections
+        # A reachable WebSocket endpoint can repeatedly close before AP login.
+        if connections in (1, 2, 3, 5, 6, 7):
+            await socket.close()
+            return
+        authenticated_connections += 1
+        current = authenticated_connections
         try:
             # A fragmented packet larger than the fork's former 32 KB buffer.
             room = json.dumps([{"cmd": "RoomInfo", "seed_name": "native-interop",
@@ -115,9 +121,11 @@ async def main(executable: Path, *, legacy: bool = False) -> None:
             print(output.decode(errors="replace"))
             assert not errors, errors
             assert process.returncode == 0, "Native harness failed"
-            assert connections >= 2 and checks >= 2, "Reconnect did not replay the unacknowledged check"
+            assert connections >= 8 and checks >= 2, "Reconnect did not replay the unacknowledged check"
             assert {1, 2}.issubset(group_requests), "Name groups were not refreshed on reconnect"
             assert goal.is_set(), "Goal status never reached the server"
+            assert output.decode(errors="replace").count("Connection unavailable;") == 2, (
+                "Repeated transport failures must log once per outage, rearmed only after AP login")
             assert "hello from the ASI" in messages and "!hint Package" in messages
             assert "Other player: hello" in output.decode(errors="replace")
             assert "Server countdown: 3" in output.decode(errors="replace")

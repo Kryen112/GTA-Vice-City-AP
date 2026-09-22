@@ -13,8 +13,12 @@ import re
 import sys
 from pathlib import Path
 
+from island_gates import ISLAND_ACCESS_MASK, PLAYER_ISLAND_ALLOWED, district_conditions, gate_interaction_entries
+from mission_world_effects import extract_shakedown_business_opening
+
 sys.path.append(str(Path(__file__).resolve().parents[2] / "apworld" / "gta_vice_city"))
 import mission_order
+from mission_runtime import prepare_cap_targets
 
 SRC, DST = sys.argv[1], sys.argv[2]
 
@@ -145,16 +149,10 @@ MISSIONS = [
     # Mr. Black (9021)
     ("ASSIN_1", [(9021, 1)], 9095), ("ASSIN_2", [(9021, 2)], 9096), ("ASSIN_3", [(9021, 3)], 9097),
     ("ASSIN_4", [(9021, 4)], 9098), ("ASSIN_5", [(9021, 5)], 9099),
-    # Vercetti Finale (9022, after the protection strand 9016>=3). Cap the
-    # Collector keeps its vanilla asset prerequisite, read from the vanilla
-    # globals: Hit the Courier passed ($273), Cop Land passed ($268), and the
-    # owned-asset count $1175 at seven or more (the CELL controller required
-    # $1175 > 6). The last mission also mirrors logic's mainland requirement:
-    # its launcher only activates once Cap the Collector passes on the mainland,
-    # so the condition is already true whenever it can fire, and it is written as
-    # MAINLAND_ANY so it stays true whichever mainland item the seed hands out.
-    ("FIN1", [(9022, 1), (9016, 3), (268, 1), (273, 1), (1175, 7)], 9100),
-    ("FIN2", [(9022, 2), (9016, 3), MAINLAND_ANY], 9101),
+    # The shared asset gate counts purchased, owned income assets. The upstairs
+    # finale also needs mansion access, independently of Estate income.
+    ("FIN1", [(9022, 1), (9012, 5), (10575, 1)], 9100),
+    ("FIN2", [(9022, 2), (9012, 5), mission_passed("BAR5"), (10575, 1), MAINLAND_ANY], 9101),
     # Venue strands also require their property bought, read from the purchase's
     # completion global (set at the buy cutscene, save-persisted), and owned,
     # read from the ownership global its AP item drives. Both terms name the buy
@@ -1020,6 +1018,7 @@ def gate_stunt_jumps():
         lines[index - 3] = "if and"
         lines[index - 2:index - 2] = [
             _hold_condition(STUNT_JUMPS_CLASS, district),
+            *district_conditions(district),
             f"  ${794 + identifier} == 0",
             f"  ${9236 + identifier} == 0",
         ]
@@ -1120,7 +1119,8 @@ def gate_store_robberies():
             f"found {lines[index - 3]!r}")
         lines[index - 3] = "if and"
         lines[index - 2:index - 2] = [
-            _hold_condition(ROBBABLE_STORES_CLASS, STORE_DISTRICTS[order])]
+            _hold_condition(ROBBABLE_STORES_CLASS, STORE_DISTRICTS[order]),
+            *district_conditions(STORE_DISTRICTS[order])]
     edits.append(f"stores: {len(paired)} robbery entries gated by district")
 
 
@@ -2938,7 +2938,9 @@ def add_reward_applier():
 # add_markers.py anchors on that line.
 foundation = [f"${RADIO_RESOLVE_BASE + station} = {station}" for station in range(9)]
 foundation += [f"${RADIO_REQUEST} = 0", f"${PROPERTIES_ENABLED} = 0",
+               f"${ISLAND_ACCESS_MASK} = 3", f"${PLAYER_ISLAND_ALLOWED} = 1",
                f"${FINALE_WARP} = 0", f"${FINALE_ACTIVE} = 0"]
+extract_shakedown_business_opening(lines)
 insert_after("script_name 'HOT'", foundation,
              f"foundation radio identity + ${FINALE_WARP} = 0 + ${FINALE_ACTIVE} = 0")
 check_play_order()
@@ -2985,6 +2987,7 @@ suppress_emergency_grants()
 add_reward_applier()
 add_radio_watcher()
 redirect_scripted_stations()
+edits.append(f"island interaction gates: {gate_interaction_entries(lines)}")
 audit_cash_sites()
 audit_pass_banners()
 
@@ -3012,6 +3015,8 @@ for guard_label in guard_labels:
 assert not guarded_points, (
     f"these guards cover a completion point, so the percentage the stats menu "
     f"shows can no longer reach a hundred: {guarded_points}")
+
+prepare_cap_targets(lines)
 
 with open(DST, "wb") as handle:
     handle.write(nl.join(lines).encode("latin-1"))

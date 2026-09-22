@@ -3,7 +3,7 @@
 An Archipelago world plus in-game mod for GTA: Vice City (classic PC,
 executable 1.0). It turns Vice City into a multiworld game.
 
-Release version: v2.0.0. See [release notes](RELEASE_NOTES.md).
+Release version: v2.1.0. See [release notes](RELEASE_NOTES.md).
 
 ## What randomization does
 
@@ -43,7 +43,12 @@ Dirt and Test Track.
 
 ## Goals
 
-- **Final mission.** Complete "Keep Your Friends Close...".
+- **Final mission.** In full shuffle, complete the mission assigned to Vercetti
+  Finale slot 2, behind the finale's asset requirements. An early shuffled
+  "Keep Your Friends Close..." awards its own check.
+  In other modes, complete  "Keep Your Friends Close...".
+- **Keep Your Friends Close.** Complete that mission wherever it appears in the
+  shuffled world. Set `goal: keep_your_friends_close` for this alternate win condition.
 - **Hidden package hunt.** Receive a configurable number of Package Fragments
   from the multiworld, the macguffin of this world. Collecting a Hidden Package
   in game stays an ordinary check and is never goal progress.
@@ -51,6 +56,16 @@ Dirt and Test Track.
   tracks.
 
 ## Options
+
+**Mission shuffle** accepts `off`, `within_giver`, or `full`.
+Full shuffle assigns story and enabled business missions across giver slots. Distribution, Checkpoint Charlie, Sunshine Autos import lists and other activities keep their native entrances.
+
+Full shuffle includes: `quest_giver_progress` which follows each event's original slot and `mission_completion` follows its mission wherever assigned.
+Other mission rewards follow mission completion.
+
+Moved missions temporarily open the physical island crossings they need, then
+restore barriers and return Tommy to the starting position.
+Mission access and locked island content still require their normal items.
 
 **Ability locks.** Sprint, jump, crouch, vehicles, weapon equipping and your
 wallet can each be taken away and put in the pool. Vehicles split into land, sea
@@ -109,6 +124,12 @@ before editing the file manually. Changing the server or slot through F8 clears 
 Type normally to chat, use `!help` for server commands, `/hint [item]` for hints, 
 and `/deathlink [on|off|seed]` to control DeathLink or restore the seed's setting.
 The console displays other players' chat, hints, countdowns, releases and goal messages. Page Up/Down scroll the view, Ctrl+V pastes, Enter sends, and F8/Escape closes the console.
+
+Use `/increasetimer` to add 60 seconds to the active countdown. Repeat for more time.
+
+Use `/unstuck` during gameplay to return to the safe Rosenberg spawn on the starting island.
+Tommy must be outdoors, on foot and controllable, with no cutscene or fade active.
+Active missions and timers keep running
 Tab completes `/` and  `!` command names, Shift+Tab cycles backwards.
 
 Client commands also include `/ready` to toggle ready status and `/received [page]`
@@ -241,3 +262,9 @@ files in that bundle.
 `THIRD_PARTY_LICENSES` records the dependency notices from the installed vcpkg
 packages used here. Run `python scripts/collect_native_licenses.py` after changing
 dependencies to refresh those notices.
+
+Set `finale_assets_required: 0` through `9` to choose how many income assets unlock the finale (default `7`).
+The Vercetti Estate Finale still requires mansion access.
+
+Enable `require_printworks_and_estate: true` to reserve the first two asset requirements for Printworks followed by the Vercetti Estate.
+At zero neither is required, at one only Printworks is required.

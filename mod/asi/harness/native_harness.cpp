@@ -10,14 +10,21 @@ int main(int, char** argv) {
     std::cout << line << std::endl;
   }, {}, std::filesystem::absolute(argv[0]).parent_path() / "state");
   client.Start();
-  bool queued = false;
+  bool commands_queued = false;
+  bool check_queued = false;
+  auto commands_queued_at = std::chrono::steady_clock::time_point{};
   const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(20);
   while (std::chrono::steady_clock::now() < deadline) {
-    if (!queued && !game.AppliedItems().empty()) {
+    if (!commands_queued && game.ClientConnected() && !game.AppliedItems().empty()) {
       client.Command("hello from the ASI");
       client.Command("/hint Package");
+      commands_queued_at = std::chrono::steady_clock::now();
+      commands_queued = true;
+    }
+    if (commands_queued && !check_queued && game.ClientConnected() &&
+        std::chrono::steady_clock::now() - commands_queued_at >= std::chrono::milliseconds(200)) {
       game.QueueCheck(101);
-      queued = true;
+      check_queued = true;
     }
     if (game.Status().goal_reached && game.AppliedItems().size() == 2) {
       std::this_thread::sleep_for(std::chrono::milliseconds(200));

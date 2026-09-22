@@ -287,6 +287,19 @@ def _refuse_unshippable_payload() -> None:
         "Win32.")
 
 
+def verify_release_script(script: pathlib.Path, provenance: pathlib.Path) -> None:
+    """Require the compiled production artifact recorded by the release build."""
+    try:
+        record = json.loads(provenance.read_text(encoding="utf-8"))
+        valid = (record.get("flavor") == "production" and record.get("contract") == 30000
+                 and record.get("sha256") == hashlib.sha256(script.read_bytes()).hexdigest())
+    except (OSError, ValueError, AttributeError):
+        valid = False
+    if not valid:
+        raise SystemExit("Refusing to package an unverified or experimental mission script. "
+                         "Rebuild the production script and its release provenance.")
+
+
 def stock_script_path() -> pathlib.Path:
     """Where this machine keeps the stock main.scm."""
     override = os.environ.get(STOCK_SCM_VARIABLE)

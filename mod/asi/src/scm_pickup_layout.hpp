@@ -218,12 +218,13 @@ struct PickupLayoutPlan {
 // and nothing else.
 constexpr double kMatchDistanceSquared = 0.0625;
 
-// Fixed pickups only; shop stock and dropped pickups keep their own rules.
-// Only Phil's shop stands carry a price override; hospital pay stands do not.
+// Fixed pickups only.
+// Island locks also include shop stock.
+// Only Phil's shop stands carry a price override.
 inline bool IsWorldPickup(const std::vector<PickupTarget>& targets,
-                            const PickupPoolEntry& entry) {
+                            const PickupPoolEntry& entry, bool include_shop_stock = false) {
   for (const PickupTarget& target : targets) {
-    if (target.price_weapon_type == 0 &&
+    if ((include_shop_stock || target.price_weapon_type == 0) &&
         target.pickup_type == entry.pickup_type &&
         PickupDistanceSquared(target, entry) <= kMatchDistanceSquared) return true;
   }

@@ -227,7 +227,7 @@ class TestLocationPercentages(WorldTestBase):
 class TestReducedItemPool(WorldTestBase):
     game = "Grand Theft Auto Vice City"
     options: ClassVar[dict] = {
-        "mission_shuffle": True,
+        "mission_shuffle": "within_giver",
         "location_percentages": {
             "firefighter": 0, "hidden_packages": 25, "paramedic": 0,
             "pickups": 25, "pizza": 0, "properties": 25, "rampages": 0,

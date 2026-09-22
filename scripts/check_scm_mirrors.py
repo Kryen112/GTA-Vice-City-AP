@@ -249,7 +249,7 @@ def _literal_table_problems(scm_dir: pathlib.Path,
     # ownership global its AP item drives, in that order.
     visited.append("venue gates")
     owned = [int(value) for value in re.findall(
-        r"\[\(\d+, \d+\), \(\d+, \d+\), \((\d+), 1\)\]", markers)]
+        r"\[\(902[3-9], \d+\), \(\d+, \d+\), \((\d+), 1\)\]", markers)]
     if not owned:
         problems.append("add_markers.py: found no venue gates, so nothing was "
                         "checked")
@@ -311,20 +311,20 @@ def _cleo_problems(cleo_dir: pathlib.Path, scm: types.ModuleType,
     bands: dict[str, tuple[tuple[tuple[int, int], ...], str]] = {
         # The reward globals and the two config flags that sit directly above.
         "aprewd.cs": (((scm.REWARD_BASE, scm.EMERGENCY_SHUFFLED_GLOBAL),),
-                      f"the reward block and its config flags "
+                      (f"the reward block and its config flags "
                       f"(${scm.REWARD_BASE}..${reward_top}, "
                       f"${scm.PACKAGES_SHUFFLED_GLOBAL}, "
-                      f"${scm.EMERGENCY_SHUFFLED_GLOBAL})"),
+                      f"${scm.EMERGENCY_SHUFFLED_GLOBAL})")),
         # The retune request, and the resolve map it is answered from.
         "apradio.cs": (((scm.RADIO_RANDOMIZED_GLOBAL, scm.RADIO_REQUEST_GLOBAL),),
-                       f"the radio block "
+                       (f"the radio block "
                        f"(${scm.RADIO_RANDOMIZED_GLOBAL}.."
-                       f"${scm.RADIO_REQUEST_GLOBAL})"),
+                       f"${scm.RADIO_REQUEST_GLOBAL})")),
         # Completion globals plus the taxi spacing and its scratch counter.
         "apwatchers.cs": (((scm.COMPLETION_BASE, completion_top),
                           (scm.TAXI_MILESTONE_SPACING_GLOBAL, scm.TAXI_MILESTONE_COUNT_GLOBAL)),
-                          f"the completion globals (${scm.COMPLETION_BASE}..${completion_top}) "
-                          "and taxi milestone globals"),
+                          (f"the completion globals (${scm.COMPLETION_BASE}..${completion_top}) "
+                          "and taxi milestone globals")),
         # The pickup watcher reads each slot's handle, which is a vanilla global
         # below the reserved block, and writes only the completion global of the
         # slot or stand it polled, so its runs are the pickup run inside the
@@ -332,15 +332,15 @@ def _cleo_problems(cleo_dir: pathlib.Path, scm: types.ModuleType,
         "appickup.cs": (((scm.completion_global(data.PICKUP_NAMES[0]),
                           scm.completion_global(data.PICKUP_NAMES[-1])),
                          (min(stand_globals), max(stand_globals))),
-                        f"the world pickup completion globals and Phil's "
-                        f"stands (${min(stand_globals)}..${max(stand_globals)})"),
+                        (f"the world pickup completion globals and Phil's "
+                        f"stands (${min(stand_globals)}..${max(stand_globals)})")),
         # The area thread reads unlock globals and bookkeeping, both of which sit
         # below the completion block, so it may reach nothing from there up. Named
         # rather than left out, since a script this cannot see is a script nothing
         # checks.
         "aparea.cs": (((0, scm.COMPLETION_BASE - 1),),
-                      "the unlock and bookkeeping globals below the completion "
-                      "block"),
+                      ("the unlock and bookkeeping globals below the completion "
+                      "block")),
         # The pad warps read two vanilla flags and nothing this build writes, so
         # the same band holds them with room to spare. Named rather than left
         # out, for the reason above.
@@ -360,12 +360,13 @@ def _cleo_problems(cleo_dir: pathlib.Path, scm: types.ModuleType,
     for shop in SHOP_SCRIPTS:
         bands[shop] = (((scm.COMPLETION_BASE, completion_top),
                         (scm.SHOPS_ENABLED_GLOBAL, scm.SHOPS_ENABLED_GLOBAL),
+                        (scm.ISLAND_CONTENT_ACCESS_GLOBAL, scm.PLAYER_ISLAND_CONTENT_ACCESS_GLOBAL),
                         (min(store_districts), max(store_districts))),
-                       f"the completion globals in use (${scm.COMPLETION_BASE}.."
+                       (f"the completion globals in use (${scm.COMPLETION_BASE}.."
                        f"${completion_top}), the shops-enabled flag "
                        f"(${scm.SHOPS_ENABLED_GLOBAL}) and the store district "
                        f"unlocks (${min(store_districts)}.."
-                       f"${max(store_districts)})")
+                       f"${max(store_districts)})"))
     # The success line counts CLEO_SCRIPTS; this is what actually judges them, so
     # a script added to one and not the other is a script reported as read and
     # never looked at.
@@ -555,8 +556,8 @@ def _match_tolerance_problems(asi_dir: pathlib.Path, data) -> list[str]:
     """
     header = asi_dir / "scm_pickup_layout.hpp"
     if not header.is_file():
-        return [f"ASI: {header.name} is missing, so the match tolerance was "
-                f"not checked"]
+        return [(f"ASI: {header.name} is missing, so the match tolerance was "
+                f"not checked")]
     text = header.read_text(encoding="utf-8")
     match = re.search(r"kMatchDistanceSquared\s*=\s*(?P<value>[0-9.]+)\s*;", text)
     if match is None:
@@ -598,8 +599,8 @@ def _district_list_problems(scm_dir: pathlib.Path, scm) -> list[str]:
     mirrored = re.findall(r'"([^"]+)"', match.group(1))
     if mirrored == list(scm.DISTRICT_KEYS):
         return []
-    return [f"{source.name}: DISTRICTS is {mirrored}, the world derives "
-            f"{list(scm.DISTRICT_KEYS)}"]
+    return [(f"{source.name}: DISTRICTS is {mirrored}, the world derives "
+            f"{list(scm.DISTRICT_KEYS)}")]
 
 
 # The one package whose route in the world is true only because build_scm.py
@@ -639,20 +640,20 @@ def _pad_door_problems(scm_dir: pathlib.Path, data) -> list[str]:
     if not routed:
         if len(absent) == len(PAD_EDITS):
             return []
-        return [f"{source.name}: {', '.join(sorted(set(PAD_EDITS) - set(absent)))} "
+        return [(f"{source.name}: {', '.join(sorted(set(PAD_EDITS) - set(absent)))} "
                 f"opens the pad for a route package {PAD_DOOR_PACKAGE} no longer "
-                "takes"]
+                "takes")]
     if absent:
-        return [f"{source.name}: package {PAD_DOOR_PACKAGE} is reached through "
+        return [(f"{source.name}: package {PAD_DOOR_PACKAGE} is reached through "
                 f"{PAD_DOOR_MISSION}, but {', '.join(absent)} is not both defined "
                 "and called, so the pad is shut again once that mission ends and "
-                "the route is a window inside it"]
+                "the route is a window inside it")]
     shut = [model for model in PAD_DOOR_MODELS
             if model not in bodies["open_gonzalez_pad_door"]]
     if shut:
-        return [f"{source.name}: open_gonzalez_pad_door names no {', '.join(shut)}, "
+        return [(f"{source.name}: open_gonzalez_pad_door names no {', '.join(shut)}, "
                 f"so the pad keeps a door package {PAD_DOOR_PACKAGE} is behind and "
-                "the route stays a window inside the mission"]
+                "the route stays a window inside the mission")]
     return []
 
 
@@ -861,6 +862,11 @@ def main() -> int:
         ("ASI", asi, "kAbilityUnlockBase", scm.ABILITY_UNLOCK_BASE),
         ("ASI", asi, "kContentLockFlagBase", scm.CONTENT_LOCK_FLAG_BASE),
         ("ASI", asi, "kDistrictUnlockBase", scm.DISTRICT_UNLOCK_BASE),
+        ("ASI", asi, "kIslandContentLocksGlobal", scm.ISLAND_CONTENT_LOCKS_GLOBAL),
+        ("ASI", asi, "kIslandContentAccessGlobal", scm.ISLAND_CONTENT_ACCESS_GLOBAL),
+        ("ASI", asi, "kPlayerIslandContentAccessGlobal", scm.PLAYER_ISLAND_CONTENT_ACCESS_GLOBAL),
+        ("ASI", asi, "kStarfishAccessGlobal", scm.unlock_global("Starfish Island Access")),
+        ("ASI", asi, "kAllHandsPassedGlobal", scm.completion_global("All Hands On Deck!")),
         # What a district unlock holds. Drift here is silent twice over: every
         # gate asks ">= 1" so the game plays the same, and the page simply
         # reverts to counting all eleven districts and offering the empty ones.

@@ -13,6 +13,7 @@
 #include "../src/scm_status_panel.hpp"
 #include "../src/scm_pole_position.hpp"
 #include "../src/water_creatures.hpp"
+#include "../src/scm_unstuck.hpp"
 
 using namespace gtavc;
 
@@ -32,6 +33,33 @@ int main(int argc, char** argv) {
   _set_error_mode(_OUT_TO_STDERR); // keep assertion failures in the test log
   std::cout << std::unitbuf;
   assert(argc == 2);
+  {
+    UnstuckControlHold hold;
+    short controls = 0;
+    assert(hold.Begin(controls) && controls != 0);
+    assert(!hold.Begin(controls));
+    hold.Tick(controls, true);
+    hold.Tick(controls, true);
+    assert(controls != 0);
+    hold.Tick(controls, false);
+    assert(controls != 0); // One full update is sometimes insufficient to resync physics.
+    controls |= 0x20; // A mission may claim its own lock during the transition.
+    hold.Tick(controls, false);
+    assert(controls == 0x20);
+    hold.Reset(controls);
+    assert(controls == 0x20 && !hold.Begin(controls));
+    controls = 0;
+    assert(hold.Begin(controls));
+    hold.Reset(controls); // Loading another save cancels the temporary lock.
+    assert(controls == 0);
+    hold.Tick(controls, false);
+    assert(controls == 0);
+  }
+  assert(CanUnstuck(true, true, true, true, false, false));
+  for (int blocked = 0; blocked < 6; ++blocked) {
+    assert(!CanUnstuck(blocked != 0, blocked != 1, blocked != 2, blocked != 3,
+                       blocked == 4, blocked == 5));
+  }
   {
     WaterCreature creatures[8]{};
     for (auto& creature : creatures) creature.state = 4;
@@ -148,7 +176,36 @@ int main(int argc, char** argv) {
     marker_config["marker_requirements"]["9512"] = json::array({json::array({1, json::array({json::array({bad_term})})})});
     assert(!ApplyClientMessage(&marker_game, marker_config, [](const std::string&) {}));
   }
+  {
+    std::array<int, 4> timers{77, 1500, 123, 456};
+    assert(IncreaseCountdown(4, 1, timers.data(), timers.size()));
+    assert(timers[1] == 61500 && timers[0] == 77 && timers[2] == 123 && timers[3] == 456);
+    assert(IncreaseCountdown(4, 1, timers.data(), timers.size()) && timers[1] == 121500);
+    for (unsigned int offset : {0u, 3u, 16u, 0xFFFFFFFFu})
+      assert(!IncreaseCountdown(offset, 1, timers.data(), timers.size()));
+    assert(!IncreaseCountdown(4, 0, timers.data(), timers.size()) && timers[1] == 121500);
+    for (int expired : {0, -1, std::numeric_limits<int>::max()}) {
+      timers[1] = expired;
+      assert(!IncreaseCountdown(4, 1, timers.data(), timers.size()) && timers[1] == expired);
+    }
+    timers[1] = std::numeric_limits<int>::max() - 60000;
+    assert(IncreaseCountdown(4, 1, timers.data(), timers.size()));
+    assert(timers[1] == std::numeric_limits<int>::max());
+  }
   ConsoleCommandCompletion completion;
+  for (const auto prefix : {L"/inc", L"/increaset", L"/increasetimer"}) {
+    std::wstring text = prefix;
+    std::size_t cursor = text.size();
+    assert(completion.Complete(text, cursor) && text == L"/increasetimer" && cursor == text.size());
+    completion.Reset();
+  }
+
+  for (const auto prefix : {L"/u", L"/unst", L"/unstuck"}) {
+    std::wstring text = prefix;
+    std::size_t cursor = text.size();
+    assert(completion.Complete(text, cursor) && text == L"/unstuck" && cursor == text.size());
+    completion.Reset();
+  }
   {
     std::set<int> reported;
     const std::map<int, std::int64_t> watch{{9386, 542000328}};
@@ -389,6 +446,24 @@ int main(int argc, char** argv) {
     session.Handle({{"cmd", "ReceivedItems"}, {"index", 0}, {"items", json::array({item})}});
   };
   {
+    TestGame mission_goal_game;
+    const auto goal_directory = directory / "shuffled-mission-goal";
+    std::filesystem::create_directories(goal_directory);
+    NativeSession mission_goal(&mission_goal_game, logger, sender, "rando.vc", "", goal_directory);
+    auto config = connected;
+    config["slot_data"]["goal"] = "keep_your_friends_close";
+    login(mission_goal, config);
+    assert(!mission_goal_game.Status().goal_reached);
+    mission_goal.Handle({{"cmd", "RoomUpdate"}, {"checked_locations", {101}}});
+    assert(!mission_goal_game.Status().goal_reached);
+    mission_goal.Handle({{"cmd", "RoomUpdate"}, {"checked_locations", {102}}});
+    assert(mission_goal_game.Status().goal_reached);
+    assert(!mission_goal_game.Status().finale_warp);
+    assert(std::any_of(sent.begin(), sent.end(), [](const json& message) {
+      return message.at("cmd") == "StatusUpdate" && message.at("status") == 30;
+    }));
+  }
+  {
     TestGame menu_game;
     const auto menu_directory = directory / "main-menu-connection";
     std::filesystem::create_directories(menu_directory);
@@ -468,9 +543,9 @@ int main(int argc, char** argv) {
     assert(markers.at(9366).category == 6 && !markers.count(9367)); // Safehouses stay ordinary AP checks.
     const auto locked = [](int) { return 0; };
     const auto unlocked = [](int) { return 100; };
-    assert(markers.at(9358).DisplayCategory(locked) == kFinaleAssetMarker);
+    assert(markers.at(9358).DisplayCategory(locked) == -1);
     assert(markers.at(9358).DisplayCategory(unlocked) == 6);
-    assert(markers.at(9361).DisplayCategory(locked) == kFinaleAssetMarker);
+    assert(markers.at(9361).DisplayCategory(locked) == -1);
     assert(markers.at(9361).DisplayCategory(unlocked) == kFinaleAssetMarker);
     assert(markers.at(9366).DisplayCategory(locked) == -1);
     config["slot_data"]["goal"] = "hidden_packages";
@@ -655,9 +730,7 @@ int main(int argc, char** argv) {
   const auto& continuation = long_popup.Advance(4750, 9, glyph_width);
   assert(continuation.size() == 2 && continuation.front().colors[0] == 5 && continuation.back().colors[0] == 6);
   assert(continuation.front().popup_until == 8500); // waiting lines start their clock when shown
-  long_popup.Pause(10000);
-  assert(long_popup.Advance(10001, 9, glyph_width).front().popup_until == 13750);
-  assert(long_popup.Advance(13750, 9, glyph_width).empty() && long_popup.empty());
+  assert(long_popup.Advance(8500, 9, glyph_width).empty() && long_popup.empty());
   assert(WrapConsoleText({L"iiii", {1, 1, 1, 1}}, 18, glyph_width).size() == 1);
   const auto words = WrapConsoleText({L"WW iii", {1, 1, 1, 2, 2, 2}}, 27, glyph_width);
   assert(words.size() == 2 && words[0].text == L"WW" && words[1].text == L"iii");
@@ -684,6 +757,12 @@ int main(int argc, char** argv) {
   assert(second_batch.front().popup_until == 8500 && second_batch.front().colors[0] == 0xAF99EF);
   assert(burst.Advance(8500, 86).front().text == L"8");
   assert(burst.Advance(12250, 86).empty() && burst.empty());
+  for (int i = 0; i < 8; ++i) burst.Add({std::to_wstring(i), {0xAF99EF}});
+  assert(burst.Advance(13000, 86).size() == 4);
+  burst.Clear();
+  assert(burst.empty() && burst.Advance(14000, 86).empty());
+  burst.Add({L"New message after closing F8", {0xAF99EF}});
+  assert(burst.Advance(15000, 86).front().text == L"New message after closing F8");
   assert(ConsoleScrollAfterArrival(0, 5, 105) == 0); // follow live chat only when already at the bottom
   assert(ConsoleScrollAfterArrival(12, 5, 105) == 17);
   assert(ConsoleScrollAfterArrival(12, 5, 100) == 17); // works when old history rows were trimmed

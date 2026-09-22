@@ -42,8 +42,8 @@ class ConsoleCommandCompletion {
     }
     static constexpr std::wstring_view commands[] = {
         L"/commands", L"/connect", L"/deathlink", L"/disconnect", L"/help", L"/hint",
-        L"/item_groups", L"/items", L"/location_groups", L"/locations", L"/password",
-        L"/ready", L"/received", L"/server", L"/slot",
+        L"/increasetimer", L"/item_groups", L"/items", L"/location_groups", L"/locations", L"/password",
+        L"/ready", L"/received", L"/server", L"/slot", L"/unstuck",
         L"!admin", L"!alias", L"!checked", L"!collect", L"!countdown", L"!getitem",
         L"!help", L"!hint", L"!hint_location", L"!license", L"!missing", L"!options",
         L"!players", L"!release", L"!remaining", L"!status"};
@@ -160,9 +160,9 @@ class ConsolePopupQueue {
     if (waiting_.size() < 4096) waiting_.push_back(line);
   }
   bool empty() const { return waiting_.empty() && visible_.empty(); }
-  void Pause(std::uint64_t now) {
-    // Give visible rows their full reading time again after closing F8.
-    for (auto& line : visible_) line.popup_until = now + kConsolePopupLifetimeMs;
+  void Clear() {
+    waiting_.clear();
+    visible_.clear();
   }
   const std::deque<ConsoleLine>& Advance(std::uint64_t now, float width,
       const std::function<float(std::wstring_view)>& measure = {}) {

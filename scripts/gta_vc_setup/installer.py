@@ -7,7 +7,9 @@ from __future__ import annotations
 import bisect
 import hashlib
 import json
+import os
 import shutil
+import stat
 import struct
 import subprocess
 import sys
@@ -538,6 +540,12 @@ def _backup_once(install_dir: Path, path: Path) -> None:
         shutil.copy2(path, destination)
 
 
+def _make_writable(path: Path) -> None:
+    """Clear a Windows read-only attribute before replacing an existing file."""
+    if path.is_file():
+        os.chmod(path, path.stat().st_mode | stat.S_IWRITE)
+
+
 def mod_is_current(install_dir: Path, payload: list[tuple[str, bytes]] | None = None) -> bool:
     """Check supported build, payload hashes and text keys.
 
@@ -594,6 +602,7 @@ def deploy(install_dir: Path, payload: list[tuple[str, bytes]] | None = None) ->
         # Only main.scm replaces a stock payload file.
         if destination.is_file() and relative_path == MAIN_SCM:
             _backup_once(install_dir, destination)
+        _make_writable(destination)
         destination.parent.mkdir(parents=True, exist_ok=True)
         destination.write_bytes(data)
         installed += 1

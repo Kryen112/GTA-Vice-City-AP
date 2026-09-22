@@ -29,7 +29,7 @@ from BaseClasses import (
 from Options import DeathLink, OptionError, OptionGroup
 from worlds.AutoWorld import WebWorld, World
 
-from . import data, regions, rules, scm
+from . import data, mission_layout, mission_order, mission_progression, regions, rules, scm
 from .check_markers import check_markers, marker_requirements
 from .items import (
     DISTRICT_CONTENT_NAMES,
@@ -54,9 +54,11 @@ from .options import (
     EnableRobbableStores,
     EnableSideEvents,
     EnableStuntJumps,
+    FinaleAssetsRequired,
     Goal,
     GTAViceCityOptions,
     HiddenPackagesRequired,
+    IslandContentLocks,
     LocationPercentages,
     MilestoneSpacing,
     MissionShuffle,
@@ -64,6 +66,7 @@ from .options import (
     RandomizePickups,
     RandomizeRadioStations,
     RememberEmergencyProgress,
+    RequirePrintworksAndEstate,
     ShuffleEmergencyRewards,
     ShuffleMinimap,
     ShuffleShops,
@@ -72,6 +75,7 @@ from .options import (
     StartingAbilityUnlock,
     StartingContentUnlock,
     TrapPercentage,
+    WorldEventTiming,
 )
 
 # How many checks a seed must leave reachable on a new game before it needs no
@@ -141,7 +145,7 @@ class GTAViceCityWeb(WebWorld):
     # it moves the emergency payouts into the pool whether or not those levels
     # are checks.
     option_groups: typing.ClassVar[list[OptionGroup]] = [
-        OptionGroup("Goal", [Goal, HiddenPackagesRequired]),
+        OptionGroup("Goal", [Goal, FinaleAssetsRequired, RequirePrintworksAndEstate, HiddenPackagesRequired]),
         OptionGroup("Check Classes", [
             EnableHiddenPackages, EnableRampages, EnableStuntJumps,
             EnableEmergencyVehicles, EnableProperties, EnableRobbableStores,
@@ -150,10 +154,10 @@ class GTAViceCityWeb(WebWorld):
         OptionGroup("In-World Modifiers", [
             ShuffleEmergencyRewards, RememberEmergencyProgress,
             RandomizePickups, RandomizeRadioStations, ShuffleMinimap,
-            SplitMainlandAccess, MissionShuffle, PolePositionCharge,
+            SplitMainlandAccess, MissionShuffle, WorldEventTiming, PolePositionCharge,
         ]),
         OptionGroup("Locks", [
-            AbilityLocks, StartingAbilityUnlock, ContentLocks,
+            AbilityLocks, StartingAbilityUnlock, ContentLocks, IslandContentLocks,
             SplitContentLocks, StartingContentUnlock,
         ]),
         OptionGroup("Traps and DeathLink", [TrapPercentage, DeathLink]),
@@ -163,8 +167,8 @@ class GTAViceCityWeb(WebWorld):
 class GTAViceCityWorld(World):
     """Grand Theft Auto: Vice City randomizer.
 
-    Completing a mission sends a check. Progressive per-giver unlocks arriving
-    from the multiworld open each giver's next mission in vanilla order.
+    Completing a mission sends its check. Progressive per-giver unlocks arriving
+    from the multiworld open destination slots in the seed's order.
     """
 
     game = "Grand Theft Auto Vice City"
@@ -218,11 +222,15 @@ class GTAViceCityWorld(World):
         # Rebuild the world-shaping options from a played seed's slot_data, so a
         # tracker regeneration matches that seed's locations and pool.
         options = self.options
-        options.mission_shuffle.value = int(bool(slot_data.get("mission_shuffle", False)))
+        options.mission_shuffle = MissionShuffle.from_any(slot_data["mission_shuffle"])
+        options.world_event_timing = WorldEventTiming.from_any(slot_data["world_event_timing"])
         options.location_percentages = LocationPercentages.from_any(slot_data.get("location_percentages", {}))
         options.milestone_spacing = MilestoneSpacing.from_any(slot_data.get("milestone_spacing", {}))
         options.pole_position_charge.value = slot_data.get("pole_position_charge", 20)
         options.goal.value = type(options.goal).options[slot_data["goal"]]
+        options.finale_assets_required = FinaleAssetsRequired.from_any(slot_data.get("finale_assets_required", 7))
+        options.require_printworks_and_estate = RequirePrintworksAndEstate.from_any(
+            slot_data.get("require_printworks_and_estate", False))
         options.hidden_packages_required.value = int(slot_data["hidden_packages_required"])
         options.death_link.value = int(bool(slot_data["death_link"]))
         if "shuffle_emergency_rewards" in slot_data:
@@ -240,6 +248,7 @@ class GTAViceCityWorld(World):
             options.ability_locks.value = set(slot_data["ability_locks"])
         if "content_locks" in slot_data:
             options.content_locks.value = set(slot_data["content_locks"])
+        options.island_content_locks.value = int(bool(slot_data.get("island_content_locks", False)))
         if "split_content_locks" in slot_data:
             # Without this a regeneration rebuilds a split seed's rules against
             # the whole-class items, which the pool does not hold: every
@@ -430,6 +439,20 @@ class GTAViceCityWorld(World):
         self.mission_order = {}
         if not self.options.mission_shuffle:
             return
+        if self.options.mission_shuffle == MissionShuffle.option_full:
+            strands = mission_progression.full_strands(bool(self.options.enable_properties.value))
+            if passthrough is None:
+                self.mission_order = mission_progression.shuffle_full(strands, self.random)
+            else:
+                try:
+                    order = passthrough["mission_order"]
+                    mission_order.assigned_slots(strands, order)
+                    if order["Rosenberg"][0] != "An Old Friend":
+                        raise ValueError("An Old Friend must remain the opening mission.")
+                except (KeyError, ValueError) as error:
+                    raise OptionError(f"{self.game}: invalid saved full mission assignment: {error}") from error
+                self.mission_order = {giver: list(missions) for giver, missions in order.items()}
+            return
         for strand, (class_key, missions) in data.progressive_strands().items():
             if strand == "Sunshine Autos" or not self._class_enabled(class_key):
                 continue
@@ -446,6 +469,10 @@ class GTAViceCityWorld(World):
                         or (last and order[-1:] != last)):
                     raise OptionError(f"{self.game}: invalid saved mission order for {strand}.")
             self.mission_order[strand] = list(order)
+        mission_order.assigned_slots(
+            {giver: data.progressive_strands()[giver][1] for giver in self.mission_order},
+            self.mission_order,
+        )
 
     def _choose_locations(self, passthrough: dict | None) -> None:
         if passthrough is not None:
@@ -538,6 +565,10 @@ class GTAViceCityWorld(World):
         )
 
     def _location_rules(self) -> dict[str, rules.RulePredicate]:
+        if self.options.mission_shuffle == MissionShuffle.option_full:
+            entries, _, _ = self._full_mission_graph()
+            return {name: rules.compile_requirements(entry) for name, entry in entries.items()
+                    if entry.requirements or entry.thresholds}
         # Built per world: the finale missions carry the asset prerequisite
         # only while the properties class is on (its items are in the pool),
         # a lock term exists only for the selected ability_locks and
@@ -550,7 +581,17 @@ class GTAViceCityWorld(World):
             bool(self.options.split_mainland_access.value),
             self._split_content_locks(),
             self.mission_order,
+            self.options.finale_assets_required.value,
+            bool(self.options.require_printworks_and_estate.value),
         )
+
+    def _full_mission_graph(self):
+        return rules.full_mission_requirements(
+            self.mission_order, self.options.world_event_timing.current_key,
+            bool(self.options.enable_properties.value), self._ability_lock_keys(), self._content_lock_keys(),
+            bool(self.options.split_mainland_access.value), self._split_content_locks(),
+            self.options.finale_assets_required.value,
+            bool(self.options.require_printworks_and_estate.value))
 
     def create_item(self, name: str) -> GTAViceCityItem:
         return GTAViceCityItem(
@@ -586,6 +627,10 @@ class GTAViceCityWorld(World):
             else:
                 start.connect(region, rule=self._bind(rule))
 
+        if self.options.mission_shuffle == MissionShuffle.option_full:
+            self._create_full_mission_locations(by_name)
+            return
+
         # One event per mission the audit uses as a way onto an island. Passing
         # a mission is not something a seed can place, so it arrives as an event
         # item on an event location that sits in the mission's own region and
@@ -617,6 +662,42 @@ class GTAViceCityWorld(World):
             if self._location_excluded(location_name):
                 location.progress_type = LocationProgressType.EXCLUDED
             region.locations.append(location)
+
+    def _create_full_mission_locations(self, by_name: dict[str, Region]) -> None:
+        for attempt in range(1000):
+            entries, region_names, event_items = self._full_mission_graph()
+            events = []
+            for name, region_name in region_names.items():
+                is_event = name in event_items
+                if not is_event and not self._location_enabled(name):
+                    continue
+                region = by_name[region_name]
+                location = GTAViceCityLocation(
+                    self.player, name, None if is_event else LOCATION_NAME_TO_ID[name], region)
+                if name in entries:
+                    location.access_rule = self._bind(rules.compile_requirements(entries[name]))
+                if is_event:
+                    location.place_locked_item(GTAViceCityItem(
+                        event_items[name], ItemClassification.progression, None, self.player))
+                    events.append(location)
+                elif self._location_excluded(name):
+                    location.progress_type = LocationProgressType.EXCLUDED
+                region.locations.append(location)
+            state = CollectionState(self.multiworld)
+            for name in ITEM_NAME_TO_ID:
+                if self._item_enabled(name) and ITEM_CLASSIFICATIONS[name] & ItemClassification.progression:
+                    for _ in range(ITEM_QUANTITIES.get(name, 1)):
+                        state.collect(self.create_item(name), prevent_sweep=True)
+            try:
+                mission_progression.validate_slot_reachability(state, events)
+                return
+            except ValueError as error:
+                if self._tracker_passthrough() is not None or attempt == 999:
+                    raise OptionError(
+                        f"{self.game}: full mission assignment is structurally blocked: {error}") from error
+                for region in by_name.values():
+                    region.locations.clear()
+                self._choose_mission_order(None)
 
     def create_items(self) -> None:
         placeable: list[str] = []
@@ -967,7 +1048,8 @@ class GTAViceCityWorld(World):
         # Universal Tracker can regenerate the world from slot_data alone. JSON
         # object keys are strings.
         return {
-            "mission_shuffle": bool(self.options.mission_shuffle.value),
+            "mission_shuffle": self.options.mission_shuffle.current_key,
+            "world_event_timing": self.options.world_event_timing.current_key,
             "mission_order": self.mission_order or {},
             "location_percentages": dict(self.options.location_percentages.value),
             "milestone_spacing": dict(self.options.milestone_spacing.value),
@@ -981,7 +1063,13 @@ class GTAViceCityWorld(World):
             # The client watches for this location being checked to detect the
             # final-mission goal; the 100 percent goal needs no id (it waits for
             # every location).
-            "final_location_id": LOCATION_NAME_TO_ID[data.FINAL_MISSION],
+            "final_location_id": LOCATION_NAME_TO_ID[self._goal_mission()],
+            "finale_assets_required": self.options.finale_assets_required.value,
+            "require_printworks_and_estate": bool(self.options.require_printworks_and_estate.value),
+            "goal_trigger": {"kind": "mission_slot" if self._goal_uses_finale_slot()
+                             else "mission", "location_id": LOCATION_NAME_TO_ID[self._goal_mission()],
+                             **({"giver": "Vercetti Finale", "ordinal": 2}
+                                if self._goal_uses_finale_slot() else {})},
             "death_link": bool(self.options.death_link.value),
             "shuffle_emergency_rewards": bool(self.options.shuffle_emergency_rewards.value),
             "remember_emergency_progress": bool(
@@ -1000,6 +1088,7 @@ class GTAViceCityWorld(World):
             # flags themselves reach the ASI through config_globals.
             "ability_locks": sorted(self.options.ability_locks.value),
             "content_locks": sorted(self.options.content_locks.value),
+            "island_content_locks": bool(self.options.island_content_locks.value),
             "split_content_locks": int(self.options.split_content_locks.value),
             "starting_ability_unlock": bool(self.options.starting_ability_unlock.value),
             "starting_content_unlock": bool(self.options.starting_content_unlock.value),
@@ -1054,7 +1143,9 @@ class GTAViceCityWorld(World):
                 if global_index in active_globals
             },
             "marker_requirements": marker_requirements(
-                bool(self.options.split_mainland_access.value), self.mission_order),
+                bool(self.options.split_mainland_access.value), self.mission_order,
+                self.options.mission_shuffle == MissionShuffle.option_full,
+                self.options.world_event_timing.current_key, bool(self.options.enable_properties.value)),
             # Only when the class is enabled: with packages off their locations
             # do not exist, so the ASI must not detect or report them.
             "package_coords": {
@@ -1127,11 +1218,31 @@ class GTAViceCityWorld(World):
                            item.weapon_type])
         return layout
 
+    def extend_hint_information(self, hint_data: dict[int, dict[int, str]]) -> None:
+        if self.options.mission_shuffle != MissionShuffle.option_full:
+            return
+        strands = mission_progression.full_strands(bool(self.options.enable_properties.value))
+        hints = hint_data.setdefault(self.player, {})
+        for mission, (giver, ordinal) in mission_order.assigned_slots(strands, self.mission_order).items():
+            hints[LOCATION_NAME_TO_ID[mission]] = f"{giver} slot {ordinal + 1}"
+
     def write_spoiler(self, spoiler_handle: typing.TextIO) -> None:
         if self.mission_order:
             spoiler_handle.write(f"\nMission order ({self.multiworld.player_name[self.player]}):\n")
             for giver, missions in self.mission_order.items():
                 spoiler_handle.write(f"  {giver}: {' -> '.join(missions)}\n")
+            if self.options.mission_shuffle == MissionShuffle.option_full:
+                strands = mission_progression.full_strands(bool(self.options.enable_properties.value))
+                timing = self.options.world_event_timing.current_key
+                spoiler_handle.write(f"  World event timing: {timing}\n")
+                for mission, event in mission_progression.WORLD_EVENTS.items():
+                    giver, ordinal = mission_order.event_trigger_slot(strands, self.mission_order, mission, timing)
+                    spoiler_handle.write(f"  {event}: {giver} slot {ordinal + 1}\n")
+                if self.options.goal == Goal.option_keep_your_friends_close:
+                    giver, ordinal = mission_order.assigned_slots(strands, self.mission_order)[data.FINAL_MISSION]
+                    spoiler_handle.write(f"  Mission goal: {data.FINAL_MISSION} ({giver} slot {ordinal + 1})\n")
+                elif self.options.goal == Goal.option_final_mission:
+                    spoiler_handle.write(f"  Final mission goal: Vercetti Finale slot 2 ({self._goal_mission()})\n")
         # The pickup layout is decided at generation, so the spoiler log lists
         # it: each spot named by its vanilla item, then what stands there now.
         if self.pickup_permutation is None:
@@ -1166,7 +1277,14 @@ class GTAViceCityWorld(World):
         # Restore emergency activity progress when enabled.
         flags.update(scm.remember_emergency_flag(
             bool(self.options.remember_emergency_progress.value)))
-        flags.update(scm.mission_order_globals(self.mission_order or {}))
+        flags[mission_layout.FINALE_ASSETS_REQUIRED_GLOBAL] = self.options.finale_assets_required.value
+        flags[mission_layout.FINALE_MANDATORY_ASSETS_GLOBAL] = int(self.options.require_printworks_and_estate.value)
+        flags[mission_layout.FULL_MODE_GLOBAL] = 0
+        if self.options.mission_shuffle == MissionShuffle.option_full:
+            flags.update(scm.full_mission_order_globals(
+                self.mission_order, self.options.world_event_timing.current_key))
+        else:
+            flags.update(scm.mission_order_globals(self.mission_order or {}))
         # The shop threads read this before they hide what a shop sells, so a
         # seed without the class leaves every shop exactly vanilla.
         flags.update(scm.shops_enabled_flag(
@@ -1198,6 +1316,7 @@ class GTAViceCityWorld(World):
             self.options.milestone_spacing.value.get("taxi", 10)
             if self.options.enable_emergency_vehicles.value else 10)
         flags[scm.POLE_POSITION_CHARGE_GLOBAL] = self.options.pole_position_charge.value
+        flags[scm.ISLAND_CONTENT_LOCKS_GLOBAL] = int(self.options.island_content_locks.value)
         return flags
 
     def _completion_condition(self) -> Callable[[CollectionState], bool]:
@@ -1227,4 +1346,13 @@ class GTAViceCityWorld(World):
             return lambda state: all(
                 state.can_reach_location(name, player) for name in enabled
             )
-        return lambda state: state.can_reach_location(data.FINAL_MISSION, player)
+        return lambda state: state.can_reach_location(self._goal_mission(), player)
+
+    def _goal_uses_finale_slot(self) -> bool:
+        return (self.options.mission_shuffle == MissionShuffle.option_full
+                and self.options.goal == Goal.option_final_mission)
+
+    def _goal_mission(self) -> str:
+        if self._goal_uses_finale_slot():
+            return self.mission_order["Vercetti Finale"][-1]
+        return data.FINAL_MISSION

@@ -176,6 +176,14 @@ class TestDeploy(unittest.TestCase):
         self.assertEqual(
             (self.install / "AP_mod_backup" / "main.scm").read_bytes(), b"stock-scm")
 
+    def test_deploy_clears_a_read_only_attribute_before_replacing_main_script(self) -> None:
+        main_script = self.install / "data" / "main.scm"
+        main_script.parent.mkdir()
+        main_script.write_bytes(b"stock-scm")
+        with unittest.mock.patch.object(installer, "_make_writable") as make_writable:
+            installer.deploy(self.install, payload=[SCM])
+        make_writable.assert_any_call(main_script)
+
     def test_is_idempotent(self) -> None:
         installer.deploy(self.install, payload=PAYLOAD)
         log = installer.deploy(self.install, payload=PAYLOAD)

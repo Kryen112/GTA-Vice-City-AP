@@ -15,6 +15,7 @@
 #include <vector>
 
 #include "game_state.hpp"
+#include "scm_unstuck.hpp"
 #include "scm_grant_pacing.hpp"
 #include "scm_ability_locks.hpp"
 #include "scm_applied_reports.hpp"
@@ -76,6 +77,8 @@ class ScmGameState : public GameState {
 
   // Called from the game frame. All SCM memory access is here.
   void OnGameFrame();
+  std::string IncreaseTimer();
+  std::string Unstuck();
   void UpdateTaxiCounter();
   void OnPickupsUpdated(); // observe collections before script consumers clear them
 
@@ -250,6 +253,7 @@ class ScmGameState : public GameState {
 
   Logger logger_;
   std::mutex mutex_;
+  UnstuckControlHold unstuck_control_hold_;
   std::map<std::int64_t, int> item_globals_;
   std::map<std::int64_t, ItemEffect> item_effects_;
   TrapConsumer consume_trap_;

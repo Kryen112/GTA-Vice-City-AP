@@ -12,9 +12,11 @@
 
 #include "game_addresses.hpp"
 #include "scm_finale_warp.hpp"
+#include "scm_unstuck.hpp"
 #include "scm_packages.hpp"
 #include "scm_seed_stamp.hpp"
 #include "scm_pole_position.hpp"
+#include "scm_island_content.hpp"
 #include "toast_stack.hpp"
 
 #include <plugin.h>
@@ -26,6 +28,7 @@
 #include <CModelInfo.h>
 #include <CTheScripts.h>
 #include <CWorld.h>
+#include <CTheZones.h>
 #include <CPlayerPed.h>
 #include <CWeaponInfo.h>
 #include <CStreaming.h>
@@ -65,6 +68,18 @@ static_assert(kPickupTypePropertyForSale == PICKUP_PROPERTY_FORSALE, "for-sale p
 static_assert(kPickupTypeInShop == PICKUP_IN_SHOP, "in-shop pickup type");
 
 namespace {
+int IslandBitAt(CVector position) {
+  // Navigation zones are island interiors.
+  position.z = 10.0f;
+  const CZone* zone = CTheZones::FindSmallestNavigationZoneForPosition(&position, true, true);
+  if (zone != nullptr) {
+    if (std::strcmp(zone->name, "STARI") == 0) return kStarfishContentBit;
+    for (const char* mainland : {"DTOWN", "A_PORT", "JUNKY", "DOCKS", "HAVANA", "HAITI"})
+      if (std::strcmp(zone->name, mainland) == 0) return kMainlandContentBit;
+  }
+  return CTheZones::GetLevelFromPosition(&position) == LEVEL_MAINLAND ? kMainlandContentBit : 0;
+}
+
 // Fixed part of the reserved layout, matching apworld scm.py: the seed hash
 // occupies four globals from $9000, sixteen hex characters packed four per
 // global. The applied-index is $9005. The unlock, reward, completion, and
@@ -707,6 +722,12 @@ void ScmGameState::DrawCheckMarkers() {
   const float radius_x = std::abs(edge.x - centre.x);
   const float radius_y = std::abs(edge.y - centre.y);
   for (const auto& [global_index, position] : check_markers_) {
+    const int district_offset = position.content_unlock_global - kDistrictUnlockBase;
+    const int island_bit = district_offset >= 0 && district_offset < kContentCount * kDistrictStride
+        ? DistrictIslandBit(district_offset % kDistrictStride)
+        : IslandBitAt(CVector(position.x, position.y, 10.0f));
+    if (!IslandContentAllowed(GetGlobal(kIslandContentAccessGlobal),
+                              island_bit)) continue;
     const bool asset = position.category == kFinaleAssetMarker || position.category == kFinaleAssetCheckMarker;
     if (global_index < 0 || global_index >= sizeof(CTheScripts::ScriptSpace) / sizeof(int) ||
         (!asset && reported_.count(global_index)) || GetGlobal(global_index) != 0) continue;
@@ -978,7 +999,11 @@ void ScmGameState::EnforceHeldPickups(const AbilityLocks& locked,
                          static_cast<int>(pickup.nModelId), index})) {
       held_class = HeldPickupClass::kPickup;
     }
-    if (held_class == HeldPickupClass::kNone) continue;
+    const bool asset_revenue = pickup.bPickupType == PICKUP_ASSET_REVENUE;
+    const bool shop_stock = held_class == HeldPickupClass::kNone && IsWorldPickup(pickup_targets_,
+        {pickup.vecPos.x, pickup.vecPos.y, UnsunkHeight(pickup.vecPos.z),
+         static_cast<int>(pickup.bPickupType), static_cast<int>(pickup.nModelId), index}, true);
+    if (held_class == HeldPickupClass::kNone && !asset_revenue && !shop_stock) continue;
     const int district = DistrictForPickup(pickup_districts_, held_class,
                                           pickup.vecPos.x, pickup.vecPos.y);
     // A pickup no row placed is held while any district of its class is, which
@@ -987,7 +1012,7 @@ void ScmGameState::EnforceHeldPickups(const AbilityLocks& locked,
     // district's item, so the two disagree and the check could become
     // unreachable. Logged once per class, since only a wrong or missing table
     // row causes it and one line is enough to find that.
-    if (district == kDistrictUnknown && logger_ != nullptr &&
+    if (held_class != HeldPickupClass::kNone && district == kDistrictUnknown && logger_ != nullptr &&
         !pickup_unplaced_logged_[static_cast<std::size_t>(held_class)]) {
       pickup_unplaced_logged_[static_cast<std::size_t>(held_class)] = true;
       logger_(std::string("content locks: no district for a ") +
@@ -999,7 +1024,8 @@ void ScmGameState::EnforceHeldPickups(const AbilityLocks& locked,
     const bool should_hold = ShouldHoldPickup(
         held_class, district,
         IsVehicleRampagePickup(pickup.vecPos.x, pickup.vecPos.y),
-        locked, held);
+        locked, held) || ((asset_revenue || shop_stock) &&
+        !IslandContentAllowed(GetGlobal(kIslandContentAccessGlobal), IslandBitAt(pickup.vecPos)));
     const PickupHoldAction action =
         PlanPickupHold(should_hold, pickup.vecPos.z, pickup.bRemoved);
     if (action == PickupHoldAction::kLeaveAlone) continue;
@@ -1022,9 +1048,8 @@ void ScmGameState::EnforceHeldPickups(const AbilityLocks& locked,
 ContentLocks ScmGameState::ReadContentLocks(
     std::array<int, kContentCount>& lock_flags, ContentAbsence* absent) {
   // The lock flags say which classes this seed configured, which is what the
-  // status page lists. What is held comes from the district block alone: a class
-  // the seed does not lock arrives with every district already released, so a
-  // flag test here would only repeat what the globals say.
+  // status page lists. Island permissions add locks without overwriting the
+  // district unlocks.
   std::array<int, kContentCount * kDistrictCount> district_unlocks{};
   for (int index = 0; index < kContentCount; ++index) {
     lock_flags[index] = GetGlobal(kContentLockFlagBase + index);
@@ -1034,7 +1059,7 @@ ContentLocks ScmGameState::ReadContentLocks(
     }
   }
   if (absent != nullptr) *absent = PlanContentAbsence(district_unlocks);
-  return PlanContentLocks(district_unlocks);
+  return HoldIslandContent(PlanContentLocks(district_unlocks), GetGlobal(kIslandContentAccessGlobal));
 }
 
 
@@ -1136,7 +1161,7 @@ void ScmGameState::EnforceLocks() {
   const AbilityLocks locked = ReadAbilityLocks(lock_flags);
   std::array<int, kContentCount> content_flags{};
   const ContentLocks held = ReadContentLocks(content_flags);
-  bool any_flag_set = false;
+  bool any_flag_set = GetGlobal(kIslandContentLocksGlobal) != 0;
   for (int index = 0; index < kAbilityCount; ++index) {
     any_flag_set = any_flag_set || lock_flags[index] != 0;
   }
@@ -1149,9 +1174,11 @@ void ScmGameState::EnforceLocks() {
   // and reading NO WALLET YET over real money.
   g_money_reads_locked.store(locked[kAbilityWallet], std::memory_order_relaxed);
 
-  // No key of either family selected this seed: fully vanilla, nothing to
-  // enforce.
-  if (!any_flag_set) return;
+  // A seed with no locks still restores pickups sunk by an earlier configuration.
+  if (!any_flag_set) {
+    if (FindPlayerPed() != nullptr) EnforceHeldPickups(locked, held);
+    return;
+  }
 
   if (locked[kAbilityWallet]) {
     // Tommy cannot hold money: everything earned or received while the
@@ -1801,6 +1828,7 @@ void ScmGameState::OnGameStarted() {
 // hash the frame would otherwise have read as empty. Every write is idempotent,
 // so the paths overlapping costs nothing.
 void ScmGameState::ForgetGameScopedState() {
+  if (auto* pad = CPad::GetPad(0)) unstuck_control_hold_.Reset(pad->DisablePlayerControls);
   pole_position_charge_ = 0;
   trap_baseline_pending_ = true;
   baseline_captured_ = false;
@@ -1938,8 +1966,57 @@ void ScmGameState::UpdateTaxiCounter() {
         std::max(GetGlobal(kTaxiCareerFaresGlobal), emergency_progress_[0]), counter.m_acDisplayedText);
 }
 
+std::string ScmGameState::IncreaseTimer() {
+  std::lock_guard<std::mutex> lock(mutex_);
+  if (!ConfiguredSeedMatches(ReadSeedHash(), configured_seed_hash_) || FindPlayerPed() == nullptr ||
+      PlayerState() != PLAYERSTATE_PLAYING || CTimer::m_UserPause || CTimer::m_CodePause ||
+      FrontEndMenuManager.m_bMenuActive)
+    return "/increasetimer requires a loaded game in progress.";
+  const auto& clock = CUserDisplay::OnscnTimer.m_aClocks[0];
+  // The registered variable identifies the active clock.
+  if (!IncreaseCountdown(clock.m_nVarId, clock.m_nTimerDirection,
+                         reinterpret_cast<int*>(CTheScripts::ScriptSpace),
+                         sizeof(CTheScripts::ScriptSpace) / sizeof(int)))
+    return "No active countdown can be extended.";
+  return "Added 60 seconds to the active countdown.";
+}
+
+std::string ScmGameState::Unstuck() {
+  std::lock_guard<std::mutex> lock(mutex_);
+  CPlayerPed* player = FindPlayerPed();
+  if (!ConfiguredSeedMatches(ReadSeedHash(), configured_seed_hash_) || player == nullptr)
+    return "/unstuck requires a loaded Archipelago game.";
+  if (!CanUnstuck(PlayerState() == PLAYERSTATE_PLAYING && player->m_fHealth > 0.0f,
+                  CGame::currArea == 0 && player->m_nAreaCode == 0,
+                  !player->m_bInVehicle &&
+                  player->m_nObjective != OBJECTIVE_ENTER_CAR_AS_DRIVER &&
+                  player->m_nObjective != OBJECTIVE_ENTER_CAR_AS_PASSENGER &&
+                  player->m_ePedState != PEDSTATE_CAR_JACK &&
+                  player->m_ePedState != PEDSTATE_ENTER_CAR &&
+                  player->m_ePedState != PEDSTATE_EXIT_CAR, PlayerIsControllable(),
+                  CTimer::m_UserPause || CTimer::m_CodePause || FrontEndMenuManager.m_bMenuActive,
+                  TheCamera.m_bWideScreenOn || TheCamera.m_bFading))
+    return "/unstuck requires normal control, outdoors and on foot, with no cutscene or fade.";
+  // Movement mods reseed their physics position after observing disabled control.
+  if (!unstuck_control_hold_.Begin(CPad::GetPad(0)->DisablePlayerControls))
+    return "/unstuck is already running or player control is locked.";
+  // Rosenberg's native taxi drop-off is outside the mission entry trigger.
+  const CVector destination(110.6f, -824.2f, 9.6f);
+  CStreaming::LoadSceneCollision(&destination);
+  CStreaming::LoadScene(&destination);
+  player->Teleport(destination);
+  player->m_vecMoveSpeed = CVector(0.0f, 0.0f, 0.0f);
+  player->m_vecTurnSpeed = CVector(0.0f, 0.0f, 0.0f);
+  TheCamera.RestoreWithJumpCut();
+  return "Returned to Rosenberg. Any active mission remains running.";
+}
+
 void ScmGameState::OnGameFrame() {
   std::lock_guard<std::mutex> lock(mutex_);
+  if (auto* pad = CPad::GetPad(0))
+    unstuck_control_hold_.Tick(pad->DisablePlayerControls,
+        CTimer::m_UserPause || CTimer::m_CodePause || FrontEndMenuManager.m_bMenuActive);
+
 
   cached_seed_hash_ = ReadSeedHash();
   if (ShouldStampSeedHash(cached_seed_hash_.empty(), !expected_seed_hash_.empty(),
@@ -2154,6 +2231,13 @@ void ScmGameState::OnGameFrame() {
   for (const auto& [global_index, value] : config_globals_) {
     SetGlobal(global_index, value);
   }
+  std::array<int, kAbilityCount> island_ability_flags{};
+  const int island_access = IslandContentAccess(mainland_routes_, ReadAbilityLocks(island_ability_flags),
+      [](int index) { return GetGlobal(index); });
+  SetGlobal(kIslandContentAccessGlobal, island_access);
+  CPlayerPed* island_player = FindPlayerPed();
+  SetGlobal(kPlayerIslandContentAccessGlobal, island_player != nullptr &&
+      IslandContentAllowed(island_access, IslandBitAt(island_player->GetPosition())) ? 1 : 0);
 
   // Apply one-shot effects (consumables and traps) once, past the saved
   // applied-index. Only when the player exists, so a grant is never lost to a

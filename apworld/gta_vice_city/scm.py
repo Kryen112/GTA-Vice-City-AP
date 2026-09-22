@@ -273,7 +273,10 @@ MISSION_COMPLETED_GLOBAL = MISSION_DIGIT_GLOBAL + 1
 TAXI_MILESTONE_SPACING_GLOBAL = MISSION_COMPLETED_GLOBAL + 1
 TAXI_MILESTONE_COUNT_GLOBAL = TAXI_MILESTONE_SPACING_GLOBAL + 1
 POLE_POSITION_CHARGE_GLOBAL = TAXI_MILESTONE_COUNT_GLOBAL + 1
-SPARE_FLAGS_USED = 1 + len(EMERGENCY_PROGRESS_ACTIVITIES) + 2 + 3 + 2 + 1
+ISLAND_CONTENT_LOCKS_GLOBAL = POLE_POSITION_CHARGE_GLOBAL + 1
+ISLAND_CONTENT_ACCESS_GLOBAL = ISLAND_CONTENT_LOCKS_GLOBAL + 1
+PLAYER_ISLAND_CONTENT_ACCESS_GLOBAL = ISLAND_CONTENT_ACCESS_GLOBAL + 1
+SPARE_FLAGS_USED = 1 + len(EMERGENCY_PROGRESS_ACTIVITIES) + 2 + 3 + 2 + 1 + 3
 
 assert SPARE_FLAGS_USED <= SPARE_FLAG_CAPACITY, (
     f"{SPARE_FLAGS_USED} spare flags handed out of {SPARE_FLAG_CAPACITY}; "
@@ -511,6 +514,9 @@ def reserved_global_map() -> dict[str, int]:
         "base:TAXI_MILESTONE_SPACING_GLOBAL": TAXI_MILESTONE_SPACING_GLOBAL,
         "base:TAXI_MILESTONE_COUNT_GLOBAL": TAXI_MILESTONE_COUNT_GLOBAL,
         "base:POLE_POSITION_CHARGE_GLOBAL": POLE_POSITION_CHARGE_GLOBAL,
+        "base:ISLAND_CONTENT_LOCKS_GLOBAL": ISLAND_CONTENT_LOCKS_GLOBAL,
+        "base:ISLAND_CONTENT_ACCESS_GLOBAL": ISLAND_CONTENT_ACCESS_GLOBAL,
+        "base:PLAYER_ISLAND_CONTENT_ACCESS_GLOBAL": PLAYER_ISLAND_CONTENT_ACCESS_GLOBAL,
         "base:FINALE_WARP_GLOBAL": FINALE_WARP_GLOBAL,
         "base:FINALE_ACTIVE_GLOBAL": FINALE_ACTIVE_GLOBAL,
     }
@@ -764,3 +770,25 @@ def package_coords() -> dict[int, list[float]]:
         completion_global(name): list(data.PACKAGE_COORDS[index])
         for index, name in enumerate(locations.PACKAGE_NAMES)
     }
+
+
+def full_mission_order_globals(assignment: dict[str, list[str]], timing: str) -> dict[int, int]:
+    """Encode each original start slot's assigned native mission."""
+    from .mission_layout import ASSIGNMENT_BASE, EVENT_TIMING_GLOBAL, FULL_MODE_GLOBAL, MISSION_NUMBERS
+    from .mission_order import assigned_slots
+
+    strands = {giver: data.progressive_strands()[giver][1] for giver in assignment}
+    assigned_slots(strands, assignment)
+    if timing not in ("quest_giver_progress", "mission_completion"):
+        raise ValueError("Invalid world event timing.")
+    result = {FULL_MODE_GLOBAL: 1, EVENT_TIMING_GLOBAL: int(timing == "mission_completion")}
+    result.update({ASSIGNMENT_BASE + number: number for number in MISSION_NUMBERS.values()})
+    for giver, originals in strands.items():
+        for original, payload in zip(originals, assignment[giver], strict=True):
+            if original == "An Old Friend":
+                if payload != original:
+                    raise ValueError("The opening bootstrap cannot move.")
+                continue
+            result[ASSIGNMENT_BASE + MISSION_NUMBERS[original]] = MISSION_NUMBERS[payload]
+    result.update({unlock_global(f"Mission Order: {giver}"): 0 for giver in data.progressive_strands()})
+    return result

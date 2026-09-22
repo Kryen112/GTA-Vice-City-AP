@@ -1,4 +1,6 @@
 """Access rules: the logic core.
+Full shuffle uses explicit slot, mission, purchase and world-event facts.
+The off and within-giver modes use the inherited item requirements below.
 Every mission location (story giver or venue strand) has a rule that is the
 conjunction of: its strand's progressive-unlock count, any cross-giver
 prerequisite gating the whole strand (the finale behind the protection strand,
@@ -312,9 +314,7 @@ def _deduplicated(requirements: list[Requirement]) -> list[Requirement]:
 
 
 def _mission_edges(mission: str, properties_enabled: bool) -> list[tuple[str, int]]:
-    # A mission's own cross-strand edges. The Printworks one is carried only
-    # while the properties class is on, since Progressive Printworks leaves the
-    # pool with the class and no rule may name an item that is not in it.
+    # Venue edges only bind while their progressive items exist in the pool.
     edges = list(data.MISSION_PREREQUISITES.get(mission, []))
     if properties_enabled:
         edges += list(data.PROPERTY_MISSION_PREREQUISITES.get(mission, []))
@@ -597,8 +597,7 @@ def _asset_completion_requirements(asset: str, progressive_count: int,
     # asset groups, where a nested threshold has no shape, so neither a region
     # nor a several-routes requirement can ride here. Neither is needed. Every
     # region a sliced mission needs is one the finale's own rule already
-    # requires, and the one sliced mission carrying a route is Hit the Courier,
-    # whose route reaches the finale through Cap the Collector's Printworks edge.
+    # requires. Hit the Courier accepts the land-vehicle route Cap already needs.
     # test_an_asset_slice_carries_nothing_a_threshold_cannot_hold pins both.
     # Everything else about buying the property is the sale requirements' job,
     # carried once by the finale rule; what belongs to the asset itself is the
@@ -626,25 +625,22 @@ def _finale_asset_terms(
     split_content_locks: int,
     sale_requirements: list[Requirement],
     mission_order: dict[str, list[str]] | None = None,
-) -> tuple[list[Requirement], list[list[Requirement]]]:
-    # The finale's vanilla asset prerequisite as items. Hit the Courier
-    # (Printworks' last mission) is individually mandatory, Cop Land arrives
-    # through the protection progressives already in the finale's own
-    # requirements, and the remaining threshold picks from the optional assets.
-    # The sale requirements are handed in rather than rebuilt, so the flat half
-    # here and the threshold half the caller carries are one answer.
-    mandatory = (
-        _asset_completion_requirements(
-            "Printworks", len(data.VENUE_STRANDS["Printworks"]), active_items,
-            split_content_locks, mission_order=mission_order)
-        + sale_requirements
-    )
-    optional = [
-        _asset_completion_requirements(asset, progressive_count, active_items,
-                                       split_content_locks, mission_order=mission_order)
-        for asset, progressive_count in data.FINALE_OPTIONAL_ASSETS.items()
-    ]
-    return mandatory, optional
+    properties_enabled: bool = True,
+) -> list[list[Requirement]]:
+    assets = {"Printworks": len(data.VENUE_STRANDS["Printworks"]), **data.FINALE_OPTIONAL_ASSETS}
+    groups = []
+    for asset, count in assets.items():
+        terms = _asset_completion_requirements(asset, count, active_items, split_content_locks,
+                                               mission_order=mission_order)
+        if not properties_enabled:
+            terms = [(item, count) for item, count in terms
+                     if item not in (data.ownership_item_name(asset), data.progressive_item_name(asset))]
+        groups.append([*terms, *sale_requirements])
+    # The finale already carries both islands and Cap's land-vehicle route.
+    groups.append([(item, count) for item, count in _mission_requirements(
+        "Cop Land", "Vercetti Protection", active_items, split_content_locks, False, mission_order=mission_order)
+        if item not in data.AREA_ITEMS])
+    return groups
 
 
 def build_location_requirements(
@@ -654,6 +650,8 @@ def build_location_requirements(
     split_mainland_access: bool = False,
     split_content_locks: int = data.CONTENT_SPLIT_OFF,
     mission_order: dict[str, list[str]] | None = None,
+    finale_assets_required: int = data.FINALE_ASSET_THRESHOLD,
+    require_printworks_and_estate: bool = False,
 ) -> dict[str, LocationRequirements]:
     """Every location that carries a rule, and what that rule asks for.
 
@@ -673,8 +671,9 @@ def build_location_requirements(
     requirements_by_location: dict[str, LocationRequirements] = {}
     sale_requirements, sale_thresholds = _property_sale_requirements(
         active_items, split_content_locks, split_mainland_access, properties_enabled, mission_order=mission_order)
-    finale_mandatory, finale_optional = _finale_asset_terms(
-        active_items, split_content_locks, sale_requirements, mission_order=mission_order)
+    finale_assets = _finale_asset_terms(
+        active_items, split_content_locks, sale_requirements, mission_order=mission_order,
+        properties_enabled=properties_enabled)
     for mission, giver in locations.MISSION_GIVER.items():
         requirements = _mission_requirements(
             mission, giver, active_items, split_content_locks, split_mainland_access,
@@ -692,30 +691,14 @@ def build_location_requirements(
             mission_thresholds = _deduplicated_thresholds(
                 [*mission_thresholds, *sale_thresholds])
         if giver == "Vercetti Finale":
-            # The finale carries the sale requirements whichever way the
-            # properties class is set, so it carries their threshold half too.
-            mission_thresholds = _deduplicated_thresholds(
-                [*mission_thresholds, *sale_thresholds])
-            if properties_enabled:
-                requirements_by_location[mission] = LocationRequirements(
-                    requirements + finale_mandatory,
-                    [*mission_thresholds,
-                     (finale_optional, data.FINALE_OPTIONAL_ASSETS_REQUIRED)],
-                )
-            else:
-                # With the properties class off the asset items leave the pool
-                # and assets complete vanilla-style with grindable money, but
-                # the FIN1 gate still reads the vanilla flags, and Shakedown
-                # and Cop Land are given from the mansion: the finale keeps
-                # the property-sale requirements (Starfish Island Access
-                # included, and the wallet term while its lock is selected,
-                # since vanilla asset completion still spends money) so the
-                # fill cannot strand those items behind it.
-                off_requirements = (
-                    requirements + sale_requirements
-                    + _any_property_content_terms(active_items, split_content_locks))
-                requirements_by_location[mission] = LocationRequirements(
-                    off_requirements, mission_thresholds)
+            if finale_assets_required == 0:
+                requirements_by_location[mission] = LocationRequirements(requirements, mission_thresholds)
+                continue
+            mandatory_assets = ([finale_assets[0], finale_assets[-1]][:finale_assets_required]
+                                if require_printworks_and_estate else [])
+            requirements_by_location[mission] = LocationRequirements(
+                requirements + [term for asset in mandatory_assets for term in asset],
+                [*mission_thresholds, (finale_assets, finale_assets_required)])
             continue
         if mission_thresholds or requirements:
             requirements_by_location[mission] = LocationRequirements(
@@ -792,6 +775,142 @@ def compile_requirements(entry: LocationRequirements) -> RulePredicate:
             if entry.thresholds else _requires(entry.requirements))
 
 
+def full_mission_requirements(
+    assignment: dict[str, list[str]], timing: str, properties_enabled: bool,
+    ability_locks: frozenset[str], content_locks: frozenset[str],
+    split_mainland_access: bool, split_content_locks: int,
+    finale_assets_required: int = data.FINALE_ASSET_THRESHOLD,
+    require_printworks_and_estate: bool = False,
+) -> tuple[dict[str, LocationRequirements], dict[str, str], dict[str, str]]:
+    """Direct slot, payload and world-event rules, with their region and event items."""
+    from . import mission_order
+    from . import mission_progression as progression
+
+    strands = progression.full_strands(properties_enabled)
+    destinations = mission_order.assigned_slots(strands, assignment)
+    active = frozenset([item for key in ability_locks for item in data.ABILITY_LOCK_ITEMS[key]]
+                       + [data.CONTENT_LOCK_ITEMS[key] for key in content_locks])
+    entries = build_location_requirements(properties_enabled, ability_locks, content_locks,
+                                          split_mainland_access, split_content_locks)
+    region_names = dict(locations.LOCATION_REGIONS)
+    events = {}
+
+    def event(name: str, region: str, requirements: LocationRequirements, item: str | None = None) -> None:
+        entries[name] = requirements
+        region_names[name] = region
+        events[name] = item or name
+
+    def purchase_terms(venue: str) -> list[Requirement]:
+        terms = [(progression.purchase_completed(venue), 1)]
+        if properties_enabled:
+            terms.append((data.ownership_item_name(venue), 1))
+        return terms
+
+    for purchase in data.BUSINESS_PURCHASES:
+        venue = purchase.removesuffix(" Purchase")
+        terms = [(progression.BUSINESSES_PURCHASABLE, 1),
+                 *_property_content_terms(purchase, active, split_content_locks)]
+        if data.WALLET_ITEM in active:
+            terms.append((data.WALLET_ITEM, 1))
+        entries[purchase] = LocationRequirements(terms, [])
+        event(progression.purchase_completed(venue), region_names[purchase], entries[purchase])
+
+    gameplay = {mission: LocationRequirements(
+        [*_lock_terms(mission, active, split_content_locks), *_mission_terms(mission)],
+        _ability_alternative_thresholds(mission, active, split_mainland_access))
+        for mission in destinations}
+    finale_terms = ([(progression.asset_completed(asset), 1)
+                     for asset in ["Printworks", "Vercetti Estate"][:finale_assets_required]]
+                    if require_printworks_and_estate else [])
+    finale_threshold = ([[(progression.asset_completed(asset), 1)]
+                         for asset in ["Vercetti Estate", "Printworks", *data.FINALE_OPTIONAL_ASSETS]],
+                        finale_assets_required)
+    cap = gameplay["Cap the Collector"]
+    gameplay["Cap the Collector"] = LocationRequirements(
+        [*cap.requirements, *finale_terms], [*cap.thresholds, finale_threshold])
+    entry_requirements = {}
+    for giver, missions in strands.items():
+        for ordinal, original in enumerate(missions):
+            count = ordinal if giver == data.SPHERE_ZERO_GIVER else ordinal + 1
+            terms = [(data.progressive_item_name(giver), count)] if count else []
+            thresholds = []
+            if giver in data.VENUE_STRANDS:
+                terms.extend(purchase_terms(giver))
+            if giver == "Vercetti Protection":
+                terms.append((progression.MANSION_TAKEN_OVER, 1))
+            elif giver == "Vercetti Finale":
+                if ordinal == 1:
+                    terms.append((progression.MANSION_TAKEN_OVER, 1))
+                terms.extend(finale_terms)
+                thresholds.append(finale_threshold)
+            else:
+                for source, required in data.STRAND_PREREQUISITES.get(giver, []):
+                    terms.append((progression.slot_completed(source, required - 1), 1))
+            for source, required in data.MISSION_PREREQUISITES.get(original, []):
+                terms.append((progression.slot_completed(source, required - 1), 1))
+            entry_requirements[giver, ordinal] = LocationRequirements(terms, thresholds)
+    for slot in progression.build_slots(strands, assignment, entry_requirements, gameplay):
+        region = locations.LOCATION_REGIONS[strands[slot.giver][slot.ordinal]]
+        entries[slot.mission] = slot.requirements
+        region_names[slot.mission] = region
+        fact = progression.slot_completed(slot.giver, slot.ordinal)
+        event(fact, region, slot.requirements)
+        event(progression.mission_completed(slot.mission), region, LocationRequirements([(fact, 1)], []))
+
+    # Disabled venue checks still leave physical purchases and vanilla missions playable.
+    for venue, missions in data.VENUE_STRANDS.items():
+        if venue in strands:
+            continue
+        for ordinal, mission in enumerate(missions):
+            terms = [*purchase_terms(venue), *_lock_terms(mission, active, split_content_locks)]
+            if properties_enabled:
+                terms.append((data.progressive_item_name(venue), ordinal + 1))
+            if ordinal:
+                terms.append((progression.mission_completed(missions[ordinal - 1]), 1))
+            entry = LocationRequirements(terms, _ability_alternative_thresholds(mission, active, split_mainland_access))
+            entries[mission] = entry
+            event(progression.mission_completed(mission), region_names[mission], entry)
+    for venue, activities in data.VENUE_ACTIVITIES.items():
+        for activity in activities:
+            entries[activity] = LocationRequirements(
+                [*purchase_terms(venue), *_lock_terms(activity, active, split_content_locks)],
+                _ability_alternative_thresholds(activity, active, split_mainland_access))
+
+    for mission, name in progression.WORLD_EVENTS.items():
+        giver, ordinal = mission_order.event_trigger_slot(strands, assignment, mission, timing)
+        event(name, locations.LOCATION_REGIONS[strands[giver][ordinal]],
+              LocationRequirements([(progression.slot_completed(giver, ordinal), 1)], []))
+    for mission in data.ROUTE_MISSIONS:
+        trigger = progression.mission_completed(mission)
+        event(data.mission_event_name(mission), region_names[trigger],
+              LocationRequirements([(trigger, 1)], []), data.mission_passed_item_name(mission))
+
+    for venue in ["Printworks", *data.FINALE_OPTIONAL_ASSETS]:
+        terms = purchase_terms(venue)
+        if venue in data.VENUE_STRANDS:
+            mission = data.VENUE_STRANDS[venue][0 if venue == "Sunshine Autos" else -1]
+            terms.append((progression.mission_completed(mission), 1))
+        terms.extend((item, 1) for item in data.ASSET_ABILITY_REQUIREMENTS.get(venue, []) if item in active)
+        event(progression.asset_completed(venue), region_names[f"{venue} Purchase"], LocationRequirements(terms, []))
+    event(progression.asset_completed("Vercetti Estate"), data.REGION_STARFISH,
+          LocationRequirements([(progression.mission_completed("Cop Land"), 1),
+                                (progression.MANSION_TAKEN_OVER, 1)], []))
+    mansion_checks = {name for name, missions in data.CHOPPER_MISSION_REQUIREMENTS.items() if "Rub Out" in missions}
+    mansion_checks.update(data.pickup_name(index) for index, missions in data.PICKUP_MISSION_REQUIREMENTS.items()
+                          if "Rub Out" in missions)
+    dock_checks = {data.stunt_jump_name(index) for index in (25, 26)}
+    for name, entry in entries.items():
+        terms = [(progression.MANSION_TAKEN_OVER if name in mansion_checks and item == "Rub Out Passed"
+                  else progression.CORTEZ_DEPARTED if name in dock_checks and item == "All Hands On Deck! Passed"
+                  else item, count) for item, count in entry.requirements]
+        # The start-island helicopter source follows mansion ownership; shops and boats follow payload success.
+        thresholds = [([[(progression.MANSION_TAKEN_OVER if item == "Rub Out Passed" else item, count)
+                         for item, count in route] for route in routes], needed)
+                      for routes, needed in entry.thresholds]
+        entries[name] = LocationRequirements(terms, thresholds)
+    return entries, region_names, events
+
+
 def build_location_rules(
     properties_enabled: bool = True,
     ability_locks: frozenset[str] = frozenset(),
@@ -799,6 +918,8 @@ def build_location_rules(
     split_mainland_access: bool = False,
     split_content_locks: int = data.CONTENT_SPLIT_OFF,
     mission_order: dict[str, list[str]] | None = None,
+    finale_assets_required: int = data.FINALE_ASSET_THRESHOLD,
+    require_printworks_and_estate: bool = False,
 ) -> dict[str, RulePredicate]:
     """Every location's rule, as the predicates the world sets on them."""
     return {
@@ -810,5 +931,7 @@ def build_location_rules(
             split_mainland_access=split_mainland_access,
             split_content_locks=split_content_locks,
             mission_order=mission_order,
+            finale_assets_required=finale_assets_required,
+            require_printworks_and_estate=require_printworks_and_estate,
         ).items()
     }

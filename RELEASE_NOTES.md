@@ -1,4 +1,24 @@
-# GTA: Vice City Archipelago 2.0.0
+# GTA: Vice City Archipelago 2.1.0
+
+Requires fresh seeds and new saves, with matching APWorld and mod versions.
+
+## Changes since 2.0.0
+
+- Removed error spamming on connection errors.
+- Moved overlapping mission launch markers.
+- Required-asset map markers stay hidden until the property is purchasable.
+- Added Mission Shuffle: `off`, `within_giver`, or `full`.
+- Full shuffle mixes story and asset missions across givers. Checks stay tied to missions.
+- An Old Friend and vehicle activities keep their original entrances.
+- Set 0–9 completed assets to unlock the finale.
+- New goal: complete Keep Your Friends Close wherever it appears.
+- Location hints for shuffled missions show their giver and slot.
+- World events can follow giver progress or their shuffled mission.
+- Missions temporarily open needed crossings, then restore them and return you to the giver.
+- Added `/unstuck` and `/increasetimer`.
+- Fixed/Adjusted shuffled mission entrances, interiors, controls, and return warps.
+
+## Previous release: 2.0.0
 
 Vice City connects directly to Archipelago through the native ASI client.
 Use the standalone setup to install or update the mod, and install the matching
@@ -28,7 +48,7 @@ APWorld in Archipelago for generation and hosting.
 
 The Pay 'n' Spray crash at `005C2D01` is not confirmed fixed. Temporary movement
 diagnostics are not included. The save-directory recovery passed its regression
-test; confirmation from the affected player's installation is still pending.
+test.
 
 ## Also included since upstream 1.0.0
 
@@ -56,6 +76,5 @@ original `data/main.scm`. Generation/hosting requires Archipelago 0.6.7 or newer
 The unsigned installer downloads missing ASI Loader and CLEO runtimes.
 See [setup instructions](apworld/gta_vice_city/docs/setup_en.md) for details.
 
-Distribute `GTA-Vice-City-AP-v2.0.0-source-and-relink.zip` alongside the binaries.
 It contains matching source, dependency materials, license notices, and build
 instructions. `SHA256SUMS.txt` identifies the release assets.

@@ -71,7 +71,10 @@ class MilestoneSpacing(OptionDict):
 class Goal(Choice):
     """Which condition beats the seed.
 
-    final_mission (default): complete "Keep Your Friends Close...".
+    final_mission (default): complete Vercetti Finale slot 2 in full shuffle,
+    complete "Keep Your Friends Close..." in other modes.
+    keep_your_friends_close: complete "Keep Your Friends Close..." wherever it
+    appears, including an early slot in full shuffle.
     hidden_packages: receive the configured number of Package Fragment items, a
     hunt across the multiworld. Collecting a package in game is a check, never
     goal progress.
@@ -84,7 +87,23 @@ class Goal(Choice):
     option_final_mission = 0
     option_hidden_packages = 1
     option_hundred_percent = 2
+    option_keep_your_friends_close = 3
     default = 0
+
+
+class FinaleAssetsRequired(NamedRange):
+    """Completed income assets needed to unlock the Vercetti finale and Cap the
+    Collector."""
+    display_name = "Finale assets required"
+    range_start = 0
+    range_end = 9
+    default = 7
+
+
+class RequirePrintworksAndEstate(Toggle):
+    """Reserve the first two finale asset requirements for Printworks, then
+    Vercetti Estate."""
+    display_name = "Require Printworks and Estate"
 
 
 class HiddenPackagesRequired(NamedRange):
@@ -185,15 +204,26 @@ class RandomizeRadioStations(Toggle):
     display_name = "Randomize radio stations"
 
 
-class MissionShuffle(Toggle):
-    """Shuffle mission order within each giver, including mission-based assets.
-
-    Progressive items unlock that giver's next mission in the seed's order.
-    An Old Friend stays first. Cortez's departure, Rub Out, asset finales and
-    Keep Your Friends Close stay last in their branches.
-    Cross-giver mission prerequisites still apply.
-    """
+class MissionShuffle(Choice):
+    """Off preserves mission order.
+    Within giver changes each giver's order.
+    Full assigns missions across story and mission-based business slots."""
     display_name = "Mission shuffle"
+    option_off = 0
+    option_within_giver = 1
+    option_full = 2
+    default = 0
+
+
+class WorldEventTiming(Choice):
+    """Only for Full Shuffle:
+    World events can be triggered by their mission-giver slot
+    or they follow the mission wherever it is shuffled.
+    """
+    display_name = "World event timing"
+    option_quest_giver_progress = 0
+    option_mission_completion = 1
+    default = 0
 
 
 class ShuffleMinimap(Toggle):
@@ -231,6 +261,14 @@ class StartingAbilityUnlock(Toggle):
     """Start with one random ability that you have locked, drawn at random
     from the Ability locks keys selected above."""
     display_name = "Starting ability unlock"
+
+
+class IslandContentLocks(DefaultOnToggle):
+    """Require logical island access before interacting with content on the
+    mainland or Starfish Island, even when Content locks is empty.
+    Does not affect Missions.
+    !Recommended for Full Mission Shuffle!"""
+    display_name = "Island content locks"
 
 
 class ContentLocks(OptionSet):
@@ -348,6 +386,8 @@ class PolePositionCharge(NamedRange):
 class GTAViceCityOptions(PerGameCommonOptions):
     start_inventory_from_pool: StartInventoryPool
     goal: Goal
+    finale_assets_required: FinaleAssetsRequired
+    require_printworks_and_estate: RequirePrintworksAndEstate
     hidden_packages_required: HiddenPackagesRequired
     location_percentages: LocationPercentages
     milestone_spacing: MilestoneSpacing
@@ -366,11 +406,13 @@ class GTAViceCityOptions(PerGameCommonOptions):
     shuffle_shops: ShuffleShops
     randomize_radio_stations: RandomizeRadioStations
     mission_shuffle: MissionShuffle
+    world_event_timing: WorldEventTiming
     shuffle_minimap: ShuffleMinimap
     split_mainland_access: SplitMainlandAccess
     ability_locks: AbilityLocks
     starting_ability_unlock: StartingAbilityUnlock
     content_locks: ContentLocks
+    island_content_locks: IslandContentLocks
     split_content_locks: SplitContentLocks
     starting_content_unlock: StartingContentUnlock
     trap_percentage: TrapPercentage

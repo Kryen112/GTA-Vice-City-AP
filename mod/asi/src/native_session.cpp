@@ -135,14 +135,14 @@ bool NativeSession::Activate() {
   configuration["check_markers"] = json::object();
   configuration["marker_requirements"] = defaults_.at("marker_requirements").at(
       Enabled(config_.value("split_mainland_access", json(false))) ? 1 : 0);
-  if (Enabled(config_.value("mission_shuffle", json(false))) && config_.contains("marker_requirements"))
+  if (config_.contains("marker_requirements"))
     configuration["marker_requirements"] = config_.at("marker_requirements");
   for (auto entry = defaults_["markers"].begin(); entry != defaults_["markers"].end(); ++entry) {
     const auto watched = configuration["completion_watch"].find(entry.key());
     const bool purchase_check = watched != configuration["completion_watch"].end() && watched->is_number_integer() &&
         all_locations_.count(watched->get<std::int64_t>());
     const auto goal = config_.value("goal", std::string());
-    const bool finale_asset = (goal == "final_mission" || goal == "hundred_percent") &&
+    const bool finale_asset = (goal == "final_mission" || goal == "keep_your_friends_close" || goal == "hundred_percent") &&
         std::stoll(entry.key()) >= 9358 && std::stoll(entry.key()) <= 9365;
     if (!purchase_check && !finale_asset) continue;
     json marker = entry.value();
@@ -458,7 +458,8 @@ void NativeSession::ItemToast(const json& item, int receiving) {
 
 bool NativeSession::GoalReached() const {
   const std::string goal = config_.value("goal", std::string());
-  if (goal == "final_mission") return checked_.count(config_.value("final_location_id", std::int64_t(-1))) != 0;
+  if (goal == "final_mission" || goal == "keep_your_friends_close")
+    return checked_.count(config_.value("final_location_id", std::int64_t(-1))) != 0;
   if (goal == "hidden_packages") {
     const int required = config_.value("hidden_packages_required", 0);
     const auto fragment = config_.value("hidden_package_item_id", std::int64_t(-1));
@@ -486,7 +487,10 @@ void NativeSession::PublishStatus() {
   status.goal_reached = complete;
   const std::string goal = config_.value("goal", std::string("unknown"));
   status.finale_warp = complete && goal == "hidden_packages";
-  status.goal_rows.push_back({"Goal", goal == "final_mission" ? "Keep Your Friends Close" :
+  const bool finale_slot = goal == "final_mission" && config_.value("goal_trigger", json::object()).value(
+      "kind", std::string()) == "mission_slot";
+  status.goal_rows.push_back({"Goal", finale_slot ? "Vercetti Finale slot 2" :
+      (goal == "final_mission" || goal == "keep_your_friends_close") ? "Keep Your Friends Close" :
       goal == "hidden_packages" ? "Package Fragments" : "Every check in the seed", complete});
   if (goal == "hidden_packages") {
     const auto fragment = config_.value("hidden_package_item_id", std::int64_t(-1));

@@ -63,6 +63,7 @@ _ALL_CONTENT_LOCKS: list[str] = [
 # The fields _restore_options reads unconditionally, so a passthrough test only
 # has to name what it is actually about.
 _TRACKER_SLOT_DATA: dict = {
+    "mission_shuffle": "off", "world_event_timing": "quest_giver_progress",
     "goal": "final_mission",
     "hidden_packages_required": 60,
     "death_link": False,
@@ -72,6 +73,27 @@ _TRACKER_SLOT_DATA: dict = {
 class TestDefault(WorldTestBase):
     game = "Grand Theft Auto Vice City"
     # Default options: final-mission goal, hidden packages on.
+
+    def test_island_content_locks(self) -> None:
+        world = self.multiworld.worlds[self.player]
+        self.assertTrue(world.options.island_content_locks.value)
+        original_districts = scm.unlocked_district_globals(world._content_lock_keys())
+        for enabled in (0, 1):
+            world.options.island_content_locks.value = enabled
+            slot = world.fill_slot_data()
+            self.assertEqual(slot["island_content_locks"], bool(enabled))
+            self.assertEqual(slot["config_globals"][str(scm.ISLAND_CONTENT_LOCKS_GLOBAL)], enabled)
+            for index, value in original_districts.items():
+                self.assertEqual(slot["config_globals"][str(index)], value)
+            world._restore_options(slot)
+            self.assertEqual(world.options.island_content_locks.value, enabled)
+        del slot["island_content_locks"]
+        world._restore_options(slot)
+        self.assertFalse(world.options.island_content_locks.value)
+        self.assertEqual(scm.unlock_global("Starfish Island Access"), 9031)
+        self.assertEqual(scm.completion_global("All Hands On Deck!"), 9067)
+        self.assertEqual(scm.DISTRICT_KEYS[3], "Starfish Island")
+        self.assertEqual(set(scm.DISTRICT_KEYS[6:]), set(data.MAINLAND_DISTRICTS))
 
     def test_pole_position_charge(self) -> None:
         world = self.multiworld.worlds[self.player]
@@ -310,6 +332,7 @@ class TestUniversalTracker(WorldTestBase):
         # slot_data passed through must overwrite the options generate_early
         # would otherwise use.
         slot_data = {
+            "mission_shuffle": "off", "world_event_timing": "quest_giver_progress",
             "goal": "hundred_percent",
             "hidden_packages_required": 80,
             "death_link": True,
@@ -1860,25 +1883,13 @@ class TestAbilityLocksAll(WorldTestBase):
                                           split=split):
                             self.assertTrue(set(group) & flat, group)
 
-    def test_the_printworks_edge_comes_and_goes_with_its_class(self) -> None:
-        # Cap the Collector waits on Hit the Courier, which is a Printworks
-        # mission, so the edge names a progressive that leaves the pool when the
-        # properties class is off. It is carried only while the class is on,
-        # since no rule may name an item that is not in the pool.
-        self.assertEqual(data.PROPERTY_MISSION_PREREQUISITES,
-                         {"Cap the Collector": [("Printworks", 2)]})
-        for mission, edges in data.MISSION_PREREQUISITES.items():
-            for strand, _count in edges:
-                self.assertNotIn(strand, data.VENUE_STRANDS,
-                                 f"{mission} names a venue strand unguarded")
-        with_class = dict(rules._mission_requirements(
-            "Cap the Collector", "Vercetti Finale", frozenset(),
-            data.CONTENT_SPLIT_OFF, False, properties_enabled=True))
-        without = dict(rules._mission_requirements(
-            "Cap the Collector", "Vercetti Finale", frozenset(),
-            data.CONTENT_SPLIT_OFF, False, properties_enabled=False))
-        self.assertEqual(with_class["Progressive Printworks"], 2)
-        self.assertNotIn("Progressive Printworks", without)
+    def test_printworks_is_not_a_mandatory_finale_asset(self) -> None:
+        for properties in (False, True):
+            terms = dict(rules._mission_requirements(
+                "Cap the Collector", "Vercetti Finale", frozenset(),
+                data.CONTENT_SPLIT_OFF, False, properties_enabled=properties))
+            self.assertNotIn("Progressive Printworks", terms)
+            self.assertNotIn("Progressive Vercetti Protection", terms)
 
     def test_a_region_route_can_actually_open_that_region(self) -> None:
         # A route is worth nothing if reaching the mission it names already needs
@@ -3092,10 +3103,8 @@ class TestStrandAccess(WorldTestBase):
         self.collect_by_name(["Progressive Death Row"])
         self.assertTrue(self.can_reach_location("Rub Out"))
 
-    def test_final_mission_requires_the_protection_strand(self) -> None:
-        # The finale keeps the one strand-level cross-giver edge: it sits
-        # behind the protection strand. The asset items are collected up
-        # front so the protection edge is the only thing under test.
+    def test_default_finale_assets_require_business_sales(self) -> None:
+        # Default asset completion requires Shakedown to open business sales.
         self.collect_by_name(_MANSION_CHAIN)
         self.collect_by_name([
             "Progressive Vercetti Finale", "Mainland Access", "Starfish Island Access",
@@ -3542,9 +3551,7 @@ class TestFinaleAssetThreshold(WorldTestBase):
             "Mainland Access", "Starfish Island Access",
         ])
 
-    def test_finale_needs_the_printworks_asset(self) -> None:
-        # Cap the Collector keeps its vanilla prerequisite: Hit the Courier
-        # passed is individually mandatory, so the Printworks items are too.
+    def test_finale_accepts_assets_without_printworks(self) -> None:
         self.collect_by_name(_MANSION_CHAIN)
         self._collect_finale_base()
         self.collect_by_name([
@@ -3555,7 +3562,7 @@ class TestFinaleAssetThreshold(WorldTestBase):
             "Boatyard Ownership", "Progressive Boatyard",
             "Sunshine Autos Ownership", "Pole Position Ownership",
         ])
-        self.assertFalse(self.can_reach_location("Cap the Collector"))
+        self.assertTrue(self.can_reach_location("Cap the Collector"))
         self.collect_by_name(["Printworks Ownership", "Progressive Printworks"])
         self.assertTrue(self.can_reach_location("Cap the Collector"))
 
@@ -4920,7 +4927,7 @@ class TestReservedGlobals(WorldTestBase):
         # The count is what the spare-tail
         # exclusion above is built from, so it cannot be wrong in only one place.
         self.assertEqual(scm.POLE_POSITION_CHARGE_GLOBAL, 10171)
-        self.assertEqual(scm.SPARE_FLAGS_USED, 13)
+        self.assertEqual(scm.SPARE_FLAGS_USED, 16)
         # The finale warp flag, hard-coded in the ASI (scm_game_state.cpp) and in
         # build_scm.py, which reads it in the APFIN watcher and in the mission
         # branch that jumps to the ending cutscene. It is also the foundation's
