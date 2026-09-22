@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "game_state.hpp"
+#include "scm_player_model.hpp"
 
 namespace gtavc {
 namespace {
@@ -308,9 +309,16 @@ bool ApplyClientMessage(GameState* game, const json& message, const Logger& logg
       }
       for (const auto& entry : content_district_globals)
         for (const int index : entry.second) validate_global(index);
+      const json player_model = message.value("player_model_index", json(nullptr));
+      const int player_model_index = player_model.is_null() ? -1 : player_model.get<int>();
+      if (player_model_index < -1 || player_model_index >= static_cast<int>(kPlayerModels.size()))
+        throw std::runtime_error("Invalid player model index");
+      const json car_colors = message.value("car_color_randomizer", json(false));
+      if (!car_colors.is_boolean()) throw std::runtime_error("Invalid car color randomizer setting");
       game->ApplyConfig(item_globals, completion_watch, item_effects, config_globals,
                          package_locations, pickup_targets, mainland_routes,
-                         content_district_globals, pickup_districts, check_markers);
+                         content_district_globals, pickup_districts, check_markers,
+                         player_model_index, car_colors.get<bool>());
     } else if (type == msg::kItems) {
       std::vector<std::pair<std::int64_t, std::int64_t>> items;
       for (const json& entry : message.at("items")) {

@@ -168,6 +168,9 @@ class GameState {
   // effect. config_globals: config-flag global index -> value to stamp.
   // completion_watch: completion global index -> AP location id to poll.
   // pickup_targets: the world pickup layout to enforce, empty when vanilla.
+  // player_model_index: the seed's fixed entry in the safe model pool,
+  // or -1 for vanilla.
+  // randomize_car_colors: replace the game's vehicle palette for this seed.
   // routes carries every crossing off the start island: the mainland ways, one
   // entry when Mainland Access opens them all and one per crossing when the seed
   // split them, and then Starfish Island, which is always its own row.
@@ -181,7 +184,9 @@ class GameState {
                            const std::map<std::int64_t, std::vector<int>>&
                                content_district_globals,
                            const std::vector<PickupDistrict>& pickup_districts,
-                           const CheckMarkers& check_markers = {}) = 0;
+                           const CheckMarkers& check_markers = {},
+                           int player_model_index = -1,
+                           bool randomize_car_colors = false) = 0;
 
   // The seed hash to present on hello, read from the reserved SCM global.
   // Empty when no game has been started for this seed.

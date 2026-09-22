@@ -44,6 +44,7 @@ from ..locations import (
 from ..options import (
     CHECK_CLASS_OPTIONS,
     HUNDRED_PERCENT_CLASS_OPTIONS,
+    PLAYER_MODELS,
     UNCOUNTED_CLASS_KEYS,
     UNCOUNTED_CLASS_OPTIONS,
     EnablePickups,
@@ -311,6 +312,10 @@ class TestUniversalTracker(WorldTestBase):
         self.assertIn("shuffle_emergency_rewards", slot_data)
         self.assertIn("randomize_radio_stations", slot_data)
         self.assertIn("radio_start_station", slot_data)
+        self.assertFalse(slot_data["player_model_randomizer"])
+        self.assertEqual(slot_data["player_models"], list(PLAYER_MODELS))
+        self.assertIsNone(slot_data["player_model_index"])
+        self.assertFalse(slot_data["car_color_randomizer"])
         self.assertIn("shuffle_minimap", slot_data)
         self.assertIn("randomize_pickups", slot_data)
         self.assertIn("pickup_permutation", slot_data)
@@ -339,6 +344,10 @@ class TestUniversalTracker(WorldTestBase):
             "shuffle_emergency_rewards": True,
             "randomize_radio_stations": True,
             "radio_start_station": 3,
+            "player_model_randomizer": True,
+            "player_models": ["PLAYER2", "igpercy"],
+            "player_model_index": 73,
+            "car_color_randomizer": True,
             "shuffle_minimap": True,
             "randomize_pickups": True,
             "pickup_permutation": list(reversed(range(len(data.PICKUP_SLOTS)))),
@@ -361,6 +370,10 @@ class TestUniversalTracker(WorldTestBase):
         self.assertTrue(bool(self.world.options.shuffle_emergency_rewards.value))
         self.assertEqual(self.world.options.trap_percentage.value, 40)
         self.assertTrue(bool(self.world.options.randomize_radio_stations.value))
+        self.assertTrue(bool(self.world.options.player_model_randomizer.value))
+        self.assertEqual(self.world.options.player_models.value, {"PLAYER2", "igpercy"})
+        self.assertEqual(self.world.player_model_index, 73)
+        self.assertTrue(bool(self.world.options.car_color_randomizer.value))
         self.assertTrue(bool(self.world.options.shuffle_minimap.value))
         # The played seed's starting station replays instead of rerolling.
         self.assertEqual(self.world.radio_start_station, 3)
@@ -374,6 +387,38 @@ class TestUniversalTracker(WorldTestBase):
         self.assertEqual(self.world.options.ability_locks.value, {"vehicles", "wallet"})
         for name in CHECK_CLASS_OPTIONS:
             self.assertEqual(getattr(self.world.options, name).value, 1)
+
+
+class TestPlayerModelRandomizerOn(WorldTestBase):
+    game = "Grand Theft Auto Vice City"
+    options: ClassVar[dict] = {
+        "player_model_randomizer": True,
+        "player_models": ["igpercy"],
+    }
+
+    def test_seed_selects_only_an_allowed_model(self) -> None:
+        self.assertEqual(len(PLAYER_MODELS), 74)
+        self.assertEqual(PLAYER_MODELS[:12], (
+            "PLAYER", "PLAYER2", "PLAYER3", "PLAYER4", "PLAYER5", "PLAYER6",
+            "PLAYER7", "PLAYER8", "PLAYER9", "PLAY11", "PLAY12", "PLAY10",
+        ))
+        self.assertEqual(self.world.player_model_index, PLAYER_MODELS.index("igpercy"))
+        slot_data = self.world.fill_slot_data()
+        self.assertEqual(slot_data["player_models"], ["igpercy"])
+        self.assertEqual(slot_data["player_model_index"], self.world.player_model_index)
+
+    def test_empty_allow_list_is_rejected(self) -> None:
+        self.world.options.player_models.value.clear()
+        with self.assertRaisesRegex(OptionError, "at least one player model"):
+            self.world._choose_player_model(None)
+
+
+class TestCarColorRandomizerOn(WorldTestBase):
+    game = "Grand Theft Auto Vice City"
+    options: ClassVar[dict] = {"car_color_randomizer": True}
+
+    def test_setting_reaches_the_native_client(self) -> None:
+        self.assertTrue(self.world.fill_slot_data()["car_color_randomizer"])
 
 
 class TestRadioStationsOn(WorldTestBase):

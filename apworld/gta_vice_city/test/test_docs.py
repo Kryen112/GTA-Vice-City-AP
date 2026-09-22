@@ -152,3 +152,15 @@ class TestDocs(unittest.TestCase):
         expected = {GTAViceCityOptions.type_hints[name]
                     for name in [*CHECK_CLASS_OPTIONS, "location_percentages", "milestone_spacing"]}
         self.assertEqual(set(grouped.options), expected)
+
+    def test_cosmetic_options_are_last(self) -> None:
+        self.assertEqual(
+            list(GTAViceCityOptions.__annotations__)[-3:],
+            ["player_model_randomizer", "player_models", "car_color_randomizer"],
+        )
+        cosmetics = next(group for group in GTAViceCityWorld.web.option_groups
+                          if group.name == "Cosmetics")
+        self.assertEqual(
+            [option.__name__ for option in cosmetics.options],
+            ["PlayerModelRandomizer", "PlayerModels", "CarColorRandomizer"],
+        )

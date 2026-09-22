@@ -8,6 +8,9 @@ Requires fresh seeds and new saves, with matching APWorld and mod versions.
 - Moved overlapping mission launch markers.
 - Required-asset map markers stay hidden until the property is purchasable.
 - Added Mission Shuffle: `off`, `within_giver`, or `full`.
+- Added a player model randomizer covering all player outfits and
+  special-character models.
+- Added a car color randomizer.
 - Full shuffle mixes story and asset missions across givers. Checks stay tied to missions.
 - An Old Friend and vehicle activities keep their original entrances.
 - Set 0–9 completed assets to unlock the finale.

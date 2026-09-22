@@ -78,6 +78,10 @@ city-wide, per district, or per district per class.
 **Shuffles.** The 9 radio stations become items, and you start with one. The
 minimap can start hidden. The world pickups can trade places among themselves.
 The five emergency vehicle finish rewards can go into the pool.
+The player model randomizer picks one of Vice City's 74 player outfits and special characters for the whole seed.
+`player_models` defines the pool of available models.
+Remove any outfits or characters you do not want. 
+The car color randomizer replaces Vice City's vehicle palette with seed-specific random colors.
 
 **Traps** take a configurable share of the filler, default 15 percent, spread
 over seven types. **DeathLink** is supported and off by default. It sends on

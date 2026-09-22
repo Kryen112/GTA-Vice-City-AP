@@ -66,7 +66,12 @@ Options can go further: abilities can be locked away (sprint, jump, crouch,
 vehicles, weapons, and the ability to hold money at all), whole content classes
 can be held inert until their item arrives, the radar can start hidden, the
 radio can start with one station, and the world pickups scattered around the
-city can be shuffled among themselves. Emergency vehicle activities can also
+city can be shuffled among themselves. 
+The player model randomizer picks one of the 12 player outfits and 62 special-character models for the whole seed.
+Remove unwanted entries from `player_models` to limit its choices.
+The car color randomizer replaces the vehicle palette with colors chosen for
+the seed.
+Emergency vehicle activities can also
 remember how far you got, so leaving one and coming back resumes at the level
 you stopped at instead of restarting at level 1.
 

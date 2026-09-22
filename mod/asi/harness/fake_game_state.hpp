@@ -30,7 +30,9 @@ class FakeGameState : public GameState {
                    const std::map<std::int64_t, std::vector<int>>&
                        content_district_globals,
                    const std::vector<PickupDistrict>& pickup_districts,
-                   const CheckMarkers& check_markers = {}) override {
+                   const CheckMarkers& check_markers = {},
+                   int player_model_index = -1,
+                   bool randomize_car_colors = false) override {
     std::lock_guard<std::mutex> lock(mutex_);
     item_globals_ = item_globals;
     completion_watch_ = completion_watch;
@@ -42,6 +44,8 @@ class FakeGameState : public GameState {
     mainland_routes_ = routes;
     content_district_globals_ = content_district_globals;
     pickup_districts_ = pickup_districts;
+    player_model_index_ = player_model_index;
+    randomize_car_colors_ = randomize_car_colors;
   }
 
   std::string SeedHash() override {
@@ -244,6 +248,16 @@ class FakeGameState : public GameState {
     consume_trap_ = std::move(consume);
   }
 
+  int PlayerModelIndex() {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return player_model_index_;
+  }
+
+  bool RandomizeCarColors() {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return randomize_car_colors_;
+  }
+
   EmergencyProgress emergency_progress_{};
   EmergencyProgress GetEmergencyProgress() override {
     std::lock_guard<std::mutex> lock(mutex_);
@@ -283,6 +297,8 @@ class FakeGameState : public GameState {
   std::vector<MainlandRoute> mainland_routes_;
   std::map<std::int64_t, std::vector<int>> content_district_globals_;
   std::vector<PickupDistrict> pickup_districts_;
+  int player_model_index_ = -1;
+  bool randomize_car_colors_ = false;
   std::vector<std::pair<std::int64_t, std::int64_t>> applied_items_;
   std::vector<std::int64_t> checked_;
   std::vector<std::string> toasts_;

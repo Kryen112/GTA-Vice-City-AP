@@ -52,7 +52,9 @@ class ScmGameState : public GameState {
                    const std::map<std::int64_t, std::vector<int>>&
                        content_district_globals,
                    const std::vector<PickupDistrict>& pickup_districts,
-                   const CheckMarkers& check_markers = {}) override;
+                   const CheckMarkers& check_markers = {},
+                   int player_model_index = -1,
+                   bool randomize_car_colors = false) override;
   std::string SeedHash() override;
   void StampSeedHash(const std::string& expected) override;
   bool CanSaveSeed(const std::string& expected); // game thread, immediately before a save write
@@ -245,6 +247,8 @@ class ScmGameState : public GameState {
   // that removes and recreates a slot (the vanilla scripts do, with vanilla
   // models) is re-enforced on the next frame. Empty layout means vanilla.
   void EnforcePickupLayout();
+  bool ApplyPlayerModel();
+  void ApplyCarColors();
   // Drops everything this class remembers about one game, so the next one
   // starts from its own world and its own globals rather than from what the
   // last one left here. Runs with mutex_ held, on the frame and on the
@@ -387,6 +391,11 @@ class ScmGameState : public GameState {
   // unmatched-slot diagnostic fires once, past the init mission's pickup
   // creation window. Reset on the game boundary and on a fresh config.
   int pickup_enforce_frames_ = 0;
+  int player_model_index_ = -1;
+  bool player_model_pending_ = false;
+  bool player_model_saw_full_fade_ = false;
+  bool randomize_car_colors_ = false;
+  bool car_colors_pending_ = false;
   // One report and no more when a layout asks for more stand price overrides
   // than the store holds, the way the unmatched-slot count is one report: it
   // would otherwise be a line every frame.

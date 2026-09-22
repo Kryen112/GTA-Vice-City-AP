@@ -43,8 +43,10 @@ from .locations import CLASS_TOGGLE, LOCATION_GROUPS, LOCATION_NAME_TO_ID, LOCAT
 from .options import (
     CHECK_CLASS_OPTIONS,
     HUNDRED_PERCENT_CLASS_OPTIONS,
+    PLAYER_MODELS,
     UNCOUNTED_CLASS_KEYS,
     AbilityLocks,
+    CarColorRandomizer,
     ContentLocks,
     EnableEmergencyVehicles,
     EnableHiddenPackages,
@@ -62,6 +64,8 @@ from .options import (
     LocationPercentages,
     MilestoneSpacing,
     MissionShuffle,
+    PlayerModelRandomizer,
+    PlayerModels,
     PolePositionCharge,
     RandomizePickups,
     RandomizeRadioStations,
@@ -161,6 +165,7 @@ class GTAViceCityWeb(WebWorld):
             SplitContentLocks, StartingContentUnlock,
         ]),
         OptionGroup("Traps and DeathLink", [TrapPercentage, DeathLink]),
+        OptionGroup("Cosmetics", [PlayerModelRandomizer, PlayerModels, CarColorRandomizer]),
     ]
 
 
@@ -183,6 +188,10 @@ class GTAViceCityWorld(World):
     # The starting radio station's index into data.RADIO_STATION_ITEMS, chosen
     # in generate_early when the randomize option is on; None when it is off.
     radio_start_station: int | None = None
+
+    # Index into the mod's player-model pool, chosen once per seed.
+    # None leaves Tommy and every vanilla outfit change alone.
+    player_model_index: int | None = None
 
     # The lock items Tommy starts holding, one drawn at random from the selected
     # ability keys and one from the selected content keys. Chosen in
@@ -237,6 +246,12 @@ class GTAViceCityWorld(World):
             options.shuffle_emergency_rewards.value = int(bool(slot_data["shuffle_emergency_rewards"]))
         if "randomize_radio_stations" in slot_data:
             options.randomize_radio_stations.value = int(bool(slot_data["randomize_radio_stations"]))
+        if "player_model_randomizer" in slot_data:
+            options.player_model_randomizer.value = int(bool(slot_data["player_model_randomizer"]))
+        if "player_models" in slot_data:
+            options.player_models = PlayerModels.from_any(slot_data["player_models"])
+        if "car_color_randomizer" in slot_data:
+            options.car_color_randomizer.value = int(bool(slot_data["car_color_randomizer"]))
         if "shuffle_minimap" in slot_data:
             options.shuffle_minimap.value = int(bool(slot_data["shuffle_minimap"]))
         if "randomize_pickups" in slot_data:
@@ -280,6 +295,7 @@ class GTAViceCityWorld(World):
             self._choose_locations(passthrough)
             self._choose_mission_order(passthrough)
             self._choose_radio_start(passthrough)
+            self._choose_player_model(passthrough)
             self._choose_pickup_permutation(passthrough)
             self._choose_starting_unlocks(passthrough)
             return
@@ -287,6 +303,7 @@ class GTAViceCityWorld(World):
         self._choose_locations(None)
         self._choose_mission_order(None)
         self._choose_radio_start(None)
+        self._choose_player_model(None)
         self._choose_pickup_permutation(None)
         self._choose_directed_opener()
         self._choose_starting_unlocks(None)
@@ -332,6 +349,28 @@ class GTAViceCityWorld(World):
             int(restored) if restored is not None
             else self.random.randrange(len(data.RADIO_STATION_ITEMS))
         )
+
+    def _choose_player_model(self, passthrough: dict | None) -> None:
+        if not self.options.player_model_randomizer:
+            self.player_model_index = None
+            return
+        allowed = [index for index, name in enumerate(PLAYER_MODELS)
+                   if name in self.options.player_models]
+        if not allowed:
+            raise OptionError("Player model randomizer requires at least one player model")
+        restored = (passthrough or {}).get("player_model_index")
+        if passthrough is not None:
+            if restored is None:
+                self.player_model_index = None
+                return
+            restored = int(restored)
+            if not 0 <= restored < len(PLAYER_MODELS):
+                raise OptionError(f"Player model index out of range: {restored}")
+            if restored not in allowed:
+                raise OptionError(f"Player model {PLAYER_MODELS[restored]} is not allowed")
+            self.player_model_index = restored
+            return
+        self.player_model_index = self.random.choice(allowed)
 
     def _choose_starting_unlocks(self, passthrough: dict | None) -> None:
         # The lock items Tommy already holds. Fixed here, before the pool builds,
@@ -1078,6 +1117,10 @@ class GTAViceCityWorld(World):
             # The starting station's index (None when the option is off), so a
             # tracker regeneration precollects the same station.
             "radio_start_station": self.radio_start_station,
+            "player_model_randomizer": bool(self.options.player_model_randomizer.value),
+            "player_models": [name for name in PLAYER_MODELS if name in self.options.player_models],
+            "player_model_index": self.player_model_index,
+            "car_color_randomizer": bool(self.options.car_color_randomizer.value),
             "shuffle_minimap": bool(self.options.shuffle_minimap.value),
             "split_mainland_access": bool(self.options.split_mainland_access.value),
             "mainland_routes": scm.mainland_routes(

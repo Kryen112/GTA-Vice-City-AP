@@ -382,6 +382,43 @@ class PolePositionCharge(NamedRange):
     special_range_names: ClassVar[dict[str, int]] = {"vanilla": 5}
 
 
+# Cosmetic options go last
+PLAYER_MODELS: tuple[str, ...] = (
+    # Vanilla outfits.
+    "PLAYER", "PLAYER2", "PLAYER3", "PLAYER4", "PLAYER5", "PLAYER6",
+    "PLAYER7", "PLAYER8", "PLAYER9", "PLAY11", "PLAY12", "PLAY10",
+    # Special characters.
+    "sam", "s_keep", "bgb", "stripc", "stripa", "stripb", "bga", "burger",
+    "sgoona", "sgoonb", "igken", "cgona", "dgoona", "dgoonb", "igmerc2",
+    "bounca", "floozyb", "chef", "igbuddy", "spandxa", "spandxb", "iggonz",
+    "cgonb", "fsfa", "courier", "igdiaz", "igcolon", "dgoonc", "sgc",
+    "igmike", "shootra", "shootrb", "igphil", "ighlary", "igphil3", "igmike2",
+    "ighlry2", "igphil2", "cmraman", "mporna", "igcandy", "igmerc", "crewa",
+    "crewb", "igalscb", "igbudy2", "floozya", "cdrivra", "cdrivrb", "printra",
+    "printrb", "printrc", "mba", "mbb", "igsonny", "mgoona", "mserver",
+    "floozyc", "psycho", "igjezz", "igdick", "igpercy",
+)
+
+
+class PlayerModelRandomizer(Toggle):
+    """Play as a random model chosen per seed from every player outfit and
+    special-character model."""
+    display_name = "Player model randomizer"
+
+
+class PlayerModels(OptionSet):
+    """Models the player model randomizer may choose. Remove unwanted entries.
+    Vanilla outfits are listed first, followed by special characters."""
+    display_name = "Player models"
+    valid_keys = PLAYER_MODELS
+    default = PLAYER_MODELS
+
+
+class CarColorRandomizer(Toggle):
+    """Replace Vice City's vehicle color palette with random colors for this seed."""
+    display_name = "Car color randomizer"
+
+
 @dataclass
 class GTAViceCityOptions(PerGameCommonOptions):
     start_inventory_from_pool: StartInventoryPool
@@ -417,3 +454,6 @@ class GTAViceCityOptions(PerGameCommonOptions):
     starting_content_unlock: StartingContentUnlock
     trap_percentage: TrapPercentage
     death_link: DeathLink
+    player_model_randomizer: PlayerModelRandomizer
+    player_models: PlayerModels
+    car_color_randomizer: CarColorRandomizer

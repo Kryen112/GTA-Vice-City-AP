@@ -10,8 +10,10 @@
 #include "../src/native_data.hpp"
 #include "../src/console_font.hpp"
 #include "../src/scm_effects.hpp"
+#include "../src/scm_car_colors.hpp"
 #include "../src/scm_status_panel.hpp"
 #include "../src/scm_pole_position.hpp"
+#include "../src/scm_player_model.hpp"
 #include "../src/water_creatures.hpp"
 #include "../src/scm_unstuck.hpp"
 
@@ -33,6 +35,34 @@ int main(int argc, char** argv) {
   _set_error_mode(_OUT_TO_STDERR); // keep assertion failures in the test log
   std::cout << std::unitbuf;
   assert(argc == 2);
+  static_assert(kPlayerModels.size() == 74);
+  assert(std::string(PlayerModelName(0)) == "PLAYER");
+  assert(std::string(PlayerModelName(73)) == "igpercy");
+  assert(PlayerModelName(-1) == nullptr && PlayerModelName(74) == nullptr);
+  assert(PlayerModelReady(1, true, true, true));
+  assert(!PlayerModelReady(1, false, true, true));
+  assert(!PlayerModelReady(1, true, false, true));
+  assert(!PlayerModelReady(1, true, true, false));
+  const auto vehicle_palette = RandomVehiclePalette("test-seed");
+  assert(vehicle_palette == RandomVehiclePalette("test-seed"));
+  assert(vehicle_palette != RandomVehiclePalette("other-seed"));
+  assert(vehicle_palette[0] != vehicle_palette[1]);
+  {
+    TestGame player_model_game;
+    json config = {{"type", msg::kConfig}, {"item_globals", json::object()},
+                   {"completion_watch", json::object()}, {"player_model_index", 73},
+                   {"car_color_randomizer", true}};
+    assert(ApplyClientMessage(&player_model_game, config, [](const std::string&) {}));
+    assert(player_model_game.PlayerModelIndex() == 73);
+    assert(player_model_game.RandomizeCarColors());
+    config["player_model_index"] = 74;
+    assert(!ApplyClientMessage(&player_model_game, config, [](const std::string&) {}));
+    config["player_model_index"] = nullptr;
+    assert(ApplyClientMessage(&player_model_game, config, [](const std::string&) {}));
+    assert(player_model_game.PlayerModelIndex() == -1);
+    config["car_color_randomizer"] = 1;
+    assert(!ApplyClientMessage(&player_model_game, config, [](const std::string&) {}));
+  }
   {
     UnstuckControlHold hold;
     short controls = 0;

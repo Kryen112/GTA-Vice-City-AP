@@ -12,10 +12,12 @@
 
 #include "game_addresses.hpp"
 #include "scm_finale_warp.hpp"
+#include "scm_car_colors.hpp"
 #include "scm_unstuck.hpp"
 #include "scm_packages.hpp"
 #include "scm_seed_stamp.hpp"
 #include "scm_pole_position.hpp"
+#include "scm_player_model.hpp"
 #include "scm_island_content.hpp"
 #include "toast_stack.hpp"
 
@@ -38,11 +40,13 @@
 #include <CTimer.h>
 #include <CUserDisplay.h>
 #include <CGame.h>
+#include <CDraw.h>
 #include <CMenuManager.h>
 #include <CStats.h>
 #include <CWanted.h>
 #include <CPools.h>
 #include <CVehicle.h>
+#include <CVehicleModelInfo.h>
 #include <CAutomobile.h>
 #include <CPed.h>
 #include <CWeather.h>
@@ -664,7 +668,9 @@ void ScmGameState::ApplyConfig(const std::map<std::int64_t, int>& item_globals,
                                const std::map<std::int64_t, std::vector<int>>&
                                    content_district_globals,
                                const std::vector<PickupDistrict>& pickup_districts,
-                               const CheckMarkers& check_markers) {
+                               const CheckMarkers& check_markers,
+                               int player_model_index,
+                               bool randomize_car_colors) {
   std::lock_guard<std::mutex> lock(mutex_);
   item_globals_ = item_globals;
   item_effects_ = item_effects;
@@ -675,6 +681,10 @@ void ScmGameState::ApplyConfig(const std::map<std::int64_t, int>& item_globals,
   pickup_targets_ = pickup_targets;
   content_district_globals_ = content_district_globals;
   pickup_districts_ = pickup_districts;
+  player_model_index_ = player_model_index;
+  player_model_pending_ = player_model_index_ >= 0;
+  randomize_car_colors_ = randomize_car_colors;
+  car_colors_pending_ = true;
   // The unlock targets were tallied against the tables this call just
   // replaced, so they are answers to a question that no longer exists.
   // Marking them stale here rather than relying on an item resync following
@@ -1372,7 +1382,10 @@ void ScmGameState::StampSeedHash(const std::string& expected) {
   // under it, so this is held for as long as the session is up: the seed every
   // game that comes up without one of its own is stamped with.
   expected_seed_hash_ = expected;
-  if (configured_seed_hash_ != expected) emergency_progress_ = {};
+  if (configured_seed_hash_ != expected) {
+    emergency_progress_ = {};
+    car_colors_pending_ = true;
+  }
   configured_seed_hash_ = expected;
 }
 
@@ -1820,6 +1833,37 @@ void ScmGameState::OnGameStarted() {
   ForgetGameScopedState();
 }
 
+bool ScmGameState::ApplyPlayerModel() {
+  const char* model = PlayerModelName(player_model_index_);
+  CPlayerPed* player = FindPlayerPed();
+  if (model == nullptr || player == nullptr || player->m_bInVehicle) return false;
+  if (plugin::GetGameVersion() != GAME_10EN) {
+    if (logger_) logger_("player model randomizer unavailable outside classic 1.0");
+    return true;
+  }
+  CBaseModelInfo* model_info = CModelInfo::GetModelInfo(0);
+  if (model_info == nullptr) return false;
+  std::array<char, sizeof(model_info->m_szName)> original_name{};
+  std::memcpy(original_name.data(), model_info->m_szName, original_name.size());
+  plugin::Call<kChangePlayerModel10>(model);
+  CStreaming::LoadAllRequestedModels(false);
+  std::memcpy(model_info->m_szName, original_name.data(), original_name.size());
+  return true;
+}
+
+void ScmGameState::ApplyCarColors() {
+  CVehicleModelInfo::LoadVehicleColours();
+  if (!randomize_car_colors_) return;
+
+  const auto palette = RandomVehiclePalette(configured_seed_hash_);
+  for (int index = 0; index < 95; ++index) {
+    auto& color = CVehicleModelInfo::ms_colourTextureTable[index];
+    color.r = palette[index][0];
+    color.g = palette[index][1];
+    color.b = palette[index][2];
+  }
+}
+
 // Everything this handler remembers about one game, dropped when that game
 // ends. Runs with mutex_ held, from three places that each reach a boundary the
 // others do not: the frame that stamps a fresh game, every frame of a game that
@@ -1830,6 +1874,9 @@ void ScmGameState::OnGameStarted() {
 void ScmGameState::ForgetGameScopedState() {
   if (auto* pad = CPad::GetPad(0)) unstuck_control_hold_.Reset(pad->DisablePlayerControls);
   pole_position_charge_ = 0;
+  player_model_pending_ = player_model_index_ >= 0;
+  player_model_saw_full_fade_ = false;
+  car_colors_pending_ = true;
   trap_baseline_pending_ = true;
   baseline_captured_ = false;
   // Forget which packages were seen present so a fresh game re-derives from
@@ -2042,6 +2089,13 @@ void ScmGameState::OnGameFrame() {
     return;
   }
 
+  if (car_colors_pending_) {
+    ApplyCarColors();
+    car_colors_pending_ = false;
+    if (logger_) logger_(randomize_car_colors_ ? "randomized vehicle color palette" :
+                                                  "restored vehicle color palette");
+  }
+
   // No item applies until the player is controllable. Before control a script
   // still owns the world (the new-game intro, a cutscene), so a side effect an
   // SCM watcher fires off a fresh unlock global (an area gate opening) would be
@@ -2063,6 +2117,18 @@ void ScmGameState::OnGameFrame() {
   // box are all frames where handing something over means handing it to nobody.
   // Read once, so every use this frame answers the same question.
   const bool playable = WorldIsPlayable(ReadPlayableState());
+  if (CDraw::FadeValue == 255) {
+    player_model_saw_full_fade_ = true;
+  } else if (player_model_saw_full_fade_) {
+    player_model_pending_ = player_model_index_ >= 0;
+    player_model_saw_full_fade_ = false;
+  }
+  CPlayerPed* model_player = FindPlayerPed();
+  if (PlayerModelReady(player_model_index_, player_model_pending_, playable,
+                       model_player != nullptr && !model_player->m_bInVehicle) &&
+      ApplyPlayerModel()) {
+    player_model_pending_ = false;
+  }
   // The one-shot applied-index as it reads before this frame has granted
   // ANYTHING, which is half of what the landing reports are answered from; the
   // other half is the unlock observations, taken before the raise for the same

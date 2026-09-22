@@ -7,6 +7,9 @@
 
 namespace gtavc {
 
+// Loads a named model into the player's model slot in VC classic 1.0.
+constexpr unsigned int kChangePlayerModel10 = 0x4AE8C0;
+
 // Direct native physics calls in VC classic 1.0
 constexpr unsigned int kPedBuoyancyCall10 = 0x5094FC;
 constexpr unsigned int kBuoyancyTarget10 = 0x5AAC90;
