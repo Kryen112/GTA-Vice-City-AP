@@ -289,9 +289,9 @@ int main(int argc, char** argv) {
   }
   {
     std::vector<unsigned char> script(75, 0);
-    const unsigned char check[] = {0x0A, 0x01, 0x02, 0x08, 0x00, 0x04, 5};
+    const unsigned char check[] = {0x0A, 0x01, 0x02, 0x44, 0xA5, 0x04, 5};
     std::copy(std::begin(check), std::end(check), script.begin());
-    const unsigned char spend[] = {0x09, 0x01, 0x02, 0x08, 0x00, 0x04, 0xFB,
+    const unsigned char spend[] = {0x09, 0x01, 0x02, 0x44, 0xA5, 0x04, 0xFB,
         0x06, 0x00, 0x03, 0x10, 0x00, 0x04, 0x00, 0x08, 0x00, 0x02, 0xF8, 0x10, 0x04, 5,
         0x08, 0x00, 0x02, 0xFC, 0x10, 0x04, 1};
     script.insert(script.end(), std::begin(spend), std::end(spend));
@@ -306,6 +306,9 @@ int main(int argc, char** argv) {
     script.insert(script.end(), vanilla.begin(), vanilla.end());
     const auto duplicate = script;
     assert(!PatchPolePositionCharge(script.data(), script.size(), 20) && script == duplicate);
+    script = vanilla; script[3] ^= 1;
+    const auto mismatched_global = script;
+    assert(!PatchPolePositionCharge(script.data(), script.size(), 20) && script == mismatched_global);
     script = vanilla; script[90] = 1;
     const auto incompatible = script;
     assert(!PatchPolePositionCharge(script.data(), script.size(), 20) && script == incompatible);

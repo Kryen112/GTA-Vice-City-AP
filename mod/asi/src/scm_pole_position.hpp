@@ -17,10 +17,13 @@ inline bool PatchPolePositionCharge(unsigned char* script, std::size_t size, int
   const unsigned char affordability[] = {0x0A, 0x01, 0x02, 0x08, 0x00, 0x04};
   std::size_t found = 0;
   for (std::size_t i = 75; i + sizeof(spend) <= size; ++i) {
-    if (std::memcmp(script + i, spend, 6) ||
+    if (std::memcmp(script + i, spend, 3) ||
+        script[i + 5] != spend[5] ||
         std::memcmp(script + i + 7, spend + 7, 13) ||
         std::memcmp(script + i + 21, spend + 21, 7) ||
-        std::memcmp(script + i - 75, affordability, sizeof(affordability))) continue;
+        std::memcmp(script + i - 75, affordability, 3) ||
+        script[i - 70] != affordability[5] ||
+        std::memcmp(script + i + 3, script + i - 72, 2)) continue;
     const int previous = script[i + 20];
     if (previous < 1 || previous > 100 || script[i + 6] != static_cast<unsigned char>(-previous) ||
         script[i - 69] != previous) continue;
