@@ -504,6 +504,7 @@ MISSION_ABILITY_REQUIREMENTS: dict[str, list[str]] = {
     "Guardian Angels": [WEAPON_EQUIP_ITEM, LAND_VEHICLES_ITEM],
     "Hit the Courier": [WEAPON_EQUIP_ITEM],
     "Hog Tied": [LAND_VEHICLES_ITEM],
+    "Juju Scramble": [LAND_VEHICLES_ITEM],
     "Jury Fury": [WEAPON_EQUIP_ITEM],
     "Keep Your Friends Close...": [WEAPON_EQUIP_ITEM],
     "Loose Ends": [WEAPON_EQUIP_ITEM],
