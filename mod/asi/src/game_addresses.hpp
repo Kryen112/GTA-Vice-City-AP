@@ -33,6 +33,11 @@ constexpr unsigned int kFrictionWorldCalls10[] = {0x4B225D};
 constexpr unsigned int kContactPointMarkerCall10 = 0x4C3FC2;
 constexpr unsigned int kContactPointMarkerTarget10 = 0x570270;
 
+// CTheZones::GetLevelFromPosition takes one CVector pointer and returns its
+// eLevelName in eax. plugin-sdk's VC wrapper incorrectly passes an output
+// pointer as the first argument and returns that uninitialized local instead.
+constexpr unsigned int kGetLevelFromPosition10 = 0x4DD300;
+
 // CWaterCreatures::Create stores its CObject in a 24-byte slot, then increments
 // the active count here. The update call comes from the water particle pass.
 // Verified in the classic 1.0 crash at 0x6616B7: a freed pool object retained

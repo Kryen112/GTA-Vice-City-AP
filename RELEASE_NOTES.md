@@ -1,6 +1,13 @@
 # GTA: Vice City Archipelago 2.1.0
 
-Requires fresh seeds and new saves, with matching APWorld and mod versions.
+Upgrading from 2.0.0 requires fresh seeds and new saves, with matching APWorld
+and mod versions.
+
+## Hotfix
+
+- Fixed a Wine crash (`c0000005` at `30303030`) when applying a seed by
+  correcting Vice City's island lookup call. The fix also applies to other goals.
+- Existing 2.1.0 seeds and saves remain compatible with this hotfix.
 
 ## Changes since 2.0.0
 

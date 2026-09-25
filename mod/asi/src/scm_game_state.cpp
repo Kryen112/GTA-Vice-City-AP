@@ -73,6 +73,7 @@ static_assert(kPickupTypeInShop == PICKUP_IN_SHOP, "in-shop pickup type");
 
 namespace {
 int IslandBitAt(CVector position) {
+  if (plugin::GetGameVersion() != GAME_10EN) return 0;
   // Navigation zones are island interiors.
   position.z = 10.0f;
   const CZone* zone = CTheZones::FindSmallestNavigationZoneForPosition(&position, true, true);
@@ -81,7 +82,8 @@ int IslandBitAt(CVector position) {
     for (const char* mainland : {"DTOWN", "A_PORT", "JUNKY", "DOCKS", "HAVANA", "HAITI"})
       if (std::strcmp(zone->name, mainland) == 0) return kMainlandContentBit;
   }
-  return CTheZones::GetLevelFromPosition(&position) == LEVEL_MAINLAND ? kMainlandContentBit : 0;
+  return plugin::CallAndReturn<eLevelName, kGetLevelFromPosition10, const CVector*>(
+             &position) == LEVEL_MAINLAND ? kMainlandContentBit : 0;
 }
 
 // Fixed part of the reserved layout, matching apworld scm.py: the seed hash
