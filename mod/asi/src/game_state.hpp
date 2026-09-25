@@ -271,6 +271,10 @@ class GameState {
   // changed since the last call. False when there is nothing new to report, so
   // the bridge sends a frame per change rather than one per frame.
   virtual bool TakeProgressPercentage(int& percentage) = 0;
+
+  // Goal evidence from the loaded game, independent of server-checked locations.
+  virtual bool GoalLocationCompleted(std::int64_t location) = 0;
+  virtual int GameCompletionPercentage() = 0;
 };
 
 }  // namespace gtavc

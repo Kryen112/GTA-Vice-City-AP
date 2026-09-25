@@ -459,18 +459,14 @@ void NativeSession::ItemToast(const json& item, int receiving) {
 bool NativeSession::GoalReached() const {
   const std::string goal = config_.value("goal", std::string());
   if (goal == "final_mission" || goal == "keep_your_friends_close")
-    return checked_.count(config_.value("final_location_id", std::int64_t(-1))) != 0;
+    return game_->GoalLocationCompleted(config_.value("final_location_id", std::int64_t(-1)));
   if (goal == "hidden_packages") {
     const int required = config_.value("hidden_packages_required", 0);
     const auto fragment = config_.value("hidden_package_item_id", std::int64_t(-1));
     return required > 0 && fragment > 0 && std::count_if(received_.begin(), received_.end(),
         [fragment](const json& item) { return item.at("item") == fragment; }) >= required;
   }
-  if (goal == "hundred_percent" && !checked_.empty()) {
-    const auto uncounted = config_.value("goal_uncounted_locations", std::set<std::int64_t>{});
-    return std::all_of(all_locations_.begin(), all_locations_.end(),
-        [&](std::int64_t location) { return checked_.count(location) || uncounted.count(location); });
-  }
+  if (goal == "hundred_percent") return game_->GameCompletionPercentage() >= 100;
   return false;
 }
 
@@ -491,19 +487,13 @@ void NativeSession::PublishStatus() {
       "kind", std::string()) == "mission_slot";
   status.goal_rows.push_back({"Goal", finale_slot ? "Vercetti Finale slot 2" :
       (goal == "final_mission" || goal == "keep_your_friends_close") ? "Keep Your Friends Close" :
-      goal == "hidden_packages" ? "Package Fragments" : "Every check in the seed", complete});
+      goal == "hidden_packages" ? "Package Fragments" : "100% game completion", complete});
   if (goal == "hidden_packages") {
     const auto fragment = config_.value("hidden_package_item_id", std::int64_t(-1));
     const auto count = std::count_if(received_.begin(), received_.end(),
         [fragment](const json& item) { return item.at("item") == fragment; });
     status.goal_rows.push_back({"Fragments", std::to_string(count) + " of " +
                                std::to_string(config_.value("hidden_packages_required", 0)), complete});
-  }
-  if (goal == "hundred_percent") {
-    const auto uncounted = config_.value("goal_uncounted_locations", std::set<std::int64_t>{});
-    const auto left = std::count_if(all_locations_.begin(), all_locations_.end(),
-        [&](std::int64_t location) { return !checked_.count(location) && !uncounted.count(location); });
-    status.goal_rows.push_back({"Checks left", std::to_string(left), complete});
   }
   for (const auto& strand : defaults_["strands"]) {
     if (strand[3] == true && !Enabled(config_.value("enable_properties", json(false)))) continue;

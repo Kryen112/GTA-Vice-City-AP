@@ -74,6 +74,8 @@ class ScmGameState : public GameState {
   std::vector<std::int64_t> TakeAppliedReports() override;
   bool TakeGoalReached() override;
   bool TakeProgressPercentage(int& percentage) override;
+  bool GoalLocationCompleted(std::int64_t location) override;
+  int GameCompletionPercentage() override;
   void ApplyDeathLink(const std::string& source) override;
   bool TakeDeath() override;
 
@@ -406,6 +408,7 @@ class ScmGameState : public GameState {
   // the last one sends nothing.
   int reported_percentage_ = -1;
   int pending_percentage_ = -1;
+  int current_percentage_ = -1;
   // What the client says about itself and about AP's own counts, for the status
   // page. Written by the bridge thread, read by the menu draw. Not known until
   // a client says so, which is why the page can say "not connected" rather than

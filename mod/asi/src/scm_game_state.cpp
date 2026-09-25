@@ -695,6 +695,7 @@ void ScmGameState::ApplyConfig(const std::map<std::int64_t, int>& item_globals,
   // A fresh connection is a fresh client, which may never have been told this
   // game's percentage, so the next frame reports it again.
   reported_percentage_ = -1;
+  current_percentage_ = -1;
   // The landing reports are deliberately NOT touched here. Which rows the player
   // has already seen is a fact about the GAME, not about the client session: the
   // mod's own stack drew them and the client only composed the text, so a
@@ -1833,6 +1834,19 @@ void ScmGameState::OnGameStarted() {
   ForgetGameScopedState();
 }
 
+bool ScmGameState::GoalLocationCompleted(std::int64_t location) {
+  std::lock_guard<std::mutex> lock(mutex_);
+  const auto found = location_to_global_.find(location);
+  return found != location_to_global_.end() && world_was_loaded_ &&
+      ConfiguredSeedMatches(cached_seed_hash_, configured_seed_hash_) && GetGlobal(found->second) != 0;
+}
+
+int ScmGameState::GameCompletionPercentage() {
+  std::lock_guard<std::mutex> lock(mutex_);
+  return world_was_loaded_ && ConfiguredSeedMatches(cached_seed_hash_, configured_seed_hash_)
+      ? current_percentage_ : -1;
+}
+
 bool ScmGameState::ApplyPlayerModel() {
   const char* model = PlayerModelName(player_model_index_);
   CPlayerPed* player = FindPlayerPed();
@@ -1924,6 +1938,7 @@ void ScmGameState::ForgetGameScopedState() {
   // is that a queued number can go out while the frontend is up, so a tracker
   // can show the save just left for as long as one poll of the next game.
   reported_percentage_ = -1;
+  current_percentage_ = -1;
   // The pacer and what it has handed over belong to the game that received
   // them. A fresh game reads its own globals as the starting point, so a
   // load whose unlocks are already saved hands over nothing, and a new game
@@ -2508,6 +2523,7 @@ void ScmGameState::OnGameFrame() {
   // stat is the game's, not the seed's, so nothing here writes it.
   if (world_loaded) {
     const int percentage = DisplayedPercentage(CStats::GetPercentageProgress());
+    current_percentage_ = percentage;
     if (percentage != reported_percentage_) pending_percentage_ = percentage;
   }
 

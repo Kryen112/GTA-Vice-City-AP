@@ -485,11 +485,16 @@ int main(int argc, char** argv) {
     NativeSession mission_goal(&mission_goal_game, logger, sender, "rando.vc", "", goal_directory);
     auto config = connected;
     config["slot_data"]["goal"] = "keep_your_friends_close";
+    config["checked_locations"] = {102};
+    config["missing_locations"] = {101};
     login(mission_goal, config);
     assert(!mission_goal_game.Status().goal_reached);
     mission_goal.Handle({{"cmd", "RoomUpdate"}, {"checked_locations", {101}}});
     assert(!mission_goal_game.Status().goal_reached);
     mission_goal.Handle({{"cmd", "RoomUpdate"}, {"checked_locations", {102}}});
+    assert(!mission_goal_game.Status().goal_reached);
+    mission_goal_game.CompleteGoalLocation(102);
+    mission_goal.Handle({{"cmd", "RoomUpdate"}});
     assert(mission_goal_game.Status().goal_reached);
     assert(!mission_goal_game.Status().finale_warp);
     assert(std::any_of(sent.begin(), sent.end(), [](const json& message) {
@@ -682,9 +687,18 @@ int main(int argc, char** argv) {
   auto hundred_config = connected;
   hundred_config["slot_data"]["goal"] = "hundred_percent";
   hundred_config["slot_data"]["goal_uncounted_locations"] = {102};
+  hundred_config["checked_locations"] = {101, 102};
+  hundred_config["missing_locations"] = json::array();
   login(hundred_session, hundred_config);
   assert(!hundred.Status().goal_reached);
+  assert(hundred.Status().checks_done == hundred.Status().checks_total);
   hundred_session.Handle({{"cmd", "RoomUpdate"}, {"checked_locations", {101}}});
+  assert(!hundred.Status().goal_reached);
+  hundred.SetGameCompletionPercentage(99);
+  hundred_session.Handle({{"cmd", "RoomUpdate"}});
+  assert(!hundred.Status().goal_reached);
+  hundred.SetGameCompletionPercentage(100);
+  hundred_session.Handle({{"cmd", "RoomUpdate"}});
   assert(hundred.Status().goal_reached);
 
   // Chat and server output do not depend on game item/toast state.
@@ -937,6 +951,9 @@ int main(int argc, char** argv) {
   commands.Command("/deathlink");
   assert(sent.back().at("tags") == json::array({"AP", "DeathLink"}));
   commands.Handle({{"cmd", "RoomUpdate"}, {"checked_locations", {102}}});
+  assert(!command_game.Status().goal_reached);
+  command_game.CompleteGoalLocation(102);
+  commands.Handle({{"cmd", "RoomUpdate"}});
   const auto before_ready = sent.size();
   commands.Command("/ready");
   assert(sent.size() == before_ready && sent.back().at("status") == 30);

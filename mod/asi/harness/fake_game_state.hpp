@@ -152,6 +152,16 @@ class FakeGameState : public GameState {
     return true;
   }
 
+  bool GoalLocationCompleted(std::int64_t location) override {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return completed_goal_locations_.count(location) != 0;
+  }
+
+  int GameCompletionPercentage() override {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return game_completion_percentage_;
+  }
+
   // Harness controls and accessors.
   void QueueCheck(std::int64_t location) {
     std::lock_guard<std::mutex> lock(mutex_);
@@ -161,6 +171,16 @@ class FakeGameState : public GameState {
   void QueuePercentage(int percentage) {
     std::lock_guard<std::mutex> lock(mutex_);
     pending_percentage_ = percentage;
+  }
+
+  void CompleteGoalLocation(std::int64_t location) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    completed_goal_locations_.insert(location);
+  }
+
+  void SetGameCompletionPercentage(int percentage) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    game_completion_percentage_ = percentage;
   }
 
   void QueueDeath() {
@@ -308,6 +328,8 @@ class FakeGameState : public GameState {
   bool death_pending_ = false;
   bool goal_pending_ = false;
   int pending_percentage_ = -1;
+  int game_completion_percentage_ = -1;
+  std::set<std::int64_t> completed_goal_locations_;
   bool client_connected_ = false;
   TrapConsumer consume_trap_;
   bool client_was_connected_ = false;

@@ -24,6 +24,7 @@ int main(int, char** argv) {
     if (commands_queued && !check_queued && game.ClientConnected() &&
         std::chrono::steady_clock::now() - commands_queued_at >= std::chrono::milliseconds(200)) {
       game.QueueCheck(101);
+      game.CompleteGoalLocation(101);
       check_queued = true;
     }
     if (game.Status().goal_reached && game.AppliedItems().size() == 2) {
