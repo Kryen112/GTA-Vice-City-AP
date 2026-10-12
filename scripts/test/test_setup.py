@@ -48,7 +48,8 @@ class TestOfflineSetup(unittest.TestCase):
                 settings = folder / "user/GtaVcAp/connection.ini"
                 self.assertEqual(settings.read_text().strip(), setup.CONNECTION_TEMPLATE.strip())
                 self.assertFalse((folder / "GtaVcAp.VC.ini").exists())
-                existing = b"[archipelago]\r\nslot=My Slot\r\npassword=secret\r\n[marker_colors]\r\nhidden_packages=0088FF\r\n"
+                existing = (b"[archipelago]\r\nslot=My Slot\r\npassword=secret\r\n"
+                            b"[marker_colors]\r\nhidden_packages=0088FF\r\n")
                 settings.write_bytes(existing)
                 setup.install(folder)
                 upgraded = configparser.ConfigParser(interpolation=None)
@@ -100,7 +101,7 @@ class TestOfflineSetup(unittest.TestCase):
             settings_path.parent.mkdir(parents=True)
             original = ("\ufeff[archipelago]\r\nserver=example.org:1234\r\nslot=Große Stadt\r\n"
                         "password=50%secret\r\n[custom]\r\nsetting=keep me\r\n"
-                        "[marker_colors]\r\npreset=colorblind\r\nhidden_packages=0088FF\r\n").encode("utf-8")
+                        "[marker_colors]\r\npreset=colorblind\r\nhidden_packages=0088FF\r\n").encode()
             settings_path.write_bytes(original)
             with (mock.patch.object(installer, "game_process_running", return_value=False),
                   mock.patch.object(installer, "require_supported_game_build"),
