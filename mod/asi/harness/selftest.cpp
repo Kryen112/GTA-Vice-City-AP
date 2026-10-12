@@ -3284,6 +3284,48 @@ int main() {
          "packages are green and jumps blue");
   Expect(CheckMarkerColor(2)[0] > CheckMarkerColor(3)[0], "robberies use lighter red than rampages");
   Expect(CheckMarkerColor(-1) == CheckMarkerColor(0), "unknown category has a visible fallback");
+  const auto marker_colors = LoadCheckMarkerColors([](const wchar_t* key) {
+    if (std::wstring_view(key) == L"hidden_packages") return std::wstring(L"#0088fF");
+    if (std::wstring_view(key) == L"finale_assets") return std::wstring(L"000000");
+    if (std::wstring_view(key) == L"other") return std::wstring(L"123456");
+    return std::wstring();
+  });
+  Expect(CheckMarkerColor(1, marker_colors) == std::array<unsigned char, 3>{0, 136, 255},
+         "personal package colors accept a hash prefix and mixed-case RGB");
+  Expect(CheckMarkerColor(9, marker_colors) == std::array<unsigned char, 3>{0, 0, 0},
+         "finale assets have a separate customizable color, including black");
+  Expect(CheckMarkerColor(6, marker_colors) == CheckMarkerColor(6),
+         "missing colors keep their category defaults");
+  Expect(CheckMarkerColor(10, marker_colors) == marker_colors[0] &&
+             CheckMarkerColor(-1, marker_colors) == marker_colors[0],
+         "unknown categories use the personal fallback color");
+  for (const auto value : {L"", L"12345", L"1234567", L"GG1122", L"+12345", L"0x1234",
+                           L"123456junk", L"#", L"##123456", L"12345\uFF16"})
+    Expect(ParseCheckMarkerColor(value, CheckMarkerColor(3)) == CheckMarkerColor(3),
+           "invalid RGB settings keep the category default");
+  const auto all_custom = LoadCheckMarkerColors([](const wchar_t*) { return std::wstring(L"FFFFFF"); });
+  for (std::size_t category = 0; category < marker_colors.size(); ++category) {
+    Expect(CheckMarkerColor(static_cast<int>(category), all_custom) == std::array<unsigned char, 3>{255, 255, 255},
+           "every custom marker category accepts RGB overrides");
+  }
+  for (const auto preset : {L"colorblind", L"COLORBLIND", L"ColorBlind"}) {
+    const auto accessible = LoadCheckMarkerColors([&](const wchar_t* key) {
+      return std::wstring(std::wstring_view(key) == L"preset" ? preset : L"000000");
+    });
+    Expect(accessible == kColorblindCheckMarkerColors,
+           "colorblind preset selects the whole palette regardless of saved RGB colors");
+    for (std::size_t a = 0; a < accessible.size(); ++a)
+      for (std::size_t b = a + 1; b < accessible.size(); ++b)
+        Expect(accessible[a] != accessible[b], "every preset category has its own color");
+  }
+  for (const auto preset : {L"", L"custom", L"unknown", L"colorblindjunk"}) {
+    const auto personal = LoadCheckMarkerColors([&](const wchar_t* key) {
+      return std::wstring(std::wstring_view(key) == L"preset" ? preset : L"0088FF");
+    });
+    for (const auto& color : personal)
+      Expect(color == std::array<unsigned char, 3>{0, 136, 255},
+             "missing, custom and invalid presets keep personal RGB colors");
+  }
   Expect(CheckMarkerFitsScreen(3, 3, 640, 448), "main-map outline fits at the top left edge");
   Expect(CheckMarkerFitsScreen(636, 444, 640, 448), "main-map outline fits at the bottom right edge");
   Expect(!CheckMarkerFitsScreen(2, 200, 640, 448), "panned map clips the left edge");

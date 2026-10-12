@@ -10,6 +10,22 @@ EXTRA_TRAVEL_MISSIONS = {
     20: "Two Bit Hit", 22: "The Shootist", 24: "The Job",
     27: "Recruitment Drive", 30: "G-spotlight", 52: "Keep Your Friends Close...",
 }
+FILM_STUDIO_MISSIONS = (27, 28, 29, 30)
+
+
+def film_studio_gate_lines(source: list[str], mission: int, *, restore: bool) -> list[str]:
+    """Move unpurchased studio gates aside and restore after"""
+    result = []
+    for handle in ("film_studio_front_gate_closed", "film_studio_back_gate_closed", "1811"):
+        positions = [match.groups() for line in source
+                     if (match := re.fullmatch(
+                         rf"create_object_no_offset \${handle} = init_object #\w+ at (\S+) (\S+) (\S+)", line))]
+        assert len(positions) == 1, f"studio: missing or ambiguous gate {handle}"
+        x, y, z = positions[0]
+        label = f"AP_STUDIO_{mission}_{'CLOSE' if restore else 'OPEN'}_{handle}"
+        result += ["if ", f"  does_object_exist ${handle}", f"goto_if_false @{label}",
+                   f"set_object_coordinates ${handle} at {x} {y} {z if restore else '-90.0'}", f":{label}"]
+    return result
 
 
 def needs_travel(number: int, launcher: str) -> bool:

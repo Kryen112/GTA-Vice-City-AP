@@ -154,7 +154,37 @@ def test_connection_shortcut_and_optional_failure(standalone, tmp_path, monkeypa
     ], check=True, capture_output=True, text=True, creationflags=subprocess.CREATE_NO_WINDOW)
     assert Path(result.stdout.strip()) == settings
     saved = settings.read_bytes()
-    with mock.patch.object(setup.subprocess, "run", side_effect=OSError("No shortcut support")):
+    subprocess.run([
+        "powershell.exe", "-NoProfile", "-NonInteractive", "-Command",
+        "$ErrorActionPreference = 'Stop'; "
+        "$file = [System.IO.File]::GetAccessControl($env:GTAVC_TEST_SETTINGS); "
+        "$file.SetAccessRuleProtection($true, $true); "
+        "[System.IO.File]::SetAccessControl($env:GTAVC_TEST_SETTINGS, $file); "
+        "$link = (New-Object -ComObject WScript.Shell).CreateShortcut($env:GTAVC_TEST_SHORTCUT); "
+        "$link.TargetPath = 'C:\\missing-connection.ini'; $link.Save()",
+    ], env={**setup.os.environ, "GTAVC_TEST_SETTINGS": str(settings)},
+        check=True, capture_output=True, creationflags=subprocess.CREATE_NO_WINDOW)
+    setup.install(game)
+    result = subprocess.run([
+        "powershell.exe", "-NoProfile", "-NonInteractive", "-Command",
+        "$ErrorActionPreference = 'Stop'; "
+        "[System.IO.File]::GetAccessControl($env:GTAVC_TEST_SETTINGS).AreAccessRulesProtected; "
+        "(New-Object -ComObject WScript.Shell).CreateShortcut($env:GTAVC_TEST_SHORTCUT).TargetPath",
+    ], env={**setup.os.environ, "GTAVC_TEST_SETTINGS": str(settings)},
+        check=True, capture_output=True, text=True, creationflags=subprocess.CREATE_NO_WINDOW)
+    assert not result.stderr, result.stderr
+    protected, target = result.stdout.strip().splitlines()
+    assert protected == "False" and Path(target) == settings
+    assert settings.read_bytes() == saved
+    shortcut.unlink()
+    setup.install(game)
+    assert shortcut.is_file() and settings.read_bytes() == saved
+    run = subprocess.run
+    def fail_shortcut(command, **kwargs):
+        if command[0] == "powershell.exe":
+            raise OSError("No shortcut support")
+        return run(command, **kwargs)
+    with mock.patch.object(setup.subprocess, "run", side_effect=fail_shortcut):
         log = setup.install(game)
     assert any("Could not create the shortcut" in line for line in log)
     assert settings.read_bytes() == saved

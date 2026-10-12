@@ -48,10 +48,19 @@ class TestOfflineSetup(unittest.TestCase):
                 settings = folder / "user/GtaVcAp/connection.ini"
                 self.assertEqual(settings.read_text().strip(), setup.CONNECTION_TEMPLATE.strip())
                 self.assertFalse((folder / "GtaVcAp.VC.ini").exists())
-                existing = b"[archipelago]\r\nslot=My Slot\r\npassword=secret\r\n"
+                existing = b"[archipelago]\r\nslot=My Slot\r\npassword=secret\r\n[marker_colors]\r\nhidden_packages=0088FF\r\n"
                 settings.write_bytes(existing)
                 setup.install(folder)
-                self.assertEqual(settings.read_bytes(), existing)
+                upgraded = configparser.ConfigParser(interpolation=None)
+                upgraded.read(settings)
+                self.assertEqual(dict(upgraded["archipelago"]), {"slot": "My Slot", "password": "secret"})
+                self.assertEqual(upgraded["marker_colors"]["hidden_packages"], "0088FF")
+                self.assertEqual(upgraded["marker_colors"]["rampages"], "B92337")
+                self.assertEqual(upgraded["marker_colors"]["preset"], "custom")
+                self.assertEqual(len(upgraded["marker_colors"]), 11)
+                saved = settings.read_bytes()
+                setup.install(folder)
+                self.assertEqual(settings.read_bytes(), saved)
                 self.assertEqual((folder / "AP_mod_backup/main.scm").read_bytes(), b"stock script")
             with (mock.patch.object(installer, "game_process_running", return_value=True),
                   mock.patch.object(installer, "deploy") as deploy):
@@ -74,12 +83,45 @@ class TestOfflineSetup(unittest.TestCase):
                 settings_path = folder / "user/GtaVcAp/connection.ini"
                 settings = configparser.ConfigParser(interpolation=None)
                 settings.read(settings_path)
-                self.assertEqual(settings.sections(), ["archipelago"])
+                self.assertEqual(settings.sections(), ["archipelago", "marker_colors"])
                 self.assertEqual(dict(settings["archipelago"]), {
                     "server": "localhost:1234", "slot": "My Slot", "password": "50%secret"})
                 self.assertEqual(legacy.read_text(), original)
                 saved = settings_path.read_bytes()
                 legacy.write_text(original.replace("My Slot", "Old Slot"), encoding="utf-8")
+                setup.install(folder)
+                self.assertEqual(settings_path.read_bytes(), saved)
+
+    def test_existing_connection_upgrade_preserves_values_and_survives_write_failure(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            folder = Path(temporary)
+            (folder / "gta-vc.exe").touch()
+            settings_path = folder / "user/GtaVcAp/connection.ini"
+            settings_path.parent.mkdir(parents=True)
+            original = ("\ufeff[archipelago]\r\nserver=example.org:1234\r\nslot=Große Stadt\r\n"
+                        "password=50%secret\r\n[custom]\r\nsetting=keep me\r\n"
+                        "[marker_colors]\r\npreset=colorblind\r\nhidden_packages=0088FF\r\n").encode("utf-8")
+            settings_path.write_bytes(original)
+            with (mock.patch.object(installer, "game_process_running", return_value=False),
+                  mock.patch.object(installer, "require_supported_game_build"),
+                  mock.patch.dict(os.environ, LOCALAPPDATA=str(folder / "user")),
+                  mock.patch.object(setup.subprocess, "run"),
+                  mock.patch.object(installer, "deploy", return_value=[])):
+                with mock.patch.object(setup.os, "replace", side_effect=OSError("Cannot replace settings")):
+                    with self.assertRaisesRegex(OSError, "Cannot replace settings"):
+                        setup.install(folder)
+                self.assertEqual(settings_path.read_bytes(), original)
+                self.assertEqual(list(settings_path.parent.iterdir()), [settings_path])
+                setup.install(folder)
+                settings = configparser.ConfigParser(interpolation=None)
+                settings.read(settings_path, encoding="utf-8")
+                self.assertEqual(dict(settings["archipelago"]), {
+                    "server": "example.org:1234", "slot": "Große Stadt", "password": "50%secret"})
+                self.assertEqual(settings["custom"]["setting"], "keep me")
+                self.assertEqual(settings["marker_colors"]["preset"], "colorblind")
+                self.assertEqual(settings["marker_colors"]["hidden_packages"], "0088FF")
+                self.assertEqual(len(settings["marker_colors"]), 11)
+                saved = settings_path.read_bytes()
                 setup.install(folder)
                 self.assertEqual(settings_path.read_bytes(), saved)
 

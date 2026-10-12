@@ -102,7 +102,7 @@ void IngameConsole::Key(WPARAM key) {
   else if (key == VK_RIGHT && cursor_ < input_.size()) ++cursor_;
   else if (key == VK_HOME) cursor_ = 0;
   else if (key == VK_END) cursor_ = input_.size();
-  else if (key == VK_PRIOR) scroll_ = std::min(wrapped_lines_.size() > 18 ? wrapped_lines_.size() - 18 : 0, scroll_ + 12);
+  else if (key == VK_PRIOR) scroll_ = std::min(wrapped_lines_.size() > kConsoleHistoryRows ? wrapped_lines_.size() - kConsoleHistoryRows : 0, scroll_ + 12);
   else if (key == VK_NEXT) scroll_ = scroll_ > 12 ? scroll_ - 12 : 0;
   else if (key == 'V' && (GetKeyState(VK_CONTROL) & 0x8000) && OpenClipboard(window_)) {
     const HANDLE data = GetClipboardData(CF_UNICODETEXT);
@@ -233,9 +233,9 @@ void IngameConsole::Draw(bool show_hint, bool connected) {
     BlockControls();
     CSprite2d::DrawRect(CRect(StretchX(14), StretchY(28), StretchX(626), StretchY(414)), CRGBA(10, 12, 30, 235));
     Print(*font_, 40, L"ARCHIPELAGO | F8/Esc close | PgUp/PgDn Scroll | type /help for more.");
-    scroll_ = std::min(scroll_, wrapped_lines_.size() > 18 ? wrapped_lines_.size() - 18 : 0);
+    scroll_ = std::min(scroll_, wrapped_lines_.size() > kConsoleHistoryRows ? wrapped_lines_.size() - kConsoleHistoryRows : 0);
     const auto end = wrapped_lines_.size() - scroll_;
-    const auto start = end > 18 ? end - 18 : 0;
+    const auto start = end > kConsoleHistoryRows ? end - kConsoleHistoryRows : 0;
     for (std::size_t i = start; i < end; ++i) {
       const float y = 68 + static_cast<float>(i - start) * 16;
       if (i > start)
@@ -244,15 +244,57 @@ void IngameConsole::Draw(bool show_hint, bool connected) {
       PrintLine(*font_, y, wrapped_lines_[i]);
     }
     std::wstring shown = input_;
-    if (shown.rfind(L"/password", 0) == 0) shown = L"/password " + std::wstring(shown.size() > 10 ? shown.size() - 10 : 0, L'*');
-    const auto offset = cursor_ > 72 ? cursor_ - 72 : 0;
-    shown = shown.substr(std::min(offset, shown.size()), 80);
-    shown.insert(std::min(cursor_ - offset, shown.size()), L"|");
-    shown = L"> " + shown;
-    const auto input_rows = WrapConsoleText({shown, std::vector<std::uint32_t>(shown.size(), 0xEBE1F5)},
-                                           StretchX(590), measure);
-    for (std::size_t i = 0; i < std::min<std::size_t>(2, input_rows.size()); ++i)
-      PrintLine(*font_, 378 + static_cast<float>(i) * 16, input_rows[i]);
+    if (shown.rfind(L"/password", 0) == 0) {
+      const auto secret = shown.find_first_not_of(L" \t", 9);
+      if (secret != std::wstring::npos) std::fill(shown.begin() + secret, shown.end(), L'*');
+    }
+    const float y = StretchY(396), x = StretchX(24);
+    const CRGBA input_color(235, 225, 245, 255);
+    const float prompt_width = PrintMixed(*font_, x, y, L"> ", input_color);
+    const float available = StretchX(590) - prompt_width;
+    const auto glyph_units = [](std::wstring_view text, std::size_t index) -> std::size_t {
+      return text[index] >= 0xD800 && text[index] <= 0xDBFF && index + 1 < text.size() &&
+          text[index + 1] >= 0xDC00 && text[index + 1] <= 0xDFFF ? 2 : 1;
+    };
+    const auto fit = [&](std::wstring_view text, float limit) {
+      std::size_t end = 0;
+      float width = 0;
+      while (end < text.size()) {
+        const auto units = glyph_units(text, end);
+        const float advance = measure(text.substr(end, units));
+        if (width + advance > limit) break;
+        width += advance;
+        end += units;
+      }
+      return end;
+    };
+    const auto caret = std::min(cursor_, shown.size());
+    auto offset = caret;
+    float width = 0;
+    while (offset) {
+      const std::size_t units = offset > 1 && glyph_units(shown, offset - 2) == 2 ? 2 : 1;
+      const float advance = measure(std::wstring_view(shown).substr(offset - units, units));
+      if (width + advance > available) break;
+      width += advance;
+      offset -= units;
+    }
+    float caret_width = PrintMixed(*font_, 0, 0, shown.substr(offset, caret - offset), input_color, false);
+    while (caret_width > available && offset < caret) {
+      offset += glyph_units(shown, offset);
+      caret_width = PrintMixed(*font_, 0, 0, shown.substr(offset, caret - offset), input_color, false);
+    }
+    const auto visible_end = offset + fit(std::wstring_view(shown).substr(offset), available);
+    const float typed_width = PrintMixed(*font_, x + prompt_width, y,
+        shown.substr(offset, visible_end - offset), input_color);
+    auto preview = completion_.Preview(input_, cursor_);
+    if (visible_end == shown.size() && !preview.empty()) {
+      preview.resize(fit(preview, available - typed_width));
+      PrintMixed(*font_, x + prompt_width + typed_width, y, preview, CRGBA(235, 225, 245, 112));
+    }
+    if ((now / 500) % 2 == 0) {
+      const float caret_x = x + prompt_width + caret_width;
+      CSprite2d::DrawRect(CRect(caret_x, y, caret_x + std::max(1.0f, StretchX(1)), y + StretchY(12)), input_color);
+    }
   }
   CFont::Details = saved;
 }

@@ -35,6 +35,7 @@
 #include "toast_stack.hpp"
 #include "water_creatures.hpp"
 #include "ped_physics_diagnostics.hpp"
+#include "diagnostic_log.hpp"
 
 using namespace plugin;
 
@@ -80,25 +81,78 @@ CdeclEvent<AddressListMulti<0x490476, GAME_10EN, H_CALL, 0x4A4412, GAME_10EN, H_
     PRIORITY_AFTER, ArgPickNone, void()> afterPadsEvent;
 
 std::mutex g_log_mutex;
+std::filesystem::path g_log_path;
+std::string g_log_problem;
+
+std::filesystem::path ModulePath(HMODULE module = nullptr) {
+  wchar_t path[32768]{};
+  const DWORD length = GetModuleFileNameW(module, path, 32768);
+  return length != 0 && length < 32768 ? std::filesystem::path(path) : std::filesystem::path{};
+}
 
 std::string LogPath() {
-  char executable[MAX_PATH] = {0};
-  GetModuleFileNameA(nullptr, executable, MAX_PATH);
-  std::string path(executable);
-  const std::size_t slash = path.find_last_of("\\/");
-  const std::string directory = (slash == std::string::npos) ? "." : path.substr(0, slash);
-  return directory + "\\gtavc_ap_asi.log";
+  return gtavc::DiagnosticPath(g_log_path.empty()
+      ? ModulePath().parent_path() / L"gtavc_ap_asi.log" : g_log_path);
 }
 
 void LogLine(const std::string& line) {
   std::lock_guard<std::mutex> lock(g_log_mutex);
   static FILE* file = nullptr;
-  if (file == nullptr) {
-    fopen_s(&file, LogPath().c_str(), "w");
-    if (file == nullptr) return;
+  static bool attempted = false;
+  if (!attempted) {
+    attempted = true;
+    wchar_t local[32768]{};
+    const auto primary = ModulePath().parent_path() / L"gtavc_ap_asi.log";
+    const DWORD local_length = GetEnvironmentVariableW(L"LOCALAPPDATA", local, 32768);
+    const auto fallback = local_length != 0 && local_length < 32768
+        ? std::filesystem::path(local) / L"GtaVcAp" / L"gtavc_ap_asi.log" : std::filesystem::path{};
+    g_log_path = gtavc::OpenDiagnosticLog(primary, fallback, file, g_log_problem);
+    if (file != nullptr) {
+      std::fprintf(file, "GTAVC_AP log: %s\n", LogPath().c_str());
+      if (!g_log_problem.empty()) std::fprintf(file, "GTAVC_AP log: %s; using fallback\n", g_log_problem.c_str());
+    } else OutputDebugStringA(("GTAVC_AP log: " + g_log_problem + "\n").c_str());
   }
+  if (file == nullptr) { OutputDebugStringA(("GTAVC_AP: " + line + "\n").c_str()); return; }
   std::fprintf(file, "GTAVC_AP %ld: %s\n", static_cast<long>(std::time(nullptr)), line.c_str());
   std::fflush(file);
+}
+
+void LogStartup() {
+  HMODULE module = nullptr;
+  GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                    reinterpret_cast<LPCWSTR>(&LogStartup), &module);
+  LogLine("diagnostics build=" __DATE__ " " __TIME__ " game_version=" + std::to_string(plugin::GetGameVersion()));
+  LogLine("executable=" + gtavc::DiagnosticPath(ModulePath()));
+  LogLine("ASI=" + gtavc::DiagnosticPath(ModulePath(module)));
+  const auto script = ModulePath().parent_path() / L"data" / L"main.scm";
+  std::error_code error;
+  const auto bytes = std::filesystem::file_size(script, error);
+  LogLine("main.scm=" + gtavc::DiagnosticPath(script) + (error
+      ? "; size error=" + std::to_string(error.value()) : "; bytes=" + std::to_string(bytes)));
+  const auto version_function = reinterpret_cast<LONG (WINAPI*)(OSVERSIONINFOW*)>(
+      GetProcAddress(GetModuleHandleW(L"ntdll.dll"), "RtlGetVersion"));
+  OSVERSIONINFOW version{};
+  version.dwOSVersionInfoSize = sizeof(version);
+  if (version_function != nullptr && version_function(&version) == 0)
+    LogLine("Windows=" + std::to_string(version.dwMajorVersion) + "." + std::to_string(version.dwMinorVersion) +
+            " build=" + std::to_string(version.dwBuildNumber) + "; process_bits=" + std::to_string(sizeof(void*) * 8));
+  HANDLE token = nullptr;
+  if (OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &token)) {
+    TOKEN_ELEVATION elevation{};
+    DWORD bytes = 0;
+    if (GetTokenInformation(token, TokenElevation, &elevation, sizeof(elevation), &bytes))
+      LogLine("process elevated=" + std::to_string(elevation.TokenIsElevated));
+    CloseHandle(token);
+  }
+}
+
+// file hashing runs on the first frame, after the ASI loader releases its lock
+void LogFileIdentity() {
+  HMODULE module = nullptr;
+  GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                    reinterpret_cast<LPCWSTR>(&LogFileIdentity), &module);
+  for (const auto& path : {ModulePath(), ModulePath(module), ModulePath().parent_path() / L"data" / L"main.scm"})
+    LogLine("file SHA256=" + gtavc::DiagnosticFileHash(path) + "; path=" + gtavc::DiagnosticPath(path));
 }
 
 void UpdateWaterCreatures() {
@@ -190,6 +244,8 @@ struct AsiMain {
                  console.Add(message, notify);
                }) {
     LogLine("loaded");
+    LogStartup();
+    console.Add(g_log_path.empty() ? "Diagnostic log unavailable: " + g_log_problem : "Diagnostic log: " + LogPath());
     InstallWaterCreatureReferences();
     InstallContactMarkerRange();
     // Register the frame handlers before starting the bridge, so the game
@@ -249,8 +305,17 @@ struct AsiMain {
   ~AsiMain() { bridge.Stop(); }
 
   void OnClientUpdate() {
+    if (!diagnostic_files_logged) {
+      diagnostic_files_logged = true;
+      LogFileIdentity();
+    }
     if (client_ready) bridge.Start();
     gtavc::TickSaveIsolation();
+    const bool console_open = console.IsOpen();
+    if (console_open != console_was_open) {
+      console_was_open = console_open;
+      LogLine(console_open ? "console input blocking enabled" : "console input blocking released");
+    }
   }
 
   void OnGameProcess() {
@@ -311,6 +376,8 @@ struct AsiMain {
   }
 
   static AsiMain instance;
+  bool console_was_open = false;
+  bool diagnostic_files_logged = false;
 };
 
 AsiMain AsiMain::instance;

@@ -11,16 +11,53 @@
 
 #include <cmath>
 #include <array>
+#include <cwchar>
+#include <string>
+#include <string_view>
 
 namespace gtavc {
 
-// Category order matches check_markers.py.
-inline std::array<unsigned char, 3> CheckMarkerColor(int category) {
-  static constexpr std::array<unsigned char, 3> colors[] = {
+using CheckMarkerPalette = std::array<std::array<unsigned char, 3>, 10>;
+
+// Category order matches check_markers.py, plus the fallback and finale assets.
+inline constexpr CheckMarkerPalette kDefaultCheckMarkerColors = {{
       {255, 255, 255}, {60, 255, 90}, {255, 130, 140}, {185, 35, 55},
       {255, 155, 30}, {65, 140, 255}, {255, 235, 65}, {55, 240, 240}, {215, 120, 255},
-      {180, 255, 35}}; // Lime: finale assets without an available AP purchase check.
-  return colors[category >= 0 && category < 10 ? category : 0];
+      {180, 255, 35}}};
+// muted palette for nine categories, with white for the fallback
+// taken from: https://sronpersonalpages.nl/~pault/#sec:qualitative
+inline constexpr CheckMarkerPalette kColorblindCheckMarkerColors = {{
+      {255, 255, 255}, {136, 204, 238}, {204, 102, 119}, {136, 34, 85},
+      {221, 204, 119}, {51, 34, 136}, {17, 119, 51}, {68, 170, 153}, {170, 68, 153},
+      {153, 153, 51}}};
+inline constexpr const wchar_t* kCheckMarkerColorKeys[] = {
+    L"other", L"hidden_packages", L"robbable_stores", L"rampages", L"pickups",
+    L"stunt_jumps", L"properties", L"side_events", L"shops", L"finale_assets"};
+
+inline std::array<unsigned char, 3> ParseCheckMarkerColor(
+    std::wstring_view value, std::array<unsigned char, 3> fallback) {
+  if (!value.empty() && value.front() == L'#') value.remove_prefix(1);
+  if (value.size() != 6 || value.find_first_not_of(L"0123456789abcdefABCDEF") != std::wstring_view::npos)
+    return fallback;
+  const auto rgb = std::wcstoul(std::wstring(value).c_str(), nullptr, 16);
+  return {static_cast<unsigned char>(rgb >> 16), static_cast<unsigned char>(rgb >> 8),
+          static_cast<unsigned char>(rgb)};
+}
+
+template <typename Read>
+CheckMarkerPalette LoadCheckMarkerColors(Read read) {
+  auto preset = read(L"preset");
+  for (auto& c : preset) if (c >= L'A' && c <= L'Z') c += L'a' - L'A';
+  if (preset == L"colorblind") return kColorblindCheckMarkerColors;
+  auto colors = kDefaultCheckMarkerColors;
+  for (std::size_t category = 0; category < colors.size(); ++category)
+    colors[category] = ParseCheckMarkerColor(read(kCheckMarkerColorKeys[category]), colors[category]);
+  return colors;
+}
+
+inline std::array<unsigned char, 3> CheckMarkerColor(
+    int category, const CheckMarkerPalette& colors = kDefaultCheckMarkerColors) {
+  return colors[category >= 0 && category < static_cast<int>(colors.size()) ? category : 0];
 }
 
 // Pin nearby dots inside the rim and around the corner in a 3x minimap size radius.

@@ -18,6 +18,7 @@ class IngameConsole {
   void Add(const ConsoleMessage& message, bool notify = false);
   void Draw(bool show_hint = false, bool connected = false); // game/menu drawing thread
   void BlockControls();
+  bool IsOpen() const { return active_.load(); }
   void ReleaseGraphics(); // before RenderWare shuts down
  private:
   static LRESULT CALLBACK WindowProc(HWND, UINT, WPARAM, LPARAM);

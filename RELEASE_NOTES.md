@@ -1,4 +1,13 @@
-# GTA: Vice City Archipelago 2.1.0
+# GTA: Vice City Archipelago 2.1.1
+
+## Release: 2.1.1
+
+- Choose custom RGB colors for each AP marker category on the radar and pause-menu map, including finale assets.
+- Added a `preset=colorblind` palette.
+- Added autocomplete previews for console commands and hint names
+- Increased visible console history
+
+## Release: 2.1.0
 
 Upgrading from 2.0.0 requires fresh seeds and new saves, with matching APWorld
 and mod versions.

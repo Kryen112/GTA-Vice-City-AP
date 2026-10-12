@@ -2,7 +2,7 @@
 
 import re
 
-from mission_access import needs_travel, route_lines
+from mission_access import FILM_STUDIO_MISSIONS, film_studio_gate_lines, needs_travel, route_lines
 from mission_returns import PHONE_RETURN_POSITION, RETURN_PENDING, ending_relocations, giver_return_point, return_lines
 from mission_world_effects import (
     BUSINESS_SALES_APPLIED,
@@ -262,10 +262,14 @@ def instrument_identity_dispatch(lines: list[str], managed: list[dict], *, smoke
                 finish_edits[payload].insert(1, f"gosub @{closing}")
                 body += [f":{opening}",
                          *(line.replace("AP_TRAVEL", f"AP_TRAVEL_{payload}")
-                           for line in travel_open), "return",
+                           for line in travel_open),
+                         *(film_studio_gate_lines(travel_source, payload, restore=False)
+                           if payload in FILM_STUDIO_MISSIONS else []), "return",
                          f":{closing}",
                          *(line.replace("AP_TRAVEL", f"AP_TRAVEL_{payload}")
-                           for line in travel_close), "return"]
+                           for line in travel_close),
+                         *(film_studio_gate_lines(travel_source, payload, restore=True)
+                           if payload in FILM_STUDIO_MISSIONS else []), "return"]
             changes.append((exit_sites[payload] + 1, 0, body))
     insertion = source.index(":GEN1")
     previous = next(line for line in reversed(source[:insertion]) if line)

@@ -256,8 +256,12 @@ class ScmGameState : public GameState {
   // last one left here. Runs with mutex_ held, on the frame and on the
   // world-replaced events alike.
   void ForgetGameScopedState();
+  void LogControlDiagnostics();
 
   Logger logger_;
+  std::array<int, 20 + 2 * kAbilityCount> control_diagnostic_state_{};
+  bool control_diagnostic_seen_ = false;
+  unsigned int control_diagnostic_last_ms_ = 0;
   std::mutex mutex_;
   UnstuckControlHold unstuck_control_hold_;
   std::map<std::int64_t, int> item_globals_;

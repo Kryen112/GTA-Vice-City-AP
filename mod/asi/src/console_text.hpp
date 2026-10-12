@@ -20,9 +20,42 @@ class ConsoleCommandCompletion {
   std::wstring prefix_;
   int selected_ = -1;
   bool arguments_ = false;
+  bool cycling_ = false;
+  std::vector<std::wstring_view> Matches(std::wstring_view prefix, std::wstring_view command,
+                                       bool arguments) const {
+    static constexpr std::wstring_view commands[] = {
+        L"/commands", L"/connect", L"/deathlink", L"/disconnect", L"/help", L"/hint",
+        L"/increasetimer", L"/item_groups", L"/items", L"/location_groups", L"/locations", L"/password",
+        L"/ready", L"/received", L"/server", L"/slot", L"/unstuck",
+        L"!admin", L"!alias", L"!checked", L"!collect", L"!countdown", L"!getitem",
+        L"!help", L"!hint", L"!hint_location", L"!license", L"!missing", L"!options",
+        L"!players", L"!release", L"!remaining", L"!status"};
+    std::vector<std::wstring_view> matches;
+    if (arguments) {
+      if (command != L"!hint" && command != L"!hint_location") return matches;
+      for (const auto& name : command == L"!hint" ? items : locations)
+        if (name.size() >= prefix.size() && std::equal(prefix.begin(), prefix.end(), name.begin(),
+            [](wchar_t a, wchar_t b) { return std::towlower(a) == std::towlower(b); })) matches.push_back(name);
+    } else {
+      for (const auto name : commands)
+        if (name.substr(0, prefix.size()) == prefix) matches.push_back(name);
+    }
+    return matches;
+  }
  public:
   std::vector<std::wstring> items, locations;
-  void Reset() { prefix_.clear(); selected_ = -1; }
+  void Reset() { prefix_.clear(); selected_ = -1; cycling_ = false; }
+  std::wstring Preview(const std::wstring& text, std::size_t cursor) const {
+    if (cycling_ || text.empty() || cursor != text.size()) return {};
+    const auto end = std::min(text.find_first_of(L" \t\r\n"), text.size());
+    const bool arguments = cursor > end;
+    auto start = arguments ? text.find_first_not_of(L" \t\r\n", end) : 0;
+    if (start == std::wstring::npos) start = cursor;
+    const auto prefix = std::wstring_view(text).substr(start);
+    const auto matches = Matches(prefix, std::wstring_view(text).substr(0, end), arguments);
+    if (matches.empty() || start + matches.front().size() > 1024) return {};
+    return std::wstring(matches.front().substr(prefix.size()));
+  }
   bool Complete(std::wstring& text, std::size_t& cursor, bool reverse = false) {
     auto end = std::min(text.find_first_of(L" \t\r\n"), text.size());
     const bool arguments = cursor > end;
@@ -40,42 +73,17 @@ class ConsoleCommandCompletion {
       if (cursor < start) { Reset(); return false; }
       end = text.size();
     }
-    static constexpr std::wstring_view commands[] = {
-        L"/commands", L"/connect", L"/deathlink", L"/disconnect", L"/help", L"/hint",
-        L"/increasetimer", L"/item_groups", L"/items", L"/location_groups", L"/locations", L"/password",
-        L"/ready", L"/received", L"/server", L"/slot", L"/unstuck",
-        L"!admin", L"!alias", L"!checked", L"!collect", L"!countdown", L"!getitem",
-        L"!help", L"!hint", L"!hint_location", L"!license", L"!missing", L"!options",
-        L"!players", L"!release", L"!remaining", L"!status"};
-    const bool fresh = prefix_.empty();
-    if (fresh) prefix_ = text.substr(start, cursor - start);
-    std::vector<std::wstring_view> matches;
-    if (arguments) {
-      for (const auto& name : command == L"!hint" ? items : locations)
-        if (name.size() >= prefix_.size() && std::equal(prefix_.begin(), prefix_.end(), name.begin(),
-            [](wchar_t a, wchar_t b) { return std::towlower(a) == std::towlower(b); })) matches.push_back(name);
-    } else {
-      for (const auto name : commands)
-        if (name.substr(0, prefix_.size()) == prefix_) matches.push_back(name);
-    }
+    if (!cycling_) prefix_ = text.substr(start, cursor - start);
+    const auto matches = Matches(prefix_, command, arguments);
     if (matches.empty()) { Reset(); return false; }
     const auto count = static_cast<int>(matches.size());
     selected_ = selected_ < 0 ? (reverse ? count - 1 : 0) :
         (selected_ + (reverse ? -1 : 1) + count) % count;
     auto match = matches[selected_];
-    if (arguments && fresh && !reverse && matches.size() > 1) {
-      auto common = matches.front();
-      for (const auto name : matches) {
-        std::size_t i = 0;
-        while (i < common.size() && i < name.size() &&
-               std::towlower(common[i]) == std::towlower(name[i])) ++i;
-        common = common.substr(0, i);
-      }
-      if (common.size() > prefix_.size()) { match = common; selected_ = -1; }
-    }
     if (text.size() - (end - start) + match.size() > 1024) { Reset(); return false; }
     text.replace(start, end - start, match);
     cursor = start + match.size();
+    cycling_ = true;
     return true;
   }
 };
@@ -156,7 +164,7 @@ class ConsolePopupQueue {
   std::deque<ConsoleLine> waiting_, visible_;
  public:
   void Add(const ConsoleLine& line) {
-    // ponytail: bounded flood protection; raise this if real rooms exceed 4096 queued rows.
+    // flood protection
     if (waiting_.size() < 4096) waiting_.push_back(line);
   }
   bool empty() const { return waiting_.empty() && visible_.empty(); }
@@ -179,8 +187,9 @@ class ConsolePopupQueue {
   }
 };
 
+constexpr std::size_t kConsoleHistoryRows = 20;
 inline std::size_t ConsoleScrollAfterArrival(std::size_t scroll, std::size_t added_rows,
                                            std::size_t history_rows) {
-  return scroll ? std::min(scroll + added_rows, history_rows > 18 ? history_rows - 18 : 0) : 0;
+  return scroll ? std::min(scroll + added_rows, history_rows > kConsoleHistoryRows ? history_rows - kConsoleHistoryRows : 0) : 0;
 }
 }  // namespace gtavc

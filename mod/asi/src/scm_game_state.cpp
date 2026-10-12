@@ -9,6 +9,10 @@
 #include <cstdlib>
 #include <cstring>
 #include <cmath>
+#include <sstream>
+#include <filesystem>
+#include <windows.h>
+#include <shlobj.h>
 
 #include "game_addresses.hpp"
 #include "scm_finale_warp.hpp"
@@ -729,6 +733,19 @@ void ScmGameState::DrawCheckMarkers() {
                    FrontEndMenuManager.m_bMenuActive || FrontEndMenuManager.m_nPrefsRadarMode == 2)) return;
   if (GetGlobal(kMinimapShuffledGlobal) != 0 && GetGlobal(kMinimapUnlockGlobal) == 0) return;
 
+  // read personal colors once, after the client has created connection.ini
+  static const auto colors = [] {
+    wchar_t local[MAX_PATH]{};
+    if (FAILED(SHGetFolderPathW(nullptr, CSIDL_LOCAL_APPDATA, nullptr, 0, local)))
+      return kDefaultCheckMarkerColors;
+    const auto settings = std::filesystem::path(local) / L"GtaVcAp" / L"connection.ini";
+    return LoadCheckMarkerColors([&](const wchar_t* key) {
+      wchar_t value[64]{};
+      GetPrivateProfileStringW(L"marker_colors", key, L"", value, 64, settings.c_str());
+      return std::wstring(value);
+    });
+  }();
+
   CVector2D centre, edge;
   CRadar::TransformRadarPointToScreenSpace(centre, CVector2D(0.0f, 0.0f));
   CRadar::TransformRadarPointToScreenSpace(edge, CVector2D(1.0f, 1.0f));
@@ -754,7 +771,7 @@ void ScmGameState::DrawCheckMarkers() {
     const float y = std::floor(screen.y);
     if (main_map && !CheckMarkerFitsScreen(x, y, static_cast<float>(RsGlobal.screenWidth),
                                          static_cast<float>(RsGlobal.screenHeight))) continue;
-    const auto color = CheckMarkerColor(category);
+    const auto color = CheckMarkerColor(category, colors);
     CSprite2d::DrawRect(CRect(x - 3.0f, y - 3.0f, x + 4.0f, y + 4.0f), CRGBA(0, 0, 0, 255));
     CSprite2d::DrawRect(CRect(x - 2.0f, y - 2.0f, x + 3.0f, y + 3.0f),
                         CRGBA(color[0], color[1], color[2], 255));
@@ -1827,6 +1844,7 @@ void ScmGameState::SuppressPackageCash(int newly_collected) {
 
 void ScmGameState::OnGameStarted() {
   std::lock_guard<std::mutex> lock(mutex_);
+  if (logger_) logger_("world start/reload; resetting game-scoped state");
   // Called from the two events that mean the world was replaced, one for starting
   // a game and one for loading one, because no state a frame can see says it: the
   // frame keeps running with the pause menu open, and the player ped outlives
@@ -1888,6 +1906,7 @@ void ScmGameState::ApplyCarColors() {
 // hash the frame would otherwise have read as empty. Every write is idempotent,
 // so the paths overlapping costs nothing.
 void ScmGameState::ForgetGameScopedState() {
+  control_diagnostic_seen_ = false;
   if (auto* pad = CPad::GetPad(0)) unstuck_control_hold_.Reset(pad->DisablePlayerControls);
   pole_position_charge_ = 0;
   player_model_pending_ = player_model_index_ >= 0;
@@ -2075,6 +2094,54 @@ std::string ScmGameState::Unstuck() {
   return "Returned to Rosenberg. Any active mission remains running.";
 }
 
+void ScmGameState::LogControlDiagnostics() {
+  if (!logger_ || plugin::GetGameVersion() != GAME_10EN || FrontEndMenuManager.m_bGameNotLoaded) return;
+  const auto* pad = CPad::GetPad(0);
+  auto* player = FindPlayerPed();
+  int save_pickups = 0;
+  for (const auto& pickup : CPickups::aPickUps)
+    if (pickup.nModelId == 411 && pickup.bPickupType != 0 && !pickup.bRemoved) ++save_pickups;
+  std::array<int, 20 + 2 * kAbilityCount> state{
+      GetGlobal(kOnMissionGlobal), GetGlobal(10357), GetGlobal(10358),
+      pad != nullptr ? static_cast<unsigned short>(pad->DisablePlayerControls) : -1,
+      pad != nullptr ? pad->Mode : -1, player != nullptr ? static_cast<int>(player->m_ePedState) : -1,
+      PlayerState(), CWorld::bProcessCutsceneOnly, CStreaming::ms_disableStreaming,
+      CGame::currArea, CTimer::m_UserPause || CTimer::m_CodePause, FrontEndMenuManager.m_bMenuActive,
+      player != nullptr && player->m_bInVehicle, CWorld::Players[0].m_pRemoteVehicle != nullptr,
+      GetGlobal(444), GetGlobal(21), GetGlobal(10173), GetGlobal(10174), GetGlobal(10466), save_pickups};
+  for (int index = 0; index < kAbilityCount; ++index) {
+    state[20 + index] = GetGlobal(kAbilityLockFlagBase + index);
+    state[20 + kAbilityCount + index] = GetGlobal(kAbilityUnlockBase + index);
+  }
+  const auto now = RealTimeMs();
+  const bool changed = !control_diagnostic_seen_ || state != control_diagnostic_state_;
+  if (!changed && now - control_diagnostic_last_ms_ < 10000) return;
+  control_diagnostic_state_ = state;
+  control_diagnostic_seen_ = true;
+  control_diagnostic_last_ms_ = now;
+  constexpr const char* names[] = {"onmission", "slot", "mission", "disabled_controls", "pad_mode", "ped_state",
+      "player_state", "cutscene_only", "streaming_disabled", "area", "paused", "menu", "in_vehicle",
+      "remote_vehicle", "hotel_save_handle", "mansion_save_handle", "island_access", "island_allowed",
+      "mission_shuffle", "save_pickups"};
+  static_assert(std::size(names) == 20, "diagnostic field names match the snapshot");
+  std::ostringstream line;
+  line << "controls " << (changed ? "changed" : "heartbeat") << " ms=" << now;
+  for (int index = 0; index < 20; ++index) line << ' ' << names[index] << '=' << state[index];
+  line << " ability_flags=";
+  for (int index = 0; index < kAbilityCount; ++index) line << (index ? "," : "") << state[20 + index];
+  line << " ability_unlocks=";
+  for (int index = 0; index < kAbilityCount; ++index) line << (index ? "," : "") << state[20 + kAbilityCount + index];
+  if (pad != nullptr) line << " input_fire=" << pad->NewState.RightShoulder1
+                          << " input_enter=" << pad->NewState.ButtonTriangle
+                          << " input_attack=" << pad->NewState.ButtonCircle;
+  if (player != nullptr) {
+    const auto& position = player->GetPosition();
+    line << " model=" << player->m_nModelIndex << " health=" << player->m_fHealth
+         << " position=" << position.x << ',' << position.y << ',' << position.z;
+  }
+  logger_(line.str());
+}
+
 void ScmGameState::OnGameFrame() {
   std::lock_guard<std::mutex> lock(mutex_);
   if (auto* pad = CPad::GetPad(0))
@@ -2105,6 +2172,7 @@ void ScmGameState::OnGameFrame() {
     ForgetGameScopedState();
     return;
   }
+  LogControlDiagnostics();
 
   if (car_colors_pending_) {
     ApplyCarColors();

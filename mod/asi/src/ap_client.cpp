@@ -4,6 +4,7 @@
 #include <shlobj.h>
 #include <memory>
 #include "apcpp/Archipelago.h"
+#include "diagnostic_log.hpp"
 
 namespace gtavc {
 namespace {
@@ -92,6 +93,7 @@ void ArchipelagoClient::Run() {
     }
     std::filesystem::create_directories(data_directory);
     const auto settings = data_directory / "connection.ini";
+    if (logger_) logger_("settings=" + DiagnosticPath(settings) + "; ASI defaults=" + DiagnosticPath(ini));
     if (!std::filesystem::exists(settings)) {
       const auto server = Setting(ini, "server", "127.0.0.1:38281");
       const auto slot = Setting(ini, "slot", "");

@@ -4,12 +4,30 @@ import configparser
 import os
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 from . import installer
 
 TITLE = "GTA Vice City Setup"
-CONNECTION_TEMPLATE = "[archipelago]\nserver=127.0.0.1:38281\nslot=\npassword=\n"
+CONNECTION_TEMPLATE = """[archipelago]
+server=127.0.0.1:38281
+slot=
+password=
+
+[marker_colors]
+preset=custom
+other=FFFFFF
+hidden_packages=3CFF5A
+robbable_stores=FF828C
+rampages=B92337
+pickups=FF9B1E
+stunt_jumps=418CFF
+properties=FFEB41
+side_events=37F0F0
+shops=D778FF
+finale_assets=B4FF23
+"""
 
 
 def check_folder(install_dir: Path) -> None:
@@ -42,6 +60,29 @@ def install(install_dir: Path, before_install=None) -> list[str]:
                 settings.write(settings_file, space_around_delimiters=False)
         except FileExistsError:
             pass
+    if sys.platform == "win32":
+        subprocess.run(["icacls.exe", str(settings_path), "/reset"], check=True,
+                       capture_output=True, creationflags=subprocess.CREATE_NO_WINDOW)
+    settings = configparser.ConfigParser(interpolation=None)
+    settings.read_string(settings_path.read_text(encoding="utf-8-sig"))
+    defaults = configparser.ConfigParser(interpolation=None)
+    defaults.read_string(CONNECTION_TEMPLATE)
+    missing_colors = {key: value for key, value in defaults["marker_colors"].items()
+                      if not settings.has_option("marker_colors", key)}
+    if missing_colors:
+        if not settings.has_section("marker_colors"):
+            settings.add_section("marker_colors")
+        settings["marker_colors"].update(missing_colors)
+        # inherit the user folder's permissions
+        descriptor, temporary = tempfile.mkstemp(dir=settings_path.parent)
+        upgraded = Path(temporary)
+        try:
+            with os.fdopen(descriptor, "w", encoding="utf-8") as settings_file:
+                settings.write(settings_file, space_around_delimiters=False)
+            os.replace(upgraded, settings_path)
+        finally:
+            upgraded.unlink(missing_ok=True)
+        log.append("Added missing custom map marker color settings to connection.ini.")
     shortcut = install_dir / "Archipelago Connection Settings.lnk"
     try:
         if sys.platform == "win32":

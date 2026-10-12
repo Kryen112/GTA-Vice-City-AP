@@ -5,6 +5,7 @@
 #include <fstream>
 #include <vector>
 #include "../src/save_isolation.hpp"
+#include "../src/diagnostic_log.hpp"
 
 constexpr int GAME_10EN = 1, MENUPAGE_START_MENU = 29, MENUPAGE_PAUSE_MENU = 32;
 namespace plugin {
@@ -48,6 +49,29 @@ void SaveSlots::PopulateSlotInfo() {
 
 int main(int argc, char** argv) {
   assert(argc == 2);
+  {
+    const auto directory = std::filesystem::absolute(argv[1]) / L"logs-\u96ea";
+    std::filesystem::create_directories(directory);
+    const auto primary = directory / L"primary.log";
+    const auto fallback = directory / L"fallback" / L"gtavc_ap_asi.log";
+    FILE* log = nullptr;
+    std::string problem;
+    assert(gtavc::OpenDiagnosticLog(primary, fallback, log, problem) == primary);
+    assert(log != nullptr && problem.empty());
+    std::fputs("abc", log);
+    std::fclose(log);
+    assert(std::filesystem::file_size(primary) > 0);
+    assert(gtavc::DiagnosticFileHash(primary) == "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");
+    assert(gtavc::DiagnosticFileHash(directory / "missing.log") == "unavailable (open)");
+    // dir cannot be opened as a writable file, even when elevated
+    assert(gtavc::OpenDiagnosticLog(directory, fallback, log, problem) == fallback);
+    assert(log != nullptr && problem.find("errno=") != std::string::npos);
+    std::fputs(problem.c_str(), log);
+    std::fclose(log);
+    assert(std::filesystem::file_size(fallback) > 0);
+    assert(gtavc::OpenDiagnosticLog(directory, directory, log, problem).empty());
+    assert(log == nullptr && problem.find("cannot open") != std::string::npos);
+  }
   auto& saves = gtavc::State();
   char prefix[256] = "?:\\GTAVCsf";
   saves.installed = true;

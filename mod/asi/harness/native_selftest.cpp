@@ -223,6 +223,18 @@ int main(int argc, char** argv) {
     assert(timers[1] == std::numeric_limits<int>::max());
   }
   ConsoleCommandCompletion completion;
+  {
+    std::wstring text = L"/serv";
+    std::size_t cursor = text.size();
+    assert(completion.Preview(text, cursor) == L"er" && text == L"/serv");
+    assert(completion.Preview(text, cursor) == L"er"); // Drawing does not begin cycling.
+    assert(completion.Complete(text, cursor) && text == L"/server" && cursor == text.size());
+    assert(completion.Preview(text, cursor).empty());
+    completion.Reset();
+    assert(completion.Preview(L"", 0).empty());
+    assert(completion.Preview(L"/password secret", 16).empty());
+    assert(completion.Preview(L"/serv", 2).empty());
+  }
   for (const auto prefix : {L"/inc", L"/increaset", L"/increasetimer"}) {
     std::wstring text = prefix;
     std::size_t cursor = text.size();
@@ -377,13 +389,15 @@ int main(int argc, char** argv) {
   completion.items = {L"Progressive Diaz", L"Progressive Lance"};
   completion.locations = {L"Ocean Beach - Check", L"Ocean View Hotel"};
   completion.Reset(); command_text = L"!hint prog"; command_cursor = command_text.size();
-  assert(completion.Complete(command_text, command_cursor) && command_text == L"!hint Progressive ");
+  assert(completion.Preview(command_text, command_cursor) == L"ressive Diaz");
   assert(completion.Complete(command_text, command_cursor) && command_text == L"!hint Progressive Diaz");
+  assert(completion.Preview(command_text, command_cursor).empty());
   assert(completion.Complete(command_text, command_cursor) && command_text == L"!hint Progressive Lance");
   assert(completion.Complete(command_text, command_cursor, true) && command_text == L"!hint Progressive Diaz");
   completion.Reset(); command_text = L"!hint progressive d"; command_cursor = command_text.size();
   assert(completion.Complete(command_text, command_cursor) && command_text == L"!hint Progressive Diaz");
   completion.Reset(); command_text = L"!hint_location ocean b"; command_cursor = command_text.size();
+  assert(completion.Preview(command_text, command_cursor) == L"each - Check");
   assert(completion.Complete(command_text, command_cursor) && command_text == L"!hint_location Ocean Beach - Check");
   for (const auto text : {L"!hint ocean", L"!hint_location prog", L"/hint prog", L"!getitem prog", L"prog"}) {
     completion.Reset(); command_text = text; command_cursor = command_text.size();
@@ -813,7 +827,7 @@ int main(int argc, char** argv) {
   assert(ConsoleScrollAfterArrival(0, 5, 105) == 0); // follow live chat only when already at the bottom
   assert(ConsoleScrollAfterArrival(12, 5, 105) == 17);
   assert(ConsoleScrollAfterArrival(12, 5, 100) == 17); // works when old history rows were trimmed
-  assert(ConsoleScrollAfterArrival(82, 5, 100) == 82); // oldest retained page remains reachable
+  assert(ConsoleScrollAfterArrival(80, 5, 100) == 80); // oldest retained page remains reachable
   reconnected.Handle({{"cmd", "Print"}, {"text", "Server announcement"}});
   assert(logs.back() == "Server announcement");
   for (const auto* type : {"Chat", "Hint", "Countdown", "Release", "Goal"}) {

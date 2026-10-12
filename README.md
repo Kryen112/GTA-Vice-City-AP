@@ -3,7 +3,7 @@
 An Archipelago world plus in-game mod for GTA: Vice City (classic PC,
 executable 1.0). It turns Vice City into a multiworld game.
 
-Release version: v2.1.0. See [release notes](RELEASE_NOTES.md).
+Release version: v2.1.1. See [release notes](RELEASE_NOTES.md).
 
 ## What randomization does
 
@@ -101,6 +101,13 @@ Asset names on the status page are white without ownership, yellow when owned bu
 The separate `x/y` unlock count turns green when full.
 Dots disappear when checked. Content-locked checks stay hidden until their content is unlocked.
 Markers also follow the world's mission, ability and region requirements, including alternative vehicle routes and their sources.
+
+You can choose your own colors for each custom dot category by editing:
+`[marker_colors]` in `%LOCALAPPDATA%\GtaVcAp\connection.ini` while the game is closed.
+Use six-digit RGB hex colors (for example, `hidden_packages=0088FF` for blue).
+For a ready-made palette intended for red/green color blindness
+set `preset=colorblind` in the same section and restart the game.
+Set `preset=custom` to return to your saved RGB colors.
 
 The ASI connects directly to Archipelago using
 [N00byKing's APCpp C++ library](https://github.com/N00byKing/APCpp). Set `server`,

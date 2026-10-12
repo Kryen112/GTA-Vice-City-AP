@@ -113,8 +113,7 @@ To edit the same settings outside the game:
    automatically. Start a **New Game** for a new seed, or load your existing
    save for this seed. The Python client does not need to run while playing.
 
-Setup and the updated client copy connection details from the old `GtaVcAp.VC.ini`
-only when `connection.ini` does not exist. Existing `connection.ini` files are kept.
+Setup and the updated client copy connection details from the old `GtaVcAp.VC.ini` only when `connection.ini` does not exist.
 Future connection edits belong in `connection.ini`. If shortcut creation fails,
 setup shows the file's full path.
 
@@ -123,6 +122,31 @@ packages green, robberies light red, rampages dark red, pickups orange,
 stunt jumps blue, properties yellow, side events cyan, and shop stock purple.
 Each dot has a 5x5 pixel center and a one-pixel black outline.
 Missions retain their existing markers. Current seeds work without regeneration.
+
+### Custom map marker colors
+
+To make the custom dots easier to distinguish, choose a color for each category.
+Close Vice City and open **Archipelago Connection Settings.lnk**, or open
+`%LOCALAPPDATA%\GtaVcAp\connection.ini` directly. 
+If the update fails and the section is missing, append this block:
+
+```ini
+[marker_colors]
+preset=custom
+other=FFFFFF
+hidden_packages=3CFF5A
+robbable_stores=FF828C
+rampages=B92337
+pickups=FF9B1E
+stunt_jumps=418CFF
+properties=FFEB41
+side_events=37F0F0
+shops=D778FF
+finale_assets=B4FF23
+```
+
+For a ready-made palette intended for red/green color blindness, change only
+`preset=custom` to `preset=colorblind` and restart Vice City. 
 
 Items, goals, and DeathLink use the room's slot data. Pending checks remain in
 `%LOCALAPPDATA%/GtaVcAp/GtaVcAp.<seed-hash>.json` until the server acknowledges
@@ -211,6 +235,7 @@ folders and `gta_vc.set`; do not overwrite saves you want to keep.
   `%LOCALAPPDATA%\GtaVcAp\connection.ini` and the room address. Restart the game
   after editing the file, or change settings through F8 and use `/connect`. The pause menu and
   `gtavc_ap_asi.log` report connection errors. The room must be running.
+  The log is beside `gta-vc.exe`, or at `%LOCALAPPDATA%\GtaVcAp\gtavc_ap_asi.log` if the game folder is not writable.
 - **Wrong seed save loaded.** Load a save from this room or start a new game.
   Restart Vice City if the server was changed to another seed.
 - **The game is very slow, or it crashes when you Alt+Tab away from it.**

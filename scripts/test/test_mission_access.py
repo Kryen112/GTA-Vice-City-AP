@@ -11,7 +11,7 @@ import pytest
 from test_mission_dispatch import dispatch
 from test_mission_order import run_lines
 
-from mission_access import EXTRA_TRAVEL_MISSIONS, needs_travel, route_lines
+from mission_access import EXTRA_TRAVEL_MISSIONS, film_studio_gate_lines, needs_travel, route_lines
 from mission_returns import return_lines
 
 
@@ -38,8 +38,9 @@ def execute_routes(body, state, objects):
             tests = []
             while index < len(body) and body[index].startswith("  "):
                 tokens = body[index].split()
+                handle = tokens[-1][1:]
                 tests.append(state[tokens[0]] >= int(tokens[2]) if tokens[0].startswith("$")
-                             else int(tokens[-1][1:]) in objects)
+                             else (int(handle) if handle.isdigit() else handle) in objects)
                 index += 1
             name = f"predicate_{index}"
             predicates[name] = any(tests) if line == "if or" else all(tests)
@@ -76,6 +77,28 @@ def test_temporary_routes_restore_current_items_without_granting_content():
         assert dict(state) == before
     assert execute_routes(closing, defaultdict(int), set()) == []
     assert not any(line.startswith(("$", "gosub", "wait")) for line in opening + closing)
+
+
+def test_studio_gates_restore_surviving_objects_without_granting_the_property():
+    source = [f"create_object_no_offset ${handle} = init_object #STUDIOGATE at 1.0 2.0 {height}"
+              for handle, height in (("film_studio_front_gate_closed", "12.0"),
+                                     ("film_studio_back_gate_closed", "13.0"), ("1811", "11.0"))]
+    objects = {"film_studio_front_gate_closed", "film_studio_back_gate_closed", 1811}
+    state = defaultdict(int, {"$9360": 0, "$9882": 0})
+    before = dict(state)
+    opening = film_studio_gate_lines(source, 27, restore=False)
+    closing = film_studio_gate_lines(source, 27, restore=True)
+    assert len(execute_routes(opening, state, objects)) == 3
+    assert all(line.endswith("-90.0") for line in execute_routes(opening, state, objects))
+    restored = execute_routes(closing, state, objects)
+    assert [line.split()[-1] for line in restored] == ["12.0", "13.0", "11.0"]
+    assert dict(state) == before
+    # purchase deletes the closed gates
+    assert execute_routes(opening, state, set()) == execute_routes(closing, state, set()) == []
+    objects.remove("film_studio_front_gate_closed")
+    assert len(execute_routes(closing, state, objects)) == 2
+    with pytest.raises(AssertionError, match="studio: missing or ambiguous gate"):
+        film_studio_gate_lines(source[:-1], 27, restore=False)
 
 
 def test_forced_return_covers_failure_and_identity_but_preserves_respawn():
