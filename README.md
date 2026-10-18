@@ -135,6 +135,8 @@ before editing the file manually. Changing the server or slot through F8 clears 
 Type normally to chat, use `!help` for server commands, `/hint [item]` for hints, 
 and `/deathlink [on|off|seed]` to control DeathLink or restore the seed's setting.
 The console displays other players' chat, hints, countdowns, releases and goal messages. Page Up/Down scroll the view, Ctrl+V pastes, Enter sends, and F8/Escape closes the console.
+Use `/clear` to empty message history and queued popups, `/status` for connection details,
+and `/port NUMBER` to change the server port.
 
 Use `/increasetimer` to add 60 seconds to the active countdown. Repeat for more time.
 
@@ -160,7 +162,8 @@ Installation/update/removal is handled by setup; `/play` and
 `/setfolder` are unnecessary inside the running game.
 
 Server messages appear in a popup queue with up to four lines visible.
-Opening the console pauses the queue.
+Opening the console clears active and waiting popups while preserving message history.
+Messages during initial connection synchronization stay in history without creating popups.
 Items apply when the game is playable, including during missions.
 
 The pause menu carries an ARCHIPELAGO page above Quit Game: client connection,

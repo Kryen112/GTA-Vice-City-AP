@@ -29,6 +29,15 @@ int main(int, char** argv) {
     }
     if (game.Status().goal_reached && game.AppliedItems().size() == 2) {
       std::this_thread::sleep_for(std::chrono::milliseconds(200));
+      const auto settings = std::filesystem::absolute(argv[0]).parent_path() / "state/connection.ini";
+      char server[2048]{};
+      GetPrivateProfileStringA("archipelago", "server", "", server, sizeof(server), settings.string().c_str());
+      const std::string address(server);
+      client.Command("/status"); client.Command("/server"); client.Command("/slot"); client.Command("/port 0");
+      client.Command("/port " + address.substr(address.rfind(':') + 1));
+      client.Command("/status"); client.Command("/quit");
+      std::this_thread::sleep_for(std::chrono::milliseconds(200));
+      client.Command("/connect");
       client.Stop();
       std::cout << "Native WebSocket integration passed" << std::endl;
       return 0;

@@ -18,7 +18,8 @@ class NativeSession {
   using Sender = std::function<bool(const json&)>;
   NativeSession(GameState* game, Logger logger, Sender send,
                 std::string slot_name, std::string password, std::filesystem::path state_directory,
-                std::function<bool(const std::string&)> prepare_seed = {}, ConsoleOutput console = {});
+                std::function<bool(const std::string&)> prepare_seed = {}, ConsoleOutput console = {},
+                CompletionOutput completion = {});
   void Handle(const json& packet);
   void Tick(bool socket_connected);
   void Command(const std::string& text);
@@ -44,6 +45,7 @@ class NativeSession {
   GameState* game_;
   Logger logger_;
   ConsoleOutput console_;
+  CompletionOutput completion_;
   Sender send_;
   std::function<bool(const std::string&)> prepare_seed_;
   std::string slot_name_, password_, seed_name_, seed_hash_;

@@ -1427,9 +1427,14 @@ class TestAbilityLocksAll(WorldTestBase):
         self.assertTrue(self.can_reach_location(data.stunt_jump_name(1)))
 
     def test_emergency_level_needs_a_land_vehicle(self) -> None:
-        self.assertFalse(self.can_reach_location("Paramedic Level 01"))
+        self.collect_by_name(["Mainland Access", data.WEAPON_EQUIP_ITEM])
+        for activity in ("Paramedic", "Firefighter", "Vigilante"):
+            self.assertFalse(self.can_reach_location(f"{activity} Level 01"))
         self.collect_by_name([data.LAND_VEHICLES_ITEM])
-        self.assertTrue(self.can_reach_location("Paramedic Level 01"))
+        self.assertFalse(self.can_reach_location("Phnom Penh '86"))
+        for activity in ("Paramedic", "Firefighter", "Vigilante"):
+            for level in (1, 12):
+                self.assertTrue(self.can_reach_location(data.emergency_name(activity, level)))
 
     def test_chopper_checkpoint_needs_an_air_vehicle_and_one_to_fly(self) -> None:
         # A start-island checkpoint: the helicopter is the requirement, not a land

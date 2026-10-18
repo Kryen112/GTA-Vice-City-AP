@@ -15,6 +15,70 @@ struct ConsoleSpan {
 };
 using ConsoleMessage = std::vector<ConsoleSpan>;
 using ConsoleOutput = std::function<void(const ConsoleMessage&, bool notify)>;
+using CompletionOutput = std::function<void(std::vector<std::string>, std::vector<std::string>)>;
+
+inline bool SecretConsoleInput(std::wstring_view text) {
+  const auto start = text.find_first_not_of(L" \t");
+  if (start == std::wstring_view::npos) return false;
+  text.remove_prefix(start);
+  const auto end = text.find_first_of(L" \t");
+  text = text.substr(0, end);
+  const std::wstring_view password = L"/password";
+  return text.size() == password.size() && std::equal(text.begin(), text.end(), password.begin(),
+      [](wchar_t a, wchar_t b) { return std::towlower(a) == b; });
+}
+
+struct ConsoleInput {
+  std::wstring text;
+  std::size_t cursor = 0, anchor = 0;
+  std::size_t Previous(std::size_t at) const {
+    if (at) --at;
+    if (at && text[at] >= 0xDC00 && text[at] <= 0xDFFF &&
+        text[at - 1] >= 0xD800 && text[at - 1] <= 0xDBFF) --at;
+    return at;
+  }
+  std::size_t Next(std::size_t at) const {
+    if (at < text.size()) {
+      const auto c = text[at++];
+      if (c >= 0xD800 && c <= 0xDBFF && at < text.size() &&
+          text[at] >= 0xDC00 && text[at] <= 0xDFFF) ++at;
+    }
+    return at;
+  }
+  void Move(bool right, bool selecting) {
+    if (!selecting && cursor != anchor) cursor = right ? std::max(cursor, anchor) : std::min(cursor, anchor);
+    else cursor = right ? Next(cursor) : Previous(cursor);
+    if (!selecting) anchor = cursor;
+  }
+  void Edge(bool end, bool selecting) {
+    cursor = end ? text.size() : 0;
+    if (!selecting) anchor = cursor;
+  }
+  std::wstring Selected() const { return text.substr(std::min(cursor, anchor), std::max(cursor, anchor) - std::min(cursor, anchor)); }
+  void Erase(bool backwards) {
+    auto first = std::min(cursor, anchor), last = std::max(cursor, anchor);
+    if (first == last) {
+      if (backwards) first = Previous(first);
+      else last = Next(last);
+    }
+    text.erase(first, last - first);
+    cursor = anchor = first;
+  }
+  void Insert(std::wstring value) {
+    // clipboard newlines stay within one command, never submit another message
+    for (auto& c : value) if (c == L'\r' || c == L'\n' || c == L'\t') c = L' ';
+    value.erase(std::remove_if(value.begin(), value.end(), [](wchar_t c) { return c < 32 || c == 127; }), value.end());
+    if (value.empty()) return;
+    const auto first = std::min(cursor, anchor), last = std::max(cursor, anchor);
+    auto count = std::min(value.size(), 1024 - (text.size() - (last - first)));
+    if (count && count < value.size() && value[count - 1] >= 0xD800 && value[count - 1] <= 0xDBFF &&
+        value[count] >= 0xDC00 && value[count] <= 0xDFFF) --count;
+    if (!count) return;
+    text.replace(first, last - first, value, 0, count);
+    cursor = anchor = first + count;
+  }
+  void Clear() { std::fill(text.begin(), text.end(), 0); text.clear(); cursor = anchor = 0; }
+};
 
 class ConsoleCommandCompletion {
   std::wstring prefix_;
@@ -24,9 +88,9 @@ class ConsoleCommandCompletion {
   std::vector<std::wstring_view> Matches(std::wstring_view prefix, std::wstring_view command,
                                        bool arguments) const {
     static constexpr std::wstring_view commands[] = {
-        L"/commands", L"/connect", L"/deathlink", L"/disconnect", L"/help", L"/hint",
+        L"/clear", L"/commands", L"/connect", L"/deathlink", L"/disconnect", L"/help", L"/hint",
         L"/increasetimer", L"/item_groups", L"/items", L"/location_groups", L"/locations", L"/password",
-        L"/ready", L"/received", L"/server", L"/slot", L"/unstuck",
+        L"/port", L"/quit", L"/ready", L"/received", L"/server", L"/slot", L"/status", L"/unstuck",
         L"!admin", L"!alias", L"!checked", L"!collect", L"!countdown", L"!getitem",
         L"!help", L"!hint", L"!hint_location", L"!license", L"!missing", L"!options",
         L"!players", L"!release", L"!remaining", L"!status"};
@@ -38,7 +102,8 @@ class ConsoleCommandCompletion {
             [](wchar_t a, wchar_t b) { return std::towlower(a) == std::towlower(b); })) matches.push_back(name);
     } else {
       for (const auto name : commands)
-        if (name.substr(0, prefix.size()) == prefix) matches.push_back(name);
+        if (name.size() >= prefix.size() && std::equal(prefix.begin(), prefix.end(), name.begin(),
+            [](wchar_t a, wchar_t b) { return std::towlower(a) == b; })) matches.push_back(name);
     }
     return matches;
   }
@@ -46,7 +111,7 @@ class ConsoleCommandCompletion {
   std::vector<std::wstring> items, locations;
   void Reset() { prefix_.clear(); selected_ = -1; cycling_ = false; }
   std::wstring Preview(const std::wstring& text, std::size_t cursor) const {
-    if (cycling_ || text.empty() || cursor != text.size()) return {};
+    if (cycling_ || text.empty() || cursor != text.size() || SecretConsoleInput(text)) return {};
     const auto end = std::min(text.find_first_of(L" \t\r\n"), text.size());
     const bool arguments = cursor > end;
     auto start = arguments ? text.find_first_not_of(L" \t\r\n", end) : 0;
@@ -94,7 +159,7 @@ class ConsoleInputHistory {
   std::wstring draft_;
  public:
   void Add(const std::wstring& text) {
-    if (!text.empty()) {
+    if (!text.empty() && !SecretConsoleInput(text)) {
       entries_.push_back(text);
       if (entries_.size() > 100) entries_.pop_front();
     }
@@ -104,7 +169,7 @@ class ConsoleInputHistory {
   void Recall(bool older, std::wstring& text, std::size_t& cursor) {
     if (older) {
       if (!position_) return;
-      if (position_ == entries_.size()) draft_ = text;
+      if (position_ == entries_.size()) draft_ = SecretConsoleInput(text) ? L"" : text;
       --position_;
     } else {
       if (position_ == entries_.size()) return;

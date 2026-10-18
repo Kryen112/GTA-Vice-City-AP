@@ -97,3 +97,50 @@ def test_remote_markers_use_their_giver_island_instead_of_the_player_island():
     assert gates.marker_gate_lines("BAR1", "HIDE") == ["if ", "  $10173 >= 2", "goto_if_false @HIDE"]
     assert gates.marker_gate_lines("LAW1", "HIDE") == []
     assert gates.marker_gate_lines("PORN1", "HIDE") == []
+
+
+def emergency_source():
+    lines = []
+    for number, (thread, checks) in enumerate((("COK2", 1), ("TAXI", 0), ("AMBULAN", 1),
+                                               ("FIRETRU", 2), ("COPCAR", 2), ("PIZZA", 0))):
+        lines += [f"//-------------Mission {number}---------------", f"script_name '{thread}'"]
+        for check in range(checks):
+            lines += ["if ", "  $passed_COK2_Phnom_Penh_86 == 0",
+                      f"goto_if_false @{thread}_SPAWN_{check}", "wait 0", f":{thread}_SPAWN_{check}"]
+        lines += ["terminate_this_script "]
+    return lines
+
+
+@pytest.mark.parametrize("mainland_open,mission_passed", [(0, 0), (0, 1), (1, 0), (1, 1)])
+def test_emergency_spawns_follow_ap_mainland_access_independently_of_story(mainland_open, mission_passed):
+    lines = emergency_source()
+    original = lines.copy()
+    gates.redirect_emergency_mainland_checks(lines)
+    changed = [index for index, line in enumerate(lines) if line != original[index]]
+    assert len(changed) == 5
+    values = {"$847": mainland_open, "$passed_COK2_Phnom_Penh_86": mission_passed}
+    for index in changed:
+        variable, comparison, expected = lines[index].split()
+        assert comparison == "=="
+        assert (values[variable] == int(expected)) == (not mainland_open)
+    # only the five emergency guards change. story checks, Taxi and Pizza stay intact.
+    assert lines.count("  $passed_COK2_Phnom_Penh_86 == 0") == 1
+    for index in changed:
+        lines[index] = original[index]
+    assert lines == original
+
+
+@pytest.mark.parametrize("change", ["missing", "extra", "already_redirected"])
+def test_emergency_spawn_guard_drift_fails_before_mutation(change):
+    lines = emergency_source()
+    index = lines.index("script_name 'COPCAR'") + 2
+    if change == "missing":
+        del lines[index]
+    elif change == "extra":
+        lines.insert(index, lines[index])
+    else:
+        gates.redirect_emergency_mainland_checks(lines)
+    original = lines.copy()
+    with pytest.raises(AssertionError, match="emergency mainland"):
+        gates.redirect_emergency_mainland_checks(lines)
+    assert lines == original

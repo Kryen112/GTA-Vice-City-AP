@@ -242,6 +242,8 @@ struct AsiMain {
                  for (const auto& span : message) text += span.text;
                  LogLine("APCpp: " + text);
                  console.Add(message, notify);
+               }, [this](std::vector<std::string> items, std::vector<std::string> locations) {
+                 console.SetCompletionNames(std::move(items), std::move(locations));
                }) {
     LogLine("loaded");
     LogStartup();

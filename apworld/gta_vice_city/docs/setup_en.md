@@ -194,6 +194,9 @@ optional `/password PASSWORD`, and `/connect`. Connection settings can also be
 set in `%LOCALAPPDATA%\GtaVcAp\connection.ini`. Type `/help` for local commands, `!help` for server commands, or
 chat normally. `/hint [item]` asks for hints; `/deathlink [on|off]` controls DeathLink.
 Other players' messages, hints, countdowns, releases and goals appear in the console.
+`/clear` clears message history and popups.
+`/status` shows connection details.
+`/port NUMBER` changes the port.
 
 Saves select themselves automatically under `AP_Seeds/<seed-and-slot-hash>` in
 `GTA Vice City User Files`. Existing career saves and `gta_vc.set` stay in place.

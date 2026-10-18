@@ -13,7 +13,13 @@ import re
 import sys
 from pathlib import Path
 
-from island_gates import ISLAND_ACCESS_MASK, PLAYER_ISLAND_ALLOWED, district_conditions, gate_interaction_entries
+from island_gates import (
+    ISLAND_ACCESS_MASK,
+    PLAYER_ISLAND_ALLOWED,
+    district_conditions,
+    gate_interaction_entries,
+    redirect_emergency_mainland_checks,
+)
 from mission_world_effects import extract_shakedown_business_opening
 
 sys.path.append(str(Path(__file__).resolve().parents[2] / "apworld" / "gta_vice_city"))
@@ -2982,6 +2988,7 @@ suppress_rampage_rewards()
 add_stat_watcher()
 add_emergency_instrumentation()
 add_emergency_progress()
+redirect_emergency_mainland_checks(lines)
 suppress_package_grants()
 suppress_emergency_grants()
 add_reward_applier()

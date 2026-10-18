@@ -1,6 +1,7 @@
 #include "ingame_console.hpp"
 #include <algorithm>
 #include <map>
+#include <cstring>
 #include <CPad.h>
 #include <CSprite2d.h>
 #include "hud_text.hpp"
@@ -49,6 +50,15 @@ IngameConsole::IngameConsole(std::function<void(std::string)> send) : send_(std:
   std::sort(completion_.locations.begin(), completion_.locations.end());
 }
 void IngameConsole::ReleaseGraphics() { font_.reset(); }
+void IngameConsole::SetCompletionNames(std::vector<std::string> items, std::vector<std::string> locations) {
+  std::pair<std::vector<std::wstring>, std::vector<std::wstring>> names;
+  for (const auto& item : items) names.first.push_back(Wide(item));
+  for (const auto& location : locations) names.second.push_back(Wide(location));
+  std::sort(names.first.begin(), names.first.end());
+  std::sort(names.second.begin(), names.second.end());
+  std::lock_guard<std::mutex> lock(mutex_);
+  pending_completion_ = std::move(names);
+}
 IngameConsole::~IngameConsole() {
   if (window_ && reinterpret_cast<WNDPROC>(GetWindowLongPtrW(window_, GWLP_WNDPROC)) == WindowProc)
     SetWindowLongPtrW(window_, GWLP_WNDPROC, reinterpret_cast<LONG_PTR>(previous_));
@@ -81,37 +91,71 @@ void IngameConsole::Add(const ConsoleMessage& message, bool notify) {
     if (lines_.size() > 4096) lines_.pop_front();
   }
 }
+void IngameConsole::Scroll(int rows) {
+  const auto maximum = wrapped_lines_.size() > kConsoleHistoryRows ? wrapped_lines_.size() - kConsoleHistoryRows : 0;
+  if (rows >= 0) scroll_ = std::min(maximum, scroll_ + static_cast<std::size_t>(rows));
+  else scroll_ = scroll_ > static_cast<std::size_t>(-rows) ? scroll_ - static_cast<std::size_t>(-rows) : 0;
+}
+void IngameConsole::ClearHistory() {
+  std::lock_guard<std::mutex> lock(mutex_);
+  lines_.clear(); wrapped_lines_.clear(); popups_.Clear(); scroll_ = 0; wrap_dirty_ = true;
+}
+bool IngameConsole::CopySelection() {
+  const auto text = input_.Selected();
+  if (SecretConsoleInput(input_.text) || text.empty() || !OpenClipboard(window_)) return false;
+  const auto memory = GlobalAlloc(GMEM_MOVEABLE, (text.size() + 1) * sizeof(wchar_t));
+  bool copied = false;
+  if (memory) {
+    if (auto* at = GlobalLock(memory)) {
+      std::memcpy(at, text.c_str(), (text.size() + 1) * sizeof(wchar_t));
+      GlobalUnlock(memory);
+      copied = EmptyClipboard() && SetClipboardData(CF_UNICODETEXT, memory);
+    }
+    if (!copied) GlobalFree(memory);
+  }
+  CloseClipboard();
+  return copied;
+}
 void IngameConsole::Key(WPARAM key) {
+  pending_surrogate_ = 0;
+  const bool ctrl = (GetKeyState(VK_CONTROL) & 0x8000) != 0;
+  const bool shift = (GetKeyState(VK_SHIFT) & 0x8000) != 0;
   if (key == VK_TAB) {
-    completion_.Complete(input_, cursor_, (GetKeyState(VK_SHIFT) & 0x8000) != 0);
+    if (input_.cursor != input_.anchor) return;
+    completion_.Complete(input_.text, input_.cursor, shift);
+    input_.anchor = input_.cursor;
     return;
   }
   if (key != VK_SHIFT && key != VK_LSHIFT && key != VK_RSHIFT) completion_.Reset();
   if (key == VK_ESCAPE) { active_ = false; return; }
   if (key == VK_RETURN) {
-    if (!input_.empty()) {
-      send_(Utf8(input_));
-      input_history_.Add(input_);
-      std::fill(input_.begin(), input_.end(), 0);
-      input_.clear(); cursor_ = 0; scroll_ = 0;
+    if (!input_.text.empty()) {
+      if (input_.text == L"/clear") { ClearHistory(); input_history_.Add(L""); }
+      else { send_(Utf8(input_.text)); input_history_.Add(input_.text); }
+      input_.Clear(); scroll_ = 0;
     }
-  } else if (key == VK_UP || key == VK_DOWN) input_history_.Recall(key == VK_UP, input_, cursor_);
-  else if (key == VK_BACK && cursor_) input_.erase(--cursor_, 1);
-  else if (key == VK_DELETE && cursor_ < input_.size()) input_.erase(cursor_, 1);
-  else if (key == VK_LEFT && cursor_) --cursor_;
-  else if (key == VK_RIGHT && cursor_ < input_.size()) ++cursor_;
-  else if (key == VK_HOME) cursor_ = 0;
-  else if (key == VK_END) cursor_ = input_.size();
-  else if (key == VK_PRIOR) scroll_ = std::min(wrapped_lines_.size() > kConsoleHistoryRows ? wrapped_lines_.size() - kConsoleHistoryRows : 0, scroll_ + 12);
-  else if (key == VK_NEXT) scroll_ = scroll_ > 12 ? scroll_ - 12 : 0;
-  else if (key == 'V' && (GetKeyState(VK_CONTROL) & 0x8000) && OpenClipboard(window_)) {
+  } else if (ctrl && key == 'A') { input_.anchor = 0; input_.cursor = input_.text.size(); }
+  else if (ctrl && key == 'C') CopySelection();
+  else if (key == VK_UP || key == VK_DOWN) {
+    input_history_.Recall(key == VK_UP, input_.text, input_.cursor);
+    input_.anchor = input_.cursor;
+  } else if (key == VK_BACK || key == VK_DELETE) input_.Erase(key == VK_BACK);
+  else if (key == VK_LEFT || key == VK_RIGHT) input_.Move(key == VK_RIGHT, shift);
+  else if (key == VK_HOME || key == VK_END) input_.Edge(key == VK_END, shift);
+  else if (key == VK_PRIOR) Scroll(12);
+  else if (key == VK_NEXT) Scroll(-12);
+  else if (key == 'V' && ctrl && OpenClipboard(window_)) {
     const HANDLE data = GetClipboardData(CF_UNICODETEXT);
     if (data) {
       const auto* text = static_cast<const wchar_t*>(GlobalLock(data));
       if (text) {
         const auto bound = std::min<std::size_t>(GlobalSize(data) / sizeof(wchar_t), 2048);
-        for (std::size_t i = 0; i < bound && text[i] && input_.size() < 1024; ++i)
-          if (text[i] >= 32) input_.insert(cursor_++, 1, text[i]);
+        std::size_t length = 0;
+        while (length < bound && text[length]) ++length;
+        if (length && length == bound && text[length - 1] >= 0xD800 && text[length - 1] <= 0xDBFF) --length;
+        const int bytes = WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, text, static_cast<int>(length),
+                                            nullptr, 0, nullptr, nullptr);
+        if (bytes) input_.Insert(std::wstring(text, length));
         GlobalUnlock(data);
       }
     }
@@ -120,9 +164,12 @@ void IngameConsole::Key(WPARAM key) {
 }
 LRESULT CALLBACK IngameConsole::WindowProc(HWND window, UINT message, WPARAM w, LPARAM l) {
   auto& self = *instance_;
-  if (message == WM_KILLFOCUS) { self.active_ = false; self.completion_.Reset(); }
+  if (message == WM_KILLFOCUS) {
+    self.active_ = false; self.completion_.Reset(); self.pending_surrogate_ = 0; self.wheel_delta_ = 0;
+  }
   if (message == WM_KEYDOWN && w == VK_F8) {
     self.completion_.Reset();
+    self.pending_surrogate_ = 0;
     if (!(l & (1L << 30))) {
       std::lock_guard<std::mutex> lock(self.mutex_);
       self.active_ = !self.active_;
@@ -134,13 +181,27 @@ LRESULT CALLBACK IngameConsole::WindowProc(HWND window, UINT message, WPARAM w, 
   if (self.active_) {
     if (message == WM_KEYDOWN) { self.Key(w); self.BlockControls(); return 0; }
     if (message == WM_CHAR) {
-      if (w >= 32 && w != 127 && self.input_.size() < 1024) {
+      if (w >= 32 && w != 127 && w <= 0xFFFF) {
         self.completion_.Reset();
-        self.input_.insert(self.cursor_++, 1, static_cast<wchar_t>(w));
+        const auto c = static_cast<wchar_t>(w);
+        if (c >= 0xD800 && c <= 0xDBFF) self.pending_surrogate_ = c;
+        else {
+          if (c >= 0xDC00 && c <= 0xDFFF) {
+            if (self.pending_surrogate_) self.input_.Insert(std::wstring{self.pending_surrogate_, c});
+          } else self.input_.Insert(std::wstring(1, c));
+          self.pending_surrogate_ = 0;
+        }
       }
       return 0;
     }
-    if (message == WM_KEYUP || message == WM_MOUSEWHEEL ||
+    if (message == WM_MOUSEWHEEL) {
+      self.wheel_delta_ += static_cast<short>(HIWORD(w));
+      self.Scroll(3 * (self.wheel_delta_ / WHEEL_DELTA));
+      self.wheel_delta_ %= WHEEL_DELTA;
+      return 0;
+    }
+    if (message == WM_INPUT) return DefWindowProcW(window, message, w, l);
+    if (message == WM_KEYUP || message == WM_SYSKEYDOWN || message == WM_SYSKEYUP || message == WM_SYSCHAR ||
         (message >= WM_MOUSEFIRST && message <= WM_MOUSELAST)) return 0;
   }
   return CallWindowProcW(self.previous_, window, message, w, l);
@@ -167,6 +228,11 @@ void IngameConsole::Draw(bool show_hint, bool connected) {
     window_ = window; previous_ = previous; instance_ = this;
   }
   std::lock_guard<std::mutex> lock(mutex_);
+  if (pending_completion_) {
+    completion_.items = std::move(pending_completion_->first);
+    completion_.locations = std::move(pending_completion_->second);
+    pending_completion_.reset(); completion_.Reset();
+  }
   const auto now = GetTickCount64();
   if (!active_ && !show_hint && popups_.empty()) return;
   const auto saved = CFont::Details;
@@ -243,10 +309,12 @@ void IngameConsole::Draw(bool show_hint, bool connected) {
                            CRGBA(130, 135, 165, 65));
       PrintLine(*font_, y, wrapped_lines_[i]);
     }
-    std::wstring shown = input_;
-    if (shown.rfind(L"/password", 0) == 0) {
-      const auto secret = shown.find_first_not_of(L" \t", 9);
-      if (secret != std::wstring::npos) std::fill(shown.begin() + secret, shown.end(), L'*');
+    std::wstring shown = input_.text;
+    const bool secret = SecretConsoleInput(shown);
+    if (secret) {
+      const auto command_end = shown.find_first_of(L" \t", shown.find_first_not_of(L" \t"));
+      const auto argument = command_end == std::wstring::npos ? command_end : shown.find_first_not_of(L" \t", command_end);
+      if (argument != std::wstring::npos) std::fill(shown.begin() + argument, shown.end(), L'*');
     }
     const float y = StretchY(396), x = StretchX(24);
     const CRGBA input_color(235, 225, 245, 255);
@@ -268,7 +336,7 @@ void IngameConsole::Draw(bool show_hint, bool connected) {
       }
       return end;
     };
-    const auto caret = std::min(cursor_, shown.size());
+    const auto caret = std::min(input_.cursor, shown.size());
     auto offset = caret;
     float width = 0;
     while (offset) {
@@ -284,9 +352,17 @@ void IngameConsole::Draw(bool show_hint, bool connected) {
       caret_width = PrintMixed(*font_, 0, 0, shown.substr(offset, caret - offset), input_color, false);
     }
     const auto visible_end = offset + fit(std::wstring_view(shown).substr(offset), available);
+    if (!secret && input_.cursor != input_.anchor) {
+      const auto first = std::clamp(std::min(input_.cursor, input_.anchor), offset, visible_end);
+      const auto last = std::clamp(std::max(input_.cursor, input_.anchor), offset, visible_end);
+      const auto left = PrintMixed(*font_, 0, 0, shown.substr(offset, first - offset), input_color, false);
+      const auto width = PrintMixed(*font_, 0, 0, shown.substr(first, last - first), input_color, false);
+      CSprite2d::DrawRect(CRect(x + prompt_width + left, y, x + prompt_width + left + width, y + StretchY(12)),
+                         CRGBA(90, 110, 180, 180));
+    }
     const float typed_width = PrintMixed(*font_, x + prompt_width, y,
         shown.substr(offset, visible_end - offset), input_color);
-    auto preview = completion_.Preview(input_, cursor_);
+    auto preview = input_.cursor == input_.anchor ? completion_.Preview(input_.text, input_.cursor) : L"";
     if (visible_end == shown.size() && !preview.empty()) {
       preview.resize(fit(preview, available - typed_width));
       PrintMixed(*font_, x + prompt_width + typed_width, y, preview, CRGBA(235, 225, 245, 112));

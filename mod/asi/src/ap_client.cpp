@@ -38,8 +38,9 @@ std::string ServerUrl(std::string server) {
 
 ArchipelagoClient::ArchipelagoClient(GameState* game, Logger logger,
                                      std::function<bool(const std::string&)> prepare_seed,
-                                     std::filesystem::path state_directory, ConsoleOutput console)
-    : game_(game), logger_(std::move(logger)), console_(std::move(console)), prepare_seed_(std::move(prepare_seed)),
+                                     std::filesystem::path state_directory, ConsoleOutput console,
+                                     CompletionOutput completion)
+    : game_(game), logger_(std::move(logger)), console_(std::move(console)), completion_(std::move(completion)), prepare_seed_(std::move(prepare_seed)),
       state_directory_(std::move(state_directory)) {}
 ArchipelagoClient::~ArchipelagoClient() { Stop(); }
 void ArchipelagoClient::Start() {
@@ -50,6 +51,7 @@ void ArchipelagoClient::Stop() {
   if (thread_.joinable()) thread_.join();
 }
 void ArchipelagoClient::Command(std::string text) {
+  if (stop_) { logger_("AP client stopped. Restart Vice City to reconnect."); return; }
   std::lock_guard<std::mutex> lock(mutex_);
   if (text.size() <= 4096 && commands_.size() < 32) commands_.push_back(std::move(text));
 }
@@ -120,7 +122,7 @@ void ArchipelagoClient::Run() {
       reported_unavailable = false;
       if (!native) native = std::make_unique<NativeSession>(game_, logger_, [](const json& messages) {
         return AP_SendPacket(messages.dump());
-      }, slot, password, data_directory, prepare_seed_, console_);
+      }, slot, password, data_directory, prepare_seed_, console_, completion_);
       AP_SetLoggingCallback([](std::string) {}); // never log raw packets or credentials
       AP_SetPacketCallback([&](const std::string& packet) {
         std::lock_guard<std::mutex> lock(events_mutex);
@@ -145,18 +147,32 @@ void ArchipelagoClient::Run() {
     while (!stop_) {
       std::deque<std::string> commands;
       { std::lock_guard<std::mutex> lock(mutex_); commands.swap(commands_); }
-      for (const auto& text : commands) {
+      for (auto text : commands) {
         try {
+          if (text.rfind("/port ", 0) == 0) text = "/server " + ServerWithPort(server, text.substr(6));
           if (text == "/connect") connect();
           else if (text == "/disconnect") { disconnect(); logger_("Disconnected. Saves remain on this seed."); }
+          else if (text == "/quit") {
+            disconnect(); native.reset(); stop_ = true;
+            logger_("AP client stopped. Close and restart Vice City to reconnect.");
+            break;
+          }
+          else if (text == "/status") {
+            logger_(std::string("AP: ") + (native && native->Connected() ? "Connected" : "Disconnected") +
+                    " | Server: " + server + " | Slot: " + slot);
+          }
+          else if (text == "/server" || text == "/port") logger_("Server: " + server);
+          else if (text == "/slot") logger_("Slot: " + slot);
           else if (text == "/help") {
-            logger_("/server HOST:PORT, /slot NAME, /password PASSWORD, /connect, /disconnect");
+            logger_("/server HOST:PORT, /port NUMBER, /slot NAME, /password PASSWORD, /connect, /disconnect");
+            logger_("/status: connection details. /clear: clear chat and popups. /quit: stop AP until game restart.");
             logger_("/deathlink [on|off|seed], /ready, /received [page]");
             logger_("/unstuck: return to Rosenberg outdoors and on foot. Keeps the active mission running.");
             logger_("/increasetimer: add 60 seconds to the active countdown.");
             logger_("/items [page] [filter], /locations [page] [filter]");
             logger_("/item_groups [page] [group], /location_groups [page] [group]");
             logger_("!missing [filter], !checked [filter], !hint [item]. !help lists server commands.");
+            logger_("Shift+arrows/Home/End select; Ctrl+A selects all; Ctrl+C copies; Ctrl+V pastes; mouse wheel scrolls.");
             logger_("Saves select themselves per seed and slot. Installation/removal: GTA-Vice-City-AP-Setup.exe.");
           } else if (text.rfind("/server ", 0) == 0 || text.rfind("/slot ", 0) == 0 ||
                      text == "/password" || text.rfind("/password ", 0) == 0) {

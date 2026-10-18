@@ -92,6 +92,12 @@ Active mission payloads and the package-goal finale launcher keep their existing
 flow. The startup comparison `$10174 > $onmission` combines permission and an
 idle player in one opcode: both inputs are booleans, so only 1 > 0 admits entry.
 
+Paramedic, Firefighter and Vigilante choose and validate mainland spawn locations
+using APAREA's mainland-open flag `$847`, independently of Phnom Penh '86
+completion. APAREA sets it on Mainland Access or an opened split crossing; the
+Starfish causeway also requires Starfish Island Access. Taxi and Pizza have no
+Phnom Penh spawn checks.
+
 Release builds must keep MAIN within 225,512 bytes and every mission within
 35,000 bytes. Compilation does not replace in-game verification.
 

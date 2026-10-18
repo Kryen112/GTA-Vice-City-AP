@@ -67,8 +67,9 @@ std::string NativeSeedHash(const std::string& seed, const std::string& slot) {
 NativeSession::NativeSession(GameState* game, Logger logger, Sender send,
                              std::string slot_name, std::string password,
                              std::filesystem::path state_directory,
-                             std::function<bool(const std::string&)> prepare_seed, ConsoleOutput console)
-    : game_(game), logger_(std::move(logger)), console_(std::move(console)), send_(std::move(send)),
+                             std::function<bool(const std::string&)> prepare_seed, ConsoleOutput console,
+                             CompletionOutput completion)
+    : game_(game), logger_(std::move(logger)), console_(std::move(console)), completion_(std::move(completion)), send_(std::move(send)),
       prepare_seed_(std::move(prepare_seed)),
       slot_name_(std::move(slot_name)), password_(std::move(password)),
       state_directory_(std::move(state_directory)), defaults_(json::parse(kNativeData)) {}
@@ -256,6 +257,15 @@ void NativeSession::Handle(const json& packet) {
     Send({{"cmd", "Get"}, {"keys", keys}});
     all_locations_ = packet.at("missing_locations").get<std::set<std::int64_t>>();
     all_locations_.insert(checked_.begin(), checked_.end());
+    if (completion_) {
+      std::vector<std::string> items, locations;
+      for (const auto& item : defaults_["items"]) items.push_back(item.at(0).get<std::string>());
+      for (const auto id : all_locations_) {
+        const auto name = defaults_["locations"].find(std::to_string(id));
+        if (name != defaults_["locations"].end()) locations.push_back(name->get<std::string>());
+      }
+      completion_(std::move(items), std::move(locations));
+    }
     pending_.clear();
     state_file_.clear();
     received_ = json::array();
@@ -339,7 +349,7 @@ void NativeSession::Handle(const json& packet) {
     }
   } else if (command == "Print") {
     const auto text = packet.at("text").get<std::string>().substr(0, 16384);
-    OutputConsole(ConsoleMessage{{text, 0xFFFFFF}}, true);
+    OutputConsole(ConsoleMessage{{text, 0xFFFFFF}}, online_ && items_ready_);
   } else if (command == "PrintJSON") {
     std::string text;
     ConsoleMessage spans;
@@ -379,7 +389,7 @@ void NativeSession::Handle(const json& packet) {
       text += value;
       if (!value.empty()) spans.push_back({std::move(value), ConsoleColor(color)});
     }
-    OutputConsole(spans, true);
+    OutputConsole(spans, online_ && items_ready_);
     if (online_ && active_ && packet.value("type", std::string()) == "ItemSend" && packet.contains("item")) {
       const int receiving = packet.at("receiving").get<int>();
       if (!ConcernsSelf(receiving) && ConcernsSelf(packet["item"].at("player").get<int>()))

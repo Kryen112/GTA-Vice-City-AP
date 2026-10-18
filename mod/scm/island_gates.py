@@ -1,4 +1,4 @@
-"""SCM entry gates using the island permissions."""
+"""SCM entry gates and spawn checks using AP island access."""
 
 import re
 
@@ -14,6 +14,22 @@ MAINLAND_LAUNCHERS = {
 }
 STARFISH_LAUNCHERS = {"BAR1", "BAR2", "BAR3", "BAR4", "BAR5", "PRO1", "PRO2", "PRO3", "FIN2"}
 SHOP_THREADS = {"AMMU1", "AMMU2", "AMMU3", "HARD1", "HARD2", "HARD3"}
+
+
+def redirect_emergency_mainland_checks(lines: list[str]) -> None:
+    """Use the APAREA mainland-open flag for emergency spawn selection."""
+    replacements = []
+    for thread, expected in (("AMBULAN", 1), ("FIRETRU", 2), ("COPCAR", 2)):
+        start = lines.index(f"script_name '{thread}'")
+        stop = next(index for index in range(start + 1, len(lines))
+                    if lines[index].startswith("//-------------Mission "))
+        checks = [index for index in range(start, stop)
+                  if lines[index] == "  $passed_COK2_Phnom_Penh_86 == 0"]
+        assert len(checks) == expected, f"emergency mainland: {thread} expected {expected} spawn checks"
+        replacements.extend(checks)
+    # APAREA sets $847 only when an AP route opens the mainland, including split bridges.
+    for index in replacements:
+        lines[index] = "  $847 == 0"
 
 
 def district_conditions(district: str) -> list[str]:

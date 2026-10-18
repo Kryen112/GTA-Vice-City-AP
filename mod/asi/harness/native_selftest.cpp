@@ -16,6 +16,7 @@
 #include "../src/scm_player_model.hpp"
 #include "../src/water_creatures.hpp"
 #include "../src/scm_unstuck.hpp"
+#include "../src/ap_client.hpp"
 
 using namespace gtavc;
 
@@ -338,6 +339,47 @@ int main(int argc, char** argv) {
   assert(MalibuEntranceLock(1, 0, 0) == 0); // Unavailable AP mission cannot block entry.
   assert(MalibuEntranceLock(1, 1, 0) == 1); // Keep an available Death Row entrance.
   assert(MalibuEntranceLock(0, 1, 0) == 0); // Do not introduce a new vanilla lock.
+  ConsoleInput edit;
+  edit.Insert(L"abcd"); edit.Move(false, false); edit.Move(false, true); edit.Move(false, true);
+  assert(edit.Selected() == L"bc" && edit.cursor == 1);
+  edit.Insert(L"XY");
+  assert(edit.text == L"aXYd" && edit.cursor == 3 && edit.anchor == 3);
+  edit.Erase(false); edit.Erase(true);
+  assert(edit.text == L"aX" && edit.cursor == 2);
+  edit.Edge(false, false); edit.Insert(L"! ");
+  edit.Edge(true, true); edit.Move(false, false);
+  assert(edit.text == L"! aX" && edit.cursor == 2 && edit.anchor == 2);
+  edit.Clear(); edit.Insert(L"a\U0001f600b");
+  edit.Move(false, false); edit.Move(false, true);
+  assert(edit.Selected() == L"\U0001f600");
+  edit.Erase(true); assert(edit.text == L"ab");
+  edit.Edge(false, false); edit.Erase(false); assert(edit.text == L"b");
+  edit.Clear(); edit.Insert(std::wstring(1023, L'a')); edit.Insert(L"\U0001f600");
+  assert(edit.text.size() == 1023 && edit.cursor == 1023);
+  edit.Insert(L"b"); edit.Move(false, true); edit.Insert(L"z");
+  assert(edit.text.size() == 1024 && edit.text.back() == L'z');
+  edit.anchor = 0; edit.Insert(L"one\r\ntwo\t\x01");
+  assert(edit.text == L"one  two " && edit.cursor == edit.anchor);
+  edit.Clear(); edit.Move(false, true); edit.Move(true, false); edit.Erase(true); edit.Erase(false);
+  assert(edit.text.empty() && !edit.cursor && !edit.anchor);
+  for (const auto text : {L"/password", L"/password secret", L"  /PASSWORD secret", L"/password\tsecret"})
+    assert(SecretConsoleInput(text));
+  assert(!SecretConsoleInput(L"/passwords") && !SecretConsoleInput(L"chat /password"));
+  assert(ServerWithPort("localhost:1", "38281") == "localhost:38281");
+  assert(ServerWithPort("wss://example.org:1234", "443") == "wss://example.org:443");
+  assert(ServerWithPort("ws://[::1]:1", "38281") == "ws://[::1]:38281");
+  assert(ServerWithPort("[::1]", "38281") == "[::1]:38281");
+  for (const auto port : {"", "0", "65536", "12x", "+12", "-1", "999999999", "12\n", " 12"}) {
+    bool rejected = false;
+    try { ServerWithPort("localhost:1", port); } catch (const std::runtime_error&) { rejected = true; }
+    assert(rejected);
+  }
+  ConsoleInputHistory secrets;
+  secrets.Add(L"safe"); secrets.Add(L"/password secret");
+  std::wstring secret_draft = L"/password unsubmitted";
+  std::size_t secret_cursor = secret_draft.size();
+  secrets.Recall(true, secret_draft, secret_cursor); assert(secret_draft == L"safe");
+  secrets.Recall(false, secret_draft, secret_cursor); assert(secret_draft.empty());
   ConsoleInputHistory input_history;
   std::wstring recalled = L"draft";
   std::size_t recalled_cursor = 2;
@@ -363,6 +405,19 @@ int main(int argc, char** argv) {
   input_history.Add(L"submitted edit");
   input_history.Recall(true, recalled, recalled_cursor);
   assert(recalled == L"submitted edit");
+  for (const auto command : {L"/clear", L"/port", L"/status", L"/quit"}) {
+    completion.Reset();
+    auto prefix = std::wstring(command, 3);
+    auto cursor = prefix.size();
+    assert(!completion.Preview(prefix, cursor).empty());
+    assert(completion.Complete(prefix, cursor) && prefix == command);
+  }
+  completion.Reset();
+  std::wstring upper = L"/CON";
+  std::size_t upper_cursor = upper.size();
+  assert(completion.Complete(upper, upper_cursor) && upper == L"/connect");
+  assert(completion.Preview(L"/password secret", 16).empty());
+  completion.Reset();
   std::wstring command_text = L"/re";
   std::size_t command_cursor = command_text.size();
   assert(completion.Complete(command_text, command_cursor) && command_text == L"/ready");
@@ -716,6 +771,44 @@ int main(int argc, char** argv) {
   assert(hundred.Status().goal_reached);
 
   // Chat and server output do not depend on game item/toast state.
+  {
+    const auto native_names = json::parse(kNativeData);
+    const auto first = native_names["locations"].begin();
+    const auto second = std::next(first), third = std::next(second);
+    TestGame names_game;
+    std::vector<std::string> hint_items, hint_locations;
+    int updates = 0;
+    NativeSession names(&names_game, logger, sender, "rando.vc", "", directory / "hint-names", {}, {},
+        [&](std::vector<std::string> items, std::vector<std::string> locations) {
+          hint_items = std::move(items); hint_locations = std::move(locations); ++updates;
+        });
+    auto selected = connected;
+    selected["missing_locations"] = {std::stoll(first.key())};
+    selected["checked_locations"] = {std::stoll(second.key())};
+    login(names, selected);
+    assert(updates == 1 && hint_items.size() == native_names["items"].size());
+    assert(hint_locations.size() == 2 &&
+        std::find(hint_locations.begin(), hint_locations.end(), first->get<std::string>()) != hint_locations.end() &&
+        std::find(hint_locations.begin(), hint_locations.end(), second->get<std::string>()) != hint_locations.end());
+    selected["missing_locations"] = {std::stoll(third.key())};
+    selected["checked_locations"] = json::array();
+    login(names, selected);
+    assert(updates == 2 && hint_locations == std::vector<std::string>{third->get<std::string>()});
+  }
+  {
+    std::vector<bool> popup_flags;
+    TestGame startup_game;
+    NativeSession startup(&startup_game, logger, sender, "rando.vc", "", directory / "quiet-startup", {},
+        [&](const ConsoleMessage&, bool notify) { popup_flags.push_back(notify); });
+    startup.Handle({{"cmd", "Print"}, {"text", "Before login"}});
+    startup.Handle({{"cmd", "RoomInfo"}, {"seed_name", "test-seed"}});
+    startup.Handle(connected);
+    startup.Handle({{"cmd", "PrintJSON"}, {"data", json::array({{{"text", "Before item sync"}}})}});
+    assert(popup_flags == std::vector<bool>({false, false}));
+    startup.Handle({{"cmd", "ReceivedItems"}, {"index", 0}, {"items", json::array()}});
+    startup.Handle({{"cmd", "Print"}, {"text", "New chat"}});
+    assert(popup_flags.back());
+  }
   TestGame colored_game;
   ConsoleMessage colored;
   NativeSession colored_session(&colored_game, logger, sender, "rando.vc", "", directory / "colors", {},

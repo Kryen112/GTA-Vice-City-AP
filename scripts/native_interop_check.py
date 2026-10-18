@@ -133,7 +133,12 @@ async def main(executable: Path, *, legacy: bool = False) -> None:
             assert old_state.exists() and (root / "state" / old_state.name).exists()
             assert settings.read_text().strip() == settings_text.strip(), "Connection settings were not preserved"
             assert "test-password" not in output.decode(errors="replace"), "Password leaked to the log"
-    print("APCpp transport, fragmentation, reconnect, check replay and goal reporting passed")
+            assert "AP: Connected | Server:" in output.decode(errors="replace")
+            assert "AP: Disconnected | Server:" in output.decode(errors="replace")
+            assert "Port must be 1..65535." in output.decode(errors="replace")
+            assert "server updated. Use /connect." in output.decode(errors="replace")
+            assert "AP client stopped." in output.decode(errors="replace")
+    print("APCpp transport, reconnect, check replay, goal reporting and console settings commands passed")
 
 
 if __name__ == "__main__":

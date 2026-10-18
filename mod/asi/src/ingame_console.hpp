@@ -6,6 +6,7 @@
 #include <mutex>
 #include <memory>
 #include <string>
+#include <optional>
 #include "console_text.hpp"
 
 namespace gtavc {
@@ -16,6 +17,7 @@ class IngameConsole {
   ~IngameConsole();
   void Add(const std::string& text); // safe from the network thread
   void Add(const ConsoleMessage& message, bool notify = false);
+  void SetCompletionNames(std::vector<std::string> items, std::vector<std::string> locations);
   void Draw(bool show_hint = false, bool connected = false); // game/menu drawing thread
   void BlockControls();
   bool IsOpen() const { return active_.load(); }
@@ -23,14 +25,20 @@ class IngameConsole {
  private:
   static LRESULT CALLBACK WindowProc(HWND, UINT, WPARAM, LPARAM);
   void Key(WPARAM key);
+  void Scroll(int rows);
+  void ClearHistory();
+  bool CopySelection();
   static IngameConsole* instance_;
   HWND window_ = nullptr;
   WNDPROC previous_ = nullptr;
   std::atomic<bool> active_{false};
-  std::wstring input_;
+  ConsoleInput input_;
   ConsoleCommandCompletion completion_;
+  std::optional<std::pair<std::vector<std::wstring>, std::vector<std::wstring>>> pending_completion_;
   ConsoleInputHistory input_history_;
-  std::size_t cursor_ = 0, scroll_ = 0;
+  std::size_t scroll_ = 0;
+  int wheel_delta_ = 0;
+  wchar_t pending_surrogate_ = 0;
   std::mutex mutex_;
   std::deque<ConsoleLine> lines_;
   ConsolePopupQueue popups_;
