@@ -150,6 +150,30 @@ class TestFullMissionShuffle(WorldTestBase):
     game = "Grand Theft Auto Vice City"
     options: ClassVar[dict] = {"mission_shuffle": "full"}
 
+    def test_kaufman_progresses_after_check_out_at_the_check_in(self):
+        from BaseClasses import CollectionState
+
+        from ..mission_layout import ASSIGNMENT_BASE
+
+        generated = setup_multiworld(GTAViceCityWorld, steps=("generate_early",), options=self.options)
+        world = generated.worlds[1]
+        world.mission_order = mission_progression.full_strands(True)
+        world.mission_order["Kaufman Cabs"][0], world.mission_order["Mr. Black"][3] = (
+            world.mission_order["Mr. Black"][3], world.mission_order["Kaufman Cabs"][0])
+        for step in ("create_regions", "create_items", "set_rules"):
+            call_all(generated, step)
+        self.assertEqual(world.fill_slot_data()["config_globals"][str(ASSIGNMENT_BASE + 72)], 70)
+        state = CollectionState(generated)
+        for item in generated.itempool:
+            if item.name != "Progressive Kaufman Cabs":
+                state.collect(item, prevent_sweep=True)
+        state.collect(world.create_item("Progressive Kaufman Cabs"))
+        self.assertTrue(state.can_reach_location("Check Out at the Check In", 1))
+        self.assertFalse(state.can_reach_location("Friendly Rivalry", 1))
+        state.collect(world.create_item("Progressive Kaufman Cabs"))
+        state.sweep_for_advancements()
+        self.assertTrue(state.can_reach_location("Friendly Rivalry", 1))
+
     def test_slots_preserve_region_ids_and_bootstrap(self):
         from ..locations import LOCATION_NAME_TO_ID, LOCATION_REGIONS
         strands = mission_progression.full_strands(True)

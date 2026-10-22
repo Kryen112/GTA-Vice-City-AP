@@ -96,8 +96,9 @@ def finish_lines(number: int, completion: str | None = None, slot: int | None = 
     report = [] if not grants else [
         "if ", f"  ${SUCCESS} == 1", f"goto_if_false @AP_DISPATCH_REPORT_{number}",
         *grants, f":AP_DISPATCH_REPORT_{number}"]
+    # foreign payloads also release the taxi latch, inside the mission buffer to preserve MAIN offsets
     return ["if ", f"  ${ACTIVE_MISSION} == {number}", f"goto_if_false @{label}",
-            *report, "gosub @AP_DISPATCH_FINISH", f":{label}"]
+            "$371 = 0", *report, "gosub @AP_DISPATCH_FINISH", f":{label}"]
 
 
 def dispatcher_lines(numbers: list[int], return_points: dict[int, tuple[str, ...]] | None = None,
@@ -189,6 +190,12 @@ def instrument_identity_dispatch(lines: list[str], managed: list[dict], *, smoke
         number = launches[0][1]
         assert all(value == number for _, value in launches), f"{launcher}: ambiguous payload"
         assert 0 < number < SLOT_CAPACITY and number not in numbers, f"{launcher}: invalid slot"
+        if launcher in ("TWAR1", "TWAR2", "TWAR3"):
+            guard = source.index("  $371 == 0", start, end)
+            assert source[guard - 1] == "if" and source[guard + 1].startswith("goto_if_false @"), (
+                f"{launcher}: unexpected taxi latch guard")
+            # HELP_4047 claims onmission. an equal-size check preserves saved MAIN thread offsets.
+            changes.append((guard, 1, ["  $onmission == 1"]))
         numbers.append(number)
         block_start, block_end = spans[number]
         successes = [index for index in range(block_start, block_end) if source[index] == f"{passed} = 1"]

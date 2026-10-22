@@ -1,4 +1,10 @@
-# GTA: Vice City Archipelago 2.1.1
+# GTA: Vice City Archipelago 2.1.2
+
+## Release: 2.1.2
+
+- Firefighter, Paramedic and Vigilante use AP mainland access for spawn selection instead of Phnom Penh '86 completion
+- Fixed Kaufman mission markers freezing after a shuffled non-taxi mission leaves the taxi launch flag set
+- Includes the current console updates
 
 ## Release: 2.1.1
 

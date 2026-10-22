@@ -126,12 +126,13 @@ def test_phone_intro_loads_exterior_before_teleport_and_releases_normal_control(
 
 
 def test_unrelated_payload_cannot_complete_or_clear_an_active_slot():
-    state = defaultdict(int)
+    state = defaultdict(int, {"$371": 1})
     execute(dispatch.launch_lines(3), state)
     execute([*dispatch.success_lines(7), *dispatch.finish_lines(7)], state)
     assert state[f"${dispatch.ACTIVE_SLOT}"] == 3
     assert state[f"${dispatch.SUCCESS}"] == 0
     assert state[f"${dispatch.SLOT_BASE + 3}"] == 0
+    assert state["$371"] == 1
     # A new accepted launch replaces a stale attempt without inheriting success.
     state[f"${dispatch.SUCCESS}"] = 1
     execute(dispatch.launch_lines(7), state)
@@ -196,6 +197,46 @@ def synthetic_source():
         lines += [f"//-------------Mission {number}---------------", f":PAYLOAD_{launcher}",
                   f"{passed} = 1", "gosub @CLEANUP", "terminate_this_script"]
     return lines
+
+
+@pytest.mark.parametrize("slot", [72, 73, 74])
+@pytest.mark.parametrize("success", [0, 1])
+def test_kaufman_slot_releases_taxi_lock_after_foreign_payload(slot, success):
+    state = defaultdict(int, {"$371": 1, f"${dispatch.ACTIVE_SLOT}": slot,
+                             f"${dispatch.ACTIVE_MISSION}": 70, f"${dispatch.SUCCESS}": success})
+    run_lines([*dispatch.finish_lines(70), "terminate_this_script",
+               *dispatch.dispatcher_lines([72, 73, 74])], state)
+    assert state["$371"] == 0
+    assert state[f"${dispatch.SLOT_BASE + slot}"] == success
+    taxi_start = ["if ", "  $371 == 0", "goto_if_false @DONE",
+                  "load_and_launch_mission_internal 75", ":DONE", "terminate_this_script"]
+    assert run_lines(taxi_start, state) == [75]
+
+
+@pytest.mark.parametrize("number", [72, 73, 74])
+def test_kaufman_launcher_recovers_stale_lock_without_interrupting_active_mission(number):
+    launcher = f"TWAR{number - 71}"
+    lines = synthetic_source()
+    entry = lines.index(":GEN1")
+    lines[entry:entry] = [
+        f":{launcher}", f"script_name '{launcher}'", "if ", "  $taxi_passed == 1",
+        f"goto_if_false @{launcher}_START", "$9383 = 1", "terminate_this_script",
+        f":{launcher}_START", "if ", "  $onmission == 0", f"goto_if_false @{launcher}_DONE",
+        "gosub @HELP_4047", f"print_big 'TAXI_{number - 71}' 15000 ms 2",
+        "if ", "  $371 == 0", f"goto_if_false @{launcher}_DONE",
+        f"load_and_launch_mission_internal {number}", "$371 = 1",
+        f":{launcher}_DONE", "terminate_this_script"]
+    lines += [f"//-------------Mission {number}---------------", "$taxi_passed = 1",
+              "terminate_this_script"]
+    dispatch.instrument_identity_dispatch(lines, [{"launcher": launcher, "passed": "$taxi_passed"}])
+    start, end = lines.index(f":{launcher}"), lines.index(":GEN1")
+    program = [*lines[start:end], *dispatch.dispatcher_lines([number]),
+               ":HELP_4047", "$onmission = 1", "set_player_control $player_char can_move False", "return"]
+    for active in (0, 1):
+        state = defaultdict(int, {"$371": 1, "$onmission": active})
+        actions = []
+        assert run_lines(program, state, executed=actions) == ([] if active else [number])
+        assert ("set_player_control $player_char can_move False" in actions) == (not active)
 
 
 def test_transform_changes_slot_guards_but_preserves_world_flags_and_cleanup():
