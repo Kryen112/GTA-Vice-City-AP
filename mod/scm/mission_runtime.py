@@ -7,6 +7,18 @@ from mission_layout import ASSIGNMENT_BASE, BUILD_VERSION, BUILD_VERSION_GLOBAL,
 from mission_returns import EXTERIOR_RESET, PHONE_RETURN_POSITION, return_lines
 
 
+def on_foot_intro_lines(number):
+    """Restore the native entry state before a shuffled mission moves the player."""
+    if number in (72, 73, 74):
+        return []
+    done = f"AP_INTRO_ON_FOOT_DONE_{number}"
+    # these existing scratch words are consumed without a wait before launcher gates reuse them
+    return ["if ", f"  ${FULL_MODE_GLOBAL} == 1", f"goto_if_false @{done}",
+            "if ", "  is_player_in_any_car $player_char", f"goto_if_false @{done}",
+            "get_player_coordinates $player_char position_to $10570 $10571 $10572",
+            "warp_player_from_car_to_coord $player_char at $10570 $10571 $10572", f":{done}"]
+
+
 def configure_runtime_dispatch(lines, source, managed, points, titles, travel_open, travel_close):
     """Replace fixed test choices with validated seed globals and shared slot commits."""
     configure_launcher_gates(lines, source, managed)
@@ -78,7 +90,7 @@ def configure_runtime_dispatch(lines, source, managed, points, titles, travel_op
             lines[index:index + 1] = []
         start = next(i for i, line in enumerate(lines) if line == f"//-------------Mission {number}---------------")
         entry = next(i for i in range(start, len(lines)) if lines[i].startswith("script_name "))
-        lines[entry + 1:entry + 1] = [title]
+        lines[entry + 1:entry + 1] = [title, *on_foot_intro_lines(number)]
         header = next(i for i, line in enumerate(lines) if line.startswith("//-------------Mission "))
     # Reserve the contract and scratch words; stamp only the immutable build identity.
     at = lines.index("script_name 'HOT'") + 1
@@ -159,6 +171,12 @@ def configure_launcher_gates(lines, source, managed):
         launch = next(line for line in source[source.index(f":{launcher}"):]
                       if line.startswith("load_and_launch_mission_internal "))
         number = int(launch.split()[-1])
+        if number not in (72, 73, 74):
+            original_start = source.index(f":{launcher}")
+            original_launch = source.index(launch, original_start)
+            assert any(re.search(r"locate_(?:stopped_)?player_on_foot_3d ", line)
+                       for line in source[original_start:original_launch]), (
+                f"{launcher}: mission entry vehicle state needs an audit")
         for index in range(start, end):
             line = lines[index]
             if line in ("gosub @HELP_2883", "make_player_safe_for_cutscene $player_char"):

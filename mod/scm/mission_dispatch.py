@@ -88,6 +88,30 @@ def success_lines(number: int) -> list[str]:
             f"${SUCCESS} = 1", f":{label}"]
 
 
+def kaufman_objective_changes(source: list[str], span: tuple[int, int], number: int):
+    """Accept both company cabs without changing the surrounding objective conditions."""
+    start, end = span
+    checks = [index for index in range(start, end)
+              if source[index].strip() in (
+                  "is_player_in_model $player_char driving_vehicle_type 216",
+                  "not is_player_in_model $player_char driving_vehicle_type 216")]
+    assert len(checks) == (0 if number == 73 else 3), f"TAXWAR{number - 71}: cab checks need an audit"
+    changes = []
+    for index in checks:
+        header = index - 1
+        while source[header].startswith("  "):
+            header -= 1
+        assert source[header].strip() in ("if", "if and", "if or"), "Kaufman: missing objective condition group"
+        ready = f"AP_KAUFMAN_MODEL_{number}_{index}"
+        # the gate scratch flag is consumed without a wait before launcher gates reuse it
+        changes.append((header, 0, ["$10572 = 0", "if or",
+                                   "  is_player_in_model $player_char driving_vehicle_type 216",
+                                   "  is_player_in_model $player_char driving_vehicle_type 188",
+                                   f"goto_if_false @{ready}", "$10572 = 1", f":{ready}"]))
+        changes.append((index, 1, [f"  $10572 == {0 if source[index].strip().startswith('not ') else 1}"]))
+    return changes
+
+
 def finish_lines(number: int, completion: str | None = None, slot: int | None = None) -> list[str]:
     label = f"AP_DISPATCH_EXIT_{number}"
     grants = ([] if completion is None else [f"{completion} = 1"])
@@ -194,10 +218,18 @@ def instrument_identity_dispatch(lines: list[str], managed: list[dict], *, smoke
             guard = source.index("  $371 == 0", start, end)
             assert source[guard - 1] == "if" and source[guard + 1].startswith("goto_if_false @"), (
                 f"{launcher}: unexpected taxi latch guard")
-            # HELP_4047 claims onmission. an equal-size check preserves saved MAIN thread offsets.
-            changes.append((guard, 1, ["  $onmission == 1"]))
+            model = source.index("  is_player_in_model $player_char driving_vehicle_type 216", start, end)
+            assert source[model - 1] == "if and" and source[model + 1].strip().startswith(
+                "locate_player_in_car_3d "), f"{launcher}: unexpected cab entry gate"
+            # player zero and removal of the stale latch guard keep this straight-line block the same size
+            changes += [(model - 1, 2, ["if or", source[model],
+                                       "  is_player_in_model 0 driving_vehicle_type 188",
+                                       source[model + 2], "if"]),
+                        (guard - 1, 3, [])]
         numbers.append(number)
         block_start, block_end = spans[number]
+        if number in (72, 73, 74):
+            changes += kaufman_objective_changes(source, spans[number], number)
         successes = [index for index in range(block_start, block_end) if source[index] == f"{passed} = 1"]
         exits = [index for index in range(block_start, block_end) if source[index] == "terminate_this_script"]
         assert len(successes) == len(exits) == 1, f"{launcher}: ambiguous success or cleanup exit"

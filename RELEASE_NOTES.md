@@ -2,8 +2,10 @@
 
 ## Release: 2.1.2
 
+- Kaufman mission markers and cab-specific objectives accept both regular Kaufman Cabs and Zebra Cabs, so early Cabmaggedon completion cannot block the remaining missions
 - Firefighter, Paramedic and Vigilante use AP mainland access for spawn selection instead of Phnom Penh '86 completion
 - Fixed Kaufman mission markers freezing after a shuffled non-taxi mission leaves the taxi launch flag set
+- Shuffled missions with on-foot openings leave the incoming vehicle at the giver instead of taking it into the opening scene
 - Includes the current console updates
 
 ## Release: 2.1.1

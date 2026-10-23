@@ -1,6 +1,7 @@
 """Execute the identity dispatcher's emitted launch and completion instructions."""
 
 import importlib.util
+import itertools
 import sys
 from collections import defaultdict
 from pathlib import Path
@@ -17,6 +18,82 @@ specification.loader.exec_module(dispatch)
 
 def execute(body, state):
     return run_lines([*body, "terminate_this_script", *dispatch.dispatcher_lines([3, 7])], state)
+
+
+def execute_cab_conditions(body, state, model, *, near=True, horn=True, executed=None):
+    def predicate(line):
+        tokens = line.split()
+        negative = tokens[0] == "not"
+        if negative:
+            tokens = tokens[1:]
+        if tokens[0] == "is_player_in_model":
+            result = model == int(tokens[-1])
+        elif tokens[0].startswith("locate_"):
+            result = near
+        elif tokens[0] == "is_player_pressing_horn":
+            result = horn
+        else:
+            assert tokens[0].startswith("$") and tokens[1] == "==", line
+            result = state[tokens[0]] == int(tokens[2])
+        return not result if negative else result
+
+    program, predicates = [], {}
+    index = 0
+    while index < len(body):
+        line = body[index]
+        index += 1
+        if line.strip() in ("if", "if and", "if or"):
+            tests = []
+            while index < len(body) and body[index].startswith("  "):
+                tests.append(body[index])
+                index += 1
+            name = f"cab_predicate_{index}"
+            mode = line.strip()
+            predicates[name] = lambda tests=tests, mode=mode: (
+                any(predicate(test) for test in tests) if mode == "if or"
+                else all(predicate(test) for test in tests))
+            program += ["if ", f"  {name}"]
+        else:
+            program.append(line)
+    return run_lines(program, state, conditions=predicates, executed=executed)
+
+
+def kaufman_objectives():
+    return [
+        "if or", "  not locate_stopped_player_any_means_3d $player_char stopped 1 0 0 0 radius 1 1 1",
+        "  not is_player_in_model $player_char driving_vehicle_type 216",
+        "  not is_player_pressing_horn $player_char", "goto_if_false @PICKUP", "goto @PICKUP_DONE",
+        ":PICKUP", "$12000 = 1", ":PICKUP_DONE", "if ",
+        "  is_player_in_model $player_char driving_vehicle_type 216",
+        "goto_if_false @STORE_DONE", "$12001 = 1", ":STORE_DONE", "if and",
+        "  locate_stopped_player_any_means_3d $player_char stopped 1 0 0 0 radius 1 1 1",
+        "  is_player_in_model $player_char driving_vehicle_type 216",
+        "goto_if_false @HORN_DONE", "$12002 = 1", ":HORN_DONE"]
+
+
+@pytest.mark.parametrize("number", [72, 74])
+def test_kaufman_objectives_accept_both_company_cabs_and_keep_position_and_horn_checks(number):
+    lines = kaufman_objectives()
+    for index, removed, replacement in sorted(
+            dispatch.kaufman_objective_changes(lines, (0, len(lines)), number), reverse=True):
+        lines[index:index + removed] = replacement
+    for model, near, horn in itertools.product((216, 188, 150, 168, 130, None), (False, True), (False, True)):
+        state = defaultdict(int, {"$10353": 123})
+        execute_cab_conditions([*lines, "terminate_this_script"], state, model, near=near, horn=horn)
+        allowed = model in (216, 188)
+        assert [state[f"${12000 + i}"] for i in range(3)] == [
+            allowed and near and horn, allowed, allowed and near]
+        assert state["$10353"] == 123
+
+
+def test_kaufman_objective_model_checks_fail_closed_on_source_drift():
+    assert dispatch.kaufman_objective_changes([], (0, 0), 73) == []
+    lines = kaufman_objectives()
+    lines.remove("  not is_player_in_model $player_char driving_vehicle_type 216")
+    original = lines.copy()
+    with pytest.raises(AssertionError, match="cab checks need an audit"):
+        dispatch.kaufman_objective_changes(lines, (0, len(lines)), 72)
+    assert lines == original
 
 
 def test_launch_failure_retry_and_saved_completion():
@@ -221,22 +298,27 @@ def test_kaufman_launcher_recovers_stale_lock_without_interrupting_active_missio
     lines[entry:entry] = [
         f":{launcher}", f"script_name '{launcher}'", "if ", "  $taxi_passed == 1",
         f"goto_if_false @{launcher}_START", "$9383 = 1", "terminate_this_script",
-        f":{launcher}_START", "if ", "  $onmission == 0", f"goto_if_false @{launcher}_DONE",
+        f":{launcher}_START", "if and", "  is_player_in_model $player_char driving_vehicle_type 216",
+        "  locate_player_in_car_3d $player_char sphere 0 near_point_in_car 0 0 0 radius 2 2 2",
+        f"goto_if_false @{launcher}_DONE", "if ", "  $onmission == 0", f"goto_if_false @{launcher}_DONE",
         "gosub @HELP_4047", f"print_big 'TAXI_{number - 71}' 15000 ms 2",
         "if ", "  $371 == 0", f"goto_if_false @{launcher}_DONE",
         f"load_and_launch_mission_internal {number}", "$371 = 1",
         f":{launcher}_DONE", "terminate_this_script"]
-    lines += [f"//-------------Mission {number}---------------", "$taxi_passed = 1",
+    lines += [f"//-------------Mission {number}---------------", *(kaufman_objectives() if number != 73 else []),
+              "$taxi_passed = 1",
               "terminate_this_script"]
     dispatch.instrument_identity_dispatch(lines, [{"launcher": launcher, "passed": "$taxi_passed"}])
     start, end = lines.index(f":{launcher}"), lines.index(":GEN1")
     program = [*lines[start:end], *dispatch.dispatcher_lines([number]),
                ":HELP_4047", "$onmission = 1", "set_player_control $player_char can_move False", "return"]
-    for active in (0, 1):
+    for active, model, near in itertools.product((0, 1), (216, 188, 150, 168, 130, None), (False, True)):
         state = defaultdict(int, {"$371": 1, "$onmission": active})
         actions = []
-        assert run_lines(program, state, executed=actions) == ([] if active else [number])
-        assert ("set_player_control $player_char can_move False" in actions) == (not active)
+        allowed = not active and near and model in (216, 188)
+        assert execute_cab_conditions(program, state, model, near=near, executed=actions) == (
+            [number] if allowed else [])
+        assert ("set_player_control $player_char can_move False" in actions) == allowed
 
 
 def test_transform_changes_slot_guards_but_preserves_world_flags_and_cleanup():

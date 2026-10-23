@@ -60,6 +60,8 @@ def run_lines(lines, values, *, conditions=None, executed=None):
                          "==": value(left) == value(right)}[operator]
         elif conditions is not None and line.strip() in conditions:
             condition = conditions[line.strip()]
+            if callable(condition):
+                condition = condition()
         elif line.startswith("$"):
             left, operator, right = tokens
             assert not right.startswith("$"), "Variable arithmetic needs an explicit integer opcode."

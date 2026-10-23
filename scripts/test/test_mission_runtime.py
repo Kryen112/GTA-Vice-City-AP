@@ -13,6 +13,52 @@ from mission_layout import ASSIGNMENT_BASE, FULL_MODE_GLOBAL
 from mission_runtime import compact_rank_reads, seed_launch_lines, slot_gate_lines
 
 
+def test_shuffled_on_foot_intros_leave_the_incoming_vehicle_before_scene_setup():
+    from mission_layout import MISSION_NUMBERS
+    from mission_runtime import on_foot_intro_lines
+
+    for number in MISSION_NUMBERS.values():
+        for full, vehicle in itertools.product((0, 1), repeat=2):
+            values = defaultdict(int, {f"${FULL_MODE_GLOBAL}": full, "$10353": 123})
+            actions = []
+            run_lines([*on_foot_intro_lines(number), "load_scene -1482.1144 -825.2285 13.8377",
+                       "set_player_coordinates $player_char at -1482.1144 -825.2285 13.8377",
+                       "terminate_this_script"], values,
+                      conditions={"is_player_in_any_car $player_char": vehicle}, executed=actions)
+            actions = [line for line in actions if line.startswith((
+                "get_player_coordinates ", "warp_player_from_car_to_coord ",
+                "set_player_coordinates ", "load_scene ", "wait "))]
+            eject = "warp_player_from_car_to_coord $player_char at $10570 $10571 $10572"
+            if full and vehicle and number not in (72, 73, 74):
+                assert actions[:2] == [
+                    "get_player_coordinates $player_char position_to $10570 $10571 $10572", eject]
+                assert not any(line.startswith("wait ") for line in actions[:2])
+                assert actions.index(eject) < actions.index("load_scene -1482.1144 -825.2285 13.8377")
+            else:
+                assert eject not in actions
+            assert values["$10353"] == 123
+            player_position = (12.5, 20.25, 3.0)
+            car_position = player_position
+            in_car = bool(vehicle)
+            captured_position = None
+            for action in actions:
+                if action.startswith("get_player_coordinates "):
+                    captured_position = player_position
+                elif action.startswith("warp_player_from_car_to_coord "):
+                    assert captured_position is not None
+                    in_car = False
+                    player_position = captured_position
+                elif action.startswith("set_player_coordinates "):
+                    player_position = (-1482.1144, -825.2285, 13.8377)
+                    if in_car:
+                        car_position = player_position
+            if full and number not in (72, 73, 74):
+                assert not in_car
+                assert car_position == (12.5, 20.25, 3.0)
+            else:
+                assert in_car == bool(vehicle)
+
+
 def test_seed_dispatch_and_phone_return_position_survive():
     for full in (0, 1):
         values = defaultdict(int, {f"${FULL_MODE_GLOBAL}": full, f"${ASSIGNMENT_BASE + 3}": 73,
