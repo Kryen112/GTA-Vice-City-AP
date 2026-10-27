@@ -4,9 +4,12 @@
 #include "fake_game_state.hpp"
 #include "../src/ap_client.hpp"
 
-int main(int, char** argv) {
+int main(int argc, char** argv) {
   gtavc::FakeGameState game("");
-  gtavc::ArchipelagoClient client(&game, [](const std::string& line) {
+  const bool large_room = argc > 1 && std::string(argv[1]) == "--large-room";
+  std::atomic<bool> names_ready{!large_room};
+  gtavc::ArchipelagoClient client(&game, [&](const std::string& line) {
+    if (line == "Foreign item 2") names_ready = true;
     std::cout << line << std::endl;
   }, {}, std::filesystem::absolute(argv[0]).parent_path() / "state");
   client.Start();
@@ -27,7 +30,7 @@ int main(int, char** argv) {
       game.CompleteGoalLocation(101);
       check_queued = true;
     }
-    if (game.Status().goal_reached && game.AppliedItems().size() == 2) {
+    if (game.Status().goal_reached && game.AppliedItems().size() == 2 && names_ready) {
       std::this_thread::sleep_for(std::chrono::milliseconds(200));
       const auto settings = std::filesystem::absolute(argv[0]).parent_path() / "state/connection.ini";
       char server[2048]{};

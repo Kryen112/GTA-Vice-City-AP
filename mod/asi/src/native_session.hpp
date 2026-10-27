@@ -32,6 +32,7 @@ class NativeSession {
   void PublishStatus();
   bool GoalReached() const;
   void PublishPercentage();
+  void RequestDataPackage();
   void PersistChecks();
   void MergeEmergency(const EmergencyProgress& progress);
   void ReceiveEmergency(const json& values);
@@ -52,6 +53,7 @@ class NativeSession {
   std::filesystem::path state_directory_, state_file_;
   json defaults_, config_, slot_info_, players_, received_ = json::array();
   json data_packages_ = json::object();
+  std::set<std::string> pending_data_packages_;
   json name_groups_ = json::object();
   std::set<std::int64_t> all_locations_, checked_, pending_;
   std::shared_ptr<TrapHistory> traps_;

@@ -548,6 +548,38 @@ int main(int argc, char** argv) {
     session.Handle({{"cmd", "ReceivedItems"}, {"index", 0}, {"items", json::array({item})}});
   };
   {
+    TestGame package_game;
+    std::vector<json> requests;
+    const auto package_directory = directory / "serialized-data-packages";
+    std::filesystem::create_directories(package_directory);
+    NativeSession packages(&package_game, logger, [&](const json& messages) {
+      for (const auto& message : messages)
+        if (message.at("cmd") == "GetDataPackage") requests.push_back(message);
+      return true;
+    }, "rando.vc", "", package_directory);
+    auto config = connected;
+    config["slot_info"]["2"] = {{"name", "Other"}, {"game", "B Game"}};
+    config["slot_info"]["3"] = {{"name", "Duplicate"}, {"game", "B Game"}};
+    config["slot_info"]["4"] = {{"name", "Missing"}, {"game", "A Missing"}};
+    config["slot_info"]["5"] = {{"name", "Last"}, {"game", "C Game"}};
+    config["slot_info"]["6"] = {{"game", "__Server"}};
+    packages.Handle({{"cmd", "RoomInfo"}, {"seed_name", "test-seed"}});
+    packages.Handle(config);
+    assert(requests.size() == 1 && requests.back().at("games") == json::array({"A Missing"}));
+    packages.Handle({{"cmd", "DataPackage"}, {"data", {{"games", json::object()}}}});
+    assert(requests.size() == 2 && requests.back().at("games") == json::array({"B Game"}));
+    packages.Handle({{"cmd", "DataPackage"}, {"data", {{"games", {{"B Game", {
+        {"item_name_to_id", {{"Foreign item", 123}}}, {"location_name_to_id", json::object()}}}}}}}});
+    assert(requests.size() == 3 && requests.back().at("games") == json::array({"C Game"}));
+    packages.Handle({{"cmd", "PrintJSON"}, {"data", json::array({
+        {{"type", "item_id"}, {"text", "123"}, {"player", 2}}})}});
+    assert(logs.back() == "Foreign item");
+    packages.Handle({{"cmd", "DataPackage"}, {"data", {{"games", json::object()}}}});
+    assert(requests.size() == 3);
+    packages.Handle(config);
+    assert(requests.size() == 4 && requests.back().at("games") == json::array({"A Missing"}));
+  }
+  {
     TestGame mission_goal_game;
     const auto goal_directory = directory / "shuffled-mission-goal";
     std::filesystem::create_directories(goal_directory);

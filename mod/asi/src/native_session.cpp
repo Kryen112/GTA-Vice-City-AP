@@ -203,6 +203,12 @@ void NativeSession::PublishItems() {
   game_->ApplyItems(items);
 }
 
+void NativeSession::RequestDataPackage() {
+  // one outstanding game bounds both individual responses and queued startup traffic
+  if (!pending_data_packages_.empty())
+    Send({{"cmd", "GetDataPackage"}, {"games", json::array({*pending_data_packages_.begin()})}});
+}
+
 void NativeSession::Handle(const json& packet) {
   const std::string command = packet.at("cmd").get<std::string>();
   if (command == "RoomInfo") {
@@ -275,12 +281,12 @@ void NativeSession::Handle(const json& packet) {
     if (death_link_override_ >= 0) death_link_ = death_link_override_ != 0;
     Send({{"cmd", "ConnectUpdate"}, {"tags", death_link_ ? json::array({"AP", "DeathLink"})
                                                                      : json::array({"AP"})}});
-    std::set<std::string> games;
+    pending_data_packages_.clear();
     for (const auto& info : slot_info_) {
       const auto game = info.value("game", std::string());
-      if (!game.empty() && game != kGame && game != "__Server") games.insert(game);
+      if (!game.empty() && game != kGame && game != "__Server") pending_data_packages_.insert(game);
     }
-    if (!games.empty()) Send({{"cmd", "GetDataPackage"}, {"games", games}});
+    RequestDataPackage();
   } else if (command == "ReceivedItems" && online_) {
     const auto index = packet.at("index").get<std::size_t>();
     const json& batch = packet.at("items");
@@ -346,6 +352,10 @@ void NativeSession::Handle(const json& packet) {
           inverted[std::string(type) + "s"][std::to_string(name.value().get<std::int64_t>())] = name.key();
       }
       data_packages_[game.key()] = std::move(inverted);
+    }
+    if (!pending_data_packages_.empty()) {
+      pending_data_packages_.erase(pending_data_packages_.begin());
+      RequestDataPackage();
     }
   } else if (command == "Print") {
     const auto text = packet.at("text").get<std::string>().substr(0, 16384);

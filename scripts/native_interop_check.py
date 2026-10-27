@@ -12,7 +12,7 @@ from websockets.asyncio.server import serve
 from websockets.exceptions import ConnectionClosed
 
 
-async def main(executable: Path, *, legacy: bool = False) -> None:
+async def main(executable: Path, *, legacy: bool = False, large_room: bool = False) -> None:
     connections = 0
     authenticated_connections = 0
     checks = 0
@@ -21,6 +21,15 @@ async def main(executable: Path, *, legacy: bool = False) -> None:
     messages = []
     percentages = []
     group_requests = []
+    package_requests = []
+    foreign_games = {f"Foreign Game {game}": {
+        "item_name_to_id": {f"Item {index} " + "x" * 256: index for index in range(12000)},
+        "location_name_to_id": {f"Location {index} " + "x" * 256: index for index in range(12000)},
+    } for game in range(3)} if large_room else {}
+    for index, package in enumerate(foreign_games.values()):
+        package["item_name_to_id"][f"Foreign item {index}"] = 1000000 + index
+    if large_room:
+        assert len(json.dumps(foreign_games).encode()) > 16 * 1024 * 1024
 
     async def server(socket):
         nonlocal connections, authenticated_connections, checks
@@ -47,7 +56,10 @@ async def main(executable: Path, *, legacy: bool = False) -> None:
                         await socket.send(json.dumps([
                             {"cmd": "Connected", "slot": 1, "team": 0,
                              "players": [{"slot": 1, "team": 0, "alias": "native-test"}],
-                             "slot_info": {"1": {"name": "native-test", "game": "Grand Theft Auto Vice City"}},
+                             "slot_info": {"1": {"name": "native-test", "game": "Grand Theft Auto Vice City"},
+                                           **{str(index + 2): {"name": f"Player{index + 2}",
+                                                              "game": f"Foreign Game {index % 3}"}
+                                              for index in range(159 if large_room else 0)}},
                              "checked_locations": [], "missing_locations": [101],
                              "slot_data": {"item_globals": {"542100000": 9005}, "config_globals": {},
                                            "completion_watch": {"9102": 101}, "goal": "final_mission",
@@ -56,6 +68,17 @@ async def main(executable: Path, *, legacy: bool = False) -> None:
                             {"cmd": "PrintJSON", "type": "Chat", "data": [{"text": "Other player: hello"}]},
                             {"cmd": "Print", "text": "Server countdown: 3"},
                         ]))
+                    elif command == "GetDataPackage":
+                        assert len(packet["games"]) == 1, "Request one game per response, not the entire room"
+                        game = packet["games"][0]
+                        assert game in foreign_games, f"Unexpected name database: {game}"
+                        assert (current, game) not in package_requests, "Duplicate game request"
+                        package_requests.append((current, game))
+                        reply = [{"cmd": "DataPackage", "data": {"games": {game: foreign_games[game]}}}]
+                        if current >= 2 and game == "Foreign Game 2":
+                            reply.append({"cmd": "PrintJSON", "data": [
+                                {"type": "item_id", "text": "1000002", "player": 4}]})
+                        await socket.send(json.dumps(reply))
                     elif command == "Get":
                         expected = {f"_read_{kind}_name_groups_Grand Theft Auto Vice City"
                                     for kind in ("item", "location")}
@@ -110,7 +133,8 @@ async def main(executable: Path, *, legacy: bool = False) -> None:
                 settings.write_text(settings_text)
                 harness.with_suffix(".ini").write_text(
                     "[archipelago]\nserver=127.0.0.1:1\nslot=stale-slot\npassword=stale-password\n")
-            process = await asyncio.create_subprocess_exec(str(harness), stdout=asyncio.subprocess.PIPE,
+            arguments = ["--large-room"] if large_room else []
+            process = await asyncio.create_subprocess_exec(str(harness), *arguments, stdout=asyncio.subprocess.PIPE,
                                                            stderr=asyncio.subprocess.STDOUT)
             try:
                 output, _ = await asyncio.wait_for(process.communicate(), timeout=30)
@@ -123,6 +147,10 @@ async def main(executable: Path, *, legacy: bool = False) -> None:
             assert process.returncode == 0, "Native harness failed"
             assert connections >= 8 and checks >= 2, "Reconnect did not replay the unacknowledged check"
             assert {1, 2}.issubset(group_requests), "Name groups were not refreshed on reconnect"
+            if large_room:
+                assert {(2, game) for game in foreign_games}.issubset(package_requests)
+                assert "Foreign item 2" in output.decode(errors="replace"), "Foreign names did not resolve"
+                assert "Server message limit exceeded" not in output.decode(errors="replace")
             assert goal.is_set(), "Goal status never reached the server"
             assert output.decode(errors="replace").count("Connection unavailable;") == 2, (
                 "Repeated transport failures must log once per outage, rearmed only after AP login")
@@ -144,3 +172,4 @@ async def main(executable: Path, *, legacy: bool = False) -> None:
 if __name__ == "__main__":
     asyncio.run(main(Path(sys.argv[1]).resolve()))
     asyncio.run(main(Path(sys.argv[1]).resolve(), legacy=True))
+    asyncio.run(main(Path(sys.argv[1]).resolve(), large_room=True))
