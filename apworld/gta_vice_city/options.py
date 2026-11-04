@@ -228,7 +228,8 @@ class WorldEventTiming(Choice):
 
 class ShuffleMinimap(Toggle):
     """If on, the minimap starts hidden and the Minimap item joins the pool as
-    a useful item."""
+    a progression item when Paramedic, Firefighter or Pizza checks are enabled.
+    """
     display_name = "Shuffle minimap"
 
 

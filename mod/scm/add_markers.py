@@ -380,18 +380,19 @@ for i, ln in enumerate(lines):
     kept.append(ln)
 lines = kept
 
-# Separate both finale triggers from the business missions they overlap.
+# Separate mission triggers from overlapping business missions and interior entrances.
 # Keep Printworks' vanilla coordinates, including Hit the Courier, untouched.
 # Match/remove vanilla reveals above before changing the finale marker specs.
 assert lines.count("$475 = -278.8") == 1, "unexpected Printworks entrance coordinate"
-for launcher, original, shifted in (
-    ("FIN1", ("$474", "$475", "$476"), ("$474", "-274.3", "$476")),
-    ("FIN2", ("-378.3", "-579.8", "24.5"), ("-378.3", "-575.3", "24.5")),
+for launcher, original, shifted, radius in (
+    ("FIN1", ("$474", "$475", "$476"), ("$474", "-274.3", "$476"), "1.5 2.0 2.0"),
+    ("FIN2", ("-378.3", "-579.8", "24.5"), ("-378.3", "-575.3", "24.5"), "1.5 2.0 2.0"),
+    ("KEN1", ("491.0", "-77.7", "10.4"), ("501.0", "-83.0", "10.4"), "2.5 2.5 2.5"),
 ):
     finale_marker = next(m for m in managed if m["launcher"] == launcher)
     assert finale_marker["coords"] == original, f"unexpected {launcher} marker position"
     finale_start = lines.index(f":{launcher}")
-    finale_trigger = f"  locate_player_on_foot_3d $player_char 0 {' '.join(original)} radius 1.5 2.0 2.0"
+    finale_trigger = f"  locate_player_on_foot_3d $player_char 0 {' '.join(original)} radius {radius}"
     finale_locate = lines.index(finale_trigger, finale_start)
     assert not any(line.startswith("script_name '") for line in lines[finale_start + 2:finale_locate]), (
         "finale marker: trigger belongs to another launcher")
@@ -554,6 +555,12 @@ activity_flags = ([(607, 9387)]
 for idx, (flag, comp) in enumerate(activity_flags):
     cleo += ["if ", f"  ${flag} == 1", f"goto_if_false @AW_E{idx}", f"${comp} = 1", f":AW_E{idx}"]
 cleo += ["goto @AW_LOOP", ""]
+
+# CLEO starts clean on load. recreate this marker when an old save keeps its previous coordinates.
+death_row_marker = next(m for m in managed if m["launcher"] == "KEN1")
+cleo[3:3] = ["if ", f"  ${death_row_marker['shown']} == 1", "goto_if_false @AW_DEATH_ROW_READY",
+             f"remove_blip ${death_row_marker['handle']}", f"${death_row_marker['shown']} = 0",
+             ":AW_DEATH_ROW_READY"]
 
 # --- Build the APPICK watcher -------------------------------------------------
 # One pass per frame over every world slot and over Phil's four shop stands,

@@ -1,4 +1,12 @@
-# GTA: Vice City Archipelago 2.1.2
+# GTA: Vice City Archipelago 2.1.3
+
+## Release: 2.1.3
+
+- Move Death Row's marker clear of Malibu's normal entrance to prevent competing interior transitions
+- Shuffled Minimap is a progression requirement for Paramedic, Firefighter and Pizza checks in new seeds. Taxi and Vigilante are unchanged.
+
+Existing seeds and saves remain compatible. The new Minimap rules apply only to
+newly generated seeds.
 
 ## Release: 2.1.2
 

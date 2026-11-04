@@ -511,13 +511,38 @@ class TestMinimapShuffleOn(WorldTestBase):
                     if item.name == data.MINIMAP_ITEM and item.player == self.player]
         self.assertEqual(len(minimaps), 1)
 
-    def test_minimap_is_useful_never_progression(self) -> None:
-        # Useful, never progression: no access rule requires the minimap, so
-        # the generator owes it no reachability guarantee and it may land
-        # anywhere, the very end of the seed included.
-        self.assertEqual(
-            ITEM_CLASSIFICATIONS[data.MINIMAP_ITEM], ItemClassification.useful,
-        )
+    def test_minimap_is_progression_for_multi_objective_emergency_levels(self) -> None:
+        self.assertEqual(self.world.create_item(data.MINIMAP_ITEM).classification, ItemClassification.progression)
+
+    def test_emergency_levels_require_minimap_except_taxi_and_vigilante(self) -> None:
+        self.collect_by_name(data.AREA_ITEMS)
+        for activity in data.EMERGENCY_MINIMAP_ACTIVITIES:
+            for level in (1, data.EMERGENCY_LEVELS[activity]):
+                self.assertFalse(self.can_reach_location(data.emergency_name(activity, level)))
+        for activity in ("Taxi", "Vigilante"):
+            self.assertTrue(self.can_reach_location(data.emergency_name(activity, 1)))
+        self.collect_by_name(data.MINIMAP_ITEM)
+        for activity in data.EMERGENCY_MINIMAP_ACTIVITIES:
+            for level in (1, data.EMERGENCY_LEVELS[activity]):
+                self.assertTrue(self.can_reach_location(data.emergency_name(activity, level)))
+
+    def test_tracker_preserves_new_and_legacy_minimap_rules(self) -> None:
+        for legacy in (False, True):
+            slot_data = self.world.fill_slot_data()
+            if legacy:
+                slot_data.pop("emergency_minimap_required")
+            tracker = setup_multiworld(GTAViceCityWorld, steps=(), seed=902)
+            tracker.re_gen_passthrough = {self.game: slot_data}
+            for step in gen_steps:
+                call_all(tracker, step)
+            world = tracker.worlds[1]
+            self.assertEqual(world.emergency_minimap_required, not legacy)
+            state = CollectionState(tracker)
+            for name in data.AREA_ITEMS:
+                state.collect(world.create_item(name))
+            self.assertEqual(state.can_reach_location(data.emergency_name("Paramedic", 1), 1), legacy)
+            expected = ItemClassification.useful if legacy else ItemClassification.progression
+            self.assertEqual(world.create_item(data.MINIMAP_ITEM).classification, expected)
 
     def test_slot_data_carries_the_minimap_contract(self) -> None:
         # The ASI hides the radar disc while the shuffled flag is set and the
@@ -525,6 +550,7 @@ class TestMinimapShuffleOn(WorldTestBase):
         # both travel.
         slot_data = self.world.fill_slot_data()
         self.assertTrue(slot_data["shuffle_minimap"])
+        self.assertTrue(slot_data["emergency_minimap_required"])
         self.assertEqual(
             slot_data["config_globals"][str(scm.MINIMAP_SHUFFLED_GLOBAL)], 1,
         )
@@ -550,6 +576,32 @@ class TestMinimapShuffleOff(WorldTestBase):
         self.assertEqual(
             slot_data["config_globals"][str(scm.MINIMAP_SHUFFLED_GLOBAL)], 0,
         )
+
+    def test_emergency_levels_do_not_require_an_absent_minimap(self) -> None:
+        self.collect_by_name(data.AREA_ITEMS)
+        for activity in data.EMERGENCY_MINIMAP_ACTIVITIES:
+            self.assertTrue(self.can_reach_location(data.emergency_name(activity, 1)))
+
+
+class TestMinimapFullShuffle(TestMinimapShuffleOn):
+    options: ClassVar[dict] = {"shuffle_minimap": True, "mission_shuffle": "full"}
+
+
+class TestMinimapEmergencyOff(WorldTestBase):
+    game = "Grand Theft Auto Vice City"
+    options: ClassVar[dict] = {"shuffle_minimap": True, "enable_emergency_vehicles": False}
+
+    def test_unused_minimap_stays_useful(self) -> None:
+        self.assertEqual(self.world.create_item(data.MINIMAP_ITEM).classification, ItemClassification.useful)
+
+
+class TestMinimapOnlyTaxiAndVigilante(WorldTestBase):
+    game = "Grand Theft Auto Vice City"
+    options: ClassVar[dict] = {"shuffle_minimap": True,
+                             "location_percentages": {"paramedic": 0, "firefighter": 0, "pizza": 0}}
+
+    def test_unused_minimap_stays_useful(self) -> None:
+        self.assertEqual(self.world.create_item(data.MINIMAP_ITEM).classification, ItemClassification.useful)
 
 
 class TestMinimapTightestPool(WorldTestBase):

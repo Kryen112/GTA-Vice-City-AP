@@ -652,6 +652,7 @@ def build_location_requirements(
     mission_order: dict[str, list[str]] | None = None,
     finale_assets_required: int = data.FINALE_ASSET_THRESHOLD,
     require_printworks_and_estate: bool = False,
+    emergency_minimap_required: bool = False,
 ) -> dict[str, LocationRequirements]:
     """Every location that carries a rule, and what that rule asks for.
 
@@ -754,6 +755,13 @@ def build_location_requirements(
         if thresholds or lock_terms:
             requirements_by_location[location_name] = LocationRequirements(
                 lock_terms, thresholds)
+    if emergency_minimap_required:
+        for activity in data.EMERGENCY_MINIMAP_ACTIVITIES:
+            for level in range(1, data.EMERGENCY_LEVELS[activity] + 1):
+                name = data.emergency_name(activity, level)
+                entry = requirements_by_location.get(name, LocationRequirements([], []))
+                requirements_by_location[name] = LocationRequirements(
+                    [*entry.requirements, (data.MINIMAP_ITEM, 1)], entry.thresholds)
     # An event per mission something else waits on, ruled here so the world can
     # set it like any other location.
     for mission in data.ROUTE_MISSIONS:
@@ -781,6 +789,7 @@ def full_mission_requirements(
     split_mainland_access: bool, split_content_locks: int,
     finale_assets_required: int = data.FINALE_ASSET_THRESHOLD,
     require_printworks_and_estate: bool = False,
+    emergency_minimap_required: bool = False,
 ) -> tuple[dict[str, LocationRequirements], dict[str, str], dict[str, str]]:
     """Direct slot, payload and world-event rules, with their region and event items."""
     from . import mission_order
@@ -791,7 +800,8 @@ def full_mission_requirements(
     active = frozenset([item for key in ability_locks for item in data.ABILITY_LOCK_ITEMS[key]]
                        + [data.CONTENT_LOCK_ITEMS[key] for key in content_locks])
     entries = build_location_requirements(properties_enabled, ability_locks, content_locks,
-                                          split_mainland_access, split_content_locks)
+                                          split_mainland_access, split_content_locks,
+                                          emergency_minimap_required=emergency_minimap_required)
     region_names = dict(locations.LOCATION_REGIONS)
     events = {}
 
@@ -920,6 +930,7 @@ def build_location_rules(
     mission_order: dict[str, list[str]] | None = None,
     finale_assets_required: int = data.FINALE_ASSET_THRESHOLD,
     require_printworks_and_estate: bool = False,
+    emergency_minimap_required: bool = False,
 ) -> dict[str, RulePredicate]:
     """Every location's rule, as the predicates the world sets on them."""
     return {
@@ -933,5 +944,6 @@ def build_location_rules(
             mission_order=mission_order,
             finale_assets_required=finale_assets_required,
             require_printworks_and_estate=require_printworks_and_estate,
+            emergency_minimap_required=emergency_minimap_required,
         ).items()
     }

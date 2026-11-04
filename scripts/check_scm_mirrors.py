@@ -294,6 +294,10 @@ def _cleo_problems(cleo_dir: pathlib.Path, scm: types.ModuleType,
     # block is padded, and a run reaching the top of the block would read it as
     # an ordinary completion global.
     completion_top = scm.COMPLETION_BASE + len(scm.completion_watch()) - 1
+    marker_order = [mission for missions in data.STORY_GIVERS.values() for mission in missions
+                    if mission != "An Old Friend"]
+    death_row_handle = scratch_top - MARKER_SCRATCH_GLOBALS + 1 + marker_order.index("Death Row")
+    death_row_shown = death_row_handle + 2 * (MARKER_SCRATCH_GLOBALS // 3)
     # Phil's four stands, which the pickup watcher polls even though the shop
     # class owns them: they are in-shop pickups the engine sells, so no shop
     # thread can reach them. They are the last four rows of shop_data, so they
@@ -320,11 +324,12 @@ def _cleo_problems(cleo_dir: pathlib.Path, scm: types.ModuleType,
                        (f"the radio block "
                        f"(${scm.RADIO_RANDOMIZED_GLOBAL}.."
                        f"${scm.RADIO_REQUEST_GLOBAL})")),
-        # Completion globals plus the taxi spacing and its scratch counter.
+        # the marker refresh should only touch Death Row's handle and shown flag
         "apwatchers.cs": (((scm.COMPLETION_BASE, completion_top),
-                          (scm.TAXI_MILESTONE_SPACING_GLOBAL, scm.TAXI_MILESTONE_COUNT_GLOBAL)),
+                          (scm.TAXI_MILESTONE_SPACING_GLOBAL, scm.TAXI_MILESTONE_COUNT_GLOBAL),
+                          (death_row_handle, death_row_handle), (death_row_shown, death_row_shown)),
                           (f"the completion globals (${scm.COMPLETION_BASE}..${completion_top}) "
-                          "and taxi milestone globals")),
+                          "and taxi milestone globals, plus Death Row's marker handle and shown flag")),
         # The pickup watcher reads each slot's handle, which is a vanilla global
         # below the reserved block, and writes only the completion global of the
         # slot or stand it polled, so its runs are the pickup run inside the

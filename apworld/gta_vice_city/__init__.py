@@ -213,6 +213,7 @@ class GTAViceCityWorld(World):
     pickup_permutation: list[int] | None = None
 
     removed_locations: frozenset[str] = frozenset()
+    emergency_minimap_required: bool = True
     mission_order: dict[str, list[str]] | None = None
 
     item_name_to_id = ITEM_NAME_TO_ID
@@ -254,6 +255,8 @@ class GTAViceCityWorld(World):
             options.car_color_randomizer.value = int(bool(slot_data["car_color_randomizer"]))
         if "shuffle_minimap" in slot_data:
             options.shuffle_minimap.value = int(bool(slot_data["shuffle_minimap"]))
+        # old seeds place Minimap as a useful item and must retain their original rules
+        self.emergency_minimap_required = bool(slot_data.get("emergency_minimap_required", False))
         if "randomize_pickups" in slot_data:
             options.randomize_pickups.value = int(bool(slot_data["randomize_pickups"]))
         if "split_mainland_access" in slot_data:
@@ -300,6 +303,7 @@ class GTAViceCityWorld(World):
             self._choose_starting_unlocks(passthrough)
             return
         options = self.options
+        self.emergency_minimap_required = True
         self._choose_locations(None)
         self._choose_mission_order(None)
         self._choose_radio_start(None)
@@ -622,6 +626,7 @@ class GTAViceCityWorld(World):
             self.mission_order,
             self.options.finale_assets_required.value,
             bool(self.options.require_printworks_and_estate.value),
+            bool(self.options.shuffle_minimap and self.emergency_minimap_required),
         )
 
     def _full_mission_graph(self):
@@ -630,11 +635,17 @@ class GTAViceCityWorld(World):
             bool(self.options.enable_properties.value), self._ability_lock_keys(), self._content_lock_keys(),
             bool(self.options.split_mainland_access.value), self._split_content_locks(),
             self.options.finale_assets_required.value,
-            bool(self.options.require_printworks_and_estate.value))
+            bool(self.options.require_printworks_and_estate.value),
+            bool(self.options.shuffle_minimap and self.emergency_minimap_required))
 
     def create_item(self, name: str) -> GTAViceCityItem:
+        classification = ITEM_CLASSIFICATIONS[name]
+        if (name == data.MINIMAP_ITEM and self.options.shuffle_minimap and self.emergency_minimap_required
+                and any(self._location_enabled(data.emergency_name(activity, 1))
+                        for activity in data.EMERGENCY_MINIMAP_ACTIVITIES)):
+            classification = ItemClassification.progression
         return GTAViceCityItem(
-            name, ITEM_CLASSIFICATIONS[name], ITEM_NAME_TO_ID[name], self.player,
+            name, classification, ITEM_NAME_TO_ID[name], self.player,
         )
 
     def get_filler_item_name(self) -> str:
@@ -1122,6 +1133,7 @@ class GTAViceCityWorld(World):
             "player_model_index": self.player_model_index,
             "car_color_randomizer": bool(self.options.car_color_randomizer.value),
             "shuffle_minimap": bool(self.options.shuffle_minimap.value),
+            "emergency_minimap_required": bool(self.options.shuffle_minimap and self.emergency_minimap_required),
             "split_mainland_access": bool(self.options.split_mainland_access.value),
             "mainland_routes": scm.mainland_routes(
                 bool(self.options.split_mainland_access.value)),

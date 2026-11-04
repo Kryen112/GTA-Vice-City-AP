@@ -735,6 +735,10 @@ EMERGENCY_LEVELS: dict[str, int] = {
     "Paramedic": 12, "Vigilante": 12, "Firefighter": 12, "Taxi": 10, "Pizza": 10,
 }
 
+# these map activites require several objectives between saved checkpoints
+# requiring minimap seems reasonable
+EMERGENCY_MINIMAP_ACTIVITIES = ("Paramedic", "Firefighter", "Pizza")
+
 
 def emergency_name(activity: str, level: int) -> str:
     return f"{activity} Level {level:02d}"

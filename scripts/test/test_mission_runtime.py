@@ -1,5 +1,6 @@
 """Execute production seed dispatch and shared rank arithmetic."""
 
+import ast
 import itertools
 import sys
 from collections import defaultdict
@@ -11,6 +12,50 @@ from test_mission_order import mission_order, run_lines
 sys.path.append(str(Path(__file__).resolve().parents[2] / "apworld/gta_vice_city"))
 from mission_layout import ASSIGNMENT_BASE, FULL_MODE_GLOBAL
 from mission_runtime import compact_rank_reads, seed_launch_lines, slot_gate_lines
+
+
+def test_death_row_marker_does_not_race_the_malibu_interior_transition():
+    source = Path(__file__).resolve().parents[2] / "mod/scm/add_markers.py"
+    tree = ast.parse(source.read_text())
+    relocation = next(node for node in tree.body if isinstance(node, ast.For)
+                      and isinstance(node.target, ast.Tuple)
+                      and any(isinstance(target, ast.Name) and target.id == "radius"
+                              for target in node.target.elts))
+    records = [("FIN1", ("$474", "$475", "$476"), "1.5 2.0 2.0"),
+               ("FIN2", ("-378.3", "-579.8", "24.5"), "1.5 2.0 2.0"),
+               ("KEN1", ("491.0", "-77.7", "10.4"), "2.5 2.5 2.5")]
+    lines, managed = [], []
+    for launcher, coords, radius in records:
+        lines += [f":{launcher}", f"script_name '{launcher}'",
+                  f"  locate_player_on_foot_3d $player_char 0 {' '.join(coords)} radius {radius}"]
+        managed.append({"launcher": launcher, "coords": coords})
+    scope = {"lines": lines, "managed": managed}
+    exec(compile(ast.Module(body=[relocation], type_ignores=[]), str(source), "exec"), scope)
+    coords = tuple(float(value) for value in managed[-1]["coords"])
+    assert any(abs(coords[axis] - (491.0, -77.7)[axis]) > 2.5 + 1.5 for axis in (0, 1))
+    assert any(abs(coords[axis] - (488.6, -75.4)[axis]) > 2.5 + 1.5 for axis in (0, 1))
+    assert any(abs(coords[axis] - (495.74, -82.79)[axis]) > 2.5 for axis in (0, 1))
+    assert f"  locate_player_on_foot_3d $player_char 0 {' '.join(managed[-1]['coords'])} radius 2.5 2.5 2.5" in lines
+
+
+def test_loaded_death_row_marker_is_recreated_without_restarting_its_launcher():
+    source = Path(__file__).resolve().parents[2] / "mod/scm/add_markers.py"
+    tree = ast.parse(source.read_text())
+    refresh = [node for node in tree.body if isinstance(node, ast.Assign) and any(
+        (isinstance(target, ast.Name) and target.id == "death_row_marker")
+        or (isinstance(target, ast.Subscript) and isinstance(target.value, ast.Name) and target.value.id == "cleo")
+        for target in node.targets)]
+    scope = {"managed": [{"launcher": "KEN1", "shown": 10311, "handle": 10191}],
+             "cleo": ["{$CLEO .cs}", "", "0000:", "", ":AW_LOOP"]}
+    exec(compile(ast.Module(body=refresh, type_ignores=[]), str(source), "exec"), scope)
+    prefix = scope["cleo"][3:scope["cleo"].index(":AW_LOOP")]
+    for shown in (0, 1):
+        values = defaultdict(int, {"$10311": shown, "$10251": 1})
+        actions = []
+        run_lines([*prefix, "terminate_this_script"], values, executed=actions)
+        assert values["$10311"] == 0
+        assert values["$10251"] == 1
+        assert ("remove_blip $10191" in actions) == bool(shown)
 
 
 def test_shuffled_on_foot_intros_leave_the_incoming_vehicle_before_scene_setup():
