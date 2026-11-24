@@ -165,7 +165,7 @@ void IngameConsole::Key(WPARAM key) {
 LRESULT CALLBACK IngameConsole::WindowProc(HWND window, UINT message, WPARAM w, LPARAM l) {
   auto& self = *instance_;
   if (message == WM_KILLFOCUS) {
-    self.active_ = false; self.completion_.Reset(); self.pending_surrogate_ = 0; self.wheel_delta_ = 0;
+    self.completion_.Reset(); self.pending_surrogate_ = 0; self.wheel_delta_ = 0;
   }
   if (message == WM_KEYDOWN && w == VK_F8) {
     self.completion_.Reset();

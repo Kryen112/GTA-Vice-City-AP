@@ -45,6 +45,12 @@ def main():
         package = stage_setup(folder)
         sys.path.insert(0, str(folder))
         import setup_dependencies
+        runtimes = folder / "runtimes"
+        runtimes.mkdir()
+        for name, url, sha256 in (
+                ("asi-loader.zip", setup_dependencies.LOADER_URL, setup_dependencies.LOADER_SHA256),
+                ("cleo.zip", setup_dependencies.CLEO_URL, setup_dependencies.CLEO_SHA256)):
+            (runtimes / name).write_bytes(setup_dependencies.download(url, sha256))
         licences = folder / "licenses"
         licences.mkdir()
         for name in payload.LICENCE_FILES:
@@ -68,6 +74,7 @@ def main():
             "--workpath", str(work / "pyinstaller"), "--specpath", str(folder),
             "--add-data", f"{package / 'data'}:gta_vc_setup/data",
             "--add-data", f"{licences}:licenses",
+            "--add-data", f"{runtimes}:runtimes",
             str(root / "scripts" / "standalone_setup.py"),
         ], check=True)
     print(root / "dist" / "GTA-Vice-City-AP-Setup.exe")

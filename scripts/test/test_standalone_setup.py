@@ -1,9 +1,8 @@
-"""Standalone setup preserves shared runtimes and rejects corrupt downloads."""
+"""Standalone setup installs offline, preserves runtimes and rejects corrupt archives."""
 
 import hashlib
 import importlib
 import io
-import json
 import shutil
 import subprocess
 import sys
@@ -34,6 +33,13 @@ def standalone(tmp_path, monkeypatch):
         output.writestr("dinput8.dll", b"downloaded loader")
         output.writestr("VC.CLEO.asi", b"cleo")
         output.writestr("CLEO_Readme/Readme.txt", b"credits")
+    runtimes = tmp_path / "runtimes"
+    runtimes.mkdir()
+    for name in ("asi-loader.zip", "cleo.zip"):
+        (runtimes / name).write_bytes(archive.getvalue())
+    digest = hashlib.sha256(archive.getvalue()).hexdigest()
+    monkeypatch.setattr(dependencies, "LOADER_SHA256", digest)
+    monkeypatch.setattr(dependencies, "CLEO_SHA256", digest)
     yield dependencies, setup, archive.getvalue()
     for name in list(sys.modules):
         if name == "setup_dependencies" or name.startswith("gta_vc_setup"):
@@ -41,60 +47,65 @@ def standalone(tmp_path, monkeypatch):
 
 
 def test_install_keeps_existing_files_and_reuses_cleo(standalone, tmp_path):
-    dependencies, _, archive = standalone
+    dependencies, _, _ = standalone
     game = tmp_path / "game"
     game.mkdir()
     (game / "dinput8.dll").write_bytes(b"existing loader")
-    with (mock.patch.object(dependencies, "download", return_value=archive) as download,
-          mock.patch.object(dependencies, "download_loader") as loader):
+    with mock.patch.object(dependencies.urllib.request, "urlopen",
+                           side_effect=OSError("Network unavailable")) as request:
         dependencies.install(game)
         assert (game / "dinput8.dll").read_bytes() == b"existing loader"
         assert (game / "VC.CLEO.asi").read_bytes() == b"cleo"
         assert (game / "GtaVcAp-Licenses/CLEO-2.1.1.txt").read_bytes() == b"credits"
         dependencies.install(game)
-        download.assert_called_once_with(dependencies.CLEO_URL, dependencies.CLEO_SHA256)
-        loader.assert_not_called()
+        request.assert_not_called()
     (game / "VC.CLEO.asi").rename(game / "CLEO.asi")
     (game / "dinput8.dll").unlink()
-    with (mock.patch.object(dependencies, "download") as download,
-          mock.patch.object(dependencies, "download_loader", return_value=archive) as loader):
+    with mock.patch.object(dependencies.urllib.request, "urlopen",
+                           side_effect=OSError("Network unavailable")) as request:
         dependencies.install(game)
         dependencies.install(game)
-        loader.assert_called_once_with()
-        download.assert_not_called()
+        request.assert_not_called()
         assert not (game / "VC.CLEO.asi").exists()
         assert (game / "dinput8.dll").read_bytes() == b"downloaded loader"
 
 
-def test_bad_download_does_not_install_loader(standalone, tmp_path):
-    dependencies, _, archive = standalone
+@pytest.mark.parametrize("corrupt", [False, True])
+def test_fresh_install_uses_verified_bundled_runtime_archives_offline(standalone, tmp_path, corrupt):
+    dependencies, _, _ = standalone
+    game = tmp_path / "Instalación de Vice City"
+    game.mkdir()
+    if corrupt:
+        (tmp_path / "runtimes/cleo.zip").write_bytes(b"corrupt archive")
+    with mock.patch.object(dependencies.urllib.request, "urlopen",
+                           side_effect=OSError("Network unavailable")) as request:
+        if corrupt:
+            with pytest.raises(dependencies.InstallRefused, match="integrity"):
+                dependencies.install(game)
+            assert not list(game.iterdir())
+        else:
+            dependencies.install(game)
+            assert (game / "dinput8.dll").read_bytes() == b"downloaded loader"
+            assert (game / "VC.CLEO.asi").read_bytes() == b"cleo"
+        request.assert_not_called()
+
+
+def test_missing_bundled_runtime_does_not_install_partial_files(standalone, tmp_path):
+    dependencies, _, _ = standalone
     game = tmp_path / "game"
     game.mkdir()
-    with (mock.patch.object(dependencies.urllib.request, "urlopen") as request,
-          mock.patch.object(dependencies, "download_loader", return_value=archive)):
-        request.return_value.__enter__.return_value.read.return_value = b"corrupt archive"
-        with pytest.raises(dependencies.InstallRefused, match="integrity"):
-            dependencies.install(game)
+    (tmp_path / "runtimes/cleo.zip").unlink()
+    with pytest.raises(dependencies.InstallRefused, match="missing a bundled game runtime"):
+        dependencies.install(game)
     assert not list(game.iterdir())
 
 
-def test_loader_verifies_current_github_digest(standalone):
-    dependencies, _, archive = standalone
-    digest = "sha256:" + hashlib.sha256(archive).hexdigest()
-    for published, downloaded, expected_error in (
-            (digest, archive, None), (digest, b"corrupt archive", "integrity"),
-            (None, archive, "Could not verify")):
-        metadata = json.dumps({"assets": [{"browser_download_url": dependencies.LOADER_URL,
-                                         "digest": published}]}).encode()
-        with mock.patch.object(dependencies.urllib.request, "urlopen") as request:
-            request.return_value.__enter__.return_value.read.side_effect = [metadata, downloaded]
-            if expected_error:
-                with pytest.raises(dependencies.InstallRefused, match=expected_error):
-                    dependencies.download_loader()
-            else:
-                assert dependencies.download_loader() == archive
-                assert request.call_args_list[0].args[0].full_url == dependencies.LOADER_RELEASE_URL
-                assert request.call_args_list[1].args[0] == dependencies.LOADER_URL
+def test_build_download_rejects_corrupt_runtime_archive(standalone):
+    dependencies, _, _ = standalone
+    with mock.patch.object(dependencies.urllib.request, "urlopen") as request:
+        request.return_value.__enter__.return_value.read.return_value = b"corrupt archive"
+        with pytest.raises(dependencies.InstallRefused, match="integrity"):
+            dependencies.download(dependencies.LOADER_URL, dependencies.LOADER_SHA256)
 
 
 def test_shared_setup_validates_game_before_dependencies(standalone, tmp_path):

@@ -21,8 +21,10 @@ foreach ($dependency in @(
 }
 Push-Location $repo
 try {
-    & "$VcpkgRoot/vcpkg.exe" install ixwebsocket[mbedtls]:x86-windows-static jsoncpp:x86-windows-static "--x-install-root=$deps" --disable-metrics
+    & "$VcpkgRoot/vcpkg.exe" install ixwebsocket[mbedtls]:x86-windows-static jsoncpp:x86-windows-static "--x-install-root=$deps" "--overlay-ports=$repo/mod/asi/vcpkg-ports" --disable-metrics
     if ($LASTEXITCODE) { throw 'APCpp dependency build failed.' }
+    & "$VcpkgRoot/vcpkg.exe" upgrade ixwebsocket:x86-windows-static --no-dry-run "--x-install-root=$deps" "--overlay-ports=$repo/mod/asi/vcpkg-ports" --disable-metrics
+    if ($LASTEXITCODE) { throw 'IXWebSocket patch build failed.' }
     # These SDK arrays live at the given addresses; their first entries are not pointers.
     $pickupSource = [IO.File]::ReadAllText("$sdk/plugin_vc/game_vc/CPickups.cpp")
     foreach ($address in @('0x94AF48', '0x7E9B08', '0x945D30')) {

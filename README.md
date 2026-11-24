@@ -115,7 +115,7 @@ The ASI connects directly to Archipelago using
 `%LOCALAPPDATA%\GtaVcAp\connection.ini`, then launch the game.
 Setup creates this file and adds **Archipelago Connection Settings.lnk** in the
 Vice City folder so you can open it directly. **GTA-Vice-City-AP-Setup.exe** installs the mod without
-Python or Archipelago Launcher. It downloads ASI Loader and CLEO if missing.
+Python or Archipelago Launcher. It includes ASI Loader and CLEO for offline installation.
 Setup checks `gta-vc.exe` for the supported classic **1.0 English** build before
 installing. Other versions and executables it cannot identify are refused.
 Unacknowledged checks are saved in
@@ -129,12 +129,15 @@ password in the INI is stored as plain text. TLS never falls back to an unencryp
 
 Press **F8** in the main menu or in game for the built-in console. Set a connection
 with `/server HOST:PORT`, `/slot NAME`, optional `/password PASSWORD`, then `/connect`.
-The server and slot are remembered in the same `connection.ini`. Close the game
-before editing the file manually. Changing the server or slot through F8 clears the previous password from memory and the file. Enter it afterwards if needed. 
+The server and slot are remembered in the same `connection.ini`.  
+Close the game before editing the file manually.  
+Changing the server or slot through F8 clears the previous password from memory and the file.  
+Enter it afterwards if needed. 
 `/disconnect` stops the connection; `/connect` retries. 
 Type normally to chat, use `!help` for server commands, `/hint [item]` for hints, 
 and `/deathlink [on|off|seed]` to control DeathLink or restore the seed's setting.
-The console displays other players' chat, hints, countdowns, releases and goal messages. Page Up/Down scroll the view, Ctrl+V pastes, Enter sends, and F8/Escape closes the console.
+The console displays other players' chat, hints, countdowns, releases and goal messages.  
+Page Up/Down scroll the view, Ctrl+V pastes, Enter sends, and F8/Escape closes the console.
 Use `/clear` to empty message history and queued popups, `/status` for connection details,
 and `/port NUMBER` to change the server port.
 
@@ -207,6 +210,7 @@ The native client builds on Windows with Visual Studio 2022 C++ Build Tools (x86
 Run `scripts/build_native_client.ps1 -Test`. It builds the x86 static packages
 `ixwebsocket[mbedtls]` and `jsoncpp`, builds plugin-sdk from source, builds the
 Release ASI, and runs the SDK binding, game logic, save isolation and native session checks.
+The IXWebSocket overlay adds a local-machine root certificate store fallback for Proton.
 The script corrects three pickup-array bindings in a generated SDK source copy.
 SDK outputs live in `.build/sdk`, and the ASI is `mod/asi/plugin/bin/GTA-VC/Release/GtaVcAp.VC.asi`.
 Leave `GTA_VC_DIR` unset for a build to stop the asi file from being installing into the game folder.
@@ -234,10 +238,9 @@ python -m venv .build/setup-venv
 
 Use 64-bit Python 3.12 with Tkinter. The output is `dist/GTA-Vice-City-AP-Setup.exe`, 
 for 64-bit Windows running the 32-bit game.
-Setup downloads [Ultimate ASI Loader's Win32 dinput8 archive](https://github.com/ThirteenAG/Ultimate-ASI-Loader/releases/download/Win32-latest/dinput8-Win32.zip)
-when `dinput8.dll` is missing, checking its SHA-256 against GitHub's release metadata.
-CLEO 2.1.1 is downloaded when missing and checked against its pinned SHA-256.
-The installer includes the ASI Loader license. A fresh install needs internet access.
+The build downloads [Ultimate ASI Loader v9.7.4 for Win32](https://github.com/ThirteenAG/Ultimate-ASI-Loader/releases/tag/v9.7.4) and CLEO 2.1.1,  
+verifies their pinned SHA-256 hashes and bundles the archives and licenses.
+Setup verifies the bundled archives and installs missing runtimes offline.
 Existing loader/CLEO files are kept, and mod uninstall leaves these shared runtimes installed. 
 Game scripts ship as patches, not stock game files.
 The executable is unsigned; Windows may show an unknown-publisher warning.

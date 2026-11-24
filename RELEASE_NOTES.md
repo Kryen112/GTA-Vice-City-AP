@@ -1,7 +1,10 @@
 # GTA: Vice City Archipelago 2.1.3
 
-## Release: 2.1.3
+## Release 2.1.3
 
+- Fix secure Archipelago connections under Proton when the current-user root certificate store is unavailable. The client falls back to the local-machine root store and continues to verify server certificates.
+- Bundle verified Ultimate ASI Loader and CLEO runtimes for offline installation.
+- Keep the Archipelago console open when the game window loses focus.
 - Move Death Row's marker clear of Malibu's normal entrance to prevent competing interior transitions
 - Shuffled Minimap is a progression requirement for Paramedic, Firefighter and Pizza checks in new seeds. Taxi and Vigilante are unchanged.
 
